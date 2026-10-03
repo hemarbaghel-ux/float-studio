@@ -1,0 +1,402 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "A user's code project",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns this project",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the project",
+          "maxLength": 100
+        },
+        "files": {
+          "type": "string",
+          "description": "JSON stringified FileNode array representing the workspace",
+          "maxLength": 1000000
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        }
+      },
+      "required": ["ownerId", "name", "files", "createdAt", "updatedAt"]
+    },
+    "EvalTask": {
+      "title": "EvalTask",
+      "description": "An evaluation task definition",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns this task",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the eval task",
+          "maxLength": 150
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the eval task",
+          "maxLength": 2000
+        },
+        "category": {
+          "type": "string",
+          "description": "Category of the eval task",
+          "maxLength": 50
+        },
+        "difficulty": {
+          "type": "string",
+          "description": "Difficulty of the task",
+          "enum": ["easy", "medium", "hard"]
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Prompt for the eval task",
+          "maxLength": 10000
+        },
+        "validationType": {
+          "type": "string",
+          "description": "Type of validation to perform",
+          "enum": ["exact_match", "contains", "regex", "llm_eval", "code_execution"]
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        }
+      },
+      "required": ["ownerId", "name", "description", "category", "difficulty", "prompt", "validationType", "createdAt", "updatedAt"]
+    },
+    "AgentModelAssignment": {
+      "title": "AgentModelAssignment",
+      "description": "A user's configured primary and fallback models for a specific agent",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns this assignment",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "agentId": {
+          "type": "string",
+          "description": "The unique identifier of the agent",
+          "maxLength": 100
+        },
+        "primaryModel": {
+          "type": "string",
+          "description": "The primary model ID assigned to the agent",
+          "maxLength": 100
+        },
+        "fallbackModel": {
+          "type": "string",
+          "description": "The fallback model ID assigned to the agent",
+          "maxLength": 100
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        }
+      },
+      "required": ["ownerId", "agentId", "primaryModel", "fallbackModel", "createdAt", "updatedAt"]
+    },
+    "EvaluationRun": {
+      "title": "EvaluationRun",
+      "description": "A completed or running evaluation execution record",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who ran the evaluation",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "taskId": {
+          "type": "string",
+          "description": "ID of the evaluated task",
+          "maxLength": 100
+        },
+        "modelId": {
+          "type": "string",
+          "description": "ID of the model evaluated",
+          "maxLength": 100
+        },
+        "providerId": {
+          "type": "string",
+          "description": "Provider ID of the model",
+          "maxLength": 100
+        },
+        "agentId": {
+          "type": "string",
+          "description": "Agent ID used in the run",
+          "maxLength": 100
+        },
+        "benchmarkId": {
+          "type": "string",
+          "description": "Optional Benchmark ID",
+          "maxLength": 100
+        },
+        "status": {
+          "type": "string",
+          "description": "Status of the run",
+          "enum": ["queued", "running", "completed", "failed", "cancelled", "timeout"]
+        },
+        "durationMs": {
+          "type": "number",
+          "description": "Execution duration in milliseconds"
+        },
+        "inputTokens": {
+          "type": "number",
+          "description": "Input tokens consumed"
+        },
+        "outputTokens": {
+          "type": "number",
+          "description": "Output tokens consumed"
+        },
+        "totalTokens": {
+          "type": "number",
+          "description": "Total tokens consumed"
+        },
+        "estimatedCost": {
+          "type": "number",
+          "description": "Estimated cost in USD"
+        },
+        "score": {
+          "type": "number",
+          "description": "Final score 0-100"
+        },
+        "patchValid": {
+          "type": "boolean",
+          "description": "Whether generated patch is syntactically valid"
+        },
+        "buildPassed": {
+          "type": "boolean",
+          "description": "Whether project build succeeded"
+        },
+        "testsPassed": {
+          "type": "boolean",
+          "description": "Whether unit/integration tests passed"
+        },
+        "testCount": {
+          "type": "number",
+          "description": "Total tests executed"
+        },
+        "testsPassedCount": {
+          "type": "number",
+          "description": "Number of passed tests"
+        },
+        "errorType": {
+          "type": "string",
+          "description": "Error category if failed",
+          "maxLength": 100
+        },
+        "errorMessage": {
+          "type": "string",
+          "description": "Error detail if failed",
+          "maxLength": 5000
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        }
+      },
+      "required": ["ownerId", "taskId", "modelId", "providerId", "agentId", "status", "createdAt", "updatedAt"]
+    },
+    "Benchmark": {
+      "title": "Benchmark",
+      "description": "A curated benchmark suite of evaluation tasks",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the creator",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the benchmark suite",
+          "maxLength": 150
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the suite",
+          "maxLength": 2000
+        },
+        "version": {
+          "type": "string",
+          "description": "Version string e.g. v1.0",
+          "maxLength": 20
+        },
+        "taskCount": {
+          "type": "number",
+          "description": "Number of tasks in suite"
+        },
+        "categories": {
+          "type": "string",
+          "description": "Comma separated categories",
+          "maxLength": 300
+        },
+        "difficulty": {
+          "type": "string",
+          "description": "Average difficulty",
+          "maxLength": 50
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        }
+      },
+      "required": ["ownerId", "name", "description", "version", "taskCount", "createdAt", "updatedAt"]
+    },
+    "EvalReview": {
+      "title": "EvalReview",
+      "description": "Human review scores and notes for an evaluation run",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the reviewer",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "runId": {
+          "type": "string",
+          "description": "ID of the evaluated run",
+          "maxLength": 128
+        },
+        "reviewerId": {
+          "type": "string",
+          "description": "Reviewer identity",
+          "maxLength": 128
+        },
+        "codeQualityScore": {
+          "type": "number",
+          "description": "Score 0-100"
+        },
+        "maintainabilityScore": {
+          "type": "number",
+          "description": "Score 0-100"
+        },
+        "instructionFollowingScore": {
+          "type": "number",
+          "description": "Score 0-100"
+        },
+        "correctnessScore": {
+          "type": "number",
+          "description": "Score 0-100"
+        },
+        "comments": {
+          "type": "string",
+          "description": "Review remarks",
+          "maxLength": 5000
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        }
+      },
+      "required": ["ownerId", "runId", "reviewerId", "createdAt", "updatedAt"]
+    },
+    "UserConsent": {
+      "title": "UserConsent",
+      "description": "User privacy and data-sharing consent record",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The UID of the user who owns this consent preference",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sharingEnabled": {
+          "type": "boolean",
+          "description": "Whether optional product-improvement data sharing is enabled"
+        },
+        "policyVersion": {
+          "type": "string",
+          "description": "Version identifier of the privacy policy consented to",
+          "maxLength": 32
+        },
+        "source": {
+          "type": "string",
+          "description": "Origin of the consent decision",
+          "enum": ["onboarding", "settings", "default"],
+          "maxLength": 32
+        },
+        "consentTimestamp": {
+          "type": "object",
+          "description": "Timestamp when consent was recorded"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp of last update"
+        }
+      },
+      "required": ["userId", "sharingEnabled", "policyVersion", "source", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "Stores user projects"
+    },
+    "/userConsents/{userId}": {
+      "schema": { "$ref": "#/entities/UserConsent" },
+      "description": "Stores user privacy and data sharing consent preferences"
+    },
+    "/evalTasks/{taskId}": {
+      "schema": { "$ref": "#/entities/EvalTask" },
+      "description": "Stores evaluation tasks defined by users"
+    },
+    "/agentAssignments/{assignmentId}": {
+      "schema": { "$ref": "#/entities/AgentModelAssignment" },
+      "description": "Stores user configured primary and fallback model assignments for agents"
+    },
+    "/evaluationRuns/{runId}": {
+      "schema": { "$ref": "#/entities/EvaluationRun" },
+      "description": "Stores evaluation run execution records"
+    },
+    "/benchmarks/{benchmarkId}": {
+      "schema": { "$ref": "#/entities/Benchmark" },
+      "description": "Stores benchmark suites"
+    },
+    "/evalReviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/EvalReview" },
+      "description": "Stores human review assessments of evaluation runs"
+    }
+  }
+}

@@ -1,0 +1,252 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function incoming() {
+      return request.resource.data;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function isValidProject(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'files', 'createdAt', 'updatedAt']) &&
+             data.keys().size() == 5 &&
+             data.ownerId == request.auth.uid &&
+             data.name is string && data.name.size() <= 100 &&
+             data.files is string && data.files.size() <= 1000000;
+    }
+
+    function isValidConversation(data) {
+      return data.keys().hasAll(['ownerId', 'projectId', 'title', 'messages', 'createdAt', 'updatedAt']) &&
+             data.keys().size() == 6 &&
+             data.ownerId == request.auth.uid &&
+             data.projectId is string && data.projectId.size() <= 128 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.messages is string && data.messages.size() <= 2000000;
+    }
+
+    function isValidEvalTask(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'description', 'category', 'difficulty', 'prompt', 'validationType', 'createdAt', 'updatedAt']) &&
+             data.keys().size() == 9 &&
+             data.ownerId == request.auth.uid &&
+             data.name is string && data.name.size() <= 150 &&
+             data.description is string && data.description.size() <= 2000 &&
+             data.category is string && data.category.size() <= 50 &&
+             data.difficulty in ['easy', 'medium', 'hard'] &&
+             data.prompt is string && data.prompt.size() <= 10000 &&
+             data.validationType in ['exact_match', 'contains', 'regex', 'llm_eval', 'code_execution'];
+    }
+
+    function isValidAgentAssignment(data) {
+      return data.keys().hasAll(['ownerId', 'agentId', 'primaryModel', 'fallbackModel', 'createdAt', 'updatedAt']) &&
+             data.keys().size() == 6 &&
+             data.ownerId == request.auth.uid &&
+             data.agentId is string && data.agentId.size() <= 100 &&
+             data.primaryModel is string && data.primaryModel.size() <= 100 &&
+             data.fallbackModel is string && data.fallbackModel.size() <= 100;
+    }
+
+    function isValidEvaluationRun(data) {
+      return data.keys().hasAll(['ownerId', 'taskId', 'modelId', 'providerId', 'agentId', 'status', 'createdAt', 'updatedAt']) &&
+             data.ownerId == request.auth.uid &&
+             data.taskId is string && data.taskId.size() <= 100 &&
+             data.modelId is string && data.modelId.size() <= 100 &&
+             data.providerId is string && data.providerId.size() <= 100 &&
+             data.agentId is string && data.agentId.size() <= 100 &&
+             data.status in ['queued', 'running', 'completed', 'failed', 'cancelled', 'timeout'];
+    }
+
+    function isValidBenchmark(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'description', 'version', 'taskCount', 'createdAt', 'updatedAt']) &&
+             data.ownerId == request.auth.uid &&
+             data.name is string && data.name.size() <= 150 &&
+             data.description is string && data.description.size() <= 2000 &&
+             data.version is string && data.version.size() <= 20 &&
+             data.taskCount is number;
+    }
+
+    function isValidEvalReview(data) {
+      return data.keys().hasAll(['ownerId', 'runId', 'reviewerId', 'createdAt', 'updatedAt']) &&
+             data.ownerId == request.auth.uid &&
+             data.runId is string && data.runId.size() <= 128 &&
+             data.reviewerId is string && data.reviewerId.size() <= 128;
+    }
+
+    function isValidUserConsent(data) {
+      return data.keys().hasAll(['userId', 'sharingEnabled', 'policyVersion', 'source', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'sharingEnabled', 'policyVersion', 'source', 'consentTimestamp', 'updatedAt']) &&
+             data.userId == request.auth.uid &&
+             data.sharingEnabled is bool &&
+             data.policyVersion is string && data.policyVersion.size() <= 32 &&
+             data.source in ['onboarding', 'settings', 'default'];
+    }
+    
+    match /userConsents/{userId} {
+      allow read, delete: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
+      
+      allow create: if isSignedIn() &&
+                    isValidId(userId) &&
+                    userId == request.auth.uid &&
+                    isValidUserConsent(incoming()) &&
+                    incoming().updatedAt == request.time;
+                    
+      allow update: if isSignedIn() &&
+                    isValidId(userId) &&
+                    userId == request.auth.uid &&
+                    isValidUserConsent(incoming()) &&
+                    incoming().userId == existing().userId &&
+                    incoming().updatedAt == request.time &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['sharingEnabled', 'policyVersion', 'source', 'consentTimestamp', 'updatedAt']);
+    }
+
+    match /projects/{projectId} {
+      allow read, delete: if isSignedIn() && (resource == null || existing().ownerId == request.auth.uid);
+      
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      allow create: if isSignedIn() &&
+                    isValidId(projectId) &&
+                    isValidProject(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+                    
+      allow update: if isSignedIn() &&
+                    isValidId(projectId) &&
+                    isValidProject(incoming()) &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'files', 'updatedAt']);
+    }
+
+    match /conversations/{conversationId} {
+      allow read, delete: if isSignedIn() && (resource == null || existing().ownerId == request.auth.uid);
+      
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      allow create: if isSignedIn() &&
+                    isValidId(conversationId) &&
+                    isValidConversation(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+                    
+      allow update: if isSignedIn() &&
+                    isValidId(conversationId) &&
+                    isValidConversation(incoming()) &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['title', 'messages', 'updatedAt']);
+    }
+
+    match /evalTasks/{taskId} {
+      allow read, delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+      
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      allow create: if isSignedIn() &&
+                    isValidId(taskId) &&
+                    isValidEvalTask(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+                    
+      allow update: if isSignedIn() &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'category', 'difficulty', 'prompt', 'validationType', 'updatedAt']) &&
+                    incoming().name is string && incoming().name.size() <= 150 &&
+                    incoming().description is string && incoming().description.size() <= 2000 &&
+                    incoming().category is string && incoming().category.size() <= 50 &&
+                    incoming().difficulty in ['easy', 'medium', 'hard'] &&
+                    incoming().prompt is string && incoming().prompt.size() <= 10000 &&
+                    incoming().validationType in ['exact_match', 'contains', 'regex', 'llm_eval', 'code_execution'];
+    }
+
+    match /agentAssignments/{assignmentId} {
+      allow read, delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+      
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      allow create: if isSignedIn() &&
+                    isValidId(assignmentId) &&
+                    isValidAgentAssignment(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+                    
+      allow update: if isSignedIn() &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().agentId == existing().agentId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['primaryModel', 'fallbackModel', 'updatedAt']) &&
+                    incoming().primaryModel is string && incoming().primaryModel.size() <= 100 &&
+                    incoming().fallbackModel is string && incoming().fallbackModel.size() <= 100;
+    }
+
+    match /evaluationRuns/{runId} {
+      allow read, delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() &&
+                    isValidId(runId) &&
+                    isValidEvaluationRun(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+      allow update: if isSignedIn() &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time;
+    }
+
+    match /benchmarks/{benchmarkId} {
+      allow read: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() &&
+                    isValidId(benchmarkId) &&
+                    isValidBenchmark(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+      allow update: if isSignedIn() &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+    }
+
+    match /evalReviews/{reviewId} {
+      allow read: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() &&
+                    isValidId(reviewId) &&
+                    isValidEvalReview(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+      allow update: if isSignedIn() &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+    }
+  }
+}

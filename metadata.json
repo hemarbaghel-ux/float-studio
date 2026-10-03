@@ -1,0 +1,8 @@
+{
+  "name": "FLOAT AI",
+  "description": "FLOAT is your AI-powered development environment and coding agent for building ambitious software.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
