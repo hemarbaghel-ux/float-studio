@@ -5,6 +5,9 @@ import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loade
 import { cn, flattenFileTree } from '../../lib/utils';
 import { runPythonCode } from '../../services/pythonRunner';
 import { ValidationPanel } from '../../components/panels/ValidationPanel';
+import { isShellCommand, runShell } from '../float/sandbox';
+import { useCloudSession } from '../float/cloudSessionStore';
+import { sandboxFs } from '../float/workspaceFs';
 
 export function BottomPanel() {
   const { 
@@ -45,6 +48,35 @@ export function BottomPanel() {
       return;
     }
 
+    if (isShellCommand(trimmed) && !trimmed.startsWith('python')) {
+      if (!useCloudSession.getState().active) {
+        if (trimmed !== 'ls') {
+          addTerminalEntry({ type: 'error', content: `'${trimmed.split(/\s+/)[0]}' runs in a Cloud Agent session. Start one from the banner above the composer (or type: session start).` });
+          return;
+        }
+      } else {
+        setIsExecutingInput(true);
+        try {
+          const { output, code } = await runShell(trimmed, sandboxFs());
+          if (output) addTerminalEntry({ type: code === 0 ? 'output' : 'error', content: output });
+        } catch (err: any) {
+          addTerminalEntry({ type: 'error', content: err?.message || String(err) });
+        } finally {
+          setIsExecutingInput(false);
+        }
+        return;
+      }
+    }
+
+    if (trimmed === 'session start' || trimmed === 'session stop' || trimmed === 'session') {
+      const cs = useCloudSession.getState();
+      if (trimmed === 'session start') cs.start('ap-south-1', '2 vCPU · 4 GB');
+      if (trimmed === 'session stop') cs.stop();
+      const now = useCloudSession.getState();
+      addTerminalEntry({ type: 'output', content: now.active ? `Cloud session active (${now.region}, ${now.machine}). node, npm test, grep, cat... are available.` : 'No cloud session. Type: session start' });
+      return;
+    }
+
     if (trimmed === 'ls') {
       const virtualFiles = flattenFileTree(files);
       const list = virtualFiles.map(f => f.path).join('  ');
@@ -60,7 +92,12 @@ export function BottomPanel() {
   <python_code>       Execute Python code directly (e.g., print(2 + 2))
   ls                  List all workspace files
   clear               Clear the terminal screen
-  help                Display this assistance message`
+  help                Display this assistance message
+
+Cloud Agent session (type: session start):
+  node <file.js>      Run a JavaScript file in the sandbox
+  npm test            Run *.test.js / *.spec.js with a Jest-compatible runner
+  cat grep head tail wc tree touch rm mkdir echo   File utilities`
       });
       return;
     }

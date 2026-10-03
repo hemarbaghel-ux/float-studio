@@ -10,7 +10,7 @@ import {
 import { useIDEStore } from '../../store';
 import { useAuthStore } from '../../store/authStore';
 import { useAIStore } from '../../store/aiStore';
-import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, deleteDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
 import { AccountMenu } from '../../components/AccountMenu';
@@ -18,6 +18,13 @@ import { SettingsModal } from '../settings/SettingsModal';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
 import { ModelSelector } from '../ai/ModelSelector';
+import { ChatList } from '../float/ChatList';
+import { ChatThread } from '../float/ChatThread';
+import { AutomationsPanel } from '../float/AutomationsPanel';
+import { useAutomationScheduler } from '../float/automationEngine';
+import { CloudSessionBanner, CloudSessionModal } from '../float/CloudSession';
+import { AttachMenu, AttachmentChips, SlashMenu, SuggestionChips, slashMatches, type Attachments } from '../float/ComposerExtras';
+import { exportZip, importFileList, importZip, mapToTree, parseStoredFiles } from '../float/projectIO';
 
 interface ProjectItem {
   id: string;
@@ -50,6 +57,82 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   } = useAIStore();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [attachments, setAttachments] = useState<Record<string, Attachments>>({});
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [importBusy, setImportBusy] = useState(false);
+  const importFolderRef = useRef<HTMLInputElement>(null);
+  const importZipRef = useRef<HTMLInputElement>(null);
+  const slashItems = slashMatches(prompt);
+  const chatRouteId = typeof window !== 'undefined' && window.location.pathname.startsWith('/chat/')
+    ? decodeURIComponent(window.location.pathname.slice('/chat/'.length)).replace(/\/$/, '') || null
+    : null;
+
+  useAutomationScheduler();
+
+  // Draft handed over from "Continue in a new chat" (Automations)
+  useEffect(() => {
+    if (activeTab !== 'new-chat') return;
+    const draft = sessionStorage.getItem('float_draft_prompt');
+    if (draft) {
+      sessionStorage.removeItem('float_draft_prompt');
+      setPrompt(draft);
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    importFolderRef.current?.setAttribute('webkitdirectory', '');
+  }, [activeTab]);
+
+  // "/" anywhere focuses the composer (like Cursor / Slack)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key === '/' && !e.metaKey && !e.ctrlKey && t && !['INPUT', 'TEXTAREA'].includes(t.tagName) && !t.isContentEditable) {
+        if (textareaRef.current) {
+          e.preventDefault();
+          textareaRef.current.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const handleRenameProject = async (projectId: string, name: string) => {
+    setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, name } : p)));
+    try {
+      await updateDoc(doc(db, 'projects', projectId), { name, updatedAt: serverTimestamp() });
+    } catch (err) {
+      console.error('Failed to rename chat:', err);
+      fetchProjects();
+    }
+  };
+
+  const createProjectFromFiles = async (name: string, fileMap: Record<string, string>) => {
+    if (Object.keys(fileMap).length === 0) {
+      setSubmitError('No readable text files were found to import.');
+      return;
+    }
+    const id = uuidv4();
+    setProject(name, mapToTree(fileMap), id);
+    const store = useIDEStore.getState();
+    await store.saveProject();
+    window.history.pushState({}, '', '/chat/' + store.projectId);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
+  const runImport = async (fn: () => Promise<[string, Record<string, string>]>) => {
+    setImportBusy(true);
+    try {
+      const [name, map] = await fn();
+      await createProjectFromFiles(name, map);
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Import failed.');
+    } finally {
+      setImportBusy(false);
+    }
+  };
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -86,7 +169,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
   useEffect(() => {
     fetchProjects();
-  }, [user]);
+  }, [user, chatRouteId]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -132,10 +215,19 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       const newProjectId = uuidv4();
       const title = textToSubmit.length > 36 ? textToSubmit.slice(0, 36) + '...' : textToSubmit;
       
-      useIDEStore.getState().setInitialPrompt(textToSubmit);
+      const attachedLabels = Object.keys(attachments);
+      const attachedMap: Record<string, string> = Object.assign({}, ...Object.values(attachments));
+      const promptWithContext = attachedLabels.length
+        ? `${textToSubmit}\n\n(Attached to this workspace: ${attachedLabels.join(', ')} — ${Object.keys(attachedMap).length} files. Use them as context.)`
+        : textToSubmit;
+
+      useIDEStore.getState().setInitialPrompt(promptWithContext);
+      const initialFiles = attachedLabels.length
+        ? mapToTree(attachedMap['README.md'] !== undefined ? attachedMap : { ...attachedMap, 'README.md': `# ${title}\n\nTask: ${textToSubmit}\n` })
+        : null;
       setProject(
         title || 'New Workspace',
-        [
+        initialFiles ?? [
           {
             id: uuidv4(),
             name: 'main.py',
@@ -151,6 +243,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
         ],
         newProjectId
       );
+      setAttachments({});
 
       const store = useIDEStore.getState();
       await store.saveProject();
@@ -165,6 +258,24 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashItems.length > 0) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const d = e.key === 'ArrowDown' ? 1 : -1;
+        setSlashIndex(i => (i + d + slashItems.length) % slashItems.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        setPrompt(slashItems[Math.min(slashIndex, slashItems.length - 1)].template);
+        setSlashIndex(0);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setPrompt('');
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleStart();
@@ -291,8 +402,30 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           />
         </div>
 
-        {/* Flexible spacer between navigation and footer */}
-        <div className="flex-1" />
+        {/* Chats list (search, pin, rename, delete) */}
+        {!sidebarCollapsed ? (
+          <ChatList
+            chats={projects}
+            loading={loadingProjects}
+            activeId={chatRouteId}
+            onOpen={(id) => {
+              const p = projects.find(x => x.id === id);
+              if (p) handleResumeProject(p);
+            }}
+            onRename={handleRenameProject}
+            onDelete={async (id) => {
+              if (!user) return;
+              try {
+                await deleteDoc(doc(db, 'projects', id));
+                setProjects(prev => prev.filter(p => p.id !== id));
+              } catch (err) {
+                console.error('Failed to delete chat:', err);
+              }
+            }}
+          />
+        ) : (
+          <div className="flex-1" />
+        )}
 
         {/* Sidebar Footer Account & Actions */}
         <div className="p-2 border-t border-slate-200 dark:border-[#2A2A2A] flex flex-col gap-1.5 shrink-0 bg-slate-50/50 dark:bg-[#0A0A0A]">
@@ -326,72 +459,14 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
       {/* MAIN CONTENT AREA */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative">
-        {activeTab === 'integrations' ? (
+        {chatRouteId ? (
+          <ChatThread key={chatRouteId} chatId={chatRouteId} />
+        ) : activeTab === 'integrations' ? (
           <div className="w-full h-full p-6 md:p-8 max-w-6xl mx-auto">
             <IntegrationsPage />
           </div>
         ) : activeTab === 'automations' ? (
-          <div className="w-full h-full p-6 md:p-8 max-w-4xl mx-auto flex flex-col gap-6">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase text-blue-600 dark:text-blue-400 mb-1">
-                <Workflow size={14} />
-                <span>Automations Engine</span>
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-                Developer Automations
-              </h2>
-              <p className="text-sm text-slate-500 dark:text-[#8B949E] mt-1">
-                Configure background triggers, webhook listeners, automated code reviews, and CI/CD validation.
-              </p>
-            </div>
-
-            {/* Status notification banner */}
-            <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl p-4 flex items-start gap-3">
-              <Sparkles size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <div className="text-xs text-amber-800 dark:text-amber-200 flex flex-col gap-1">
-                <span className="font-semibold">Autonomous background triggers are currently in preview</span>
-                <span>Connect your GitHub repository and developer integrations below to enable automated diff review upon commit.</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 rounded-xl p-5 flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center">
-                      <Code2 size={16} />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-900 dark:text-white">PR Code Reviewer</h3>
-                      <p className="text-xs text-slate-400 dark:text-[#8B949E]">Triggered on pull requests</p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 bg-slate-100 dark:bg-white/5 rounded-full text-slate-500 dark:text-[#8B949E]">Configured</span>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-[#C9D1D9]">
-                  Analyzes PR diffs against codebase conventions and reports potential bugs, security issues, and test coverage gaps.
-                </p>
-              </div>
-
-              <div className="bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 rounded-xl p-5 flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
-                      <Bug size={16} />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Continuous Fix Agent</h3>
-                      <p className="text-xs text-slate-400 dark:text-[#8B949E]">Triggered on build failures</p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 bg-slate-100 dark:bg-white/5 rounded-full text-slate-500 dark:text-[#8B949E]">Coming Soon</span>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-[#C9D1D9]">
-                  Automatically ingests CI stack traces, reproduces errors in sandboxed containers, and generates proposed fixes.
-                </p>
-              </div>
-            </div>
-          </div>
+          <AutomationsPanel />
         ) : (activeTab === 'projects' || activeTab === 'codebase') ? (
           <div className="w-full h-full p-6 md:p-8 max-w-5xl mx-auto flex flex-col gap-6">
             <div className="flex items-center justify-between">
@@ -414,6 +489,49 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 >
                   <Code2 size={14} />
                   <span>Open IDE</span>
+                </button>
+                <input
+                  ref={importFolderRef}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    const list = e.target.files;
+                    if (!list || list.length === 0) return;
+                    const name = (list[0] as any).webkitRelativePath?.split('/')[0] || 'Imported project';
+                    void runImport(async () => [name, await importFileList(list)]);
+                    e.target.value = '';
+                  }}
+                />
+                <input
+                  ref={importZipRef}
+                  type="file"
+                  accept=".zip"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    void runImport(async () => [f.name.replace(/\.zip$/i, ''), await importZip(f)]);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  onClick={() => importFolderRef.current?.click()}
+                  disabled={importBusy}
+                  className="px-3.5 py-2 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/15 text-slate-800 dark:text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  title="Import a local folder as a new workspace"
+                >
+                  {importBusy ? <Loader2 size={14} className="animate-spin" /> : <FolderGit2 size={14} />}
+                  <span>Import folder</span>
+                </button>
+                <button
+                  onClick={() => importZipRef.current?.click()}
+                  disabled={importBusy}
+                  className="px-3.5 py-2 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/15 text-slate-800 dark:text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  title="Import a .zip archive as a new workspace"
+                >
+                  <Layers size={14} />
+                  <span>Import .zip</span>
                 </button>
                 <button
                   onClick={() => {
@@ -464,6 +582,17 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                         <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center">
                           <Code2 size={16} />
                         </div>
+                        <div className="flex items-center gap-0.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void exportZip(p.name, parseStoredFiles(p.files));
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1.5 rounded hover:bg-slate-100 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-all"
+                          title="Download as .zip"
+                        >
+                          <ArrowRight size={14} className="rotate-90" />
+                        </button>
                         <button
                           onClick={(e) => handleDeleteProject(e, p.id)}
                           className="opacity-0 group-hover:opacity-100 p-1.5 rounded hover:bg-rose-100 dark:hover:bg-rose-500/20 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-all"
@@ -471,6 +600,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                         >
                           <Trash2 size={14} />
                         </button>
+                        </div>
                       </div>
                       <h3 className="text-sm font-semibold text-slate-900 dark:text-white group-hover:text-blue-500 transition-colors line-clamp-2">
                         {p.name}
@@ -494,24 +624,38 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           <div className="flex-1 flex flex-col items-center justify-between px-4 sm:px-6 pt-8 sm:pt-12 pb-6 max-w-4xl w-full mx-auto min-h-full">
             {/* Top Middle Section */}
             <div className="w-full max-w-2xl flex flex-col items-center">
-              {/* Cloud Agents / Engine Banner Tab */}
-              <button
-                type="button"
-                onClick={() => setShowSettings(true)}
-                className="w-full py-2.5 px-4 bg-white/70 dark:bg-[#141414] border border-b-0 border-slate-200 dark:border-white/10 rounded-t-2xl text-xs text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <span>Cloud Agents require a Start account</span>
-                <ArrowRight size={13} />
-              </button>
+              {/* Cloud Agents session banner */}
+              <CloudSessionBanner />
 
               {/* Premium Chat Composer */}
               <div className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 rounded-b-2xl rounded-t-none shadow-xl shadow-black/5 dark:shadow-2xl dark:shadow-black/50 focus-within:border-slate-400 dark:focus-within:border-white/30 transition-all flex flex-col">
                 {/* Textarea Input */}
                 <div className="p-3.5 relative flex flex-col">
+                  <SlashMenu
+                    dropDown
+                    prompt={prompt}
+                    index={Math.min(slashIndex, Math.max(0, slashItems.length - 1))}
+                    onPick={(template) => {
+                      setPrompt(template);
+                      setSlashIndex(0);
+                      textareaRef.current?.focus();
+                    }}
+                  />
+                  <AttachmentChips
+                    groups={Object.entries(attachments).map(([label, files]) => ({ label, count: Object.keys(files).length }))}
+                    onRemove={(label) => setAttachments(prev => {
+                      const next = { ...prev };
+                      delete next[label];
+                      return next;
+                    })}
+                  />
                   <textarea
                     ref={textareaRef}
                     value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
+                    onChange={(e) => {
+                      setPrompt(e.target.value);
+                      setSlashIndex(0);
+                    }}
                     onKeyDown={handleKeyDown}
                     disabled={isSubmitting}
                     placeholder="Ask FLOAT to build, fix bugs, explore..."
@@ -532,18 +676,11 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                   {/* Bottom Bar: Action buttons on left (+ and ModelSelector), Send on right */}
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-white/5">
                     <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (textareaRef.current) {
-                            textareaRef.current.focus();
-                          }
-                        }}
-                        title="Attach context or files"
-                        className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 flex items-center justify-center text-slate-500 dark:text-[#8B949E] hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
-                      >
-                        <Plus size={14} />
-                      </button>
+                      <AttachMenu
+                        dropDown
+                        disabled={isSubmitting}
+                        onAttach={(files, label) => setAttachments(prev => ({ ...prev, [label]: files }))}
+                      />
 
                       <ModelSelector 
                         activeModelId={selectedModel} 
@@ -573,11 +710,20 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                   </div>
                 </div>
               </div>
+              <SuggestionChips disabled={isSubmitting} onPick={(text) => handleStart(text)} />
             </div>
 
             {/* Desktop App Card at Bottom Center */}
             <div className="mt-auto pt-8 pb-2 flex justify-center w-full">
-              <div className="flex items-center gap-3 px-5 py-3 rounded-2xl bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 shadow-xs text-left max-w-md">
+              <a
+                href="/download"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.history.pushState({}, '', '/download');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }}
+                className="flex items-center gap-3 px-5 py-3 rounded-2xl bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 shadow-xs text-left max-w-md hover:border-slate-300 dark:hover:border-white/20 transition-colors"
+              >
                 <div className="w-9 h-9 rounded-xl bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shrink-0">
                   <FloatLogo className="w-5 h-5" />
                 </div>
@@ -585,13 +731,16 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                   <div className="text-xs font-semibold text-slate-900 dark:text-white">Download the Desktop App</div>
                   <div className="text-[11px] text-slate-500 dark:text-[#8B949E]">Open your code and keep building locally.</div>
                 </div>
-              </div>
+                <ArrowRight size={14} className="text-slate-400 ml-1" />
+              </a>
             </div>
           </div>
         )}
       </main>
 
       {/* Settings Modal */}
+      <CloudSessionModal />
+
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
       )}
