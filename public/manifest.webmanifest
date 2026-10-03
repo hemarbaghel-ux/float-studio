@@ -1,0 +1,9 @@
+{
+  "name": "FLOAT — AI agent coding platform",
+  "short_name": "FLOAT",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f7f8fa",
+  "theme_color": "#0b0d12",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
