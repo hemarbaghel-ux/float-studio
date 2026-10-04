@@ -27,6 +27,22 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const rawMsg = error instanceof Error ? error.message : (typeof error === 'string' ? error : (error as any)?.msg || JSON.stringify(error || ''));
+  const isCancelled = 
+    (error as any)?.type === 'cancelation' ||
+    (error as any)?.type === 'cancelled' ||
+    (error as any)?.name === 'AbortError' ||
+    rawMsg.includes('operation is manually canceled') ||
+    rawMsg.includes('cancelation') ||
+    /cancel/i.test(rawMsg);
+
+  if (isCancelled) {
+    const cancelErr = new Error('Operation was cancelled.');
+    (cancelErr as any).type = 'cancelation';
+    (cancelErr as any).name = 'AbortError';
+    throw cancelErr;
+  }
+
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {

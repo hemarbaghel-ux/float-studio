@@ -312,9 +312,11 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     });
 
     const abortController = new AbortController();
-    req.on('close', () => {
-      abortController.abort();
-    });
+    if (req?.on) {
+      req.on('close', () => {
+        abortController.abort();
+      });
+    }
 
     const sendEvent = (type: string, data: any) => {
       res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
@@ -326,8 +328,8 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         model: apiModel,
         prompt,
         virtualFiles,
-        projectName: req.body.projectName || 'Workspace',
-        projectId: req.body.projectId || 'default-project',
+        projectName: req.body?.projectName || 'Workspace',
+        projectId: req.body?.projectId || 'default-project',
         userId: req.user?.uid || 'user',
         onEvent: (event) => {
           sendEvent('event', event);

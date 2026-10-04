@@ -6,10 +6,24 @@ import {
   AIProviderError, 
   ProviderHealthCheckResult 
 } from './base';
+import { AgentRunner } from '../agent/agentRunner';
 
 export function normalizeOpenAIError(error: any): AIProviderError {
   const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
   const status = error?.status || error?.statusCode;
+
+  if (
+    error?.name === 'AbortError' ||
+    error?.type === 'cancelation' ||
+    error?.type === 'cancelled' ||
+    /operation is manually canceled/i.test(msg) ||
+    /cancel/i.test(msg)
+  ) {
+    const err = new AIProviderError('Operation was cancelled.', 'INVALID_REQUEST', 'OpenAI', 499);
+    (err as any).name = 'AbortError';
+    (err as any).type = 'cancelation';
+    return err;
+  }
 
   if (status === 401 || /invalid_api_key|Incorrect API key|unauthorized|invalid api key|authenticate/i.test(msg)) {
     return new AIProviderError(
@@ -127,6 +141,14 @@ export class OpenAIAdapter implements AIProviderAdapter {
         error: normalized.message
       };
     }
+  }
+
+  private resolveApiModel(model: string): string {
+    const mapping: Record<string, string> = {
+      'gpt-5.6-sol': 'gpt-4o-2024-11-20',
+      'auto': 'gpt-4o'
+    };
+    return mapping[model] || model;
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
@@ -285,11 +307,11 @@ export class OpenAIAdapter implements AIProviderAdapter {
   }
 
   async runAgentLoop(
-    _req: any,
-    _res: any,
+    req: any,
+    res: any,
     model: string,
-    _prompt: string,
-    _virtualFiles: any[]
+    prompt: string,
+    virtualFiles: any[]
   ): Promise<void> {
     if (!this.isConfigured()) {
       throw new AIProviderError(
@@ -299,11 +321,78 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    throw new AIProviderError(
-      'OpenAI autonomous agent loops are currently in preview. Use Gemini 3.1 Flash Lite for full tool execution.',
-      'INVALID_REQUEST',
-      'OpenAI',
-      400
-    );
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+
+    const abortController = new AbortController();
+    if (req?.on) {
+      req.on('close', () => {
+        abortController.abort();
+      });
+    }
+
+    const sendEvent = (type: string, data: any) => {
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+      }
+    };
+
+    try {
+      const apiModel = this.resolveApiModel(model);
+      const result = await AgentRunner.run({
+        provider: 'openai',
+        model: apiModel,
+        prompt,
+        virtualFiles,
+        projectName: req.body?.projectName || 'Workspace',
+        projectId: req.body?.projectId || 'default-project',
+        userId: req.user?.uid || 'user',
+        onEvent: (event) => {
+          sendEvent('event', event);
+        },
+        onDelta: (delta) => {
+          sendEvent('delta', { text: delta });
+        },
+        signal: abortController.signal
+      });
+
+      sendEvent('result', {
+        text: result.text,
+        changeSet: result.changeSet
+      });
+    } catch (error: any) {
+      if (!abortController.signal.aborted) {
+        const normalized = normalizeOpenAIError(error);
+        const isCancelled = normalized.name === 'AbortError' || (normalized as any).type === 'cancelation';
+        if (isCancelled) {
+          sendEvent('event', {
+            type: 'cancelled',
+            message: 'Agent execution was stopped by user.'
+          });
+          sendEvent('result', {
+            text: '*(Agent task stopped)*',
+            changeSet: null
+          });
+        } else {
+          sendEvent('event', {
+            type: 'failed',
+            message: normalized.message
+          });
+          sendEvent('result', {
+            text: `**Agent Execution Error (${normalized.code || 'PROVIDER_ERROR'})**\n\n${normalized.message}`,
+            changeSet: null
+          });
+        }
+      }
+    } finally {
+      if (!res.writableEnded) {
+        res.end();
+      }
+    }
   }
 }

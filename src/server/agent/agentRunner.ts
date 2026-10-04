@@ -1,10 +1,17 @@
 import { GoogleGenAI, Type } from '@google/genai';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { ToolRegistry } from './toolRegistry';
 import { ToolExecutionContext, AgentProgressEvent, AgentProgressAction } from './types';
 import { ChangeSet } from '../../types';
 import { normalizeGeminiError } from '../providers/gemini';
+import { normalizeOpenAIError } from '../providers/openai';
+import { normalizeXAIError } from '../providers/xai';
+import { normalizeAnthropicError } from '../providers/anthropic';
+import { AIProviderError } from '../providers/base';
 
 export interface AgentRunnerOptions {
+  provider?: 'google' | 'openai' | 'xai' | 'anthropic';
   model: string;
   prompt: string;
   virtualFiles: any[];
@@ -108,23 +115,13 @@ export class AgentRunner {
       throw new Error('Agent prompt is required and cannot be empty.');
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY is not configured on the FLOAT server.');
-    }
-
-    const effectiveModel = model === 'auto' || !model ? 'gemini-3.1-flash-lite' : model;
-    const RETIRED_MODELS: Record<string, string> = {
-      'gemini-2.0-flash': 'gemini-3.1-flash-lite',
-      'gemini-1.5-flash': 'gemini-3.1-flash-lite',
-      'gemini-1.5-pro': 'gemini-3.1-pro-preview',
-      'gemini-2.5-flash': 'gemini-3.1-flash-lite',
-      'gemini-2.5-pro': 'gemini-3.1-pro-preview'
-    };
-    if (RETIRED_MODELS[effectiveModel]) {
-      const suggested = RETIRED_MODELS[effectiveModel];
-      throw new Error(
-        `The selected model "${effectiveModel}" has been retired by Google and is no longer available. Please update your selected model in the model selector to an active model such as "${suggested}".`
-      );
+    // Determine provider
+    let provider: 'google' | 'openai' | 'xai' | 'anthropic' = options.provider || 'google';
+    if (!options.provider) {
+      if (model.includes('grok')) provider = 'xai';
+      else if (model.includes('gpt') || model.includes('o1') || model.includes('o3')) provider = 'openai';
+      else if (model.includes('claude')) provider = 'anthropic';
+      else provider = 'google';
     }
 
     onEvent({ 
@@ -182,35 +179,7 @@ export class AgentRunner {
       message: `Validated project context (${fileMap.size} files loaded${ignoredCount > 0 ? `, ${ignoredCount} sensitive/invalid files filtered` : ''}).` 
     });
 
-    // 2. Format tool declarations for Gemini SDK
     const registeredTools = ToolRegistry.getAllTools();
-    const geminiFunctionDeclarations = registeredTools.map(t => {
-      const properties: Record<string, any> = {};
-      const required: string[] = [];
-
-      for (const [key, prop] of Object.entries(t.parameters.properties)) {
-        properties[key] = {
-          type: prop.type === 'number' ? Type.NUMBER : Type.STRING,
-          description: prop.description
-        };
-      }
-
-      if (t.parameters.required) {
-        required.push(...t.parameters.required);
-      }
-
-      return {
-        name: t.name,
-        description: t.description,
-        parameters: {
-          type: Type.OBJECT,
-          properties,
-          required: required.length > 0 ? required : undefined
-        }
-      };
-    });
-
-    const geminiTools = [{ functionDeclarations: geminiFunctionDeclarations }];
 
     const defaultSystemInstruction = `You are FLOAT AI's autonomous software engineering agent.
 Your objective is to inspect, reason about, and assist with coding tasks using safe read-only tools and formal change proposals.
@@ -223,9 +192,6 @@ CRITICAL WORKFLOW CONSTRAINTS:
 5. Efficiency: If the user request is a general question or doesn't require inspecting files, answer directly without unnecessary tool calls.`;
 
     const systemInstruction = options.systemInstruction || defaultSystemInstruction;
-
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    let history: any[] = [{ role: 'user', parts: [{ text: prompt }] }];
 
     let finalResponseText = '';
     let changeSet: ChangeSet | null = null;
@@ -240,230 +206,720 @@ CRITICAL WORKFLOW CONSTRAINTS:
       message: 'Analyzing project and planning steps...' 
     });
 
-    while (rounds < MAX_ROUNDS) {
-      if (signal?.aborted) {
-        onEvent({ type: 'cancelled', message: 'Agent execution was stopped by user.' });
-        break;
+    // ==========================================
+    // ROUTE EXECUTION BY PROVIDER
+    // ==========================================
+
+    if (provider === 'google') {
+      if (!process.env.GEMINI_API_KEY) {
+        throw new AIProviderError(
+          'GEMINI_API_KEY is not configured on the FLOAT server.',
+          'AUTH_ERROR',
+          'Google Gemini',
+          401
+        );
       }
 
-      if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
-        onEvent({ type: 'failed', message: `Execution exceeded time limit of ${MAX_EXECUTION_TIME_MS / 1000}s.` });
-        break;
+      // Map any old aliases to active gemini-3.8-flash
+      let effectiveModel = model;
+      if (
+        model === 'auto' || 
+        !model || 
+        model === 'gemini-2.0-flash' || 
+        model === 'gemini-1.5-flash' || 
+        model === 'gemini-1.5-pro' || 
+        model === 'gemini-2.5-flash' || 
+        model === 'gemini-2.5-pro' ||
+        model === 'gemini-3.1-flash-lite' ||
+        model === 'composer-2.5' || 
+        model === 'muse-spark-1.3'
+      ) {
+        effectiveModel = 'gemini-3.8-flash';
       }
 
-      if (totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
-        onEvent({ type: 'failed', message: `Reached maximum tool call limit (${MAX_TOTAL_TOOL_CALLS}).` });
-        break;
-      }
+      const geminiFunctionDeclarations = registeredTools.map(t => {
+        const properties: Record<string, any> = {};
+        const required: string[] = [];
 
-      rounds++;
-      const isPostToolSynthesis = totalToolCalls > 0;
-      onEvent({ 
-        type: 'thinking', 
-        action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
-        message: isPostToolSynthesis 
-          ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...` 
-          : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...` 
+        for (const [key, prop] of Object.entries(t.parameters.properties)) {
+          properties[key] = {
+            type: prop.type === 'number' ? Type.NUMBER : Type.STRING,
+            description: prop.description
+          };
+        }
+
+        if (t.parameters.required) {
+          required.push(...t.parameters.required);
+        }
+
+        return {
+          name: t.name,
+          description: t.description,
+          parameters: {
+            type: Type.OBJECT,
+            properties,
+            required: required.length > 0 ? required : undefined
+          }
+        };
       });
 
-      let response;
-      try {
-        response = await ai.models.generateContent({
-          model: effectiveModel,
-          contents: history,
-          config: {
-            systemInstruction,
-            tools: geminiTools
-          }
-        });
-      } catch (err: any) {
-        throw normalizeGeminiError(err);
-      }
+      const geminiTools = [{ functionDeclarations: geminiFunctionDeclarations }];
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      let history: any[] = [{ role: 'user', parts: [{ text: prompt }] }];
 
-      const functionCalls = response.functionCalls || [];
-
-      if (response.text) {
-        finalResponseText = finalResponseText ? `${finalResponseText}\n\n${response.text}` : response.text;
-        if (onDelta) {
-          onDelta(response.text);
+      while (rounds < MAX_ROUNDS) {
+        if (signal?.aborted) {
+          onEvent({ type: 'cancelled', message: 'Agent execution was stopped by user.' });
+          break;
         }
-      }
 
-      // Ensure model turn is properly populated with candidate parts or explicit functionCall objects
-      const candidateContent = response.candidates?.[0]?.content;
-      if (candidateContent?.parts && candidateContent.parts.length > 0) {
-        history.push({
-          role: 'model',
-          parts: candidateContent.parts
-        });
-      } else {
-        const syntheticParts: any[] = [];
-        if (response.text) {
-          syntheticParts.push({ text: response.text });
+        if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+          onEvent({ type: 'failed', message: `Execution exceeded time limit of ${MAX_EXECUTION_TIME_MS / 1000}s.` });
+          break;
         }
-        for (const call of functionCalls) {
-          const fc: any = {
-            name: call.name,
-            args: call.args || {}
-          };
-          if ((call as any).id) {
-            fc.id = (call as any).id;
-          }
-          syntheticParts.push({ functionCall: fc });
-        }
-        history.push({
-          role: 'model',
-          parts: syntheticParts.length > 0 ? syntheticParts : [{ text: '...' }]
-        });
-      }
 
-      // If no function calls requested, model has reached a final natural language answer
-      if (!functionCalls || functionCalls.length === 0) {
+        if (totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
+          onEvent({ type: 'failed', message: `Reached maximum tool call limit (${MAX_TOTAL_TOOL_CALLS}).` });
+          break;
+        }
+
+        rounds++;
+        const isPostToolSynthesis = totalToolCalls > 0;
         onEvent({ 
-          type: 'completed', 
-          action: 'Synthesizing',
-          message: 'Agent completed task.' 
+          type: 'thinking', 
+          action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
+          message: isPostToolSynthesis 
+            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...` 
+            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...` 
         });
-        break;
-      }
 
-      // Execute requested tools
-      const functionResponses: { id?: string; name: string; response: Record<string, any> }[] = [];
-
-      for (const call of functionCalls) {
-        if (signal?.aborted) break;
-
-        const { name, args } = call;
-        const callId = (call as any).id;
-        const toolArgs = (args as Record<string, any>) || {};
-        totalToolCalls++;
-
-        // Loop detection: check if identical call has occurred more than twice
-        const signature = `${name}:${JSON.stringify(toolArgs)}`;
-        const count = (callCounts.get(signature) || 0) + 1;
-        callCounts.set(signature, count);
-
-        if (count > 2) {
-          onEvent({
-            type: 'tool_failed',
-            action: 'Thinking',
-            tool: name,
-            message: `Tool "${name}" was called with identical arguments multiple times. Moving forward.`
+        let response;
+        try {
+          response = await ai.models.generateContent({
+            model: effectiveModel,
+            contents: history,
+            config: {
+              systemInstruction,
+              tools: geminiTools
+            }
           });
-          functionResponses.push({
-            id: callId,
-            name,
-            response: { error: `Tool "${name}" was already executed with identical arguments. Please synthesize your answer with the information obtained.` }
-          });
-          continue;
+        } catch (err: any) {
+          throw normalizeGeminiError(err);
         }
 
-        const { action, startMessage } = getToolActionMetadata(name, toolArgs);
+        const functionCalls = response.functionCalls || [];
 
-        onEvent({
-          type: 'tool_started',
-          action,
-          tool: name,
-          args: toolArgs,
-          message: startMessage
-        });
-
-        // ToolRegistry validates context, checks for prohibited tools, and checks arguments
-        const result = await ToolRegistry.execute(name, toolArgs, context);
-
-        if (result.success) {
-          let completionMsg = `Completed "${name}" successfully.`;
-          if (name === 'search_project' || name === 'search_codebase') {
-            completionMsg = `Found ${result.output?.matchesFound ?? 0} match(es) in codebase.`;
-          } else if (name === 'read_project_file' || name === 'read_file') {
-            completionMsg = `Read ${toolArgs.path} (${result.output?.totalLines || 0} lines).`;
-          } else if (name === 'list_project_files' || name === 'list_files') {
-            completionMsg = `Found ${result.output?.totalFound ?? 0} project file(s).`;
-          } else if (name === 'get_project_context') {
-            completionMsg = `Inspected project structure (${result.output?.totalFiles ?? 0} files).`;
+        if (response.text) {
+          finalResponseText = finalResponseText ? `${finalResponseText}\n\n${response.text}` : response.text;
+          if (onDelta) {
+            onDelta(response.text);
           }
+        }
 
-          onEvent({
-            type: 'tool_completed',
-            action,
-            tool: name,
-            message: completionMsg,
-            outputSummary: result.output ? JSON.stringify(result.output).slice(0, 150) : undefined
-          });
-
-          // Check if propose_changes was executed
-          if (name === 'propose_changes' && (result.output?.changes || result.output?.proposal)) {
-            const proposal = result.output.proposal;
-            changeSet = {
-              id: result.output.proposalId || Math.random().toString(36).substring(7),
-              proposalId: result.output.proposalId,
-              projectId: context.projectId,
-              ownerId: context.userId,
-              description: result.output.description || 'Proposed Code Changes',
-              status: 'pending',
-              changes: (proposal?.changes || result.output.changes || []).map((c: any) => ({
-                path: c.path,
-                operation: c.operation,
-                originalContent: c.originalContent,
-                proposedContent: c.proposedContent,
-                originalHash: c.originalHash,
-                proposedHash: c.proposedHash,
-                diffStats: c.diffStats,
-                status: c.status || 'pending'
-              }))
-            };
-            onEvent({ 
-              type: 'review_ready', 
-              action: 'Generating proposal',
-              message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` 
-            });
-          }
-
-          functionResponses.push({
-            id: callId,
-            name,
-            response: { result: result.output }
+        const candidateContent = response.candidates?.[0]?.content;
+        if (candidateContent?.parts && candidateContent.parts.length > 0) {
+          history.push({
+            role: 'model',
+            parts: candidateContent.parts
           });
         } else {
+          const syntheticParts: any[] = [];
+          if (response.text) {
+            syntheticParts.push({ text: response.text });
+          }
+          for (const call of functionCalls) {
+            const fc: any = {
+              name: call.name,
+              args: call.args || {}
+            };
+            if ((call as any).id) {
+              fc.id = (call as any).id;
+            }
+            syntheticParts.push({ functionCall: fc });
+          }
+          history.push({
+            role: 'model',
+            parts: syntheticParts.length > 0 ? syntheticParts : [{ text: '...' }]
+          });
+        }
+
+        if (!functionCalls || functionCalls.length === 0) {
+          onEvent({ 
+            type: 'completed', 
+            action: 'Synthesizing',
+            message: 'Agent completed task.' 
+          });
+          break;
+        }
+
+        const functionResponses: { id?: string; name: string; response: Record<string, any> }[] = [];
+
+        for (const call of functionCalls) {
+          if (signal?.aborted) break;
+
+          const { name, args } = call;
+          const callId = (call as any).id;
+          const toolArgs = (args as Record<string, any>) || {};
+          totalToolCalls++;
+
+          const signature = `${name}:${JSON.stringify(toolArgs)}`;
+          const count = (callCounts.get(signature) || 0) + 1;
+          callCounts.set(signature, count);
+
+          if (count > 2) {
+            onEvent({
+              type: 'tool_failed',
+              action: 'Thinking',
+              tool: name,
+              message: `Tool "${name}" was called with identical arguments multiple times. Moving forward.`
+            });
+            functionResponses.push({
+              id: callId,
+              name,
+              response: { error: `Tool "${name}" was already executed with identical arguments. Please synthesize your answer with the information obtained.` }
+            });
+            continue;
+          }
+
+          const { action, startMessage } = getToolActionMetadata(name, toolArgs);
+
           onEvent({
-            type: 'tool_failed',
-            action: 'Thinking',
+            type: 'tool_started',
+            action,
             tool: name,
-            message: `Tool "${name}" failed: ${result.error}`
+            args: toolArgs,
+            message: startMessage
           });
 
-          functionResponses.push({
-            id: callId,
-            name,
-            response: { error: result.error || 'Tool execution failed' }
-          });
+          const result = await ToolRegistry.execute(name, toolArgs, context);
+
+          if (result.success) {
+            let completionMsg = `Completed "${name}" successfully.`;
+            if (name === 'search_project' || name === 'search_codebase') {
+              completionMsg = `Found ${result.output?.matchesFound ?? 0} match(es) in codebase.`;
+            } else if (name === 'read_project_file' || name === 'read_file') {
+              completionMsg = `Read ${toolArgs.path} (${result.output?.totalLines || 0} lines).`;
+            } else if (name === 'list_project_files' || name === 'list_files') {
+              completionMsg = `Found ${result.output?.totalFound ?? 0} project file(s).`;
+            } else if (name === 'get_project_context') {
+              completionMsg = `Inspected project structure (${result.output?.totalFiles ?? 0} files).`;
+            }
+
+            onEvent({
+              type: 'tool_completed',
+              action,
+              tool: name,
+              message: completionMsg,
+              outputSummary: result.output ? JSON.stringify(result.output).slice(0, 150) : undefined
+            });
+
+            if (name === 'propose_changes' && (result.output?.changes || result.output?.proposal)) {
+              const proposal = result.output.proposal;
+              changeSet = {
+                id: result.output.proposalId || Math.random().toString(36).substring(7),
+                proposalId: result.output.proposalId,
+                projectId: context.projectId,
+                ownerId: context.userId,
+                description: result.output.description || 'Proposed Code Changes',
+                status: 'pending',
+                changes: (proposal?.changes || result.output.changes || []).map((c: any) => ({
+                  path: c.path,
+                  operation: c.operation,
+                  originalContent: c.originalContent,
+                  proposedContent: c.proposedContent,
+                  originalHash: c.originalHash,
+                  proposedHash: c.proposedHash,
+                  diffStats: c.diffStats,
+                  status: c.status || 'pending'
+                }))
+              };
+              onEvent({ 
+                type: 'review_ready', 
+                action: 'Generating proposal',
+                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` 
+              });
+            }
+
+            functionResponses.push({
+              id: callId,
+              name,
+              response: { result: result.output }
+            });
+          } else {
+            onEvent({
+              type: 'tool_failed',
+              action: 'Thinking',
+              tool: name,
+              message: `Tool "${name}" failed: ${result.error}`
+            });
+
+            functionResponses.push({
+              id: callId,
+              name,
+              response: { error: result.error || 'Tool execution failed' }
+            });
+          }
+        }
+
+        const responseParts: any[] = [];
+        for (const fr of functionResponses) {
+          const frPart: any = {
+            name: fr.name,
+            response: fr.response
+          };
+          if (fr.id) {
+            frPart.id = fr.id;
+          }
+          responseParts.push({ functionResponse: frPart });
+        }
+
+        history.push({
+          role: 'user',
+          parts: responseParts
+        });
+
+        if (changeSet) {
+          if (!finalResponseText) {
+            finalResponseText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s).\n\nPlease review the diffs using the **Review Diffs** button to inspect additions, deletions, and approve applying them to your workspace.`;
+          }
+          break;
         }
       }
-
-      // Return function responses adhering to Gemini protocol with preserved call IDs
-      const responseParts: any[] = [];
-      for (const fr of functionResponses) {
-        const frPart: any = {
-          name: fr.name,
-          response: fr.response
-        };
-        if (fr.id) {
-          frPart.id = fr.id;
-        }
-        responseParts.push({ functionResponse: frPart });
+    } else if (provider === 'xai' || provider === 'openai') {
+      const isXAI = provider === 'xai';
+      const apiKey = isXAI ? process.env.XAI_API_KEY : process.env.OPENAI_API_KEY;
+      if (!apiKey || !apiKey.trim()) {
+        throw new AIProviderError(
+          `${isXAI ? 'xAI' : 'OpenAI'} is not configured on the FLOAT server. To run agents with ${isXAI ? 'Grok' : 'OpenAI models'}, configure ${isXAI ? 'XAI_API_KEY' : 'OPENAI_API_KEY'} in the server environment.`,
+          'AUTH_ERROR',
+          isXAI ? 'xAI' : 'OpenAI',
+          401
+        );
       }
 
-      history.push({
-        role: 'user',
-        parts: responseParts
+      let effectiveModel = model;
+      if (isXAI) {
+        if (model === 'grok-4.7') effectiveModel = 'grok-2-1212';
+        else if (model === 'grok-4.6') effectiveModel = 'grok-2';
+        else if (!model || model === 'auto') effectiveModel = 'grok-2';
+      } else {
+        if (model === 'gpt-5.6-sol') effectiveModel = 'gpt-4o-2024-11-20';
+        else if (!model || model === 'auto') effectiveModel = 'gpt-4o';
+      }
+
+      const client = new OpenAI({
+        apiKey,
+        baseURL: isXAI ? 'https://api.x.ai/v1' : undefined
       });
 
-      // If proposed changes are ready, finalize loop
-      if (changeSet) {
-        if (!finalResponseText) {
-          finalResponseText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s).\n\nPlease review the diffs using the **Review Diffs** button to inspect additions, deletions, and approve applying them to your workspace.`;
+      const openAITools: OpenAI.Chat.Completions.ChatCompletionTool[] = registeredTools.map(t => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: {
+            type: 'object',
+            properties: t.parameters.properties,
+            required: t.parameters.required || []
+          }
         }
-        break;
+      }));
+
+      const openAIMessages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: prompt }
+      ];
+
+      while (rounds < MAX_ROUNDS) {
+        if (signal?.aborted) {
+          onEvent({ type: 'cancelled', message: 'Agent execution was stopped by user.' });
+          break;
+        }
+
+        if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+          onEvent({ type: 'failed', message: `Execution exceeded time limit of ${MAX_EXECUTION_TIME_MS / 1000}s.` });
+          break;
+        }
+
+        if (totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
+          onEvent({ type: 'failed', message: `Reached maximum tool call limit (${MAX_TOTAL_TOOL_CALLS}).` });
+          break;
+        }
+
+        rounds++;
+        const isPostToolSynthesis = totalToolCalls > 0;
+        onEvent({ 
+          type: 'thinking', 
+          action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
+          message: isPostToolSynthesis 
+            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...` 
+            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...` 
+        });
+
+        let completion: OpenAI.Chat.Completions.ChatCompletion;
+        try {
+          completion = await client.chat.completions.create({
+            model: effectiveModel,
+            messages: openAIMessages,
+            tools: openAITools,
+            tool_choice: 'auto'
+          }, { signal });
+        } catch (err: any) {
+          throw isXAI ? normalizeXAIError(err) : normalizeOpenAIError(err);
+        }
+
+        const choice = completion.choices[0];
+        const assistantMsg = choice?.message;
+        if (!assistantMsg) break;
+
+        openAIMessages.push(assistantMsg);
+
+        if (assistantMsg.content) {
+          finalResponseText = finalResponseText ? `${finalResponseText}\n\n${assistantMsg.content}` : assistantMsg.content;
+          if (onDelta) {
+            onDelta(assistantMsg.content);
+          }
+        }
+
+        const toolCalls = assistantMsg.tool_calls || [];
+        if (!toolCalls || toolCalls.length === 0) {
+          onEvent({ 
+            type: 'completed', 
+            action: 'Synthesizing',
+            message: 'Agent completed task.' 
+          });
+          break;
+        }
+
+        for (const call of toolCalls) {
+          if (signal?.aborted) break;
+
+          const fn = 'function' in call ? call.function : (call as any).function;
+          const name = fn.name;
+          let toolArgs: Record<string, any> = {};
+          try {
+            toolArgs = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments || {};
+          } catch {
+            toolArgs = {};
+          }
+          totalToolCalls++;
+
+          const signature = `${name}:${JSON.stringify(toolArgs)}`;
+          const count = (callCounts.get(signature) || 0) + 1;
+          callCounts.set(signature, count);
+
+          if (count > 2) {
+            onEvent({
+              type: 'tool_failed',
+              action: 'Thinking',
+              tool: name,
+              message: `Tool "${name}" was called with identical arguments multiple times. Moving forward.`
+            });
+            openAIMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: JSON.stringify({ error: `Tool "${name}" was already executed with identical arguments. Please synthesize your answer with the information obtained.` })
+            });
+            continue;
+          }
+
+          const { action, startMessage } = getToolActionMetadata(name, toolArgs);
+
+          onEvent({
+            type: 'tool_started',
+            action,
+            tool: name,
+            args: toolArgs,
+            message: startMessage
+          });
+
+          const result = await ToolRegistry.execute(name, toolArgs, context);
+
+          if (result.success) {
+            let completionMsg = `Completed "${name}" successfully.`;
+            if (name === 'search_project' || name === 'search_codebase') {
+              completionMsg = `Found ${result.output?.matchesFound ?? 0} match(es) in codebase.`;
+            } else if (name === 'read_project_file' || name === 'read_file') {
+              completionMsg = `Read ${toolArgs.path} (${result.output?.totalLines || 0} lines).`;
+            } else if (name === 'list_project_files' || name === 'list_files') {
+              completionMsg = `Found ${result.output?.totalFound ?? 0} project file(s).`;
+            } else if (name === 'get_project_context') {
+              completionMsg = `Inspected project structure (${result.output?.totalFiles ?? 0} files).`;
+            }
+
+            onEvent({
+              type: 'tool_completed',
+              action,
+              tool: name,
+              message: completionMsg,
+              outputSummary: result.output ? JSON.stringify(result.output).slice(0, 150) : undefined
+            });
+
+            if (name === 'propose_changes' && (result.output?.changes || result.output?.proposal)) {
+              const proposal = result.output.proposal;
+              changeSet = {
+                id: result.output.proposalId || Math.random().toString(36).substring(7),
+                proposalId: result.output.proposalId,
+                projectId: context.projectId,
+                ownerId: context.userId,
+                description: result.output.description || 'Proposed Code Changes',
+                status: 'pending',
+                changes: (proposal?.changes || result.output.changes || []).map((c: any) => ({
+                  path: c.path,
+                  operation: c.operation,
+                  originalContent: c.originalContent,
+                  proposedContent: c.proposedContent,
+                  originalHash: c.originalHash,
+                  proposedHash: c.proposedHash,
+                  diffStats: c.diffStats,
+                  status: c.status || 'pending'
+                }))
+              };
+              onEvent({ 
+                type: 'review_ready', 
+                action: 'Generating proposal',
+                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` 
+              });
+            }
+
+            openAIMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: JSON.stringify(result.output || { success: true })
+            });
+          } else {
+            onEvent({
+              type: 'tool_failed',
+              action: 'Thinking',
+              tool: name,
+              message: `Tool "${name}" failed: ${result.error}`
+            });
+
+            openAIMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: JSON.stringify({ error: result.error || 'Tool execution failed' })
+            });
+          }
+        }
+
+        if (changeSet) {
+          if (!finalResponseText) {
+            finalResponseText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s).\n\nPlease review the diffs using the **Review Diffs** button to inspect additions, deletions, and approve applying them to your workspace.`;
+          }
+          break;
+        }
+      }
+    } else if (provider === 'anthropic') {
+      if (!process.env.ANTHROPIC_API_KEY || !process.env.ANTHROPIC_API_KEY.trim()) {
+        throw new AIProviderError(
+          'Anthropic is not configured on the FLOAT server. To run agents with Claude, configure ANTHROPIC_API_KEY in the server environment.',
+          'AUTH_ERROR',
+          'Anthropic',
+          401
+        );
+      }
+
+      let effectiveModel = model;
+      if (model === 'claude-opus-5.5' || model === 'claude-opus-5') {
+        effectiveModel = 'claude-3-opus-20240229';
+      } else if (model === 'claude-fable-5.1') {
+        effectiveModel = 'claude-3-7-sonnet-20250219';
+      } else if (!model || model === 'auto') {
+        effectiveModel = 'claude-3-5-sonnet-20241022';
+      }
+
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const anthropicTools: Anthropic.Tool[] = registeredTools.map(t => ({
+        name: t.name,
+        description: t.description,
+        input_schema: {
+          type: 'object',
+          properties: t.parameters.properties,
+          required: t.parameters.required || []
+        }
+      }));
+
+      const anthropicMessages: any[] = [
+        { role: 'user', content: prompt }
+      ];
+
+      while (rounds < MAX_ROUNDS) {
+        if (signal?.aborted) {
+          onEvent({ type: 'cancelled', message: 'Agent execution was stopped by user.' });
+          break;
+        }
+
+        if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+          onEvent({ type: 'failed', message: `Execution exceeded time limit of ${MAX_EXECUTION_TIME_MS / 1000}s.` });
+          break;
+        }
+
+        if (totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
+          onEvent({ type: 'failed', message: `Reached maximum tool call limit (${MAX_TOTAL_TOOL_CALLS}).` });
+          break;
+        }
+
+        rounds++;
+        const isPostToolSynthesis = totalToolCalls > 0;
+        onEvent({ 
+          type: 'thinking', 
+          action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
+          message: isPostToolSynthesis 
+            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...` 
+            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...` 
+        });
+
+        let resp: Anthropic.Message;
+        try {
+          resp = await client.messages.create({
+            model: effectiveModel,
+            max_tokens: 4096,
+            system: systemInstruction,
+            messages: anthropicMessages,
+            tools: anthropicTools
+          }, { signal });
+        } catch (err: any) {
+          throw normalizeAnthropicError(err);
+        }
+
+        anthropicMessages.push({ role: 'assistant', content: resp.content });
+
+        const textBlocks = resp.content.filter((b): b is Anthropic.TextBlock => b.type === 'text');
+        for (const tb of textBlocks) {
+          if (tb.text) {
+            finalResponseText = finalResponseText ? `${finalResponseText}\n\n${tb.text}` : tb.text;
+            if (onDelta) {
+              onDelta(tb.text);
+            }
+          }
+        }
+
+        const toolUseBlocks = resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+        if (toolUseBlocks.length === 0) {
+          onEvent({ 
+            type: 'completed', 
+            action: 'Synthesizing',
+            message: 'Agent completed task.' 
+          });
+          break;
+        }
+
+        const toolResults: any[] = [];
+        for (const call of toolUseBlocks) {
+          if (signal?.aborted) break;
+
+          const name = call.name;
+          const toolArgs = (call.input as Record<string, any>) || {};
+          totalToolCalls++;
+
+          const signature = `${name}:${JSON.stringify(toolArgs)}`;
+          const count = (callCounts.get(signature) || 0) + 1;
+          callCounts.set(signature, count);
+
+          if (count > 2) {
+            onEvent({
+              type: 'tool_failed',
+              action: 'Thinking',
+              tool: name,
+              message: `Tool "${name}" was called with identical arguments multiple times. Moving forward.`
+            });
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: call.id,
+              content: JSON.stringify({ error: `Tool "${name}" was already executed with identical arguments. Please synthesize your answer with the information obtained.` })
+            });
+            continue;
+          }
+
+          const { action, startMessage } = getToolActionMetadata(name, toolArgs);
+
+          onEvent({
+            type: 'tool_started',
+            action,
+            tool: name,
+            args: toolArgs,
+            message: startMessage
+          });
+
+          const result = await ToolRegistry.execute(name, toolArgs, context);
+
+          if (result.success) {
+            let completionMsg = `Completed "${name}" successfully.`;
+            if (name === 'search_project' || name === 'search_codebase') {
+              completionMsg = `Found ${result.output?.matchesFound ?? 0} match(es) in codebase.`;
+            } else if (name === 'read_project_file' || name === 'read_file') {
+              completionMsg = `Read ${toolArgs.path} (${result.output?.totalLines || 0} lines).`;
+            } else if (name === 'list_project_files' || name === 'list_files') {
+              completionMsg = `Found ${result.output?.totalFound ?? 0} project file(s).`;
+            } else if (name === 'get_project_context') {
+              completionMsg = `Inspected project structure (${result.output?.totalFiles ?? 0} files).`;
+            }
+
+            onEvent({
+              type: 'tool_completed',
+              action,
+              tool: name,
+              message: completionMsg,
+              outputSummary: result.output ? JSON.stringify(result.output).slice(0, 150) : undefined
+            });
+
+            if (name === 'propose_changes' && (result.output?.changes || result.output?.proposal)) {
+              const proposal = result.output.proposal;
+              changeSet = {
+                id: result.output.proposalId || Math.random().toString(36).substring(7),
+                proposalId: result.output.proposalId,
+                projectId: context.projectId,
+                ownerId: context.userId,
+                description: result.output.description || 'Proposed Code Changes',
+                status: 'pending',
+                changes: (proposal?.changes || result.output.changes || []).map((c: any) => ({
+                  path: c.path,
+                  operation: c.operation,
+                  originalContent: c.originalContent,
+                  proposedContent: c.proposedContent,
+                  originalHash: c.originalHash,
+                  proposedHash: c.proposedHash,
+                  diffStats: c.diffStats,
+                  status: c.status || 'pending'
+                }))
+              };
+              onEvent({ 
+                type: 'review_ready', 
+                action: 'Generating proposal',
+                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` 
+              });
+            }
+
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: call.id,
+              content: JSON.stringify(result.output || { success: true })
+            });
+          } else {
+            onEvent({
+              type: 'tool_failed',
+              action: 'Thinking',
+              tool: name,
+              message: `Tool "${name}" failed: ${result.error}`
+            });
+
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: call.id,
+              content: JSON.stringify({ error: result.error || 'Tool execution failed' })
+            });
+          }
+        }
+
+        anthropicMessages.push({ role: 'user', content: toolResults });
+
+        if (changeSet) {
+          if (!finalResponseText) {
+            finalResponseText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s).\n\nPlease review the diffs using the **Review Diffs** button to inspect additions, deletions, and approve applying them to your workspace.`;
+          }
+          break;
+        }
       }
     }
 

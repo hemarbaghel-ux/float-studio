@@ -12,12 +12,13 @@ try {
 if (typeof window !== 'undefined') {
   const originalConsoleError = console.error;
   console.error = (...args: any[]) => {
-    const msg = args.map(a => typeof a === 'string' ? a : (a?.message || JSON.stringify(a || ''))).join(' ');
+    const msg = args.map(a => typeof a === 'string' ? a : (a?.message || a?.msg || JSON.stringify(a || ''))).join(' ');
     if (
       msg.includes('Disconnecting idle stream') ||
       msg.includes('Timed out waiting for new targets') ||
       msg.includes("GrpcConnection RPC 'Listen' stream") ||
-      msg.includes('operation is manually canceled')
+      msg.includes('operation is manually canceled') ||
+      msg.includes('cancelation')
     ) {
       return;
     }

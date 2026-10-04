@@ -300,14 +300,37 @@ export async function startServer() {
   // AI Agent Route (SSE)
   app.post('/api/ai/agent', requireAuth, async (req: any, res: any) => {
     try {
-      const { prompt, virtualFiles, model = 'gemini-3.1-flash-lite' } = req.body;
+      const { prompt, virtualFiles, model = 'gemini-3.8-flash' } = req.body;
       
       await modelRouter.runAgentLoop(req, res, model, prompt, virtualFiles || []);
     } catch (error: any) {
-      console.error('Agent Endpoint Error:', error);
+      const isCancellation = 
+        error?.name === 'AbortError' ||
+        error?.type === 'cancelation' ||
+        error?.type === 'cancelled' ||
+        /operation is manually canceled/i.test(error?.message || error?.msg || '') ||
+        /cancel/i.test(error?.message || error?.msg || '');
+
+      if (isCancellation) {
+        if (!res.headersSent) {
+          res.json({ cancelled: true, message: 'Agent execution was stopped by user.' });
+        } else if (!res.writableEnded) {
+          res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'cancelled', message: 'Agent execution was stopped by user.' } })}\n\n`);
+          res.write(`data: ${JSON.stringify({ type: 'result', data: { text: '*(Agent task stopped)*', changeSet: null } })}\n\n`);
+          res.end();
+        }
+        return;
+      }
+
+      console.error('Agent Endpoint Error:', error.message || error);
       if (!res.headersSent) {
-        res.status(500).json({ error: error.message || 'An error occurred.' });
-      } else {
+        const statusCode = error?.statusCode || (error?.code === 'AUTH_ERROR' ? 401 : error?.code === 'MODEL_NOT_FOUND' ? 404 : 400);
+        res.status(statusCode).json({ 
+          error: error.message || 'An error occurred.',
+          code: error.code || 'PROVIDER_ERROR',
+          provider: error.provider || 'FLOAT'
+        });
+      } else if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'failed', message: error.message || 'Agent error occurred.' } })}\n\n`);
         res.end();
       }

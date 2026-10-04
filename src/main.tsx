@@ -6,6 +6,25 @@ import './index.css';
 
 // Global resilience handler to gracefully intercept benign cancellation and script errors
 if (typeof window !== 'undefined') {
+  const originalConsoleError = console.error;
+  console.error = (...args: any[]) => {
+    const msg = args.map(a => {
+      if (typeof a === 'string') return a;
+      return a?.message || a?.msg || JSON.stringify(a || '');
+    }).join(' ');
+
+    if (
+      msg.includes('operation is manually canceled') ||
+      msg.includes('cancelation') ||
+      msg.includes('Disconnecting idle stream') ||
+      msg.includes('Timed out waiting for new targets') ||
+      msg.includes("GrpcConnection RPC 'Listen' stream")
+    ) {
+      return;
+    }
+    originalConsoleError.apply(console, args);
+  };
+
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
     const reasonStr = typeof reason === 'string' 
@@ -23,14 +42,18 @@ if (typeof window !== 'undefined') {
     if (isCancellation) {
       // Gracefully prevent unhandled rejection from bubbling to error monitors
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       return;
     }
 
     if (reasonStr === 'Script error.' || reasonStr.includes('Script error')) {
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       return;
     }
-  });
+  }, true);
 
   window.addEventListener('error', (event) => {
     const message = event.message || '';
@@ -50,9 +73,11 @@ if (typeof window !== 'undefined') {
 
     if (isCancellation) {
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       return true;
     }
-  });
+  }, true);
 }
 
 createRoot(document.getElementById('root')!).render(
