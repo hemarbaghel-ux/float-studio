@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useIDEStore } from '../../store';
-import { useAuthStore } from '../../store/authStore';
-import { ArrowRight, Download, Sun, Moon, ChevronDown } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowRight, Download, Sun, Moon } from 'lucide-react';
 import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
 import { ModelsDropdown } from '../../components/ModelsDropdown';
 import { ProductsDropdown } from '../../components/ProductsDropdown';
@@ -12,31 +12,13 @@ import { useTranslation } from '../../components/LanguageProvider';
 
 export function LandingPage() {
   const { settings, toggleTheme, updateSettings } = useIDEStore();
-  const { user } = useAuthStore();
   const { t } = useTranslation();
 
-  const navigateTo = (path: string) => {
-    window.history.pushState({}, '', path);
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  };
-
   const handleStart = (mode: 'signup' | 'signin' | React.MouseEvent = 'signup') => {
-    if (user) {
-      navigateTo('/dashboard');
-      return;
-    }
     const finalMode = typeof mode === 'string' && mode === 'signin' ? 'signin' : 'signup';
     const targetPath = finalMode === 'signin' ? '/sign-in' : '/sign-up';
-    navigateTo(targetPath);
-  };
-
-  const handleExplore = () => {
-    const target = document.getElementById('float-showcase');
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth' });
-    } else {
-      navigateTo('/features');
-    }
+    window.history.pushState({}, '', targetPath);
+    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   const testimonials = [
@@ -79,80 +61,33 @@ export function LandingPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#02040A] text-slate-900 dark:text-[#EDEDED] font-sans overflow-x-hidden selection:bg-[#0070F3]/30 selection:text-white transition-colors">
+    <div className="min-h-screen bg-slate-50 dark:bg-[#0F0F0B] text-slate-900 dark:text-[#EDEDED] font-sans overflow-x-hidden selection:bg-[#7C3AED]/20 dark:selection:bg-[#EDEDED] dark:selection:text-[#0F0F0B] transition-colors">
       {/* Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 bg-white/80 dark:bg-[#02040A]/85 backdrop-blur-xl border-b border-slate-200/50 dark:border-white/[0.06] transition-colors">
+      <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 bg-white/80 dark:bg-[#0F0F0B]/80 backdrop-blur-md transition-colors">
         <div className="flex items-center gap-8">
           <a 
             href="/" 
-            className="flex items-center gap-2.5 cursor-pointer group" 
+            className="flex items-center gap-2.5 cursor-pointer" 
             onClick={(e) => {
               e.preventDefault();
               if (window.location.pathname !== '/') {
-                navigateTo('/');
+                window.history.pushState({}, '', '/');
+                window.dispatchEvent(new PopStateEvent('popstate'));
               } else {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }
             }}
           >
-            <FloatLogo size={34} className="w-[34px] h-[34px]" />
+            <FloatLogo size={38} className="w-[38px] h-[38px]" />
             <span className="flex items-center text-slate-900 dark:text-white">
-              <FloatWordmark className="h-5 w-auto text-slate-900 dark:text-white tracking-wide" />
+              <FloatWordmark className="h-5 w-auto" />
             </span>
           </a>
-          <div className="hidden md:flex items-center gap-8 text-sm font-medium absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2">
-            {/* Studio (Active Tab with subtle blue indicator) */}
-            <a
-              href="/"
-              onClick={(e) => {
-                e.preventDefault();
-                if (window.location.pathname !== '/') {
-                  navigateTo('/');
-                } else {
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-              }}
-              className="text-slate-900 dark:text-white transition-colors cursor-pointer relative py-1 flex flex-col items-center"
-            >
-              <span>Studio</span>
-              <span className="w-5 h-0.5 bg-[#0070F3] shadow-[0_0_8px_#0070F3] rounded-full mx-auto block mt-1" />
-            </a>
-
-            {/* Models */}
-            <a
-              href="/models"
-              onClick={(e) => {
-                e.preventDefault();
-                navigateTo('/models');
-              }}
-              className="text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer py-1"
-            >
-              Models
-            </a>
-
-            {/* Developers */}
-            <a
-              href="/features"
-              onClick={(e) => {
-                e.preventDefault();
-                navigateTo('/features');
-              }}
-              className="text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer py-1"
-            >
-              Developers
-            </a>
-
-            {/* Resources */}
-            <a
-              href="/resources"
-              onClick={(e) => {
-                e.preventDefault();
-                navigateTo('/resources');
-              }}
-              className="text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer py-1"
-            >
-              Resources
-            </a>
+          <div className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600 dark:text-[#A1A1AA] absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2">
+            <ModelsDropdown currentPath={window.location.pathname} />
+            <ProductsDropdown currentPath={window.location.pathname} />
+            <PricingDropdown currentPath={window.location.pathname} />
+            <ResourcesDropdown currentPath={window.location.pathname} />
           </div>
         </div>
         <div className="flex items-center gap-3 text-sm font-medium">
@@ -163,96 +98,33 @@ export function LandingPage() {
             onClick={toggleTheme}
             aria-label={`Switch to ${settings.theme === 'dark' ? 'Light' : 'Dark'} mode`}
             title={`Switch to ${settings.theme === 'dark' ? 'Light' : 'Dark'} mode`}
-            className="p-2 rounded-full border border-slate-200 dark:border-white/10 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+            className="p-2 rounded-full border border-slate-200 dark:border-white/15 text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
           >
-            {settings.theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            {settings.theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
 
           <button 
             onClick={() => handleStart('signin')}
-            className="px-4 py-1.5 rounded-full border border-slate-200 dark:border-white/20 hover:border-slate-300 dark:hover:border-white/40 text-xs sm:text-sm font-medium text-slate-700 dark:text-zinc-200 hover:text-slate-900 dark:hover:text-white transition-all cursor-pointer bg-slate-100/50 dark:bg-white/[0.02] hover:bg-slate-100 dark:hover:bg-white/[0.06] backdrop-blur-sm"
+            className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors hidden sm:block cursor-pointer px-2 py-1"
           >
-            {user ? 'Dashboard' : t('nav.signin', 'Log in')}
+            {t('nav.signin', 'Sign in')}
           </button>
           <button 
-            onClick={() => handleStart('signup')}
-            className="px-4.5 py-1.5 bg-[#0070F3] hover:bg-[#0060df] text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 shadow-[0_0_20px_rgba(0,112,243,0.4)] hover:shadow-[0_0_30px_rgba(0,112,243,0.6)] transition-all cursor-pointer active:scale-95"
+            onClick={handleStart}
+            className="px-4 py-1.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-semibold"
           >
-            <span>{user ? 'Open Workspace' : 'Open FLOAT'}</span>
-            <ArrowRight size={14} />
+            {t('nav.download', 'Download')}
           </button>
         </div>
       </nav>
 
-      {/* Astra-Inspired AI Core Hero Section */}
-      <section className="relative min-h-[92vh] flex flex-col justify-between items-center pt-28 pb-14 px-4 sm:px-6 overflow-hidden select-none bg-[#02040A]">
-        {/* Subtle cosmic vignette & background gradient */}
-        <div 
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background: 'radial-gradient(ellipse 65% 55% at 50% 48%, rgba(14, 165, 233, 0.1) 0%, rgba(2, 6, 23, 0.45) 55%, rgba(2, 4, 10, 0.98) 100%)'
-          }}
-          aria-hidden="true"
-        />
-
-        {/* Top subtle light ray / atmospheric depth */}
-        <div 
-          className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[320px] bg-[radial-gradient(ellipse_at_top,rgba(56,189,248,0.08)_0%,transparent_70%)] pointer-events-none"
-          aria-hidden="true"
-        />
-
-        {/* Central Master Composition: FLOAT AI */}
-        <div className="flex-1 w-full max-w-7xl mx-auto flex flex-col items-center justify-center relative z-10 my-auto">
-          <div className="w-full flex items-center justify-center">
-            <h1 className="text-6xl sm:text-7xl md:text-8xl lg:text-[9.5rem] xl:text-[11.5rem] font-bold tracking-tight text-white leading-none select-none drop-shadow-[0_0_50px_rgba(255,255,255,0.12)] text-center flex flex-wrap items-center justify-center gap-4 sm:gap-6 md:gap-10">
-              <span>FLOAT</span>
-              <span>AI</span>
-            </h1>
-          </div>
-
-          {/* Subtitle Line */}
-          <p className="text-sm sm:text-base md:text-lg text-zinc-300 font-light tracking-wide text-center max-w-xl mx-auto mt-6 sm:mt-8 mb-6 sm:mb-8 px-4">
-            Intelligence in motion. Software without limits.
-          </p>
-
-          {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 sm:gap-4 w-full sm:w-auto px-4 z-20">
-            <button
-              onClick={() => handleStart('signup')}
-              className="w-full sm:w-auto px-7 py-3 rounded-full bg-[#0070F3] hover:bg-[#0060df] text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(0,112,243,0.45)] hover:shadow-[0_0_35px_rgba(0,112,243,0.7)] transition-all cursor-pointer active:scale-[0.98]"
-            >
-              <span>Start Building</span>
-              <ArrowRight size={16} />
-            </button>
-            <button
-              onClick={handleExplore}
-              className="w-full sm:w-auto px-7 py-3 rounded-full bg-white/5 hover:bg-white/10 text-white border border-white/20 hover:border-white/40 font-medium text-sm sm:text-base flex items-center justify-center gap-2 transition-all cursor-pointer backdrop-blur-md active:scale-[0.98]"
-            >
-              <span>Explore FLOAT</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Bottom subtle scroll indicator / transition into showcase */}
-        <div className="w-full flex justify-center pt-6 relative z-10">
-          <button
-            onClick={handleExplore}
-            className="text-zinc-500 hover:text-zinc-300 transition-colors p-2 text-xs flex flex-col items-center gap-1 cursor-pointer"
-            aria-label="Scroll to product features"
-          >
-            <span className="text-[10px] tracking-widest uppercase opacity-75">Explore Platform</span>
-            <ChevronDown size={14} className="animate-bounce" />
-          </button>
-        </div>
-      </section>
-
-      {/* Product Showcase & Preview */}
-      <main id="float-showcase" className="pt-20 pb-20 px-6 max-w-6xl mx-auto flex flex-col items-center justify-center text-center">
-        <h2 className="text-3xl md:text-5xl font-medium tracking-tight mb-8 leading-[1.1] max-w-2xl text-slate-900 dark:text-white mx-auto">
+      {/* Hero Section */}
+      <main className="pt-32 pb-20 px-6 max-w-6xl mx-auto flex flex-col items-center justify-center text-center">
+        <h1 className="text-4xl md:text-5xl font-medium tracking-tight mb-8 leading-[1.1] max-w-2xl text-slate-900 dark:text-white mx-auto">
           {t('hero.title_part1', 'FLOAT is your coding agent for')}<br className="hidden md:block" />
           {' '}{t('hero.title_part2', 'building ambitious software.')}
-        </h2>
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-20 w-full">
+        </h1>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-24 w-full">
           <button 
             onClick={handleStart}
             className="group px-6 py-3 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-medium flex items-center justify-center gap-2 shadow-lg w-full sm:w-auto cursor-pointer"
@@ -349,7 +221,7 @@ export function LandingPage() {
             </div>
           </div>
           {/* Faded Background Element */}
-          <div className="absolute -bottom-20 -left-10 -right-10 h-64 bg-gradient-to-b from-transparent to-slate-50 dark:to-[#02040A] z-20 pointer-events-none" />
+          <div className="absolute -bottom-20 -left-10 -right-10 h-64 bg-gradient-to-b from-transparent to-slate-50 dark:to-[#0F0F0B] z-20 pointer-events-none" />
         </div>
       </main>
 
@@ -886,14 +758,14 @@ export function LandingPage() {
                    <div className="animate-spin text-slate-500 dark:text-[#A1A1AA]">⚙️</div>
                    <div>
                      <div className="text-sm font-medium text-slate-900 dark:text-white">{t('features.codebase.models_mock_task1', 'Set up model architecture')}</div>
-                     <div className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('features.codebase.models_mock_task1_sub', 'Editing files • Opus-5')}</div>
+                     <div className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('features.codebase.models_mock_task1_sub', 'Editing files')}</div>
                    </div>
                  </div>
                  <div className="bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 p-3 rounded-lg flex items-center gap-3">
                    <div className="animate-spin text-slate-500 dark:text-[#A1A1AA]">⚙️</div>
                    <div>
                      <div className="text-sm font-medium text-slate-900 dark:text-white">{t('features.codebase.models_mock_task2', 'Mission Control Interface')}</div>
-                     <div className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('features.codebase.models_mock_task2_sub', 'Building dashboard • Grok 4.6')}</div>
+                     <div className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('features.codebase.models_mock_task2_sub', 'Building dashboard')}</div>
                    </div>
                  </div>
                  <div className="bg-slate-50 dark:bg-[#161410] border border-slate-200 dark:border-white/5 p-3 rounded-lg flex items-center gap-3 opacity-60">

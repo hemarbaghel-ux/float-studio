@@ -54,6 +54,21 @@ export async function startServer() {
     }
   });
 
+  // Provider Health Check endpoint: verifies whether each configured provider can authenticate
+  // and whether its configured models are actually usable
+  app.get(['/api/ai/health', '/api/ai/providers/health'], async (_req, res) => {
+    try {
+      const health = await modelRouter.checkAllProvidersHealth();
+      res.json({
+        success: true,
+        providers: health,
+        timestamp: Date.now()
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Privacy & Governance Disclosure Route
   app.get('/api/privacy/policy', (_req, res) => {
     res.json({
@@ -194,7 +209,14 @@ export async function startServer() {
             res.write(`data: ${JSON.stringify({ type: 'done', text: '', cancelled: true })}\n\n`);
           } else {
             console.error('AI Stream Error:', error);
-            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message || 'Generation failed' })}\n\n`);
+            const errorCode = error?.code || 'PROVIDER_ERROR';
+            const errorProvider = error?.provider || 'FLOAT';
+            res.write(`data: ${JSON.stringify({ 
+              type: 'error', 
+              error: error.message || 'Generation failed',
+              code: errorCode,
+              provider: errorProvider
+            })}\n\n`);
           }
           res.end();
         }
@@ -228,7 +250,20 @@ export async function startServer() {
       }
 
       console.error('AI Error:', error);
-      res.status(500).json({ error: error.message || 'An error occurred during AI generation.' });
+      const errorCode = error?.code || 'PROVIDER_ERROR';
+      const statusCode = error?.statusCode || (
+        errorCode === 'AUTH_ERROR' ? 401 :
+        errorCode === 'MODEL_NOT_FOUND' ? 404 :
+        errorCode === 'QUOTA_EXCEEDED' || errorCode === 'RATE_LIMITED' ? 429 :
+        errorCode === 'INVALID_REQUEST' ? 400 : 500
+      );
+      const errorProvider = error?.provider || 'FLOAT';
+
+      res.status(statusCode).json({ 
+        error: error.message || 'An error occurred during AI generation.',
+        code: errorCode,
+        provider: errorProvider
+      });
     }
   });
 

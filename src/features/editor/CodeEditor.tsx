@@ -69,11 +69,15 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
     return 'plaintext';
   };
 
+  const isDark = typeof document !== 'undefined'
+    ? document.documentElement.classList.contains('dark')
+    : settings.theme !== 'light';
+
   return (
     <Editor
       height="100%"
       language={getLanguage(fileName)}
-      theme={settings.theme === 'dark' ? 'vs-dark' : 'light'}
+      theme={isDark ? 'vs-dark' : 'light'}
       value={content}
       onChange={handleEditorChange}
       onMount={handleEditorDidMount}

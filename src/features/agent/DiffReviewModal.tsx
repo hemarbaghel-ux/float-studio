@@ -509,7 +509,13 @@ export function DiffReviewModal({ changeSet, onClose }: DiffReviewModalProps) {
               <DiffEditor
                 height="100%"
                 language={getLanguage(selectedChange.path)}
-                theme={settings.theme === 'dark' ? 'vs-dark' : 'light'}
+                theme={
+                  (typeof document !== 'undefined'
+                    ? document.documentElement.classList.contains('dark')
+                    : settings.theme !== 'light')
+                    ? 'vs-dark'
+                    : 'light'
+                }
                 original={selectedChange.operation === 'create' ? '' : (selectedChange.originalContent || '')}
                 modified={selectedChange.operation === 'delete' ? '' : (selectedChange.proposedContent || '')}
                 options={{

@@ -1,37 +1,45 @@
 import { AIModel, Agent } from '../../types/ai';
 import { VERIFIED_MODELS } from '../../data/verifiedModels';
+import { DASHBOARD_MODELS } from '../dashboard/dashboardModels';
+
+const dashboardModelIds = new Set(DASHBOARD_MODELS.map(m => m.id));
 
 export const INITIAL_MODELS: AIModel[] = [
+  ...DASHBOARD_MODELS,
   { 
     id: 'auto', 
-    exactModelId: 'gemini-3.1-flash-lite',
+    exactModelId: 'gemini-2.0-flash',
     providerId: 'auto', 
     displayName: 'Auto (FLOAT Dynamic Router)', 
+    shortName: 'Auto',
     family: 'auto', 
-    category: 'auto',
-    description: 'Automatically routes to the highest-availability operational model in FLOAT (Gemini 3.1 Flash Lite).', 
+    description: 'Automatically routes to the highest-performance operational model in FLOAT (Gemini 2.0 Flash).', 
     capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true, longContext: true }, 
+    capabilitiesList: ['Coding', 'Reasoning', 'Vision', 'Tool use'],
     contextWindow: 1048576, 
     status: 'AVAILABLE', 
     speed: 'fast',
-    reasoningEffort: 'low',
-    supportedEfforts: ['low', 'medium', 'high'],
+    reasoningLevel: 'High Fast',
+    version: 'high effort',
+    availability: 'Available',
     pricing: {
-      inputCost: 0.075,
-      outputCost: 0.30,
+      inputCost: 0.10,
+      outputCost: 0.40,
       currency: 'USD',
-      effectiveDate: '2025-06-01'
+      effectiveDate: '2025-01-15'
     },
-    docUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini#gemini-3.1-flash-lite',
+    docUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini#gemini-2.0-flash',
     pricingUrl: 'https://ai.google.dev/pricing'
   },
-  ...VERIFIED_MODELS.map(vm => ({
+  ...VERIFIED_MODELS.filter(vm => !dashboardModelIds.has(vm.id)).map(vm => ({
     id: vm.id,
     exactModelId: vm.exactModelId,
+    apiModelId: vm.exactModelId,
     providerId: vm.providerId,
+    provider: vm.providerId === 'google' ? 'Google' : vm.providerId === 'openai' ? 'OpenAI' : vm.providerId === 'anthropic' ? 'Anthropic' : vm.providerId === 'xai' ? 'xAI' : 'FLOAT',
     displayName: vm.displayName,
+    shortName: vm.displayName.replace('Google ', '').replace('OpenAI ', '').replace('Anthropic ', ''),
     family: vm.family,
-    category: vm.category,
     description: vm.description,
     capabilities: {
       coding: vm.capabilities.coding,
@@ -42,11 +50,18 @@ export const INITIAL_MODELS: AIModel[] = [
       streaming: vm.capabilities.streaming,
       longContext: vm.capabilities.longContext
     },
+    capabilitiesList: [
+      ...(vm.capabilities.coding ? ['Coding'] : []),
+      ...(vm.capabilities.reasoning ? ['Reasoning'] : []),
+      ...(vm.capabilities.tools ? ['Tool use'] : []),
+      ...(vm.capabilities.vision ? ['Vision'] : [])
+    ],
     contextWindow: vm.contextWindow,
     status: vm.availabilityStatus as any,
     speed: vm.speed,
-    reasoningEffort: vm.reasoningEffort,
-    supportedEfforts: vm.supportedEfforts,
+    reasoningLevel: vm.speed === 'fast' ? 'Fast' : vm.speed === 'slow' ? 'High' : 'Medium',
+    version: vm.snapshotVersion || vm.id,
+    availability: vm.availabilityStatus === 'AVAILABLE' ? 'Available' : 'Configuration required',
     pricing: {
       inputCost: vm.pricing.inputCostPer1M,
       outputCost: vm.pricing.outputCostPer1M,
@@ -63,8 +78,7 @@ export const INITIAL_MODELS: AIModel[] = [
     snapshotVersion: vm.snapshotVersion,
     limitations: vm.limitations,
     intendedUseCases: vm.intendedUseCases,
-    availabilityDetails: vm.availabilityDetails,
-    deprecationStatus: vm.deprecationStatus
+    availabilityDetails: vm.availabilityDetails
   }))
 ];
 
@@ -72,7 +86,7 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'main-agent',
     name: 'Main Agent',
-    description: 'General purpose AI assistant for coding, questions, and architecture',
+    description: 'General purpose AI assistant',
     icon: 'Bot',
     systemInstructions: 'You are the main FLOAT assistant.',
     defaultModel: 'auto',
@@ -84,7 +98,7 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'coder-agent',
     name: 'Coder',
-    description: 'Writes and modifies production code with rigorous precision',
+    description: 'Writes and modifies code',
     icon: 'Code',
     systemInstructions: 'You are an expert coder.',
     defaultModel: 'gpt-4o',
@@ -96,7 +110,7 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'reviewer-agent',
     name: 'Reviewer',
-    description: 'Reviews code for bugs, logic errors, and security issues',
+    description: 'Reviews code for bugs and quality',
     icon: 'Eye',
     systemInstructions: 'You are a code reviewer.',
     defaultModel: 'claude-3-5-sonnet-20241022',
@@ -108,10 +122,10 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'planner-agent',
     name: 'Planner',
-    description: 'Plans complex multi-file architectural changes and migrations',
+    description: 'Plans complex architectural changes',
     icon: 'Map',
     systemInstructions: 'You are a software architect.',
-    defaultModel: 'o1',
+    defaultModel: 'o1-preview',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
@@ -120,10 +134,10 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'explorer-agent',
     name: 'Explorer',
-    description: 'Navigates, indexes, and explains large complex codebases',
+    description: 'Navigates and explains large codebases',
     icon: 'Compass',
     systemInstructions: 'You are a codebase explorer.',
-    defaultModel: 'gemini-3.1-flash-lite',
+    defaultModel: 'gemini-1.5-flash',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
@@ -132,10 +146,10 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'debugger-agent',
     name: 'Debugger',
-    description: 'Finds, reproduces, and resolves complex runtime bugs',
+    description: 'Finds and fixes bugs',
     icon: 'Bug',
     systemInstructions: 'You are a debugging expert.',
-    defaultModel: 'o3-mini',
+    defaultModel: 'o1-mini',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files', 'modify_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: true, renameFiles: false, deleteFiles: false, terminal: true, webResearch: false },
@@ -144,10 +158,10 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'ui-agent',
     name: 'UI Agent',
-    description: 'Builds beautiful, responsive developer interfaces and frontends',
+    description: 'Builds beautiful user interfaces',
     icon: 'Layout',
     systemInstructions: 'You are an expert UI/UX developer.',
-    defaultModel: 'gemini-3.8-flash',
+    defaultModel: 'gemini-1.5-pro',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },

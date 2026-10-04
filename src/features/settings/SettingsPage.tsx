@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   SlidersHorizontal, Palette, Code2, Bot, Bell, Shield, 
   Sun, Moon, Laptop, Check, ArrowLeft, RefreshCw, Download, 
@@ -16,6 +16,18 @@ import { CURRENT_POLICY_VERSION } from '../../services/consentService';
 
 export function SettingsPage() {
   const [activeCategory, setActiveCategory] = useState<'general' | 'appearance' | 'editor' | 'ai' | 'notifications' | 'privacy'>('general');
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const cat = params.get('category') || params.get('tab') || window.location.hash.replace('#', '');
+      if (cat && ['general', 'appearance', 'editor', 'ai', 'notifications', 'privacy'].includes(cat)) {
+        setActiveCategory(cat as any);
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }, []);
   const [resetSuccess, setResetSuccess] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const [consentSuccessMsg, setConsentSuccessMsg] = useState<string | null>(null);

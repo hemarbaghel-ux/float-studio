@@ -1,33 +1,73 @@
-import { AIProviderAdapter, AIProviderRequest, AIProviderResponse } from './base';
+import Anthropic from '@anthropic-ai/sdk';
+import { 
+  AIProviderAdapter, 
+  AIProviderRequest, 
+  AIProviderResponse, 
+  AIProviderError, 
+  ProviderHealthCheckResult 
+} from './base';
 
-export function normalizeAnthropicError(error: any): Error {
-  const msg = error?.message || String(error);
+export function normalizeAnthropicError(error: any): AIProviderError {
+  const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
+  const status = error?.status || error?.statusCode;
 
-  if (/rate[- ]?limit|429/i.test(msg)) {
-    return new Error(
-      "Anthropic rate limit exceeded. Please wait a moment before trying again, or switch to Gemini 3.1 Flash Lite."
+  if (status === 401 || /invalid_api_key|authentication|401|api_key/i.test(msg)) {
+    return new AIProviderError(
+      "Anthropic authentication failed. The server-side ANTHROPIC_API_KEY is missing, invalid, or unauthorized.",
+      'AUTH_ERROR',
+      'Anthropic',
+      401,
+      { original: msg }
     );
   }
 
-  if (/invalid_api_key|authentication|401/i.test(msg)) {
-    return new Error(
-      "Anthropic authentication failed. The server-side ANTHROPIC_API_KEY is invalid or unauthorized."
+  if (status === 404 || /not_found|model/i.test(msg)) {
+    return new AIProviderError(
+      "The requested Anthropic model is not available or unrecognized by the provider API.",
+      'MODEL_NOT_FOUND',
+      'Anthropic',
+      404,
+      { original: msg }
     );
   }
 
-  if (/overloaded|529/i.test(msg)) {
-    return new Error(
-      "Anthropic servers are currently overloaded. Please retry in a few moments, or select an alternative model."
+  if (/rate[- ]?limit|429/i.test(msg) || status === 429) {
+    return new AIProviderError(
+      "Anthropic rate limit exceeded. Please wait a moment before trying again.",
+      'RATE_LIMITED',
+      'Anthropic',
+      429,
+      { original: msg }
     );
   }
 
-  if (/not_found|model/i.test(msg)) {
-    return new Error(
-      "The requested Anthropic model is not available or unrecognized by the provider API."
+  if (/overloaded|529/i.test(msg) || status === 529) {
+    return new AIProviderError(
+      "Anthropic servers are currently overloaded. Please retry in a few moments, or select an alternative model.",
+      'PROVIDER_ERROR',
+      'Anthropic',
+      529,
+      { original: msg }
     );
   }
 
-  return error instanceof Error ? error : new Error(msg);
+  if (status === 400 || /bad_request|invalid_request/i.test(msg)) {
+    return new AIProviderError(
+      `Invalid request for Anthropic model: ${msg}`,
+      'INVALID_REQUEST',
+      'Anthropic',
+      400,
+      { original: msg }
+    );
+  }
+
+  return new AIProviderError(
+    msg || 'An unexpected error occurred with the Anthropic provider.',
+    'PROVIDER_ERROR',
+    'Anthropic',
+    status || 500,
+    { original: msg }
+  );
 }
 
 export class AnthropicAdapter implements AIProviderAdapter {
@@ -35,16 +75,74 @@ export class AnthropicAdapter implements AIProviderAdapter {
   name = 'Anthropic';
 
   isConfigured(): boolean {
-    return !!process.env.ANTHROPIC_API_KEY;
+    const key = process.env.ANTHROPIC_API_KEY;
+    return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
   }
 
-  private buildPayload(request: AIProviderRequest, stream = false) {
-    const formattedMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  private getClient(): Anthropic {
+    if (!this.isConfigured()) {
+      throw new AIProviderError(
+        "Anthropic is not configured on the FLOAT server. To use Claude models, configure ANTHROPIC_API_KEY in the server environment.",
+        'AUTH_ERROR',
+        'Anthropic',
+        401
+      );
+    }
+    return new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY
+    });
+  }
 
-    if (Array.isArray(request.messages)) {
-      for (const msg of request.messages) {
+  async checkHealth(): Promise<ProviderHealthCheckResult> {
+    if (!this.isConfigured()) {
+      return {
+        provider: 'Anthropic',
+        configured: false,
+        authenticated: false,
+        modelAvailable: false,
+        defaultModel: 'claude-3-5-sonnet-20241022'
+      };
+    }
+
+    try {
+      this.getClient();
+      return {
+        provider: 'Anthropic',
+        configured: true,
+        authenticated: true,
+        modelAvailable: true,
+        defaultModel: 'claude-3-5-sonnet-20241022'
+      };
+    } catch (err: any) {
+      const normalized = normalizeAnthropicError(err);
+      return {
+        provider: 'Anthropic',
+        configured: true,
+        authenticated: false,
+        modelAvailable: false,
+        defaultModel: 'claude-3-5-sonnet-20241022',
+        error: normalized.message
+      };
+    }
+  }
+
+  private resolveApiModel(model: string): string {
+    const mapping: Record<string, string> = {
+      'claude-opus-5.5': 'claude-3-opus-20240229',
+      'claude-opus-5': 'claude-3-opus-20240229',
+      'claude-fable-5.1': 'claude-3-7-sonnet-20250219',
+      'claude-sonnet-5.5': 'claude-3-5-sonnet-20241022'
+    };
+    return mapping[model] || model;
+  }
+
+  private formatMessages(messages: any[]): Array<Anthropic.MessageParam> {
+    const formatted: Array<Anthropic.MessageParam> = [];
+
+    if (Array.isArray(messages)) {
+      for (const msg of messages) {
         if (typeof msg === 'string') {
-          formattedMessages.push({ role: 'user', content: msg });
+          formatted.push({ role: 'user', content: msg });
         } else if (msg && typeof msg === 'object') {
           const role = msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user';
           let content = '';
@@ -55,78 +153,80 @@ export class AnthropicAdapter implements AIProviderAdapter {
           } else if (msg.text) {
             content = msg.text;
           }
-          formattedMessages.push({ role, content });
+          formatted.push({ role, content });
         }
       }
     }
 
-    // Anthropic requires at least 1 message
-    if (formattedMessages.length === 0) {
-      formattedMessages.push({ role: 'user', content: 'Hello' });
+    if (formatted.length === 0) {
+      formatted.push({ role: 'user', content: 'Hello' });
     }
 
-    let maxTokens = 8192;
-    const payload: Record<string, any> = {
-      model: request.model,
-      messages: formattedMessages,
-      max_tokens: maxTokens,
-      stream
-    };
+    return formatted;
+  }
 
-    if (request.systemInstruction) {
-      payload.system = request.systemInstruction;
-    }
-
-    // Extended thinking support for Claude 3.7 Sonnet
-    if (request.model.includes('3-7-sonnet') && request.reasoningEffort && request.reasoningEffort !== 'low') {
-      const budget = request.reasoningEffort === 'high' ? 16384 : 8192;
-      maxTokens = budget + 8192;
-      payload.max_tokens = maxTokens;
-      payload.thinking = {
-        type: 'enabled',
-        budget_tokens: budget
-      };
-    }
-
-    return payload;
+  private formatTools(tools?: AIProviderRequest['tools']): Anthropic.Tool[] | undefined {
+    if (!tools || tools.length === 0) return undefined;
+    return tools.map(t => ({
+      name: t.name,
+      description: t.description,
+      input_schema: (t.parameters || { type: 'object' }) as any
+    }));
   }
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
-    if (!this.isConfigured()) {
-      throw new Error(
-        `Anthropic is not configured on the FLOAT server. To use "${request.model}", configure ANTHROPIC_API_KEY in the environment.`
-      );
-    }
+    const client = this.getClient();
+    const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
 
     try {
-      const payload = this.buildPayload(request, false);
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY!,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify(payload)
-      });
+      const messages = this.formatMessages(request.messages);
+      const tools = this.formatTools(request.tools);
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `Anthropic API returned status ${res.status}`);
+      let maxTokens = 8192;
+      const params: Anthropic.MessageCreateParamsNonStreaming = {
+        model: effectiveModel,
+        messages,
+        max_tokens: maxTokens,
+        ...(request.systemInstruction ? { system: request.systemInstruction } : {}),
+        ...(tools ? { tools } : {})
+      };
+
+      if (effectiveModel.includes('3-7-sonnet') && request.reasoningEffort && request.reasoningEffort !== 'low') {
+        const budget = request.reasoningEffort === 'high' ? 16384 : 8192;
+        maxTokens = budget + 8192;
+        params.max_tokens = maxTokens;
+        (params as any).thinking = {
+          type: 'enabled',
+          budget_tokens: budget
+        };
       }
 
-      const data = await res.json();
-      const text = (data.content || [])
-        .filter((c: any) => c.type === 'text')
-        .map((c: any) => c.text)
-        .join('');
+      const response = await client.messages.create(params);
+      let text = '';
+      const executedTools: any[] = [];
 
-      const usage = data.usage ? {
-        inputTokens: data.usage.input_tokens || 0,
-        outputTokens: data.usage.output_tokens || 0
+      for (const block of response.content) {
+        if (block.type === 'text') {
+          text += block.text;
+        } else if (block.type === 'tool_use') {
+          executedTools.push({
+            id: block.id,
+            name: block.name,
+            arguments: block.input as Record<string, any>
+          });
+        }
+      }
+
+      const usage = response.usage ? {
+        inputTokens: response.usage.input_tokens || 0,
+        outputTokens: response.usage.output_tokens || 0
       } : undefined;
 
-      return { text, usage };
+      return {
+        text,
+        toolCalls: executedTools.length > 0 ? executedTools : undefined,
+        usage
+      };
     } catch (err: any) {
       throw normalizeAnthropicError(err);
     }
@@ -137,67 +237,57 @@ export class AnthropicAdapter implements AIProviderAdapter {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
-    if (!this.isConfigured()) {
-      throw new Error(
-        `Anthropic is not configured on the FLOAT server. To use "${request.model}", configure ANTHROPIC_API_KEY in the environment.`
-      );
-    }
+    const client = this.getClient();
+    const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
 
     try {
-      const payload = this.buildPayload(request, true);
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY!,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify(payload),
-        signal
-      });
+      const messages = this.formatMessages(request.messages);
+      const tools = this.formatTools(request.tools);
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `Anthropic API returned status ${res.status}`);
+      let maxTokens = 8192;
+      const params: Anthropic.MessageCreateParamsStreaming = {
+        model: effectiveModel,
+        messages,
+        max_tokens: maxTokens,
+        stream: true,
+        ...(request.systemInstruction ? { system: request.systemInstruction } : {}),
+        ...(tools ? { tools } : {})
+      };
+
+      if (effectiveModel.includes('3-7-sonnet') && request.reasoningEffort && request.reasoningEffort !== 'low') {
+        const budget = request.reasoningEffort === 'high' ? 16384 : 8192;
+        maxTokens = budget + 8192;
+        params.max_tokens = maxTokens;
+        (params as any).thinking = {
+          type: 'enabled',
+          budget_tokens: budget
+        };
       }
 
-      if (!res.body) {
-        throw new Error('Anthropic response body is empty');
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
+      const stream = client.messages.stream(params, { signal });
       let fullText = '';
-      let buffer = '';
 
-      while (true) {
+      for await (const event of stream) {
         if (signal?.aborted) break;
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
-          const dataStr = trimmed.slice(6);
-
-          try {
-            const parsed = JSON.parse(dataStr);
-            if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
-              const delta = parsed.delta.text || '';
-              if (delta) {
-                fullText += delta;
-                onChunk(delta);
-              }
-            }
-          } catch {}
+        if (event.type === 'content_block_delta') {
+          const delta = (event.delta as any)?.text || '';
+          if (delta) {
+            fullText += delta;
+            onChunk(delta);
+          }
         }
       }
 
-      return { text: fullText };
+      const finalMsg = await stream.finalMessage().catch(() => null);
+      const usage = finalMsg?.usage ? {
+        inputTokens: finalMsg.usage.input_tokens || 0,
+        outputTokens: finalMsg.usage.output_tokens || 0
+      } : undefined;
+
+      return {
+        text: fullText,
+        usage
+      };
     } catch (err: any) {
       throw normalizeAnthropicError(err);
     }
@@ -211,10 +301,18 @@ export class AnthropicAdapter implements AIProviderAdapter {
     _virtualFiles: any[]
   ): Promise<void> {
     if (!this.isConfigured()) {
-      throw new Error(
-        `Anthropic is not configured on the FLOAT server. To run agents with "${model}", configure ANTHROPIC_API_KEY.`
+      throw new AIProviderError(
+        `Anthropic is not configured on the FLOAT server. To run agents with "${model}", configure ANTHROPIC_API_KEY.`,
+        'AUTH_ERROR',
+        'Anthropic',
+        401
       );
     }
-    throw new Error('Anthropic autonomous agent loops are currently in preview. Use Gemini 3.1 Flash Lite for full tool execution.');
+    throw new AIProviderError(
+      'Anthropic agent loops are currently in preview. Use Gemini 3.1 Flash Lite for full tool execution.',
+      'INVALID_REQUEST',
+      'Anthropic',
+      400
+    );
   }
 }

@@ -704,13 +704,19 @@ export function AIPanel() {
         });
       } else {
         let errMsg = error.message || 'Could not connect to model provider.';
+        let errTitle = 'Provider Error';
         if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
+          errTitle = 'Rate Limit / Quota Exceeded';
           errMsg = "Provider quota or rate limit exceeded. Please wait a moment before trying again, or select another available model in the model selector.";
+        } else if (/auth|unauthorized|api_key|not configured|missing/i.test(errMsg)) {
+          errTitle = 'Authentication / Configuration Error';
+        } else if (/not recognized|not found/i.test(errMsg)) {
+          errTitle = 'Model Not Found';
         }
         updateAiMessage(modelMsgId, {
           status: 'error',
           error: errMsg,
-          content: `**Rate Limit / Provider Error**\n\n${errMsg}`
+          content: `**${errTitle}**\n\n${errMsg}`
         });
       }
     } finally {

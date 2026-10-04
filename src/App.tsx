@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useIDEStore } from './store';
+import { useIDEStore, applyThemeToDocument } from './store';
 import { useOnboardingStore } from './store/onboardingStore';
 import { useAuthStore } from './store/authStore';
 import { AppShell } from './features/shell/AppShell';
@@ -64,7 +64,6 @@ export default function App() {
           url.pathname === '/dashboard' ||
           url.pathname === '/workspace' ||
           url.pathname === '/ide' ||
-          url.pathname === '/codebase' ||
           url.pathname === '/projects' ||
           url.pathname === '/automations' ||
           url.pathname === '/integrations' ||
@@ -95,15 +94,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (settings.theme === 'dark') {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
-      document.documentElement.setAttribute('data-theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      document.documentElement.classList.add('light');
-      document.documentElement.setAttribute('data-theme', 'light');
-    }
+    applyThemeToDocument(settings.theme);
   }, [settings.theme]);
 
   useEffect(() => {
@@ -218,7 +209,7 @@ export default function App() {
   }
 
   if (currentPath === '/sign-in' || currentPath === '/signin' || currentPath === '/login') {
-    return <SignUpPage initialMode="signin" />;
+    return <Dashboard initialTab="new-chat" />;
   }
 
   if (currentPath === '/forgot-password' || currentPath === '/reset-password') {
@@ -249,8 +240,8 @@ export default function App() {
   if (currentPath === '/automations') {
     return <Dashboard initialTab="automations" />;
   }
-  if (currentPath === '/projects' || currentPath === '/codebase') {
-    return <Dashboard initialTab="codebase" />;
+  if (currentPath === '/projects') {
+    return <Dashboard initialTab="projects" />;
   }
   if (currentPath === '/dashboard') {
     return <Dashboard initialTab="new-chat" />;
@@ -265,8 +256,16 @@ export default function App() {
     return <ModelsPage />;
   }
 
-  // 1. First time visitors or unauthenticated users see the landing page
+  // 1. First time visitors or unauthenticated users see the landing page, unless visiting login / dashboard
   if (!user || !hasStarted) {
+    if (
+      currentPath === '/sign-in' || 
+      currentPath === '/signin' || 
+      currentPath === '/login' || 
+      currentPath === '/dashboard'
+    ) {
+      return <Dashboard initialTab="new-chat" />;
+    }
     return <LandingPage />;
   }
 

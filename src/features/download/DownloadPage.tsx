@@ -18,6 +18,7 @@ interface BuildInfo {
 export function DownloadPage() {
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(false);
   const [waitlistEmail, setWaitlistEmail] = useState('');
   const [waitlistJoined, setWaitlistJoined] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export function DownloadPage() {
       }
       setInstallPrompt(null);
     } else {
-      alert('FLOAT Web App Installation:\n\n1. In Chrome / Edge / Brave: Click the install icon in the address bar, or click Menu > "Install FLOAT".\n2. In Safari (macOS): Click File > "Add to Dock".\n\nThe app runs in an isolated desktop window with offline caching.');
+      setShowInstructions(prev => !prev);
     }
   };
 
@@ -173,6 +174,17 @@ export function DownloadPage() {
             <span>Install Desktop Web App</span>
           </button>
         </div>
+
+        {showInstructions && (
+          <div className="p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 rounded-xl text-xs text-slate-700 dark:text-slate-300 space-y-2 animate-in fade-in duration-150">
+            <h4 className="font-semibold text-slate-900 dark:text-white">Desktop Web App Installation Guide:</h4>
+            <ul className="list-disc pl-5 space-y-1 text-slate-600 dark:text-slate-400">
+              <li><strong>Chrome / Edge / Brave:</strong> Click the install icon in the address bar (right side), or open browser Menu &gt; &quot;Install FLOAT&quot;.</li>
+              <li><strong>Safari (macOS):</strong> Click File &gt; &quot;Add to Dock&quot; to run FLOAT as a dedicated desktop application.</li>
+              <li>The installed app runs in its own window with offline caching and native shortcuts.</li>
+            </ul>
+          </div>
+        )}
 
         {/* Native Desktop Builds Status Cards */}
         <div className="space-y-4">

@@ -19,22 +19,29 @@ export interface ModelCapability {
   longContext?: boolean;
 }
 
-export type ModelCategory = 'flagship_coding' | 'advanced_reasoning' | 'fast_coding' | 'efficient' | 'auto';
-
 export interface AIModel {
   id: string;
   exactModelId?: string;
+  apiModelId?: string;
   providerId: ProviderId;
+  provider?: string;
   displayName: string;
+  shortName?: string;
   family: string;
   description?: string;
-  category?: ModelCategory;
   capabilities: ModelCapability;
+  capabilitiesList?: string[];
   contextWindow: number;
   status: ModelStatus;
   speed: 'fast' | 'balanced' | 'slow';
-  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'hybrid';
-  supportedEfforts?: ('low' | 'medium' | 'high')[];
+  version?: string;
+  reasoningLevel?: string;
+  isNew?: boolean;
+  supportsStreaming?: boolean;
+  supportsTools?: boolean;
+  supportsVision?: boolean;
+  supportsReasoning?: boolean;
+  availability?: string;
   pricing?: ModelPricing;
   limits?: { maxOutputTokens?: number };
   releaseDate?: string;
@@ -45,8 +52,6 @@ export interface AIModel {
   limitations?: string[];
   intendedUseCases?: string[];
   availabilityDetails?: string;
-  configRequirement?: string;
-  deprecationStatus?: 'active' | 'preview' | 'deprecated' | 'retired';
 }
 
 export interface AgentPermission {
