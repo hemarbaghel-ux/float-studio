@@ -1,35 +1,88 @@
-import { AIProviderAdapter, AIProviderRequest, AIProviderResponse } from './base';
-import { providerRequestSignal } from './requestSignal';
+import OpenAI from 'openai';
+import {
+  AIProviderAdapter,
+  AIProviderRequest,
+  AIProviderResponse,
+  AIProviderError,
+  ProviderHealthCheckResult
+} from './base';
+import { AgentRunner } from '../agent/agentRunner';
 import { PortableAgentRunner } from '../agent/portableAgentRunner';
 
-export function normalizeOpenAIError(error: any): Error {
-  const msg = error?.message || String(error);
+export function normalizeOpenAIError(error: any): AIProviderError {
+  const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
+  const status = error?.status || error?.statusCode;
 
-  if (/insufficient_quota|quota|exceeded your current quota|429/i.test(msg)) {
-    return new Error(
-      "OpenAI rate limit or quota exceeded. Please check your OpenAI account billing or switch to an operational model such as Gemini 3.1 Flash Lite."
+  if (
+    error?.name === 'AbortError' ||
+    error?.type === 'cancelation' ||
+    error?.type === 'cancelled' ||
+    /operation is manually canceled/i.test(msg) ||
+    /cancel/i.test(msg)
+  ) {
+    const err = new AIProviderError('Operation was cancelled.', 'INVALID_REQUEST', 'OpenAI', 499);
+    (err as any).name = 'AbortError';
+    (err as any).type = 'cancelation';
+    return err;
+  }
+
+  if (status === 401 || /invalid_api_key|Incorrect API key|unauthorized|invalid api key|authenticate/i.test(msg)) {
+    return new AIProviderError(
+      "OpenAI authentication failed. The server-side OPENAI_API_KEY is missing, invalid, or unauthorized.",
+      'AUTH_ERROR',
+      'OpenAI',
+      401,
+      { original: msg }
     );
   }
 
-  if (/invalid_api_key|Incorrect API key|unauthorized|401/i.test(msg)) {
-    return new Error(
-      "OpenAI authentication failed. The server-side OPENAI_API_KEY is invalid or unauthorized."
+  if (status === 404 || /model_not_found|does not exist|access to model|model .* not found/i.test(msg)) {
+    return new AIProviderError(
+      `The requested OpenAI model is not accessible or recognized with current credentials.`,
+      'MODEL_NOT_FOUND',
+      'OpenAI',
+      404,
+      { original: msg }
     );
   }
 
-  if (/model_not_found|does not exist|access to model/i.test(msg)) {
-    return new Error(
-      `The requested OpenAI model is not accessible with the current API credentials. Please select another verified model.`
+  if (/insufficient_quota|exceeded your current quota|billing/i.test(msg)) {
+    return new AIProviderError(
+      "OpenAI account quota exceeded. Please check your OpenAI account billing or switch to another operational model.",
+      'QUOTA_EXCEEDED',
+      'OpenAI',
+      429,
+      { original: msg }
     );
   }
 
-  if (/timeout|ETIMEDOUT|ECONNRESET|network/i.test(msg)) {
-    return new Error(
-      "Connection to OpenAI API timed out. Please check network connectivity and try again."
+  if (status === 429 || /rate[- ]?limit|too many requests/i.test(msg)) {
+    return new AIProviderError(
+      "OpenAI rate limit exceeded. Please wait a moment before retrying.",
+      'RATE_LIMITED',
+      'OpenAI',
+      429,
+      { original: msg }
     );
   }
 
-  return error instanceof Error ? error : new Error(msg);
+  if (status === 400 || /bad request|invalid_request_error|parameter/i.test(msg)) {
+    return new AIProviderError(
+      `OpenAI invalid request: ${msg}`,
+      'INVALID_REQUEST',
+      'OpenAI',
+      400,
+      { original: msg }
+    );
+  }
+
+  return new AIProviderError(
+    msg || 'An unexpected error occurred with the OpenAI provider.',
+    'PROVIDER_ERROR',
+    'OpenAI',
+    status || 502,
+    { original: msg }
+  );
 }
 
 export class OpenAIAdapter implements AIProviderAdapter {
@@ -37,26 +90,83 @@ export class OpenAIAdapter implements AIProviderAdapter {
   name = 'OpenAI';
 
   isConfigured(): boolean {
-    return !!process.env.OPENAI_API_KEY;
+    const key = process.env.OPENAI_API_KEY;
+    return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
   }
 
-  private buildPayload(request: AIProviderRequest, stream = false) {
-    const isReasoningModel = request.model.startsWith('o1') || request.model.startsWith('o3');
-    const systemRole = isReasoningModel ? 'developer' : 'system';
+  private getClient(): OpenAI {
+    if (!this.isConfigured()) {
+      throw new AIProviderError(
+        "OpenAI is not configured on the FLOAT server. To use OpenAI models, configure OPENAI_API_KEY in the server environment.",
+        'AUTH_ERROR',
+        'OpenAI',
+        401
+      );
+    }
+    return new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+  }
 
-    const formattedMessages: Array<{ role: string; content: string }> = [];
+  async checkHealth(): Promise<ProviderHealthCheckResult> {
+    if (!this.isConfigured()) {
+      return {
+        provider: 'OpenAI',
+        configured: false,
+        authenticated: false,
+        modelAvailable: false,
+        defaultModel: 'gpt-4o'
+      };
+    }
+
+    try {
+      const client = this.getClient();
+      // Lightweight verification using models.list or small limit
+      const models = await client.models.list();
+      const hasGpt4 = models.data.some(m => m.id.includes('gpt-4') || m.id.includes('o1') || m.id.includes('o3'));
+      return {
+        provider: 'OpenAI',
+        configured: true,
+        authenticated: true,
+        modelAvailable: hasGpt4 || models.data.length > 0,
+        defaultModel: 'gpt-4o'
+      };
+    } catch (err: any) {
+      const normalized = normalizeOpenAIError(err);
+      return {
+        provider: 'OpenAI',
+        configured: true,
+        authenticated: false,
+        modelAvailable: false,
+        defaultModel: 'gpt-4o',
+        error: normalized.message
+      };
+    }
+  }
+
+  private resolveApiModel(model: string): string {
+    const mapping: Record<string, string> = {
+      'gpt-5.6-sol': 'gpt-4o-2024-11-20',
+      'auto': 'gpt-4o'
+    };
+    return mapping[model] || model;
+  }
+
+  private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
+    const systemRole = isReasoningModel ? 'developer' : 'system';
+    const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = [];
 
     if (request.systemInstruction) {
-      formattedMessages.push({
+      messages.push({
         role: systemRole,
         content: request.systemInstruction
-      });
+      } as any);
     }
 
     if (Array.isArray(request.messages)) {
       for (const msg of request.messages) {
         if (typeof msg === 'string') {
-          formattedMessages.push({ role: 'user', content: msg });
+          messages.push({ role: 'user', content: msg });
         } else if (msg && typeof msg === 'object') {
           const role = msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user';
           let content = '';
@@ -67,56 +177,80 @@ export class OpenAIAdapter implements AIProviderAdapter {
           } else if (msg.text) {
             content = msg.text;
           }
-          formattedMessages.push({ role, content });
+          messages.push({ role, content } as any);
         }
       }
     }
 
-    const payload: Record<string, any> = {
-      model: request.model,
-      messages: formattedMessages,
-      stream
-    };
-
-    if (isReasoningModel && request.reasoningEffort) {
-      payload.reasoning_effort = request.reasoningEffort;
+    if (messages.length === 0) {
+      messages.push({ role: 'user', content: 'Hello' });
     }
 
-    return payload;
+    return messages;
+  }
+
+  private formatTools(tools?: AIProviderRequest['tools']): OpenAI.Chat.Completions.ChatCompletionTool[] | undefined {
+    if (!tools || tools.length === 0) return undefined;
+    return tools.map(t => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters
+      }
+    }));
   }
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
-    if (!this.isConfigured()) {
-      throw new Error(
-        `OpenAI is not configured on the FLOAT server. To use "${request.model}", configure OPENAI_API_KEY in the environment.`
-      );
-    }
+    const client = this.getClient();
+    const effectiveModel = request.apiModelId || request.model;
+    const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
-      const payload = this.buildPayload(request, false);
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-        },
-        body: JSON.stringify(payload),
-        signal: providerRequestSignal()
-      });
+      const messages = this.formatMessages(request, isReasoning);
+      const tools = this.formatTools(request.tools);
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `OpenAI API returned status ${res.status}`);
+      const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+        model: effectiveModel,
+        messages,
+        ...(tools ? { tools } : {})
+      };
+
+      if (isReasoning && request.reasoningEffort) {
+        (params as any).reasoning_effort = request.reasoningEffort;
       }
 
-      const data = await res.json();
-      const text = data.choices?.[0]?.message?.content || '';
-      const usage = data.usage ? {
-        inputTokens: data.usage.prompt_tokens || 0,
-        outputTokens: data.usage.completion_tokens || 0
+      const response = await client.chat.completions.create(params);
+      const choice = response.choices[0];
+      const text = choice?.message?.content || '';
+
+      const executedTools = choice?.message?.tool_calls?.map(tc => {
+        let args: Record<string, any> = {};
+        const fn = 'function' in tc ? tc.function : (tc as any).function;
+        if (fn?.arguments) {
+          try {
+            args = JSON.parse(fn.arguments);
+          } catch {
+            args = { raw: fn.arguments };
+          }
+        }
+        return {
+          id: tc.id,
+          name: fn?.name || '',
+          arguments: args
+        };
+      });
+
+      const usage = response.usage ? {
+        inputTokens: response.usage.prompt_tokens || 0,
+        outputTokens: response.usage.completion_tokens || 0
       } : undefined;
 
-      return { text, usage };
+      return {
+        text,
+        toolCalls: executedTools,
+        usage
+      };
     } catch (err: any) {
       throw normalizeOpenAIError(err);
     }
@@ -127,65 +261,47 @@ export class OpenAIAdapter implements AIProviderAdapter {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
-    if (!this.isConfigured()) {
-      throw new Error(
-        `OpenAI is not configured on the FLOAT server. To use "${request.model}", configure OPENAI_API_KEY in the environment.`
-      );
-    }
+    const client = this.getClient();
+    const effectiveModel = request.apiModelId || request.model;
+    const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
-      const payload = this.buildPayload(request, true);
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-        },
-        body: JSON.stringify(payload),
-        signal: providerRequestSignal(signal)
-      });
+      const messages = this.formatMessages(request, isReasoning);
+      const tools = this.formatTools(request.tools);
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `OpenAI API returned status ${res.status}`);
+      const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
+        model: effectiveModel,
+        messages,
+        stream: true,
+        ...(tools ? { tools } : {})
+      };
+
+      if (isReasoning && request.reasoningEffort) {
+        (params as any).reasoning_effort = request.reasoningEffort;
       }
 
-      if (!res.body) {
-        throw new Error('OpenAI response body is empty');
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
+      const stream = await client.chat.completions.create(params, { signal });
       let fullText = '';
-      let buffer = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
 
-      while (true) {
+      for await (const chunk of stream) {
         if (signal?.aborted) break;
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
-          const dataStr = trimmed.slice(6);
-          if (dataStr === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(dataStr);
-            const delta = parsed.choices?.[0]?.delta?.content || '';
-            if (delta) {
-              fullText += delta;
-              onChunk(delta);
-            }
-          } catch {}
+        const delta = chunk.choices[0]?.delta?.content || '';
+        if (delta) {
+          fullText += delta;
+          onChunk(delta);
+        }
+        if (chunk.usage) {
+          inputTokens = chunk.usage.prompt_tokens || inputTokens;
+          outputTokens = chunk.usage.completion_tokens || outputTokens;
         }
       }
 
-      return { text: fullText };
+      return {
+        text: fullText,
+        usage: (inputTokens || outputTokens) ? { inputTokens, outputTokens } : undefined
+      };
     } catch (err: any) {
       throw normalizeOpenAIError(err);
     }
@@ -199,8 +315,11 @@ export class OpenAIAdapter implements AIProviderAdapter {
     virtualFiles: any[]
   ): Promise<void> {
     if (!this.isConfigured()) {
-      throw new Error(
-        `OpenAI is not configured on the FLOAT server. To run agents with "${model}", configure OPENAI_API_KEY.`
+      throw new AIProviderError(
+        `OpenAI is not configured on the FLOAT server. To run agents with "${model}", configure OPENAI_API_KEY.`,
+        'AUTH_ERROR',
+        'OpenAI',
+        401
       );
     }
     return PortableAgentRunner.run('openai', req, res, model, prompt, virtualFiles, process.env.OPENAI_API_KEY!);

@@ -46,7 +46,7 @@ export async function startServer() {
       res.status(503).json({ status: 'not_ready', dependency: 'firestore' });
     }
   });
-  
+
   const modelRouter = new ModelRouter();
 
   // Agent Orchestrator Routes
@@ -141,6 +141,21 @@ export async function startServer() {
     }
   });
 
+  // Provider Health Check endpoint: verifies whether each configured provider can authenticate
+  // and whether its configured models are actually usable
+  app.get(['/api/ai/health', '/api/ai/providers/health'], async (_req, res) => {
+    try {
+      const health = await modelRouter.checkAllProvidersHealth();
+      res.json({
+        success: true,
+        providers: health,
+        timestamp: Date.now()
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Privacy & Governance Disclosure Route
   app.get('/api/privacy/policy', (_req, res) => {
     res.json({
@@ -176,22 +191,22 @@ export async function startServer() {
   // AI API Route - supports progressive SSE streaming and standard JSON
   app.post('/api/ai/chat', requireAuth, express.json({ limit: '24mb' }), async (req: any, res: any) => {
     if (!checkChatRateLimit(req.user.uid)) {
-      return res.status(429).json({ 
-        error: 'Rate limit exceeded. Please wait a moment before sending another request.' 
+      return res.status(429).json({
+        error: 'Rate limit exceeded. Please wait a moment before sending another request.'
       });
     }
 
     const isStream = req.body.stream === true || req.headers.accept?.includes('text/event-stream');
-    const { 
-      messages, 
-      model = 'gemini-3.1-flash-lite', 
-      systemInstruction, 
+    const {
+      messages,
+      model = 'gemini-3.1-flash-lite',
+      systemInstruction,
       reasoningEffort,
       effort,
       speed,
-      contextItems, 
-      projectName, 
-      projectId 
+      contextItems,
+      projectName,
+      projectId
     } = req.body;
     const resolvedEffort = reasoningEffort || effort;
 
@@ -296,11 +311,11 @@ export async function startServer() {
         res.end();
       } catch (error: any) {
         const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
-        const isCancelled = 
+        const isCancelled =
           abortController.signal.aborted ||
-          error?.type === 'cancelation' || 
-          error?.type === 'cancelled' || 
-          error?.name === 'AbortError' || 
+          error?.type === 'cancelation' ||
+          error?.type === 'cancelled' ||
+          error?.name === 'AbortError' ||
           /cancel/i.test(errorStr) ||
           errorStr.includes('operation is manually canceled');
 
@@ -309,7 +324,14 @@ export async function startServer() {
             res.write(`data: ${JSON.stringify({ type: 'done', text: '', cancelled: true })}\n\n`);
           } else {
             console.error('AI Stream Error:', error);
-            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message || 'Generation failed' })}\n\n`);
+            const errorCode = error?.code || 'PROVIDER_ERROR';
+            const errorProvider = error?.provider || 'FLOAT';
+            res.write(`data: ${JSON.stringify({
+              type: 'error',
+              error: error.message || 'Generation failed',
+              code: errorCode,
+              provider: errorProvider
+            })}\n\n`);
           }
           res.end();
         }
@@ -331,10 +353,10 @@ export async function startServer() {
       res.json({ text: response.text, usage: response.usage });
     } catch (error: any) {
       const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
-      const isCancelled = 
-        error?.type === 'cancelation' || 
-        error?.type === 'cancelled' || 
-        error?.name === 'AbortError' || 
+      const isCancelled =
+        error?.type === 'cancelation' ||
+        error?.type === 'cancelled' ||
+        error?.name === 'AbortError' ||
         /cancel/i.test(errorStr) ||
         errorStr.includes('operation is manually canceled');
 
@@ -343,7 +365,20 @@ export async function startServer() {
       }
 
       console.error('AI Error:', error);
-      res.status(500).json({ error: error.message || 'An error occurred during AI generation.' });
+      const errorCode = error?.code || 'PROVIDER_ERROR';
+      const statusCode = error?.statusCode || (
+        errorCode === 'AUTH_ERROR' ? 401 :
+        errorCode === 'MODEL_NOT_FOUND' ? 404 :
+        errorCode === 'QUOTA_EXCEEDED' || errorCode === 'RATE_LIMITED' ? 429 :
+        errorCode === 'INVALID_REQUEST' ? 400 : 500
+      );
+      const errorProvider = error?.provider || 'FLOAT';
+
+      res.status(statusCode).json({
+        error: error.message || 'An error occurred during AI generation.',
+        code: errorCode,
+        provider: errorProvider
+      });
     }
   });
 
@@ -437,10 +472,33 @@ export async function startServer() {
 
       await modelRouter.runAgentLoop(req, res, model, taskPrompt, submittedFiles);
     } catch (error: any) {
-      console.error('Agent Endpoint Error:', error);
+      const isCancellation =
+        error?.name === 'AbortError' ||
+        error?.type === 'cancelation' ||
+        error?.type === 'cancelled' ||
+        /operation is manually canceled/i.test(error?.message || error?.msg || '') ||
+        /cancel/i.test(error?.message || error?.msg || '');
+
+      if (isCancellation) {
+        if (!res.headersSent) {
+          res.json({ cancelled: true, message: 'Agent execution was stopped by user.' });
+        } else if (!res.writableEnded) {
+          res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'cancelled', message: 'Agent execution was stopped by user.' } })}\n\n`);
+          res.write(`data: ${JSON.stringify({ type: 'result', data: { text: '*(Agent task stopped)*', changeSet: null } })}\n\n`);
+          res.end();
+        }
+        return;
+      }
+
+      console.error('Agent Endpoint Error:', error.message || error);
       if (!res.headersSent) {
-        res.status(500).json({ error: error.message || 'An error occurred.' });
-      } else {
+        const statusCode = error?.statusCode || (error?.code === 'AUTH_ERROR' ? 401 : error?.code === 'MODEL_NOT_FOUND' ? 404 : 400);
+        res.status(statusCode).json({
+          error: error.message || 'An error occurred.',
+          code: error.code || 'PROVIDER_ERROR',
+          provider: error.provider || 'FLOAT'
+        });
+      } else if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'failed', message: error.message || 'Agent error occurred.' } })}\n\n`);
         res.end();
       }

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useIDEStore } from '../../store';
 import { useAuthStore } from '../../store/authStore';
-import { LogOut, X, Sun, Moon, User, Copy, Check, Sparkles, Sliders, Palette, ShieldCheck, Plug, Shield, ExternalLink, AlertCircle } from 'lucide-react';
+import { LogOut, X, Sun, Moon, Laptop, User, Copy, Check, Sparkles, Sliders, Palette, ShieldCheck, Plug, Shield, ExternalLink, AlertCircle } from 'lucide-react';
 import { FloatLogo } from '../../components/FloatLogo';
 import { cn } from '../../lib/utils';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
@@ -31,7 +31,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[100] flex justify-center items-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
-      
+
       <div className="relative w-full max-w-2xl bg-white dark:bg-[#0A0A0A] text-slate-800 dark:text-[#C9D1D9] rounded-2xl shadow-2xl border border-slate-200 dark:border-[#2A2A2A] flex flex-col max-h-[85vh] overflow-hidden transition-colors">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-[#2A2A2A] shrink-0 bg-slate-50/50 dark:bg-[#111111]">
@@ -42,8 +42,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               <p className="text-xs text-slate-500 dark:text-[#8B949E]">Manage your profile preferences and environment appearance</p>
             </div>
           </div>
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-slate-700 dark:text-[#8B949E] dark:hover:text-[#C9D1D9] hover:bg-slate-100 dark:hover:bg-[#1C1C1C] rounded-lg transition-colors cursor-pointer"
             title="Close (Esc)"
           >
@@ -114,10 +114,10 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             <span>Privacy & Data</span>
           </button>
         </div>
-        
+
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          
+
           {/* USER PROFILE SECTION */}
           {activeSection === 'profile' && (
             <div className="space-y-6">
@@ -158,7 +158,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-[#8B949E]">
                   Account Details
                 </h4>
-                
+
                 <div className="divide-y divide-slate-200 dark:divide-[#2A2A2A] rounded-xl border border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#141414] overflow-hidden text-sm">
                   <div className="flex items-center justify-between p-3.5">
                     <span className="text-xs text-slate-500 dark:text-[#8B949E]">Account ID</span>
@@ -228,8 +228,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   Select your preferred interface theme. The theme is applied across the Landing Page, Dashboard, and Code IDE.
                 </p>
 
-                {/* Segmented Light/Dark Mode Toggle */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Segmented Light/Dark/System Mode Toggle */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {/* Light Mode Option Card */}
                   <button
                     type="button"
@@ -260,7 +260,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                       Light Mode
                     </span>
                     <span className="text-xs text-slate-500 dark:text-[#8B949E] leading-relaxed">
-                      Clean white canvas with high contrast, optimized for daylight and clarity.
+                      Clean white canvas with high contrast, optimized for daylight.
                     </span>
 
                     {/* Preview visual bar */}
@@ -301,7 +301,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                       Dark Mode
                     </span>
                     <span className="text-xs text-slate-500 dark:text-[#8B949E] leading-relaxed">
-                      Deep obsidian background, reduced eye strain for focused night coding.
+                      Deep obsidian background, reduced eye strain for focused coding.
                     </span>
 
                     {/* Preview visual bar */}
@@ -309,6 +309,47 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                       <div className="w-1.5 h-1.5 rounded-full bg-white" />
                       <div className="w-8 h-1 rounded bg-[#2A2A2A]" />
                       <div className="w-4 h-1 rounded bg-[#1C1C1C]" />
+                    </div>
+                  </button>
+
+                  {/* System Theme Option Card */}
+                  <button
+                    type="button"
+                    onClick={() => updateSettings({ theme: 'system' })}
+                    className={cn(
+                      "flex flex-col items-start p-4 rounded-xl border text-left transition-all relative overflow-hidden group cursor-pointer",
+                      settings.theme === 'system'
+                        ? "border-slate-900 bg-slate-100 dark:border-white dark:bg-white/10 ring-1 ring-slate-900 dark:ring-white"
+                        : "border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#141414] hover:border-slate-300 dark:hover:border-slate-600"
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full mb-3">
+                      <div className={cn(
+                        "w-9 h-9 rounded-lg flex items-center justify-center transition-colors",
+                        settings.theme === 'system'
+                          ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                          : "bg-slate-100 dark:bg-[#1C1C1C] text-slate-600 dark:text-[#8B949E] group-hover:text-slate-900 dark:group-hover:text-white"
+                      )}>
+                        <Laptop size={18} />
+                      </div>
+                      {settings.theme === 'system' && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <span className="font-semibold text-sm text-slate-900 dark:text-white mb-1">
+                      System Sync
+                    </span>
+                    <span className="text-xs text-slate-500 dark:text-[#8B949E] leading-relaxed">
+                      Automatically matches your operating system theme preference.
+                    </span>
+
+                    {/* Preview visual bar */}
+                    <div className="mt-3 w-full h-3 rounded-md bg-gradient-to-r from-slate-200 to-[#141414] border border-slate-300 dark:border-[#2A2A2A] flex items-center px-1 gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                      <div className="w-8 h-1 rounded bg-slate-400" />
+                      <div className="w-4 h-1 rounded bg-slate-600" />
                     </div>
                   </button>
                 </div>
@@ -345,7 +386,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     <div className="text-sm font-medium text-slate-900 dark:text-white">Font Size</div>
                     <div className="text-xs text-slate-500 dark:text-[#8B949E]">Adjust the code editor font size in pixels</div>
                   </div>
-                  <input 
+                  <input
                     type="number"
                     className="bg-slate-50 dark:bg-[#0A0A0A] border border-slate-300 dark:border-[#2A2A2A] rounded-lg px-3 py-1.5 text-sm outline-none w-20 text-right focus:border-slate-500 dark:focus:border-white/40 text-slate-900 dark:text-white"
                     value={settings.fontSize}
@@ -358,7 +399,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     <div className="text-sm font-medium text-slate-900 dark:text-white">Word Wrap</div>
                     <div className="text-xs text-slate-500 dark:text-[#8B949E]">Wrap long lines inside the editor viewport</div>
                   </div>
-                  <select 
+                  <select
                     className="bg-slate-50 dark:bg-[#0A0A0A] border border-slate-300 dark:border-[#2A2A2A] rounded-lg px-3 py-1.5 text-sm outline-none focus:border-slate-500 dark:focus:border-white/40 text-slate-900 dark:text-white cursor-pointer"
                     value={settings.wordWrap}
                     onChange={(e) => updateSettings({ wordWrap: e.target.value as any })}
@@ -373,7 +414,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     <div className="text-sm font-medium text-slate-900 dark:text-white">Minimap</div>
                     <div className="text-xs text-slate-500 dark:text-[#8B949E]">Display overview minimap on the right margin</div>
                   </div>
-                  <input 
+                  <input
                     type="checkbox"
                     checked={settings.minimap}
                     onChange={(e) => updateSettings({ minimap: e.target.checked })}
@@ -386,7 +427,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     <div className="text-sm font-medium text-slate-900 dark:text-white">Tab Size</div>
                     <div className="text-xs text-slate-500 dark:text-[#8B949E]">Indentation spaces per tab press</div>
                   </div>
-                  <input 
+                  <input
                     type="number"
                     className="bg-slate-50 dark:bg-[#0A0A0A] border border-slate-300 dark:border-[#2A2A2A] rounded-lg px-3 py-1.5 text-sm outline-none w-20 text-right focus:border-slate-500 dark:focus:border-white/40 text-slate-900 dark:text-white"
                     value={settings.tabSize}
@@ -432,8 +473,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-slate-900 dark:text-white">Diagnostic logging preference</span>
                       <span className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase ${
-                        preferences.sharingEnabled 
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-400' 
+                        preferences.sharingEnabled
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-400'
                           : 'bg-slate-200 text-slate-700 dark:bg-white/10 dark:text-slate-300'
                       }`}>
                         {preferences.sharingEnabled ? 'Enabled (development diagnostics)' : 'Disabled'}
@@ -462,8 +503,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     }`}
                   >
                     <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform ${
-                      preferences.sharingEnabled 
-                        ? 'translate-x-5 bg-white dark:bg-black' 
+                      preferences.sharingEnabled
+                        ? 'translate-x-5 bg-white dark:bg-black'
                         : 'translate-x-0 bg-white dark:bg-[#8B949E]'
                     }`} />
                   </button>
@@ -491,9 +532,9 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   Reset Preference
                 </button>
 
-                <a 
-                  href="/privacy" 
-                  target="_blank" 
+                <a
+                  href="/privacy"
+                  target="_blank"
                   rel="noreferrer"
                   className="text-xs text-blue-500 hover:underline flex items-center gap-1"
                 >

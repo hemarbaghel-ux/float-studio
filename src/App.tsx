@@ -1,5 +1,5 @@
 import { lazy, useEffect, useState } from 'react';
-import { useIDEStore } from './store';
+import { useIDEStore, applyThemeToDocument } from './store';
 import { useOnboardingStore } from './store/onboardingStore';
 import { useAuthStore } from './store/authStore';
 const AppShell = lazy(() => import('./features/shell/AppShell').then((module) => ({ default: module.AppShell })));
@@ -43,7 +43,7 @@ export default function App() {
       setCurrentPath(window.location.pathname);
     };
     window.addEventListener('popstate', handleLocationChange);
-    
+
     // Intercept a tag clicks for simple routing
     const handleAnchorClick = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -53,18 +53,17 @@ export default function App() {
         const url = new URL(anchor.href);
         if (
           url.origin === window.location.origin && (
-          url.pathname.startsWith('/models') || 
-          url.pathname.startsWith('/evals') || 
-          url.pathname.startsWith('/pricing') || 
-          url.pathname.startsWith('/resources') || 
-          url.pathname.startsWith('/learn') || 
-          url.pathname.startsWith('/features') || 
-          url.pathname.startsWith('/chat/') || 
+          url.pathname.startsWith('/models') ||
+          url.pathname.startsWith('/evals') ||
+          url.pathname.startsWith('/pricing') ||
+          url.pathname.startsWith('/resources') ||
+          url.pathname.startsWith('/learn') ||
+          url.pathname.startsWith('/features') ||
+          url.pathname.startsWith('/chat/') ||
           url.pathname === '/' ||
           url.pathname === '/dashboard' ||
           url.pathname === '/workspace' ||
           url.pathname === '/ide' ||
-          url.pathname === '/codebase' ||
           url.pathname === '/projects' ||
           url.pathname === '/automations' ||
           url.pathname === '/integrations' ||
@@ -95,7 +94,7 @@ export default function App() {
       }
     };
     document.addEventListener('click', handleAnchorClick);
-    
+
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
       document.removeEventListener('click', handleAnchorClick);
@@ -103,15 +102,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (settings.theme === 'dark') {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
-      document.documentElement.setAttribute('data-theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      document.documentElement.classList.add('light');
-      document.documentElement.setAttribute('data-theme', 'light');
-    }
+    applyThemeToDocument(settings.theme);
   }, [settings.theme]);
 
   useEffect(() => {
@@ -132,8 +123,7 @@ export default function App() {
 
   const requiresAccount = [
     '/dashboard', '/workspace', '/ide', '/automations', '/integrations',
-    '/projects', '/codebase', '/settings', '/profile', '/models/usage',
-    '/evals', '/models/evals',
+    '/projects', '/settings', '/profile', '/models/usage', '/evals', '/models/evals',
   ].includes(currentPath) || currentPath.startsWith('/chat/');
   if (!user && requiresAccount) {
     return <SignUpPage initialMode="signin" returnTo={`${currentPath}${window.location.search}${window.location.hash}`} />;
@@ -262,8 +252,8 @@ export default function App() {
   if (currentPath === '/automations') {
     return <Dashboard initialTab="automations" />;
   }
-  if (currentPath === '/projects' || currentPath === '/codebase') {
-    return <Dashboard initialTab="codebase" />;
+  if (currentPath === '/projects') {
+    return <Dashboard initialTab="projects" />;
   }
   if (currentPath === '/dashboard') {
     return <Dashboard initialTab="new-chat" />;
@@ -278,7 +268,7 @@ export default function App() {
     return <ModelsPage />;
   }
 
-  // 1. First time visitors or unauthenticated users see the landing page
+  // 1. First time visitors or unauthenticated users see the landing page, unless visiting login / dashboard
   if (!user || !hasStarted) {
     return <LandingPage />;
   }

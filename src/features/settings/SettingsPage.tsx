@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { 
-  SlidersHorizontal, Palette, Code2, Bot, Bell, Shield, 
-  Sun, Moon, Laptop, Check, ArrowLeft, RefreshCw, Download, 
+import React, { useState, useEffect } from 'react';
+import {
+  SlidersHorizontal, Palette, Code2, Bot, Bell, Shield,
+  Sun, Moon, Laptop, Check, ArrowLeft, RefreshCw, Download,
   Trash2, AlertTriangle, ExternalLink, ShieldCheck, Sparkles,
   Info, Cpu, CheckCircle2, ChevronRight
 } from 'lucide-react';
@@ -15,6 +15,18 @@ import { useConsentStore } from '../../store/consentStore';
 
 export function SettingsPage() {
   const [activeCategory, setActiveCategory] = useState<'general' | 'appearance' | 'editor' | 'ai' | 'notifications' | 'privacy'>('general');
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const cat = params.get('category') || params.get('tab') || window.location.hash.replace('#', '');
+      if (cat && ['general', 'appearance', 'editor', 'ai', 'notifications', 'privacy'].includes(cat)) {
+        setActiveCategory(cat as any);
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }, []);
   const [resetSuccess, setResetSuccess] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const [consentSuccessMsg, setConsentSuccessMsg] = useState<string | null>(null);
@@ -26,7 +38,7 @@ export function SettingsPage() {
   const { settings, updateSettings, files, projectName } = useIDEStore();
   const { user, logout } = useAuthStore();
   const { preferences, updateConsent, withdrawConsent, isSaving: isSavingConsent, error: consentError, clearError } = useConsentStore();
-  const { 
+  const {
     selectedModel, setSelectedModel,
     selectedAgent, setSelectedAgent
   } = useAIStore();
@@ -91,7 +103,7 @@ export function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#000000] text-slate-900 dark:text-[#E6EDF3] flex flex-col font-sans transition-colors selection:bg-slate-300 dark:selection:bg-white/20">
-      
+
       {/* Top Header */}
       <header className="h-14 border-b border-slate-200 dark:border-white/10 px-4 sm:px-6 flex items-center justify-between bg-white dark:bg-[#080808] shrink-0 sticky top-0 z-30">
         <div className="flex items-center gap-3">
@@ -126,7 +138,7 @@ export function SettingsPage() {
 
       {/* Main Container - Two Columns */}
       <div className="flex-1 max-w-6xl w-full mx-auto flex flex-col md:flex-row p-4 sm:p-6 md:p-8 gap-8">
-        
+
         {/* Left Sidebar Navigation */}
         <aside className="w-full md:w-64 shrink-0 flex flex-col gap-1 select-none">
           <div className="mb-3 px-2">
@@ -163,7 +175,7 @@ export function SettingsPage() {
 
         {/* Right Content Panel */}
         <main className="flex-1 min-w-0 bg-white dark:bg-[#0A0A0A] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-6 sm:p-8 shadow-sm">
-          
+
           {/* GENERAL SETTINGS */}
           {activeCategory === 'general' && (
             <div className="space-y-6">
@@ -584,8 +596,8 @@ export function SettingsPage() {
                     <div className="flex items-center gap-2">
                   <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Optional diagnostic logging</h4>
                       <span className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider ${
-                        preferences.sharingEnabled 
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-400' 
+                        preferences.sharingEnabled
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-400'
                           : 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-300'
                       }`}>
                         {preferences.sharingEnabled ? 'Enabled (development diagnostics)' : 'Disabled'}
@@ -615,8 +627,8 @@ export function SettingsPage() {
                       }`}
                     >
                       <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform ${
-                        preferences.sharingEnabled 
-                          ? 'translate-x-5 bg-white dark:bg-black' 
+                        preferences.sharingEnabled
+                          ? 'translate-x-5 bg-white dark:bg-black'
                           : 'translate-x-0 bg-white dark:bg-[#8B949E]'
                       }`} />
                     </button>
@@ -661,8 +673,8 @@ export function SettingsPage() {
                     <span className="text-slate-400 text-[11px]">Sets the preference to disabled.</span>
                   </div>
 
-                  <a 
-                    href="/privacy" 
+                  <a
+                    href="/privacy"
                     className="text-blue-500 hover:underline flex items-center gap-1 text-xs"
                   >
                     <span>Read data-handling draft</span>

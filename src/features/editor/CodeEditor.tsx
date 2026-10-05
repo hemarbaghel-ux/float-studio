@@ -22,7 +22,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
 
   const handleEditorDidMount = (editor: any, monacoInstance: any) => {
     editorRef.current = editor;
-    
+
     // Add save command
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {
       markTabModified(fileId, false);
@@ -69,11 +69,15 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
     return 'plaintext';
   };
 
+  const isDark = typeof document !== 'undefined'
+    ? document.documentElement.classList.contains('dark')
+    : settings.theme !== 'light';
+
   return (
     <Editor
       height="100%"
       language={getLanguage(fileName)}
-      theme={settings.theme === 'dark' ? 'vs-dark' : 'light'}
+      theme={isDark ? 'vs-dark' : 'light'}
       value={content}
       onChange={handleEditorChange}
       onMount={handleEditorDidMount}

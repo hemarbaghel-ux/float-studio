@@ -5,15 +5,15 @@ import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loade
 import { cn, flattenFileTree } from '../../lib/utils';
 import { executeProjectCommand } from '../../services/projectExecution';
 import { ValidationPanel } from '../../components/panels/ValidationPanel';
-import { isShellCommand, runShell } from '../float/sandbox';
 import { useCloudSession } from '../float/cloudSessionStore';
+import { isShellCommand, runShell } from '../float/sandbox';
 import { sandboxFs } from '../float/workspaceFs';
 
 export function BottomPanel() {
-  const { 
-    toggleBottomPanel, 
-    terminalEntries, 
-    addTerminalEntry, 
+  const {
+    toggleBottomPanel,
+    terminalEntries,
+    addTerminalEntry,
     clearTerminal,
     bottomPanelTab,
     setBottomPanelTab,
@@ -137,31 +137,31 @@ Browser worker (type: session start):
       {/* Panel Tab Bar */}
       <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#2A2A2A] select-none pr-2 shrink-0 h-9 bg-slate-100/70 dark:bg-[#080808]">
         <div className="flex h-full">
-          <Tab 
-            name="TERMINAL" 
-            icon={<TerminalIcon size={12} className="mr-1.5" />} 
-            isActive={bottomPanelTab === 'terminal'} 
-            onClick={() => setBottomPanelTab('terminal')} 
+          <Tab
+            name="TERMINAL"
+            icon={<TerminalIcon size={12} className="mr-1.5" />}
+            isActive={bottomPanelTab === 'terminal'}
+            onClick={() => setBottomPanelTab('terminal')}
           />
-          <Tab 
-            name="OUTPUT" 
-            icon={<FileText size={12} className="mr-1.5" />} 
-            isActive={bottomPanelTab === 'output'} 
-            onClick={() => setBottomPanelTab('output')} 
+          <Tab
+            name="OUTPUT"
+            icon={<FileText size={12} className="mr-1.5" />}
+            isActive={bottomPanelTab === 'output'}
+            onClick={() => setBottomPanelTab('output')}
           />
-          <Tab 
-            name="PROBLEMS" 
-            icon={<AlertCircle size={12} className="mr-1.5 text-amber-500" />} 
-            count={executionError ? 1 : 0} 
-            isActive={bottomPanelTab === 'problems'} 
-            onClick={() => setBottomPanelTab('problems')} 
+          <Tab
+            name="PROBLEMS"
+            icon={<AlertCircle size={12} className="mr-1.5 text-amber-500" />}
+            count={executionError ? 1 : 0}
+            isActive={bottomPanelTab === 'problems'}
+            onClick={() => setBottomPanelTab('problems')}
           />
-          <Tab 
-            name="VALIDATION" 
-            icon={<CheckCircle2 size={12} className={cn("mr-1.5", valErrorCount > 0 ? "text-rose-500" : "text-emerald-500")} />} 
-            count={valErrorCount} 
-            isActive={bottomPanelTab === 'validation'} 
-            onClick={() => setBottomPanelTab('validation')} 
+          <Tab
+            name="VALIDATION"
+            icon={<CheckCircle2 size={12} className={cn("mr-1.5", valErrorCount > 0 ? "text-rose-500" : "text-emerald-500")} />}
+            count={valErrorCount}
+            isActive={bottomPanelTab === 'validation'}
+            onClick={() => setBottomPanelTab('validation')}
           />
         </div>
 
@@ -185,7 +185,7 @@ Browser worker (type: session start):
             </>
           )}
 
-          <button 
+          <button
             onClick={toggleBottomPanel}
             title="Close Panel"
             className="p-1 text-slate-400 dark:text-[#8B949E] hover:bg-slate-200 dark:hover:bg-[#1C1C1C] hover:text-slate-800 dark:hover:text-white rounded transition-colors cursor-pointer"
@@ -194,7 +194,7 @@ Browser worker (type: session start):
           </button>
         </div>
       </div>
-      
+
       {/* Panel Content */}
       <div className={cn("flex-1 min-h-0", bottomPanelTab === 'validation' ? "overflow-hidden" : "overflow-y-auto p-2.5 font-mono text-xs")}>
         {/* Validation Tab */}
@@ -207,14 +207,14 @@ Browser worker (type: session start):
           <div className="text-slate-800 dark:text-[#C9D1D9] flex flex-col min-h-full">
             <div className="flex-1 space-y-1">
               {terminalEntries.map(entry => (
-                <div 
-                  key={entry.id} 
+                <div
+                  key={entry.id}
                   className={cn(
-                    "px-2 py-0.5 rounded leading-relaxed whitespace-pre-wrap break-all", 
-                    entry.type === 'error' 
-                      ? "text-rose-500 bg-rose-500/5" 
-                      : entry.type === 'command' 
-                        ? "font-semibold text-blue-600 dark:text-[#79C0FF]" 
+                    "px-2 py-0.5 rounded leading-relaxed whitespace-pre-wrap break-all",
+                    entry.type === 'error'
+                      ? "text-rose-500 bg-rose-500/5"
+                      : entry.type === 'command'
+                        ? "font-semibold text-blue-600 dark:text-[#79C0FF]"
                         : "text-slate-700 dark:text-[#C9D1D9]"
                   )}
                 >
@@ -227,12 +227,12 @@ Browser worker (type: session start):
 
             <div className="flex items-center px-2 mt-2 pt-2 border-t border-slate-200/50 dark:border-[#2A2A2A]">
               <span className="text-emerald-600 dark:text-[#7EE787] mr-2 select-none">$</span>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={inputVal}
                 disabled={isExecutingInput}
                 onChange={(e) => setInputVal(e.target.value)}
-                className="flex-1 bg-transparent outline-none caret-blue-600 dark:caret-[#79C0FF] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#555]" 
+                className="flex-1 bg-transparent outline-none caret-blue-600 dark:caret-[#79C0FF] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#555]"
                 placeholder={isExecutingInput ? 'Process running…' : 'Run a project command (e.g. npm test, git status, python main.py)…'}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && inputVal) {
@@ -244,7 +244,7 @@ Browser worker (type: session start):
             </div>
           </div>
         )}
-        
+
         {/* Output Tab */}
         {bottomPanelTab === 'output' && (
           <div className="space-y-2 text-slate-800 dark:text-[#C9D1D9]">
@@ -310,26 +310,26 @@ Browser worker (type: session start):
   );
 }
 
-function Tab({ 
-  name, 
-  icon, 
-  count, 
-  isActive, 
-  onClick 
-}: { 
-  name: string; 
-  icon?: React.ReactNode; 
-  count?: number; 
-  isActive: boolean; 
-  onClick: () => void; 
+function Tab({
+  name,
+  icon,
+  count,
+  isActive,
+  onClick
+}: {
+  name: string;
+  icon?: React.ReactNode;
+  count?: number;
+  isActive: boolean;
+  onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
       className={cn(
         "px-4 text-[11px] font-bold tracking-wider transition-colors border-b-2 flex items-center cursor-pointer",
-        isActive 
-          ? "border-slate-900 dark:border-white bg-white dark:bg-[#141414] text-slate-900 dark:text-white font-semibold" 
+        isActive
+          ? "border-slate-900 dark:border-white bg-white dark:bg-[#141414] text-slate-900 dark:text-white font-semibold"
           : "border-transparent text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-transparent"
       )}
     >

@@ -3,6 +3,26 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Base Theme & Color Scheme Synchronization */
+html.dark, html[data-theme="dark"] {
+  color-scheme: dark;
+  background-color: #0A0A0A;
+  color: #C9D1D9;
+}
+
+html.light, html[data-theme="light"] {
+  color-scheme: light;
+  background-color: #F8F8F7;
+  color: #0F172A;
+}
+
+body {
+  background-color: inherit;
+  color: inherit;
+  margin: 0;
+  padding: 0;
+}
+
 /* FLOAT Motion & Animation Design Tokens (Synced with src/lib/animations.ts) */
 :root {
   --float-duration-instant: 100ms;

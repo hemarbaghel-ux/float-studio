@@ -178,15 +178,28 @@ export const useAIStore = create<AIStore>((set) => ({
         const data = await res.json();
         if (data.providers) {
           set((state) => {
-            const updated = { ...state.providers };
+            const updatedProviders = { ...state.providers };
             for (const [key, val] of Object.entries(data.providers as Record<string, { name: string; configured: boolean }>)) {
-              updated[key] = {
+              updatedProviders[key] = {
                 enabled: true,
                 configured: val.configured,
-                defaultModel: updated[key]?.defaultModel || ''
+                defaultModel: updatedProviders[key]?.defaultModel || ''
               };
             }
-            return { providers: updated };
+
+            // Sync model availability based on real provider configuration
+            const updatedModels = state.models.map((m) => {
+              const pId = m.providerId?.toLowerCase();
+              if (pId === 'auto') return m;
+              const isConfigured = updatedProviders[pId]?.configured ?? false;
+              return {
+                ...m,
+                status: isConfigured ? ('AVAILABLE' as const) : ('CONFIG_REQUIRED' as const),
+                availability: isConfigured ? 'Available' : 'Configuration required'
+              };
+            });
+
+            return { providers: updatedProviders, models: updatedModels };
           });
         }
       }

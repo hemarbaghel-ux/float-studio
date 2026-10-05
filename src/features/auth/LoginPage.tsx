@@ -1,5 +1,5 @@
 import React from 'react';
-import { SignUpPage } from './SignUpPage';
+import { Dashboard } from '../dashboard/Dashboard';
 
 interface LoginPageProps {
   onClose?: () => void;
@@ -7,5 +7,5 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onClose, isModal = false }: LoginPageProps) {
-  return <SignUpPage initialMode="signin" onClose={onClose} isModal={isModal} />;
+  return <Dashboard initialTab="new-chat" />;
 }

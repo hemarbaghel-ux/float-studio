@@ -2,9 +2,9 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
 import { auth } from '../../lib/firebase';
-import { 
-  Send, Plus, Code, Paperclip, Square, Loader2, X, 
-  File as FileIcon, RotateCcw, AlertCircle, ChevronDown, 
+import {
+  Send, Plus, Code, Paperclip, Square, Loader2, X,
+  File as FileIcon, RotateCcw, AlertCircle, ChevronDown,
   Trash2, MessageSquare, Check, Sparkles, Upload, Search,
   FileCode, Layers, ChevronUp, Copy, Edit2, Link, ArrowRight,
   PanelRightClose
@@ -145,9 +145,9 @@ function AgentEventsTimeline({ events, isLoading }: { events: any[]; isLoading: 
                         </span>
                       )}
                       <span className={cn(
-                        "text-[11px] leading-snug", 
-                        isFailed ? "text-red-600 dark:text-red-400" : 
-                        isCurrent ? "text-purple-600 dark:text-purple-300 font-medium" : 
+                        "text-[11px] leading-snug",
+                        isFailed ? "text-red-600 dark:text-red-400" :
+                        isCurrent ? "text-purple-600 dark:text-purple-300 font-medium" :
                         "text-slate-700 dark:text-[#C9D1D9]"
                       )}>
                         {ev.message}
@@ -170,23 +170,23 @@ function AgentEventsTimeline({ events, isLoading }: { events: any[]; isLoading: 
 }
 
 export function AIPanel() {
-  const { 
+  const {
     projectId,
     projectName,
     activeConversationId, setActiveConversationId,
-    aiMessages, setAiMessages, addAiMessage, updateAiMessage, clearAiMessages, 
+    aiMessages, setAiMessages, addAiMessage, updateAiMessage, clearAiMessages,
     aiContext, addAiContext, removeAiContext, clearAiContext,
     activeSelection, activeFileId, files,
     initialPrompt, setInitialPrompt,
     toggleRightSidebar
   } = useIDEStore();
 
-  const { 
-    selectedModel, setSelectedModel, 
+  const {
+    selectedModel, setSelectedModel,
     selectedAgent, setSelectedAgent,
     models, setModels, agents, setAgents
   } = useAIStore();
-  
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [reviewingChangeSet, setReviewingChangeSet] = useState<ChangeSet | null>(null);
@@ -363,7 +363,7 @@ export function AIPanel() {
     if (!activeFileId) return;
     const virtualFiles = flattenFileTree(files);
     const activeFile = virtualFiles.find(f => f.id === activeFileId);
-    
+
     if (activeFile && !aiContext.find(c => c.path === activeFile.path || c.name === activeFile.path)) {
       addAiContext({
         type: 'file',
@@ -691,10 +691,10 @@ export function AIPanel() {
       refreshConversations();
 
     } catch (error: any) {
-      const isCancellation = 
-        error?.name === 'AbortError' || 
-        error?.type === 'cancelation' || 
-        error?.type === 'cancelled' || 
+      const isCancellation =
+        error?.name === 'AbortError' ||
+        error?.type === 'cancelation' ||
+        error?.type === 'cancelled' ||
         /cancel/i.test(error?.message || error?.msg || '');
 
       if (isCancellation) {
@@ -704,13 +704,19 @@ export function AIPanel() {
         });
       } else {
         let errMsg = error.message || 'Could not connect to model provider.';
+        let errTitle = 'Provider Error';
         if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
+          errTitle = 'Rate Limit / Quota Exceeded';
           errMsg = "Provider quota or rate limit exceeded. Please wait a moment before trying again, or select another available model in the model selector.";
+        } else if (/auth|unauthorized|api_key|not configured|missing/i.test(errMsg)) {
+          errTitle = 'Authentication / Configuration Error';
+        } else if (/not recognized|not found/i.test(errMsg)) {
+          errTitle = 'Model Not Found';
         }
         updateAiMessage(modelMsgId, {
           status: 'error',
           error: errMsg,
-          content: `**Rate Limit / Provider Error**\n\n${errMsg}`
+          content: `**${errTitle}**\n\n${errMsg}`
         });
       }
     } finally {
@@ -722,14 +728,14 @@ export function AIPanel() {
 
   // Agent submit handler
   const handleAgentSubmit = async (
-    userMessage: string, 
-    token: string, 
-    targetConvId: string, 
+    userMessage: string,
+    token: string,
+    targetConvId: string,
     contextItems: AIContextItem[] = []
   ) => {
     const { files, openTabs, activeFileId, terminalEntries } = useIDEStore.getState();
     const virtualFiles = flattenFileTree(files);
-    
+
     const activeFile = virtualFiles.find(f => f.id === activeFileId)?.path;
     const openFilePaths = openTabs.map(t => virtualFiles.find(f => f.id === t.fileId)?.path).filter(Boolean);
     const recentErrors = terminalEntries.filter(t => t.type === 'error').slice(-3).map(t => t.content);
@@ -747,18 +753,18 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
     const fullPrompt = `${contextHeader}\n\n[User Request]\n${userMessage}`;
 
     const tempId = uuidv4();
-    addAiMessage({ 
-      id: tempId, 
-      role: 'model', 
-      content: '', 
+    addAiMessage({
+      id: tempId,
+      role: 'model',
+      content: '',
       status: 'streaming',
-      events: [], 
-      conversationId: targetConvId 
+      events: [],
+      conversationId: targetConvId
     });
-    
+
     abortControllerRef.current = new AbortController();
     let finalContent = '';
-    
+
     try {
       const response = await fetch('/api/ai/agent', {
         method: 'POST',
@@ -787,7 +793,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      
+
       let events: any[] = [];
       finalContent = '';
       let finalChangeSet = undefined;
@@ -795,22 +801,22 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        
+
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n\n');
-        
+
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              
+
               if (data.type === 'event') {
                 events = [...events, data.data];
                 updateAiMessage(tempId, { events });
                 if (data.data?.type === 'failed') {
                   const errorMsg = data.data.message || 'Agent task failed.';
-                  finalContent = finalContent 
-                    ? `${finalContent}\n\n**Agent Execution Failed**: ${errorMsg}` 
+                  finalContent = finalContent
+                    ? `${finalContent}\n\n**Agent Execution Failed**: ${errorMsg}`
                     : `**Agent Execution Failed**\n\n${errorMsg}`;
                   updateAiMessage(tempId, {
                     content: finalContent,
@@ -825,10 +831,10 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               } else if (data.type === 'result') {
                 finalContent = data.data.text || finalContent || 'Task completed.';
                 finalChangeSet = data.data.changeSet;
-                updateAiMessage(tempId, { 
-                  content: finalContent, 
-                  changeSet: finalChangeSet, 
-                  status: 'completed' 
+                updateAiMessage(tempId, {
+                  content: finalContent,
+                  changeSet: finalChangeSet,
+                  status: 'completed'
                 });
               }
             } catch (e) {
@@ -851,10 +857,10 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
       refreshConversations();
 
     } catch (error: any) {
-      const isCancellation = 
-        error?.name === 'AbortError' || 
-        error?.type === 'cancelation' || 
-        error?.type === 'cancelled' || 
+      const isCancellation =
+        error?.name === 'AbortError' ||
+        error?.type === 'cancelation' ||
+        error?.type === 'cancelled' ||
         /cancel/i.test(error?.message || error?.msg || '');
 
       if (isCancellation) {
@@ -867,10 +873,10 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
         if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
           errMsg = "Provider quota or rate limit exceeded. Please wait a moment before trying again, or select another available model in the model selector.";
         }
-        updateAiMessage(tempId, { 
+        updateAiMessage(tempId, {
           status: 'error',
           error: errMsg,
-          content: `**Rate Limit / Provider Error**\n\n${errMsg}` 
+          content: `**Rate Limit / Provider Error**\n\n${errMsg}`
         });
       }
     } finally {
@@ -973,7 +979,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
   return (
     <div className="h-full flex flex-col bg-slate-50 dark:bg-[#0A0A0A]">
       {/* Hidden File Input for local source upload */}
-      <input 
+      <input
         ref={fileInputRef}
         type="file"
         accept=".py,.ts,.tsx,.js,.jsx,.json,.md,.html,.css,.txt,.yaml,.yml,.toml,.sql,.sh,.env.example"
@@ -999,13 +1005,13 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
 
             {isConvDropdownOpen && (
               <>
-                <div 
-                  className="fixed inset-0 z-30" 
+                <div
+                  className="fixed inset-0 z-30"
                   onClick={() => {
                     setIsConvDropdownOpen(false);
                     setDeletingConvId(null);
                     setEditingTitleConvId(null);
-                  }} 
+                  }}
                 />
                 <div className="absolute left-0 top-full mt-1.5 w-72 bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#2C2C2C] rounded-xl shadow-2xl p-1.5 z-40 flex flex-col gap-0.5 animate-in fade-in duration-100">
                   <div className="flex items-center justify-between px-2.5 py-1.5 text-[11px] font-semibold text-slate-400 dark:text-[#7D8590] border-b border-slate-100 dark:border-white/5">
@@ -1037,14 +1043,14 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                             onClick={() => !isDeleting && !isEditing && handleSwitchConversation(conv)}
                             className={cn(
                               "px-2.5 py-1.5 rounded-lg flex items-center justify-between text-xs cursor-pointer group transition-colors",
-                              isCurrent 
-                                ? "bg-slate-100 dark:bg-white/[0.08] text-slate-900 dark:text-white font-medium" 
+                              isCurrent
+                                ? "bg-slate-100 dark:bg-white/[0.08] text-slate-900 dark:text-white font-medium"
                                 : "text-slate-600 dark:text-[#A1A1AA] hover:bg-slate-50 dark:hover:bg-white/[0.04]"
                             )}
                           >
                             <div className="flex items-center gap-2 truncate mr-2 flex-1">
                               {isCurrent && <Check size={12} className="text-purple-600 dark:text-purple-400 shrink-0" />}
-                              
+
                               {isEditing ? (
                                 <input
                                   type="text"
@@ -1126,26 +1132,26 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </div>
 
           <div className="flex items-center gap-1">
-            <button 
+            <button
               type="button"
-              onClick={handleCopyChatLink} 
-              className="p-1.5 text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 rounded-md transition-colors cursor-pointer" 
+              onClick={handleCopyChatLink}
+              className="p-1.5 text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 rounded-md transition-colors cursor-pointer"
               title={copiedLink ? "Link copied!" : "Copy conversation link"}
             >
               {copiedLink ? <Check size={14} className="text-emerald-500" /> : <Link size={14} />}
             </button>
-            <button 
+            <button
               type="button"
-              onClick={handleNewChat} 
-              className="p-1.5 text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 rounded-md transition-colors cursor-pointer" 
+              onClick={handleNewChat}
+              className="p-1.5 text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 rounded-md transition-colors cursor-pointer"
               title="Start a new chat"
             >
               <Plus size={15} />
             </button>
-            <button 
+            <button
               type="button"
-              onClick={toggleRightSidebar} 
-              className="p-1.5 text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 rounded-md transition-colors cursor-pointer md:hidden" 
+              onClick={toggleRightSidebar}
+              className="p-1.5 text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 rounded-md transition-colors cursor-pointer md:hidden"
               title="Close AI Panel"
             >
               <PanelRightClose size={15} />
@@ -1156,30 +1162,30 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
         {/* Agent & Model Selectors */}
         <div className="flex gap-2">
           <div className="flex-1">
-             <AgentSelector 
-                activeAgentId={selectedAgent} 
+             <AgentSelector
+                activeAgentId={selectedAgent}
                 onAgentChange={(agentId) => {
                   setSelectedAgent(agentId);
                   const agent = agents.find(a => a.id === agentId);
                   if (agent && agent.defaultModel) {
                     setSelectedModel(agent.defaultModel);
                   }
-                }} 
+                }}
                 onAgentManagerOpen={() => document.dispatchEvent(new Event('open-agent-manager'))}
              />
           </div>
           <div className="flex-1">
-             <ModelSelector 
-                activeModelId={selectedModel} 
-                onModelChange={setSelectedModel} 
-                agentId={selectedAgent} 
+             <ModelSelector
+                activeModelId={selectedModel}
+                onModelChange={setSelectedModel}
+                agentId={selectedAgent}
              />
           </div>
         </div>
       </div>
 
       {/* MESSAGE STREAMING & HISTORY AREA */}
-      <div 
+      <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 scrollbar-thin"
@@ -1235,8 +1241,8 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             const isError = msg.status === 'error' || (msg.content && msg.content.startsWith('**Error**:'));
 
             return (
-              <div 
-                key={msg.id} 
+              <div
+                key={msg.id}
                 className={cn("text-sm flex flex-col group", isUser ? "items-end" : "items-start")}
               >
                 {!isUser && (msgModel || msgAgent || msg.latency) && (
@@ -1262,12 +1268,12 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 {msg.events && msg.events.length > 0 && (
                   <AgentEventsTimeline events={msg.events} isLoading={isLoading && msg.id === aiMessages[aiMessages.length - 1]?.id} />
                 )}
-                
+
                 {/* Message Bubble */}
                 <div className={cn(
                   "max-w-[92%] p-3.5 rounded-2xl select-text transition-all",
-                  isUser 
-                    ? "bg-slate-900 text-white dark:bg-white dark:text-black rounded-tr-sm shadow-xs" 
+                  isUser
+                    ? "bg-slate-900 text-white dark:bg-white dark:text-black rounded-tr-sm shadow-xs"
                     : isError
                     ? "bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-400 rounded-tl-sm w-full"
                     : "bg-white dark:bg-[#111111] border border-slate-200/90 dark:border-[#2A2A2A] rounded-tl-sm text-slate-800 dark:text-[#C9D1D9] shadow-xs"
@@ -1372,7 +1378,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                         ))}
                         <div className="mt-3 flex gap-2">
                           {msg.changeSet.status === 'pending' || msg.changeSet.status === 'pending_review' || msg.changeSet.status === 'stale' ? (
-                            <button 
+                            <button
                               type="button"
                               className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:text-black dark:hover:bg-slate-200 rounded-md transition-colors font-medium cursor-pointer shadow-xs flex items-center justify-center gap-1.5 text-xs"
                               onClick={() => setReviewingChangeSet(msg.changeSet!)}
@@ -1382,7 +1388,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           ) : (
                             <div className={cn(
                               "flex-1 py-1.5 text-center rounded-md font-medium text-xs capitalize",
-                              msg.changeSet.status === 'applied' ? "bg-emerald-500/20 text-emerald-600 dark:text-[#7EE787]" : 
+                              msg.changeSet.status === 'applied' ? "bg-emerald-500/20 text-emerald-600 dark:text-[#7EE787]" :
                               msg.changeSet.status === 'partially_applied' ? "bg-purple-500/20 text-purple-600 dark:text-purple-400" :
                               "bg-red-500/20 text-red-500"
                             )}>
@@ -1403,7 +1409,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
       {/* CHAT COMPOSER WITH CODEBASE CONTEXT INTEGRATION */}
       <div className="p-3.5 border-t border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#0A0A0A] shrink-0">
         <div className="relative bg-slate-50 dark:bg-[#111111] rounded-2xl border border-slate-200/90 dark:border-[#2A2A2A] focus-within:border-slate-400 dark:focus-within:border-white/30 shadow-xs flex flex-col">
-          
+
           {/* Upload error banner */}
           {uploadError && (
             <div className="mx-3 mt-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-600 dark:text-red-400 flex items-center justify-between">
@@ -1445,8 +1451,8 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               {aiContext.map(ctx => {
                 const sizeKB = ctx.sizeBytes ? `${(ctx.sizeBytes / 1024).toFixed(1)}k` : '';
                 return (
-                  <div 
-                    key={ctx.id} 
+                  <div
+                    key={ctx.id}
                     className="flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-lg text-xs text-slate-800 dark:text-[#C9D1D9] shadow-2xs group"
                   >
                     {ctx.type === 'selection' ? (
@@ -1469,9 +1475,9 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                       </span>
                     )}
 
-                    <button 
+                    <button
                       type="button"
-                      onClick={() => removeAiContext(ctx.id)} 
+                      onClick={() => removeAiContext(ctx.id)}
                       className="text-slate-400 hover:text-red-500 cursor-pointer p-0.5 rounded transition-colors"
                       title="Remove context"
                     >
@@ -1505,8 +1511,8 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               }
             }}
             placeholder={
-              mode === 'ask' 
-                ? "Ask about your code (Enter to send, Shift+Enter for newline)..." 
+              mode === 'ask'
+                ? "Ask about your code (Enter to send, Shift+Enter for newline)..."
                 : "Describe changes to make..."
             }
             className="w-full bg-transparent p-3 text-xs leading-relaxed text-slate-900 dark:text-[#E6EDF3] placeholder:text-slate-400 dark:placeholder:text-[#6E7681] outline-none resize-none min-h-[44px] max-h-[180px]"
@@ -1515,10 +1521,10 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           {/* Composer Controls Bar */}
           <div className="flex items-center justify-between p-2 pt-0">
             <div className="flex items-center gap-1.5 relative">
-              
+
               {/* Context Attachment Menu Button */}
               <div className="relative">
-                <button 
+                <button
                   type="button"
                   onClick={() => setIsContextMenuOpen(!isContextMenuOpen)}
                   className={cn(
@@ -1541,12 +1547,12 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 {/* Context Dropdown Popover */}
                 {isContextMenuOpen && (
                   <>
-                    <div 
-                      className="fixed inset-0 z-30" 
-                      onClick={() => setIsContextMenuOpen(false)} 
+                    <div
+                      className="fixed inset-0 z-30"
+                      onClick={() => setIsContextMenuOpen(false)}
                     />
                     <div className="absolute left-0 bottom-full mb-2 w-56 bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#2C2C2C] rounded-xl shadow-2xl p-1.5 z-40 flex flex-col gap-0.5 animate-in fade-in zoom-in-95 duration-100 text-xs">
-                      
+
                       {/* 1. Attach Active File */}
                       <button
                         type="button"
@@ -1573,7 +1579,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                         disabled={!isSelectionAvailable}
                         className={cn(
                           "w-full px-2.5 py-1.5 rounded-lg flex items-center gap-2 text-left transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed",
-                          isSelectionAvailable 
+                          isSelectionAvailable
                             ? "hover:bg-purple-50 dark:hover:bg-purple-500/10 text-purple-700 dark:text-purple-300 font-medium"
                             : "hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9]"
                         )}
@@ -1644,9 +1650,9 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               </div>
 
               {/* Model Selector Dropdown */}
-              <ModelSelector 
-                activeModelId={selectedModel} 
-                onModelChange={setSelectedModel} 
+              <ModelSelector
+                activeModelId={selectedModel}
+                onModelChange={setSelectedModel}
                 agentId={selectedAgent}
                 placement="top"
                 variant="composer"
@@ -1655,7 +1661,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
 
             {/* Send / Stop Button */}
             {isLoading ? (
-              <button 
+              <button
                 type="button"
                 onClick={handleStop}
                 className="px-2.5 py-1.5 bg-red-500/15 hover:bg-red-500/25 text-red-600 dark:text-red-400 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-semibold cursor-pointer border border-red-500/20"
@@ -1665,7 +1671,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 <span>Stop</span>
               </button>
             ) : (
-              <button 
+              <button
                 id="ai-panel-submit-btn"
                 type="button"
                 onClick={() => handleSubmit()}
@@ -1679,15 +1685,15 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </div>
         </div>
       </div>
-      
+
       {/* Review Changes Diff Modal */}
       {reviewingChangeSet && (
-        <DiffReviewModal 
-          changeSet={reviewingChangeSet} 
-          onClose={() => setReviewingChangeSet(null)} 
+        <DiffReviewModal
+          changeSet={reviewingChangeSet}
+          onClose={() => setReviewingChangeSet(null)}
         />
       )}
-      
+
       {/* Agent Manager Modal */}
       {isAgentManagerOpen && (
         <AgentManagerModal onClose={() => setIsAgentManagerOpen(false)} />

@@ -8,13 +8,32 @@ const LegacyCacheRecovery = lazy(() => import('./components/LegacyCacheRecovery'
 
 // Global resilience handler to gracefully intercept benign cancellation and script errors
 if (typeof window !== 'undefined') {
+  const originalConsoleError = console.error;
+  console.error = (...args: any[]) => {
+    const msg = args.map(a => {
+      if (typeof a === 'string') return a;
+      return a?.message || a?.msg || JSON.stringify(a || '');
+    }).join(' ');
+
+    if (
+      msg.includes('operation is manually canceled') ||
+      msg.includes('cancelation') ||
+      msg.includes('Disconnecting idle stream') ||
+      msg.includes('Timed out waiting for new targets') ||
+      msg.includes("GrpcConnection RPC 'Listen' stream")
+    ) {
+      return;
+    }
+    originalConsoleError.apply(console, args);
+  };
+
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
-    const reasonStr = typeof reason === 'string' 
-      ? reason 
+    const reasonStr = typeof reason === 'string'
+      ? reason
       : (reason?.message || reason?.msg || JSON.stringify(reason || ''));
 
-    const isCancellation = 
+    const isCancellation =
       reason?.type === 'cancelation' ||
       reason?.type === 'cancelled' ||
       reason?.name === 'AbortError' ||
@@ -25,14 +44,18 @@ if (typeof window !== 'undefined') {
     if (isCancellation) {
       // Gracefully prevent unhandled rejection from bubbling to error monitors
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       return;
     }
 
     if (reasonStr === 'Script error.' || reasonStr.includes('Script error')) {
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       return;
     }
-  });
+  }, true);
 
   window.addEventListener('error', (event) => {
     const message = event.message || '';
@@ -41,7 +64,7 @@ if (typeof window !== 'undefined') {
       ? error
       : (error?.message || error?.msg || JSON.stringify(error || ''));
 
-    const isCancellation = 
+    const isCancellation =
       message === 'Script error.' ||
       message.includes('Script error') ||
       message.includes('operation is manually canceled') ||
@@ -52,9 +75,11 @@ if (typeof window !== 'undefined') {
 
     if (isCancellation) {
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       return true;
     }
-  });
+  }, true);
 }
 
 createRoot(document.getElementById('root')!).render(

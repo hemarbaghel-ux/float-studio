@@ -15,6 +15,26 @@
     <meta name="twitter:title" content="FLOAT AI" />
     <meta name="twitter:description" content="FLOAT is your AI-powered development environment and coding agent for building ambitious software." />
     <meta name="twitter:image" content="/assets/float-logo.png" />
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('float_theme') || 'dark';
+          var resolved = saved;
+          if (saved === 'system') {
+            resolved = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          if (resolved === 'dark') {
+            document.documentElement.classList.add('dark');
+            document.documentElement.classList.remove('light');
+            document.documentElement.setAttribute('data-theme', 'dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.classList.add('light');
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
