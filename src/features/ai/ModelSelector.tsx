@@ -90,6 +90,11 @@ export function ModelSelector({
     if (model.id === 'o1') return 'High';
     if (model.id === 'o3-mini') return 'High Fast';
     if (model.id === 'grok-2-1212') return 'High Fast';
+    if (model.id === 'grok-4.7') return 'High Fast';
+    if (model.id === 'grok-2-vision-1212') return 'Vision';
+    if (model.id === 'grok-beta') return 'Fast';
+    if (model.id === 'deepseek-chat') return 'Fast';
+    if (model.id === 'deepseek-reasoner') return 'Reasoning';
 
     switch (model.speed) {
       case 'fast': return 'Fast';
@@ -206,12 +211,12 @@ export function ModelSelector({
     if (spaceOnRight >= CARD_WIDTH) {
       cardPlacement = 'right';
       cardLeft = dropdownRect.right + GAP;
-    } 
+    }
     // 2. Try LEFT of dropdown
     else if (spaceOnLeft >= CARD_WIDTH) {
       cardPlacement = 'left';
       cardLeft = dropdownRect.left - GAP - CARD_WIDTH;
-    } 
+    }
     // 3. Fallback BELOW / STACKED
     else {
       cardPlacement = 'below';

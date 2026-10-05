@@ -40,4 +40,3 @@ export const githubProvider = new GithubAuthProvider();
 // GitLab uses OAuthProvider
 export const gitlabProvider = new OAuthProvider('gitlab.com');
 export const appleProvider = new OAuthProvider('apple.com');
-

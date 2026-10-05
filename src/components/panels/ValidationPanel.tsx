@@ -67,7 +67,7 @@ export function ValidationPanel({ className, onClose }: ValidationPanelProps) {
   const flatFiles = useMemo(() => flattenFileTree(files), [files]);
 
   const handleStartValidation = () => {
-    const targetFiles = flatFiles.map(f => ({ path: f.path, content: f.content }));
+    const targetFiles = flatFiles.filter(f => f.type === 'file').map(f => ({ path: f.path, content: f.content }));
     runValidation({
       projectId: projectId || 'default-project',
       target: selectedTarget,
@@ -140,6 +140,13 @@ export function ValidationPanel({ className, onClose }: ValidationPanelProps) {
         label: 'Cancelled',
         icon: <AlertTriangle size={13} className="text-amber-500" />,
         badgeClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+      };
+    }
+    if (currentRun.status === 'unsupported') {
+      return {
+        label: 'Incomplete',
+        icon: <Info size={13} className="text-slate-500" />,
+        badgeClass: 'bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-500/20'
       };
     }
     return {
@@ -363,6 +370,10 @@ export function ValidationPanel({ className, onClose }: ValidationPanelProps) {
                             {check.unsupportedReason}
                           </div>
                         )}
+                        {check.output && (
+                          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words p-2 rounded bg-slate-100 dark:bg-[#101010] border border-slate-200 dark:border-[#252525] font-mono text-[10px] text-slate-700 dark:text-[#C9D1D9]">{check.output}</pre>
+                        )}
+                        {check.exitCode !== undefined && <p className="font-mono">Exit code: {check.exitCode ?? 'unavailable'}</p>}
                       </div>
                     )}
                   </div>

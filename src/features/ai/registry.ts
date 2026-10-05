@@ -6,18 +6,18 @@ const dashboardModelIds = new Set(DASHBOARD_MODELS.map(m => m.id));
 
 export const INITIAL_MODELS: AIModel[] = [
   ...DASHBOARD_MODELS,
-  { 
-    id: 'auto', 
+  {
+    id: 'auto',
     exactModelId: 'gemini-2.0-flash',
-    providerId: 'auto', 
-    displayName: 'Auto (FLOAT Dynamic Router)', 
+    providerId: 'auto',
+    displayName: 'Auto (FLOAT Dynamic Router)',
     shortName: 'Auto',
-    family: 'auto', 
-    description: 'Automatically routes to the highest-performance operational model in FLOAT (Gemini 2.0 Flash).', 
-    capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true, longContext: true }, 
+    family: 'auto',
+    description: 'Automatically routes to the highest-performance operational model in FLOAT (Gemini 2.0 Flash).',
+    capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true, longContext: true },
     capabilitiesList: ['Coding', 'Reasoning', 'Vision', 'Tool use'],
-    contextWindow: 1048576, 
-    status: 'AVAILABLE', 
+    contextWindow: 1048576,
+    status: 'AVAILABLE',
     speed: 'fast',
     reasoningLevel: 'High Fast',
     version: 'high effort',

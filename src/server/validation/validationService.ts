@@ -1,8 +1,4 @@
 import { v4 as uuidv4 } from 'uuid';
-import { execFile, ChildProcess } from 'child_process';
-import path from 'path';
-import fs from 'fs';
-import os from 'os';
 import ts from 'typescript';
 import { 
   ProjectValidationType, 
@@ -15,9 +11,11 @@ import {
 } from '../../types/validation';
 import { ProposalService } from '../agent/proposalService';
 import { ModelRouter } from '../providers/router';
+import { projectProcessManager } from '../execution/processManager';
 
 export class ValidationService {
-  private static activeRuns = new Map<string, { abortController: AbortController; process?: ChildProcess }>();
+  private static readonly MAX_RETAINED_RUNS = 200;
+  private static activeRuns = new Map<string, { abortController: AbortController }>();
   private static runHistory = new Map<string, ValidationRun>();
   private static modelRouter = new ModelRouter();
 
@@ -223,184 +221,80 @@ export class ValidationService {
     };
   }
 
-  /**
-   * Executes project-wide TypeScript compiler check
-   */
-  static async runTypeCheck(
-    abortSignal?: AbortSignal
+  private static async runIsolatedProjectCheck(
+    type: ProjectValidationType,
+    files: Array<{ path: string; content?: string }>,
+    projectId: string,
+    userId: string,
+    abortSignal: AbortSignal
   ): Promise<ValidationCheckResult> {
-    const startTime = Date.now();
-
-    return new Promise((resolve) => {
-      let isSettled = false;
-
-      const finish = (result: ValidationCheckResult) => {
-        if (!isSettled) {
-          isSettled = true;
-          resolve(result);
-        }
-      };
-
-      const child = execFile(
-        'npx',
-        ['tsc', '--noEmit'],
-        {
-          cwd: process.cwd(),
-          timeout: 25000,
-          maxBuffer: 200 * 1024,
-          env: { ...process.env, NODE_ENV: 'test' }
-        },
-        (error, stdout, stderr) => {
-          const durationMs = Date.now() - startTime;
-          const combinedOutput = this.sanitizeOutput((stdout || '') + '\n' + (stderr || ''));
-
-          if (abortSignal?.aborted) {
-            return finish({
-              type: 'typecheck',
-              name: 'TypeScript Compiler Check',
-              status: 'cancelled',
-              durationMs,
-              message: 'Check was cancelled by user.',
-              diagnostics: []
-            });
-          }
-
-          if (error && error.killed) {
-            return finish({
-              type: 'typecheck',
-              name: 'TypeScript Compiler Check',
-              status: 'failed',
-              durationMs,
-              message: 'Type check timed out after 25 seconds.',
-              diagnostics: [{
-                id: uuidv4(),
-                checkType: 'typecheck',
-                severity: 'error',
-                message: 'TypeScript compilation timed out. Consider breaking down large files or checking project configuration.',
-                source: 'Timeout Guard'
-              }]
-            });
-          }
-
-          const diagnostics = this.parseTscDiagnostics(combinedOutput);
-          const hasErrors = diagnostics.some(d => d.severity === 'error') || (error !== null && diagnostics.length > 0);
-
-          finish({
-            type: 'typecheck',
-            name: 'TypeScript Compiler Check',
-            status: hasErrors ? 'failed' : 'passed',
-            durationMs,
-            message: diagnostics.length === 0 
-              ? 'TypeScript compilation clean. 0 errors detected.' 
-              : `Found ${diagnostics.length} compiler diagnostic${diagnostics.length > 1 ? 's' : ''}.`,
-            diagnostics
-          });
-        }
-      );
-
-      if (abortSignal) {
-        abortSignal.addEventListener('abort', () => {
-          try {
-            child.kill('SIGTERM');
-          } catch (e) {}
-        });
+    const startedAt = Date.now();
+    const packageFile = files.find(file => file.path === 'package.json');
+    let packageJson: any = {};
+    if (packageFile?.content) {
+      try { packageJson = JSON.parse(packageFile.content); }
+      catch {
+        return { type, name: type.toUpperCase(), status: 'failed', durationMs: Date.now() - startedAt, message: 'package.json is invalid JSON.', diagnostics: [{ id: uuidv4(), checkType: type, severity: 'error', filePath: 'package.json', message: 'Invalid JSON in package.json.', source: 'FLOAT project command' }] };
       }
+    }
+
+    const scripts = packageJson.scripts || {};
+    let command: string | null = null;
+    if (type === 'test') command = typeof scripts.test === 'string' && !/^echo\s+.*no test specified/i.test(scripts.test) ? 'npm test' : null;
+    if (type === 'eslint') command = typeof scripts.lint === 'string' ? 'npm run lint' : null;
+    if (type === 'build') command = typeof scripts.build === 'string' ? 'npm run build' : null;
+    if (type === 'typecheck') {
+      if (typeof scripts.typecheck === 'string') command = 'npm run typecheck';
+      else if (typeof scripts['check-types'] === 'string') command = 'npm run check-types';
+      else if (typeof scripts.check === 'string') command = 'npm run check';
+      else if (files.some(file => file.path === 'tsconfig.json')) command = 'npm exec --offline -- tsc --noEmit';
+    }
+    if (!command) {
+      const reason = type === 'test' ? 'No test script is configured in package.json.'
+        : type === 'eslint' ? 'No lint script is configured in package.json.'
+          : type === 'build' ? 'No build script is configured in package.json.'
+            : 'No type-check script or tsconfig.json is present.';
+      return { type, name: type === 'eslint' ? 'Project Lint' : type === 'typecheck' ? 'Project Type Check' : type === 'build' ? 'Project Build' : 'Project Tests', status: 'unsupported', durationMs: 0, unsupportedReason: reason, message: reason, diagnostics: [] };
+    }
+    if (!projectProcessManager.available) {
+      const reason = 'Isolated project execution is unavailable. Configure a pinned image, a TLS-secured Docker runner, and a shared execution directory.';
+      return { type, name: type.toUpperCase(), status: 'unsupported', durationMs: 0, unsupportedReason: reason, message: reason, diagnostics: [] };
+    }
+
+    const result = await projectProcessManager.execute({
+      ownerId: userId,
+      projectId,
+      command,
+      files,
+      timeoutMs: type === 'build' ? 10 * 60_000 : 5 * 60_000,
+      signal: abortSignal
     });
+    const output = this.sanitizeOutput(`${result.stdout}\n${result.stderr}${result.error ? `\n${result.error}` : ''}`).trim();
+    const status: ValidationStatus = result.status === 'succeeded' ? 'passed' : result.status === 'cancelled' ? 'cancelled' : 'failed';
+    const diagnostics: ValidationDiagnostic[] = [];
+    if (status === 'failed') {
+      const parsed = this.parseTscDiagnostics(output).map(item => ({ ...item, checkType: type, source: command }));
+      diagnostics.push(...parsed);
+      if (!diagnostics.length) diagnostics.push({
+        id: uuidv4(), checkType: type, severity: 'error',
+        message: `Command exited with code ${result.exitCode ?? 'unknown'}${result.status === 'timed_out' ? ' after reaching its time limit' : ''}.${output ? `\n${output.slice(0, 12000)}` : ''}`,
+        source: command
+      });
+    }
+    return {
+      type,
+      name: type === 'eslint' ? 'Project Lint' : type === 'typecheck' ? 'Project Type Check' : type === 'build' ? 'Project Build' : 'Project Tests',
+      status,
+      durationMs: result.durationMs,
+      output,
+      exitCode: result.exitCode,
+      message: status === 'passed' ? `Command completed successfully: ${command}` : status === 'cancelled' ? 'Command was cancelled.' : `Command failed: ${command}`,
+      diagnostics
+    };
   }
 
   /**
-   * Build check validation
-   */
-  static async runBuildCheck(abortSignal?: AbortSignal): Promise<ValidationCheckResult> {
-    const startTime = Date.now();
-
-    return new Promise((resolve) => {
-      let isSettled = false;
-
-      const finish = (result: ValidationCheckResult) => {
-        if (!isSettled) {
-          isSettled = true;
-          resolve(result);
-        }
-      };
-
-      const child = execFile(
-        'npx',
-        ['vite', 'build'],
-        {
-          cwd: process.cwd(),
-          timeout: 30000,
-          maxBuffer: 200 * 1024,
-          env: { ...process.env, NODE_ENV: 'production' }
-        },
-        (error, stdout, stderr) => {
-          const durationMs = Date.now() - startTime;
-          const output = this.sanitizeOutput((stdout || '') + '\n' + (stderr || ''));
-
-          if (abortSignal?.aborted) {
-            return finish({
-              type: 'build',
-              name: 'Production Build Verification',
-              status: 'cancelled',
-              durationMs,
-              message: 'Build check was cancelled by user.',
-              diagnostics: []
-            });
-          }
-
-          if (error) {
-            const lines = output.split('\n').filter(l => l.includes('error') || l.includes('Error'));
-            const diagnostics: ValidationDiagnostic[] = lines.slice(0, 5).map(l => ({
-              id: uuidv4(),
-              checkType: 'build',
-              severity: 'error',
-              message: l.trim(),
-              source: 'Vite Production Build'
-            }));
-
-            if (diagnostics.length === 0) {
-              diagnostics.push({
-                id: uuidv4(),
-                checkType: 'build',
-                severity: 'error',
-                message: error.message || 'Build failed with non-zero exit code.',
-                source: 'Vite Production Build'
-              });
-            }
-
-            return finish({
-              type: 'build',
-              name: 'Production Build Verification',
-              status: 'failed',
-              durationMs,
-              message: 'Vite production build failed.',
-              diagnostics
-            });
-          }
-
-          finish({
-            type: 'build',
-            name: 'Production Build Verification',
-            status: 'passed',
-            durationMs,
-            message: 'Production build bundles successfully with Vite.',
-            diagnostics: []
-          });
-        }
-      );
-
-      if (abortSignal) {
-        abortSignal.addEventListener('abort', () => {
-          try {
-            child.kill('SIGTERM');
-          } catch (e) {}
-        });
-      }
-    });
-  }
-
-  /**
-   * Executes validation pipeline against current workspace or code proposal preview
+   * Executes validation pipeline against current workspace or proposal preview.
    */
   static async executeValidation(params: {
     projectId: string;
@@ -478,54 +372,13 @@ export class ValidationService {
         if (checkType === 'syntax') {
           checkResults.push(this.validateSyntax(targetFiles));
         } else if (checkType === 'typecheck') {
-          // If testing current project, run compiler
-          if (target === 'current_project') {
-            const tcResult = await this.runTypeCheck(abortController.signal);
-            checkResults.push(tcResult);
-          } else {
-            // For proposal preview: run in-memory syntax + isolated virtual typecheck
-            const tcResult = this.validateSyntax(targetFiles);
-            checkResults.push({
-              ...tcResult,
-              type: 'typecheck',
-              name: 'TypeScript Proposal Verification',
-              message: tcResult.status === 'passed' 
-                ? 'Proposal preview syntax and type structures valid.' 
-                : tcResult.message
-            });
-          }
+          checkResults.push(await this.runIsolatedProjectCheck(checkType, targetFiles, projectId, userId, abortController.signal));
         } else if (checkType === 'build') {
-          if (target === 'current_project') {
-            const buildResult = await this.runBuildCheck(abortController.signal);
-            checkResults.push(buildResult);
-          } else {
-            checkResults.push({
-              type: 'build',
-              name: 'Production Build Verification',
-              status: 'unsupported',
-              durationMs: 0,
-              unsupportedReason: 'Vite build verification is only performed against the main workspace. Apply the proposal first to run full production bundling.',
-              diagnostics: []
-            });
-          }
+          checkResults.push(await this.runIsolatedProjectCheck(checkType, targetFiles, projectId, userId, abortController.signal));
         } else if (checkType === 'test') {
-          checkResults.push({
-            type: 'test',
-            name: 'Unit Test Runner',
-            status: 'unsupported',
-            durationMs: 0,
-            unsupportedReason: 'No automated unit test runner (e.g. Vitest/Jest) configured in package.json. Run unit testing after configuring a test runner.',
-            diagnostics: []
-          });
+          checkResults.push(await this.runIsolatedProjectCheck(checkType, targetFiles, projectId, userId, abortController.signal));
         } else if (checkType === 'eslint') {
-          checkResults.push({
-            type: 'eslint',
-            name: 'ESLint Code Quality',
-            status: 'unsupported',
-            durationMs: 0,
-            unsupportedReason: 'ESLint is not configured in this project. TypeScript compiler diagnostics are active as the primary type/syntax validator.',
-            diagnostics: []
-          });
+          checkResults.push(await this.runIsolatedProjectCheck(checkType, targetFiles, projectId, userId, abortController.signal));
         }
       }
 
@@ -541,12 +394,15 @@ export class ValidationService {
 
       const isCancelled = checkResults.some(c => c.status === 'cancelled') || abortController.signal.aborted;
       const isFailed = checkResults.some(c => c.status === 'failed');
+      const isUnsupported = checkResults.some(c => c.status === 'unsupported');
 
       const status: ValidationStatus = isCancelled 
         ? 'cancelled' 
         : isFailed 
           ? 'failed' 
-          : 'passed';
+          : isUnsupported
+            ? 'unsupported'
+            : 'passed';
 
       const completionTime = Date.now();
       const durationMs = completionTime - startTime;
@@ -555,7 +411,9 @@ export class ValidationService {
         ? `Validation passed (${checkResults.filter(c => c.status === 'passed').length} checks passed, 0 errors)`
         : status === 'cancelled'
           ? 'Validation run was cancelled'
-          : `Validation failed with ${errorCount} error${errorCount !== 1 ? 's' : ''} and ${warningCount} warning${warningCount !== 1 ? 's' : ''}`;
+          : status === 'unsupported'
+            ? `Validation incomplete (${checkResults.filter(c => c.status === 'unsupported').length} checks could not run)`
+            : `Validation failed with ${errorCount} error${errorCount !== 1 ? 's' : ''} and ${warningCount} warning${warningCount !== 1 ? 's' : ''}`;
 
       const run: ValidationRun = {
         id: runId,
@@ -574,6 +432,11 @@ export class ValidationService {
       };
 
       this.runHistory.set(runId, run);
+      while (this.runHistory.size > this.MAX_RETAINED_RUNS) {
+        const oldestRunId = this.runHistory.keys().next().value;
+        if (!oldestRunId) break;
+        this.runHistory.delete(oldestRunId);
+      }
       return run;
     } finally {
       this.activeRuns.delete(projectId);

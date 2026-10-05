@@ -22,7 +22,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
 
   const handleEditorDidMount = (editor: any, monacoInstance: any) => {
     editorRef.current = editor;
-    
+
     // Add save command
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {
       markTabModified(fileId, false);

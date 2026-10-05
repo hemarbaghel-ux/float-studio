@@ -117,10 +117,11 @@ src/types/index.ts(104,1): warning TS2308: Module './evals' has already exported
 
   const testCheck = fullValidation.checks.find(c => c.type === 'test');
   assert(testCheck?.status === 'unsupported', 'Reports unit test runner as unsupported when not configured in package.json');
-  assert(!!testCheck?.unsupportedReason?.includes('Vitest/Jest'), 'Explains reason unit test runner is unsupported');
+  assert(!!testCheck?.unsupportedReason?.includes('No test script'), 'Explains why project tests could not run');
 
   const eslintCheck = fullValidation.checks.find(c => c.type === 'eslint');
   assert(eslintCheck?.status === 'unsupported', 'Reports ESLint as unsupported when not configured');
+  assert(fullValidation.status === 'unsupported', 'Does not report a validation run as passed when checks did not execute');
 
   // 8. Cancellation of validation run
   const cancelResult = ValidationService.cancelValidation('non-existent-project');

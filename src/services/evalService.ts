@@ -1,14 +1,12 @@
 import { EvalTask, EvalRun, Benchmark, HumanReview, LeaderboardEntry } from '../types/evals';
-import { db, auth } from '../lib/firebase';
-import { collection, doc, setDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
-import { evaluationRunConverter } from '../lib/converters';
 import { ConsentService } from './consentService';
+import { apiFetch } from './api';
 
 export const evalService = {
   // Tasks
   async getTasks(): Promise<EvalTask[]> {
     try {
-      const res = await fetch('/api/evals/tasks');
+      const res = await apiFetch('/api/evals/tasks');
       if (res.ok) {
         return await res.json();
       }
@@ -19,7 +17,7 @@ export const evalService = {
   },
 
   async createTask(task: Omit<EvalTask, 'id' | 'createdAt' | 'updatedAt'>): Promise<EvalTask> {
-    const res = await fetch('/api/evals/tasks', {
+    const res = await apiFetch('/api/evals/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(task)
@@ -32,7 +30,7 @@ export const evalService = {
   },
 
   async deleteTask(id: string): Promise<boolean> {
-    const res = await fetch(`/api/evals/tasks/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/evals/tasks/${id}`, { method: 'DELETE' });
     if (!res.ok) return false;
     const data = await res.json();
     return data.success;
@@ -41,7 +39,7 @@ export const evalService = {
   // Runs
   async getRuns(): Promise<EvalRun[]> {
     try {
-      const res = await fetch('/api/evals/runs');
+      const res = await apiFetch('/api/evals/runs');
       if (res.ok) {
         return await res.json();
       }
@@ -53,7 +51,7 @@ export const evalService = {
 
   async getRun(id: string): Promise<EvalRun | null> {
     try {
-      const res = await fetch(`/api/evals/runs/${id}`);
+      const res = await apiFetch(`/api/evals/runs/${id}`);
       if (res.ok) {
         return await res.json();
       }
@@ -71,7 +69,7 @@ export const evalService = {
     benchmarkId?: string;
   }): Promise<EvalRun> {
     const isSharingAllowed = ConsentService.isSharingAllowed();
-    const res = await fetch('/api/evals/run', {
+    const res = await apiFetch('/api/evals/run', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -88,25 +86,11 @@ export const evalService = {
     }
     const run: EvalRun = await res.json();
 
-    // Persist to Firestore if user is authenticated
-    if (auth.currentUser) {
-      try {
-        const runRef = doc(db, 'evaluationRuns', run.id).withConverter(evaluationRunConverter);
-        await setDoc(runRef, {
-          ...run,
-          ownerId: auth.currentUser.uid,
-          updatedAt: serverTimestamp()
-        });
-      } catch (fbErr) {
-        console.warn('Failed to mirror evaluation run to Firestore:', fbErr);
-      }
-    }
-
     return run;
   },
 
   async cancelRun(id: string): Promise<boolean> {
-    const res = await fetch(`/api/evals/runs/${id}/cancel`, { method: 'POST' });
+    const res = await apiFetch(`/api/evals/runs/${id}/cancel`, { method: 'POST' });
     if (!res.ok) return false;
     const data = await res.json();
     return data.success;
@@ -114,7 +98,7 @@ export const evalService = {
 
   async retryRun(id: string): Promise<EvalRun> {
     const isSharingAllowed = ConsentService.isSharingAllowed();
-    const res = await fetch(`/api/evals/runs/${id}/retry`, { 
+    const res = await apiFetch(`/api/evals/runs/${id}/retry`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -134,7 +118,7 @@ export const evalService = {
   // Benchmarks
   async getBenchmarks(): Promise<Benchmark[]> {
     try {
-      const res = await fetch('/api/evals/benchmarks');
+      const res = await apiFetch('/api/evals/benchmarks');
       if (res.ok) {
         return await res.json();
       }
@@ -146,7 +130,7 @@ export const evalService = {
 
   async getBenchmark(id: string): Promise<Benchmark | null> {
     try {
-      const res = await fetch(`/api/evals/benchmarks/${id}`);
+      const res = await apiFetch(`/api/evals/benchmarks/${id}`);
       if (res.ok) {
         return await res.json();
       }
@@ -157,7 +141,7 @@ export const evalService = {
   },
 
   async createBenchmark(bench: Omit<Benchmark, 'id' | 'createdAt' | 'updatedAt'>): Promise<Benchmark> {
-    const res = await fetch('/api/evals/benchmarks', {
+    const res = await apiFetch('/api/evals/benchmarks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bench)
@@ -176,7 +160,7 @@ export const evalService = {
       if (benchmarkId) url.searchParams.set('benchmarkId', benchmarkId);
       if (minEvaluations) url.searchParams.set('minEvaluations', minEvaluations.toString());
 
-      const res = await fetch(url.toString());
+      const res = await apiFetch(url.toString());
       if (res.ok) {
         return await res.json();
       }
@@ -189,7 +173,7 @@ export const evalService = {
   // Model Analytics
   async getModelAnalytics(modelId: string) {
     try {
-      const res = await fetch(`/api/evals/models/${encodeURIComponent(modelId)}`);
+      const res = await apiFetch(`/api/evals/models/${encodeURIComponent(modelId)}`);
       if (res.ok) {
         return await res.json();
       }
@@ -201,7 +185,7 @@ export const evalService = {
 
   // Human Reviews
   async submitReview(review: Omit<HumanReview, 'id' | 'reviewTimestamp'>): Promise<HumanReview> {
-    const res = await fetch('/api/evals/reviews', {
+    const res = await apiFetch('/api/evals/reviews', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(review)
@@ -215,7 +199,7 @@ export const evalService = {
 
   async getReviews(runId: string): Promise<HumanReview[]> {
     try {
-      const res = await fetch(`/api/evals/reviews/${runId}`);
+      const res = await apiFetch(`/api/evals/reviews/${runId}`);
       if (res.ok) {
         return await res.json();
       }

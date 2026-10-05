@@ -1,13 +1,16 @@
 {
-  "name": "react-example",
+  "name": "float-studio",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild src/server/app.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node server.ts",
-    "test": "tsx scripts/testPhase5Proposal.ts && tsx scripts/testPhase6Validation.ts && tsx scripts/testPhase7FinalIntegration.ts && tsx scripts/testProviderRoutingAndHealth.ts",
+    "start": "node dist/server.cjs",
+    "test": "tsx scripts/testCodebaseSearch.ts && tsx scripts/testProjectExecution.ts && tsx scripts/testPhase5Proposal.ts && tsx scripts/testPhase6Validation.ts && tsx scripts/testPhase7FinalIntegration.ts && tsx scripts/testAutomationIsolation.ts && tsx scripts/testPortableAgentRunner.ts && tsx scripts/testAgentOrchestratorValidation.ts && tsx scripts/testAgentGitWorktree.ts && tsx scripts/testSecurityAudit.ts && tsx scripts/testProviderRoutingAndHealth.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },
@@ -19,9 +22,12 @@
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "clsx": "^2.1.1",
+    "diff": "^9.0.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "firebase": "^12.18.0",
+    "firebase-admin": "^14.5.0",
+    "jszip": "^3.10.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "openai": "^7.27.0",
@@ -46,5 +52,9 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.5",
+    "dompurify": "^3.4.16"
   }
 }

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronDown, ArrowRight, Code, Terminal, Bot, Workflow, Layers, Puzzle } from 'lucide-react';
+import { ChevronDown, ArrowRight, Code, Terminal, Layers, Puzzle } from 'lucide-react';
 import { useTranslation } from './LanguageProvider';
 
 interface ProductsDropdownProps {
@@ -27,95 +27,31 @@ export function ProductsDropdown({ currentPath }: ProductsDropdownProps) {
 
   const categories = [
     {
-      title: t('products.ai_coding', 'AI Coding'),
+      title: 'Workspace',
       icon: <Code size={16} />,
       items: [
-        { name: 'AI Coding Agent', desc: 'Build, modify, and understand software with FLOAT.', status: 'AVAILABLE', href: '/features/agents' },
-        { name: 'ASK', desc: 'Ask questions and understand your codebase without modifying files.', status: 'AVAILABLE', href: '/' },
-        { name: 'PLAN', desc: 'Create structured implementation plans before coding.', status: 'AVAILABLE', href: '/features/plan' },
-        { name: 'EDIT', desc: 'Safely make focused code changes with review.', status: 'AVAILABLE', href: '/' },
-        { name: 'AGENT', desc: 'Run multi-step coding tasks with controlled autonomy.', status: 'AVAILABLE', href: '/features/agents' },
-        { name: 'Codebase Understanding', desc: 'Understand projects, files, dependencies, and relationships.', status: 'AVAILABLE', href: '/features/codebase-search' },
-        { name: 'Multi-file Editing', desc: 'Work across multiple files while maintaining project context.', status: 'AVAILABLE', href: '/features/desktop' },
+        { name: 'Coding workspace', desc: 'Open a browser workspace for project files, AI chat, and code review.', status: 'AVAILABLE', href: '/dashboard' },
+        { name: 'Project files', desc: 'Import, browse, and edit files in the workspace.', status: 'AVAILABLE', href: '/dashboard' },
+        { name: 'Review proposed edits', desc: 'Inspect code proposals before applying them.', status: 'AVAILABLE', href: '/dashboard' },
+        { name: 'Browser runtime', desc: 'Run supported code in the isolated browser runtime.', status: 'AVAILABLE', href: '/dashboard' },
       ]
     },
     {
-      title: t('products.dev_tools', 'Developer Tools'),
+      title: 'Models & evaluation',
       icon: <Terminal size={16} />,
       items: [
-        { name: 'Terminal', desc: 'Run development commands directly from FLOAT.', status: 'AVAILABLE', href: '/features/terminal' },
-        { name: 'Problems', desc: 'View errors, warnings, and diagnostics.', status: 'AVAILABLE', href: '/' },
-        { name: 'Testing', desc: 'Run and analyze project tests.', status: 'AVAILABLE', href: '/features/debug' },
-        { name: 'Debugging', desc: 'Investigate and resolve application problems.', status: 'AVAILABLE', href: '/features/debug' },
-        { name: 'Git', desc: 'Inspect changes, branches, commits, and repository state.', status: 'AVAILABLE', href: '/features/git-checkpoints' },
-        { name: 'GitHub', desc: 'Connect repositories and developer workflows.', status: 'AVAILABLE', href: '/features/other-surfaces' },
-        { name: 'GitLab', desc: 'Connect GitLab repositories.', status: 'COMING SOON' },
-        { name: 'Bitbucket', desc: 'Connect Bitbucket Cloud repositories.', status: 'COMING SOON' },
+        { name: 'Model catalog', desc: 'Browse models supported by configured providers.', status: 'AVAILABLE', href: '/models' },
+        { name: 'Evaluations', desc: 'Create and run model evaluation tasks.', status: 'AVAILABLE', href: '/evals' },
+        { name: 'Usage', desc: 'Review usage data recorded by the workspace.', status: 'AVAILABLE', href: '/models/usage' },
       ]
     },
     {
-      title: t('products.agents', 'Agents'),
-      icon: <Bot size={16} />,
-      items: [
-        { name: 'Agent Manager', desc: 'Manage and configure FLOAT agents.', status: 'COMING SOON' },
-        { name: 'Planner Agent', desc: 'Break complex tasks into structured plans.', status: 'COMING SOON' },
-        { name: 'Explorer Agent', desc: 'Explore and understand large codebases.', status: 'COMING SOON' },
-        { name: 'Coder Agent', desc: 'Implement coding changes.', status: 'COMING SOON' },
-        { name: 'Debugger Agent', desc: 'Investigate and fix bugs.', status: 'COMING SOON' },
-        { name: 'Reviewer Agent', desc: 'Review code and proposed changes.', status: 'COMING SOON' },
-        { name: 'UI Agent', desc: 'Build and improve user interfaces.', status: 'COMING SOON' },
-        { name: 'Test Agent', desc: 'Create and run tests.', status: 'COMING SOON' },
-        { name: 'Terminal Agent', desc: 'Handle terminal workflows.', status: 'COMING SOON' },
-        { name: 'Documentation Agent', desc: 'Create and maintain documentation.', status: 'COMING SOON' },
-        { name: 'Security Agent', desc: 'Analyze security issues.', status: 'COMING SOON' },
-        { name: 'Performance Agent', desc: 'Analyze performance problems.', status: 'COMING SOON' },
-        { name: 'Research Agent', desc: 'Research technical implementation approaches.', status: 'COMING SOON' },
-        { name: 'Custom Agents', desc: 'Create specialized agents for your workflow.', status: 'COMING SOON' },
-      ]
-    },
-    {
-      title: t('products.platform', 'Agent Platform'),
-      icon: <Workflow size={16} />,
-      items: [
-        { name: 'Agent Orchestration', desc: 'Coordinate multiple specialized agents.', status: 'COMING SOON' },
-        { name: 'Task Graphs', desc: 'Break complex work into dependent tasks.', status: 'COMING SOON' },
-        { name: 'Parallel Agents', desc: 'Run independent agent tasks safely in parallel.', status: 'COMING SOON' },
-        { name: 'Agent Communication', desc: 'Allow structured communication between agents.', status: 'COMING SOON' },
-        { name: 'Approvals', desc: 'Control when agents can make changes.', status: 'COMING SOON' },
-        { name: 'Checkpoints', desc: 'Create recoverable project states.', status: 'COMING SOON' },
-        { name: 'Rollback', desc: 'Safely restore changes.', status: 'COMING SOON' },
-        { name: 'Agent Activity', desc: 'Monitor agent actions and progress.', status: 'COMING SOON' },
-        { name: 'Automations', desc: 'Run repeatable developer workflows.', status: 'COMING SOON' },
-        { name: 'Cloud Agents', desc: 'Run longer-running development tasks.', status: 'COMING SOON' },
-        { name: 'Bug Agent', desc: 'Automated bug investigation and code review workflows.', status: 'COMING SOON' },
-      ]
-    },
-    {
-      title: t('products.models', 'Models & Evals'),
-      icon: <Layers size={16} />,
-      items: [
-        { name: 'Models', desc: 'Explore supported AI models.', status: 'AVAILABLE', href: '/models' },
-        { name: 'Model Router', desc: 'Automatically select appropriate models.', status: 'AVAILABLE', href: '/features/model-routing' },
-        { name: 'Multi-Model Support', desc: 'Use models from multiple providers.', status: 'AVAILABLE', href: '/features/multiple-models' },
-        { name: 'Model Comparison', desc: 'Compare model capabilities and performance.', status: 'AVAILABLE', href: '/models' },
-        { name: 'Evals', desc: 'Evaluate models on real coding tasks.', status: 'AVAILABLE', href: '/evals' },
-        { name: 'Benchmarks', desc: 'Compare model performance using standardized tasks.', status: 'AVAILABLE', href: '/evals' },
-        { name: 'Agent Evaluations', desc: 'Evaluate complete agent workflows.', status: 'COMING SOON' },
-        { name: 'Usage & Cost', desc: 'Track model usage, tokens, latency, and cost.', status: 'AVAILABLE', href: '/models/usage' },
-      ]
-    },
-    {
-      title: t('products.integrations', 'Integrations'),
+      title: 'Connections & automations',
       icon: <Puzzle size={16} />,
       items: [
-        { name: 'GitHub', desc: 'Repositories, codebase context, Cloud Agents and developer workflows.', status: 'AVAILABLE', href: '/features/other-surfaces' },
-        { name: 'GitLab', desc: 'GitLab repositories and workflows.', status: 'COMING SOON' },
-        { name: 'Bitbucket', desc: 'Bitbucket Cloud repositories.', status: 'COMING SOON' },
-        { name: 'Slack', desc: 'Team notifications and developer workflows.', status: 'AVAILABLE', href: '/features/other-surfaces' },
-        { name: 'Microsoft Teams', desc: 'Teams integration for notifications.', status: 'COMING SOON' },
-        { name: 'Linear', desc: 'Issue tracking and agent workflows.', status: 'COMING SOON' },
-        { name: 'Jira', desc: 'Jira issues and project management.', status: 'COMING SOON' },
-        { name: 'Sentry', desc: 'Error tracking and automated bug fixes.', status: 'COMING SOON' },
+        { name: 'GitHub', desc: 'Connect GitHub when OAuth is configured for this deployment.', status: 'AVAILABLE', href: '/integrations' },
+        { name: 'GitLab', desc: 'GitLab OAuth is available when configured for this deployment.', status: 'AVAILABLE', href: '/integrations' },
+        { name: 'Automations', desc: 'Manage browser-local scheduled workflows.', status: 'AVAILABLE', href: '/automations' },
       ]
     }
   ];
@@ -197,10 +133,10 @@ export function ProductsDropdown({ currentPath }: ProductsDropdownProps) {
             <div className="bg-slate-50 dark:bg-[#111] p-6 border-t border-slate-200 dark:border-white/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
                 <div className="font-medium text-slate-900 dark:text-white text-sm mb-1">
-                  Explore full documentation for every FLOAT feature
+                  Explore FLOAT
                 </div>
                 <div className="text-xs text-slate-500 dark:text-[#A1A1AA]">
-                  Plan, Design, Debug, Terminal, Context, Checkpoints, MCP, and Autonomous Agents.
+                  Current features are available in the browser workspace. Preview concepts are marked as unavailable.
                 </div>
               </div>
               <div className="flex items-center gap-3">

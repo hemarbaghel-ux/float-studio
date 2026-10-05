@@ -57,6 +57,13 @@ async function runOrchestratorValidationTests() {
   const gitCheck = normalizeAndSanitizePath('.git/config');
   assert(!!gitCheck.error && gitCheck.error.includes('sensitive path'), 'Rejects .git folder files');
 
+  const nestedEnvCheck = normalizeAndSanitizePath('src/.env.local');
+  assert(!!nestedEnvCheck.error, 'Rejects nested environment secret files');
+  const nestedKeyCheck = normalizeAndSanitizePath('config/service.pem');
+  assert(!!nestedKeyCheck.error, 'Rejects nested private key files');
+  const dotSegment = normalizeAndSanitizePath('src/./index.ts');
+  assert(!!dotSegment.error, 'Rejects dot segments in task file paths');
+
   // validateAndNormalizeFileNodes batch processing
   const mixedFiles = [
     { path: '/src/index.ts', content: 'console.log("ok");' },
@@ -69,6 +76,8 @@ async function runOrchestratorValidationTests() {
   assert(rejectedCount === 2, 'Counts rejected unsafe files (2)');
   assert(safeFiles[0].path === 'src/index.ts', 'Normalizes path for index.ts');
   assert(safeFiles[1].path === 'src/components/Button.tsx', 'Normalizes path for Button.tsx');
+  const oversized = validateAndNormalizeFileNodes([{ path: 'src/large.ts', content: 'x'.repeat(500 * 1024 + 1) }]);
+  assert(oversized.safeFiles.length === 0 && oversized.rejectedCount === 1, 'Excludes oversized files instead of truncating their proposal baseline');
 
   // --- SECTION 2: Project Access Validation ---
   console.log('\n--- 2. Project Access Validation ---');
@@ -84,15 +93,14 @@ async function runOrchestratorValidationTests() {
   const badProjId = await validateProjectAccess('user-1', '../../secret-db');
   assert(!badProjId.authorized, 'Rejects projectId containing path traversal (../../secret-db)');
 
-  // Valid project access
+  // Background tasks require a persisted project with an exact owner; a plausible ID is insufficient.
   const validAccess = await validateProjectAccess('user-alice', 'project-float-101');
-  assert(validAccess.authorized, 'Authorizes valid project access for user-alice');
+  assert(!validAccess.authorized, 'Fails closed when project ownership cannot be verified in Firestore');
 
-  // Ownership conflict in orchestrator
+  // In-memory registration cannot substitute for persisted project ownership.
   orchestrator.registerProjectOwner('project-float-101', 'user-alice');
   const conflictAccess = await validateProjectAccess('user-bob', 'project-float-101');
-  assert(!conflictAccess.authorized, 'Rejects access to project-float-101 for unauthorized user-bob');
-  assert(conflictAccess.error?.includes('owned by another user'), 'Explains ownership conflict');
+  assert(!conflictAccess.authorized, 'Rejects project access when the persisted owner cannot be verified');
 
   // --- SECTION 3: Tool Permission Checking ---
   console.log('\n--- 3. Tool Permission Checking ---');
@@ -130,40 +138,16 @@ async function runOrchestratorValidationTests() {
   // --- SECTION 4: Agent Orchestrator Task Creation & Security Verification ---
   console.log('\n--- 4. Orchestrator Task Lifecycle & Security Verification ---');
 
-  // Creating task with valid parameters
-  const task = await orchestrator.createTask({
-    name: 'Implement User Profile Component',
-    description: 'Add a new Profile card component to the dashboard.',
-    projectId: 'proj-orch-test',
-    assignedAgentId: 'main-agent',
-    context: {
-      files: [
-        { path: '/src/App.tsx', content: 'export default function App() {}' },
-        { path: '.env.local', content: 'SECRET=hidden' } // Must be filtered
-      ]
-    }
-  }, { uid: 'user-alice' });
-
-  assert(task.status === 'QUEUED', 'Task successfully created with QUEUED status');
-  assert(task.ownerId === 'user-alice', 'Task ownerId is bound to user-alice');
-  assert(task.context.files.length === 1, 'Sanitizes context.files: excludes .env.local (1 file remaining)');
-  assert(task.context.files[0].path === 'src/App.tsx', 'Normalized path is src/App.tsx');
-
-  // Events emitted for project access and file path normalization
-  const taskEvents = orchestrator.getEvents(task.id);
-  assert(taskEvents.some(e => e.type === 'project_access_verified'), 'Emitted project_access_verified event');
-  assert(taskEvents.some(e => e.type === 'file_paths_normalized'), 'Emitted file_paths_normalized event');
-
-  // Creating task for unauthorized project is blocked
+  // A request-supplied project tree cannot create a background task for an unsaved project.
   try {
     await orchestrator.createTask({
-      name: 'Tamper Task',
-      projectId: 'proj-orch-test', // owned by user-alice
-      assignedAgentId: 'main-agent'
-    }, { uid: 'user-intruder' });
-    assert(false, 'Should have blocked user-intruder from creating task in user-alice project');
+      name: 'Unsaved workspace task', description: 'Must not execute from client-supplied files.',
+      projectId: 'proj-orch-test', assignedAgentId: 'main-agent',
+      context: { files: [{ path: 'src/App.tsx', content: 'fake client supplied file' }] }
+    }, { uid: 'user-alice' });
+    assert(false, 'Should have blocked task creation without a Firestore-owned project snapshot');
   } catch (err: any) {
-    assert(err.message.includes('owned by another user') || err.message.includes('Unauthorized'), 'Blocked unauthorized task creation with access error');
+    assert(err.message.includes('Save the project') || err.message.includes('verify project ownership') || err.message.includes('Firestore'), 'Blocked task creation without authoritative project data');
   }
 
   console.log(`\n======================================================`);

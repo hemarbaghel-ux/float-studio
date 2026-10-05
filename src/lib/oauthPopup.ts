@@ -57,13 +57,9 @@ export function launchOAuthFlow(options: OAuthLaunchOptions): ActiveOAuthSession
   const handleMessage = (event: MessageEvent) => {
     const origin = event.origin;
 
-    // Validate trusted origins: current window origin, Cloud Run preview domains, or localhost
-    if (
-      origin !== window.location.origin &&
-      !origin.endsWith('.run.app') &&
-      !origin.includes('localhost') &&
-      !origin.includes('float-studio.ai.studio')
-    ) {
+    // OAuth callback is served by this app, so accept messages only from the
+    // current origin and the popup window opened for this exact flow.
+    if (origin !== window.location.origin || event.source !== popup) {
       return;
     }
 

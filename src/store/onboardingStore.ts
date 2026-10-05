@@ -14,38 +14,43 @@ interface OnboardingState {
   setDataSharing: (val: boolean) => void;
 }
 
-const getStoredOnboarding = (): boolean => {
-  if (typeof window === 'undefined') return true;
-  try {
-    const val = localStorage.getItem('float_has_completed_onboarding');
-    if (val !== null) return val === 'true';
-  } catch {}
-  return false;
-};
-
 export const useOnboardingStore = create<OnboardingState>((set) => ({
-  hasCompletedOnboarding: getStoredOnboarding(),
+  hasCompletedOnboarding: false,
   setOnboarded: (val, userId) => {
     try {
-      localStorage.setItem('float_has_completed_onboarding', String(val));
       if (userId) {
         localStorage.setItem(`float_onboarded_${userId}`, String(val));
+      } else {
+        // Retain a one-time legacy marker only for callers that have not migrated.
+        localStorage.setItem('float_has_completed_onboarding', String(val));
       }
     } catch {}
     set({ hasCompletedOnboarding: val });
   },
   syncOnboardingForUser: (userId) => {
     try {
-      if (userId && localStorage.getItem(`float_onboarded_${userId}`) === 'true') {
-        set({ hasCompletedOnboarding: true });
-        return true;
+      if (!userId) {
+        set({ hasCompletedOnboarding: false, accountType: 'personal', role: null, dataSharing: false });
+        return false;
       }
-      const generic = localStorage.getItem('float_has_completed_onboarding') === 'true';
-      if (generic) {
-        set({ hasCompletedOnboarding: true });
-        return true;
+
+      const accountValue = localStorage.getItem(`float_onboarded_${userId}`);
+      if (accountValue !== null) {
+        const completed = accountValue === 'true';
+        set({ hasCompletedOnboarding: completed, accountType: 'personal', role: null, dataSharing: false });
+        return completed;
       }
+
+      // Let the first account seen after upgrade claim the old shared flag once.
+      const legacyCompleted = localStorage.getItem('float_has_completed_onboarding') === 'true';
+      if (legacyCompleted) {
+        localStorage.setItem(`float_onboarded_${userId}`, 'true');
+        localStorage.removeItem('float_has_completed_onboarding');
+      }
+      set({ hasCompletedOnboarding: legacyCompleted, accountType: 'personal', role: null, dataSharing: false });
+      return legacyCompleted;
     } catch {}
+    set({ hasCompletedOnboarding: false, accountType: 'personal', role: null, dataSharing: false });
     return false;
   },
   

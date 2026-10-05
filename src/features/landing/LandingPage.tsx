@@ -1,7 +1,7 @@
 import React from 'react';
 import { useIDEStore } from '../../store';
-import { useState, useEffect } from 'react';
-import { ArrowRight, Download, Sun, Moon } from 'lucide-react';
+import { useAuthStore } from '../../store/authStore';
+import { ArrowRight, Sun, Moon, ChevronDown } from 'lucide-react';
 import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
 import { ModelsDropdown } from '../../components/ModelsDropdown';
 import { ProductsDropdown } from '../../components/ProductsDropdown';
@@ -21,53 +21,14 @@ export function LandingPage() {
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
-  const testimonials = [
-    {
-      quote: t('testimonials.diana', "It was night and day from one batch to another, adoption went from single digits to over 80%. It just spread like wildfire, all the best builders were using FLOAT."),
-      name: "Diana Hu",
-      role: t('testimonials.diana_role', "General Partner, Y Combinator"),
-      color: "bg-orange-500"
-    },
-    {
-      quote: t('testimonials.jensen', "My favorite enterprise AI service is FLOAT. Every one of our engineers, some 40,000, are now assisted by AI and our productivity has gone up incredibly."),
-      name: "Jensen Huang",
-      role: t('testimonials.jensen_role', "President & CEO, NVIDIA"),
-      color: "bg-green-600"
-    },
-    {
-      quote: t('testimonials.andrej', "The best LLM applications have an autonomy slider: you control how much independence to give the AI. In FLOAT, you can do Cmd+K for targeted edits, or let it rip with the full autonomy agentic version."),
-      name: "Andrej Karpathy",
-      role: t('testimonials.andrej_role', "CEO, Eureka Labs"),
-      color: "bg-blue-500"
-    },
-    {
-      quote: t('testimonials.patrick', "FLOAT quickly grew from hundreds to thousands of extremely enthusiastic Stripe employees. We spend more on R&D and software creation than any other undertaking, and there's significant economic outcomes when making that process more efficient."),
-      name: "Patrick Collison",
-      role: t('testimonials.patrick_role', "Co-Founder & CEO, Stripe"),
-      color: "bg-purple-500"
-    },
-    {
-      quote: t('testimonials.shadcn', "The most useful AI tool that I currently pay for, hands down, is FLOAT. It's fast, autocompletes when and where you need it to, handles brackets properly, sensible keyboard shortcuts, bring-your-own-model... everything is well put together."),
-      name: "shadcn",
-      role: t('testimonials.shadcn_role', "Creator of shadcn/ui"),
-      color: "bg-zinc-800"
-    },
-    {
-      quote: t('testimonials.greg', "It's definitely becoming more fun to be a programmer. We are at the 1% of what's possible, and it's in interactive experiences like FLOAT where models like GPT-5 shine brightest."),
-      name: "Greg Brockman",
-      role: t('testimonials.greg_role', "President, OpenAI"),
-      color: "bg-teal-500"
-    }
-  ];
-
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0F0F0B] text-slate-900 dark:text-[#EDEDED] font-sans overflow-x-hidden selection:bg-[#7C3AED]/20 dark:selection:bg-[#EDEDED] dark:selection:text-[#0F0F0B] transition-colors">
       {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 bg-white/80 dark:bg-[#0F0F0B]/80 backdrop-blur-md transition-colors">
         <div className="flex items-center gap-8">
-          <a 
-            href="/" 
-            className="flex items-center gap-2.5 cursor-pointer" 
+          <a
+            href="/"
+            className="flex items-center gap-2.5 cursor-pointer"
             onClick={(e) => {
               e.preventDefault();
               if (window.location.pathname !== '/') {
@@ -103,13 +64,13 @@ export function LandingPage() {
             {settings.theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
 
-          <button 
+          <button
             onClick={() => handleStart('signin')}
             className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors hidden sm:block cursor-pointer px-2 py-1"
           >
             {t('nav.signin', 'Sign in')}
           </button>
-          <button 
+          <button
             onClick={handleStart}
             className="px-4 py-1.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-semibold"
           >
@@ -125,11 +86,11 @@ export function LandingPage() {
           {' '}{t('hero.title_part2', 'building ambitious software.')}
         </h1>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-24 w-full">
-          <button 
+          <button
             onClick={handleStart}
             className="group px-6 py-3 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-medium flex items-center justify-center gap-2 shadow-lg w-full sm:w-auto cursor-pointer"
           >
-            {t('hero.download_windows', 'Download for Windows')} <Download size={16} />
+            {t('hero.download_windows', 'Open FLOAT')} <ArrowRight size={16} />
           </button>
         </div>
 
@@ -234,8 +195,8 @@ export function LandingPage() {
           <p className="text-slate-600 dark:text-[#A1A1AA] text-lg mb-8">
             {t('features.agents.desc', 'Accelerate development by handing off tasks to FLOAT, while you focus on making decisions.')}
           </p>
-          <a 
-            href="/learn/agentic-development" 
+          <a
+            href="/learn/agentic-development"
             onClick={(e) => {
               e.preventDefault();
               window.history.pushState({}, '', '/learn/agentic-development');
@@ -272,14 +233,14 @@ export function LandingPage() {
         <p className="text-slate-600 dark:text-[#A1A1AA] text-xl mb-16">
           {t('features.lifecycle.desc', 'FLOAT supports every phase from planning to writing to reviewing code.')}
         </p>
-        
+
         <div className="grid md:grid-cols-3 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.lifecycle.plan_title', 'Plan')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.lifecycle.plan_desc', 'For complex tasks, FLOAT asks clarifying questions, builds a plan, then executes in the background.')}</p>
-              <a 
-                href="/features/plan" 
+              <a
+                href="/features/plan"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/plan');
@@ -305,8 +266,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.lifecycle.design_title', 'Design')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.lifecycle.design_desc', 'Visually edit any page by selecting an element to instantly rewrite, resize, or move it.')}</p>
-              <a 
-                href="/features/design" 
+              <a
+                href="/features/design"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/design');
@@ -334,8 +295,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.lifecycle.debug_title', 'Debug')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.lifecycle.debug_desc', 'FLOAT instruments your code and uses real execution data to pinpoint the fix.')}</p>
-              <a 
-                href="/features/debug" 
+              <a
+                href="/features/debug"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/debug');
@@ -374,14 +335,14 @@ export function LandingPage() {
         <p className="text-slate-600 dark:text-[#A1A1AA] text-xl mb-16">
           {t('features.engineering.desc', 'FLOAT edits files, runs terminal commands, searches the web, and more.')}
         </p>
-        
+
         <div className="grid md:grid-cols-3 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.engineering.terminal_title', 'Terminal')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.engineering.terminal_desc', 'Run shell commands directly from FLOAT, from builds to tests to installs. Sandboxed by default.')}</p>
-              <a 
-                href="/features/terminal" 
+              <a
+                href="/features/terminal"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/terminal');
@@ -412,8 +373,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.engineering.context_title', 'Add context')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.engineering.context_desc', 'Point FLOAT at exactly what matters with @-mentions and image uploads for reference.')}</p>
-              <a 
-                href="/features/add-context" 
+              <a
+                href="/features/add-context"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/add-context');
@@ -435,8 +396,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.engineering.git_title', 'Git & checkpoints')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.engineering.git_desc', 'See how your code has evolved, and roll back to a previous snapshot anytime.')}</p>
-              <a 
-                href="/features/git-checkpoints" 
+              <a
+                href="/features/git-checkpoints"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/git-checkpoints');
@@ -471,14 +432,14 @@ export function LandingPage() {
         <p className="text-slate-600 dark:text-[#A1A1AA] text-xl mb-16">
           {t('features.extend.desc', 'Give FLOAT your existing context, and add custom capabilities.')}
         </p>
-        
+
         <div className="grid md:grid-cols-3 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.extend.plugins_title', 'Plugins')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.extend.plugins_desc', 'Browse and install community-built plugins to extend FLOAT with new capabilities.')}</p>
-              <a 
-                href="/features/plugins" 
+              <a
+                href="/features/plugins"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/plugins');
@@ -505,8 +466,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.extend.skills_title', 'Skills')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.extend.skills_desc', 'Add domain knowledge to let FLOAT discover and run specialized prompts and code.')}</p>
-              <a 
-                href="/features/skills" 
+              <a
+                href="/features/skills"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/skills');
@@ -544,8 +505,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.extend.mcp_title', 'MCP')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.extend.mcp_desc', 'Connect external tools and data sources like GitHub and Figma directly to FLOAT.')}</p>
-              <a 
-                href="/features/mcp" 
+              <a
+                href="/features/mcp"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/mcp');
@@ -580,15 +541,15 @@ export function LandingPage() {
           {t('features.everywhere.title', 'Everywhere you work')}
         </h2>
         <p className="text-slate-600 dark:text-[#A1A1AA] text-xl mb-16">{t('features.everywhere.desc', 'One agent across every surface.')}</p>
-        
+
         <div className="grid md:grid-cols-4 gap-6 text-left">
           {/* Desktop */}
           <div className="flex flex-col gap-4">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.everywhere.desktop_title', 'Desktop')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.everywhere.desktop_desc', 'Manual to agentic coding, in one familiar editor.')}</p>
-              <a 
-                href="/features/desktop" 
+              <a
+                href="/features/desktop"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/desktop');
@@ -616,8 +577,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.everywhere.cli_title', 'CLI')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.everywhere.cli_desc', 'Run agents in any terminal, script, or editor.')}</p>
-              <a 
-                href="/features/cli" 
+              <a
+                href="/features/cli"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/cli');
@@ -644,8 +605,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.everywhere.other_title', 'Other Surfaces')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.everywhere.other_desc', 'Start agents from GitHub, Slack, Linear, JetBrains IDEs, and more.')}</p>
-              <a 
-                href="/features/other-surfaces" 
+              <a
+                href="/features/other-surfaces"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/other-surfaces');
@@ -684,8 +645,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.everywhere.web_title', 'Web & Mobile')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.everywhere.web_desc', 'Run cloud agents from your browser or phone.')}</p>
-              <a 
-                href="/features/web-mobile" 
+              <a
+                href="/features/web-mobile"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/web-mobile');
@@ -733,14 +694,14 @@ export function LandingPage() {
         <p className="text-slate-600 dark:text-[#A1A1AA] text-xl mb-16">
           {t('features.codebase.desc', 'FLOAT deeply learns your codebase before writing a single line.')}
         </p>
-        
+
         <div className="grid md:grid-cols-3 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.codebase.models_title', 'Multiple models')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.codebase.models_desc', 'Subagents run in parallel to explore your codebase, with each one using the best model for the task.')}</p>
-              <a 
-                href="/features/multiple-models" 
+              <a
+                href="/features/multiple-models"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/multiple-models');
@@ -781,8 +742,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.codebase.rules_title', 'Team rules')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.codebase.rules_desc', 'Teach FLOAT your preferences, from team conventions to specific architectural decisions.')}</p>
-              <a 
-                href="/features/team-rules" 
+              <a
+                href="/features/team-rules"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/team-rules');
@@ -809,8 +770,8 @@ export function LandingPage() {
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.codebase.search_title', 'Fast codebase search')}</h3>
               <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.codebase.search_desc', 'Designed for large codebases, FLOAT uses Instant Grep to search millions of files in milliseconds.')}</p>
-              <a 
-                href="/features/codebase-search" 
+              <a
+                href="/features/codebase-search"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/codebase-search');
@@ -835,24 +796,23 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Testimonials */}
+      {/* Product capabilities */}
       <section className="py-24 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5">
-        <h2 className="text-3xl font-medium tracking-tight mb-12 text-center text-slate-900 dark:text-white">
-          {t('testimonials.title', 'The new way to build software.')}
+        <h2 className="text-3xl font-medium tracking-tight mb-4 text-center text-slate-900 dark:text-white">
+          Coding tools in one browser workspace
         </h2>
+        <p className="max-w-2xl mx-auto mb-12 text-center text-slate-600 dark:text-[#A1A1AA]">
+          Explore a project, ask an AI model for help, review proposed changes, and keep your work organized in FLOAT.
+        </p>
         <div className="grid md:grid-cols-3 gap-4 text-left">
-          {testimonials.map((item, i) => (
-            <div key={i} className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl p-6 flex flex-col justify-between hover:bg-slate-50 dark:hover:bg-[#1E1C18] transition-colors shadow-xs">
-              <p className="text-slate-700 dark:text-[#EDEDED] text-sm leading-relaxed mb-6">"{item.quote}"</p>
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full ${item.color} flex items-center justify-center font-bold text-white text-xs`}>
-                  {item.name.charAt(0)}
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-slate-900 dark:text-white">{item.name}</div>
-                  <div className="text-xs text-slate-500 dark:text-[#A1A1AA]">{item.role}</div>
-                </div>
-              </div>
+          {[
+            ['Work with your project', 'Browse files and edit code in the workspace.'],
+            ['Choose an AI provider', 'Connect a provider key in settings and use the models available to your account.'],
+            ['Review before applying', 'Inspect proposed code changes and validation output before accepting them.'],
+          ].map(([title, description]) => (
+            <div key={title} className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl p-6">
+              <h3 className="text-slate-900 dark:text-white font-medium mb-2">{title}</h3>
+              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm leading-relaxed">{description}</p>
             </div>
           ))}
         </div>
@@ -864,17 +824,17 @@ export function LandingPage() {
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('cards.best_model_title', 'Use the best model for every task')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('cards.best_model_desc', 'Choose between every cutting-edge model from OpenAI, Anthropic, Gemini, SpaceXAI, and FLOAT.')}</p>
-              <a 
-                href="/features/model-routing" 
+              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('cards.best_model_desc', 'Connect a supported AI provider and choose from the models available to your account.')}</p>
+              <a
+                href="/features/multiple-models"
                 onClick={(e) => {
                   e.preventDefault();
-                  window.history.pushState({}, '', '/features/model-routing');
+                  window.history.pushState({}, '', '/features/multiple-models');
                   window.dispatchEvent(new PopStateEvent('popstate'));
                 }}
                 className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
               >
-                {t('cards.best_model_cta', 'Explore model routing')} <ArrowRight size={14} />
+                {t('cards.best_model_cta', 'Explore models')} <ArrowRight size={14} />
               </a>
             </div>
             <div className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl flex-1 p-6 h-[400px] flex items-center justify-center shadow-xs">
@@ -902,13 +862,13 @@ export function LandingPage() {
                </div>
             </div>
           </div>
-          
+
           <div className="flex flex-col gap-6">
             <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('cards.autonomous_title', 'Build with autonomous agents')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('cards.autonomous_desc', 'Launch fleets of agents that work in parallel on ambitious tasks for hours or days.')}</p>
-              <a 
-                href="/features/agents" 
+              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('cards.autonomous_title', 'Review AI-assisted code changes')}</h3>
+              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('cards.autonomous_desc', 'Use FLOAT’s coding workspace to ask for changes, inspect the proposed diff, and decide what to apply.')}</p>
+              <a
+                href="/features/agents"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/agents');
@@ -916,7 +876,7 @@ export function LandingPage() {
                 }}
                 className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
               >
-                {t('cards.autonomous_cta', 'Learn about cloud agents')} <ArrowRight size={14} />
+                {t('cards.autonomous_cta', 'Explore the workspace')} <ArrowRight size={14} />
               </a>
             </div>
             <div className="bg-slate-100 dark:bg-[#3A3930] border border-slate-200 dark:border-white/5 rounded-xl flex-1 pt-8 px-8 h-[400px] flex justify-center overflow-hidden border-b-0 shadow-xs">
@@ -957,9 +917,9 @@ export function LandingPage() {
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('cards.enterprise_title', 'Develop enduring software')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('cards.enterprise_desc', 'Trusted by over half of the Fortune 500 to accelerate development, securely and at scale.')}</p>
-              <a 
-                href="/features/enterprise" 
+              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('cards.enterprise_desc', 'Keep project files, AI conversations, and development tools together in one workspace.')}</p>
+              <a
+                href="/features/enterprise"
                 onClick={(e) => {
                   e.preventDefault();
                   window.history.pushState({}, '', '/features/enterprise');
@@ -967,7 +927,7 @@ export function LandingPage() {
                 }}
                 className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
               >
-                {t('cards.enterprise_cta', 'Explore enterprise')} <ArrowRight size={14} />
+                {t('cards.enterprise_cta', 'Explore the workspace')} <ArrowRight size={14} />
               </a>
             </div>
             <div className="bg-slate-100 dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl flex-1 p-0 h-[400px] overflow-hidden relative shadow-xs">
@@ -978,56 +938,14 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Highlights & Changelog */}
-      <section className="py-24 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5 text-left">
-        <div className="grid md:grid-cols-[1fr_3fr] gap-12 mb-20">
-          <div>
-            <h3 className="text-xl font-medium text-slate-900 dark:text-white">{t('news.highlights_title', 'Recent highlights')}</h3>
-          </div>
-          <div className="flex flex-col gap-4">
-            {[
-              { 
-                title: t('news.post1_title', "Introducing Grok 4.5"), 
-                desc: t('news.post1_desc', "Our most intelligent model and the first we've built for more than software engineering."), 
-                date: t('news.post1_date', "Research · Jul 8, 2026") 
-              },
-              { 
-                title: t('news.post2_title', "Build from anywhere with FLOAT for iOS"), 
-                desc: t('news.post2_desc', "FLOAT is available as a native iOS app on your phone, now in public beta."), 
-                date: t('news.post2_date', "Product · Jun 29, 2026") 
-              },
-              { 
-                title: t('news.post3_title', "Direct agents with visual prompts in Design Mode"), 
-                desc: t('news.post3_desc', "Point, draw, or narrate UI changes in the browser while agents edit the code underneath."), 
-                date: t('news.post3_date', "Product · Jun 5, 2026") 
-              }
-            ].map((post, i) => (
-              <div key={i} className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl p-6 hover:bg-slate-50 dark:hover:bg-[#1E1C18] transition-colors cursor-pointer shadow-xs">
-                <h4 className="text-slate-900 dark:text-white font-medium text-lg mb-2">{post.title}</h4>
-                <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{post.desc}</p>
-                <div className="text-xs text-slate-500 dark:text-[#A1A1AA]">{post.date}</div>
-              </div>
-            ))}
-            <a href="#" className="text-[#FF5F56] font-medium flex items-center gap-1 mt-2">{t('news.view_more', 'View more posts')} <ArrowRight size={14} /></a>
-          </div>
-        </div>
-
-        <div className="flex flex-col">
-          <h3 className="text-xl font-medium text-slate-900 dark:text-white mb-6">{t('news.changelog_title', 'Changelog')}</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            {[
-              { date: t('news.log1_date', "Sep 2, 2026"), title: t('news.log1_title', "Self-hosted machines") },
-              { date: t('news.log2_date', "Aug 27, 2026"), title: t('news.log2_title', "Start from scratch, without a repo") },
-              { date: t('news.log3_date', "Aug 19, 2026"), title: t('news.log3_title', "Cloud Agents and FLOAT Harness Improvements") },
-              { date: t('news.log4_date', "Aug 17, 2026"), title: t('news.log4_title', "Origin Code Hosting") }
-            ].map((log, i) => (
-              <div key={i} className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl p-6 hover:bg-slate-50 dark:hover:bg-[#1E1C18] transition-colors cursor-pointer shadow-xs">
-                <div className="text-xs text-slate-500 dark:text-[#A1A1AA] mb-2">{log.date}</div>
-                <div className="text-slate-900 dark:text-white font-medium text-sm">{log.title}</div>
-              </div>
-            ))}
-          </div>
-          <a href="#" className="text-[#FF5F56] font-medium flex items-center gap-1">{t('news.see_new', "See what's new in FLOAT")} <ArrowRight size={14} /></a>
+      {/* Resources */}
+      <section className="py-20 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5 text-center">
+        <h2 className="text-3xl font-medium tracking-tight mb-4 text-slate-900 dark:text-white">Learn your way around FLOAT</h2>
+        <p className="max-w-xl mx-auto mb-8 text-slate-600 dark:text-[#A1A1AA]">Read the documentation or browse guides before starting a workspace.</p>
+        <div className="flex flex-wrap justify-center gap-3">
+          <a href="/resources/docs" className="px-5 py-2.5 rounded-full border border-slate-300 dark:border-white/15 hover:bg-slate-100 dark:hover:bg-white/5">Documentation</a>
+          <a href="/resources/guides" className="px-5 py-2.5 rounded-full border border-slate-300 dark:border-white/15 hover:bg-slate-100 dark:hover:bg-white/5">Guides</a>
+          <a href="/resources/help" className="px-5 py-2.5 rounded-full border border-slate-300 dark:border-white/15 hover:bg-slate-100 dark:hover:bg-white/5">Help center</a>
         </div>
       </section>
 
@@ -1036,69 +954,40 @@ export function LandingPage() {
         <h2 className="text-5xl md:text-7xl font-medium tracking-tight mb-12 text-slate-900 dark:text-white">
           {t('cta.title', 'Try FLOAT now.')}
         </h2>
-        <button 
+        <button
           onClick={handleStart}
           className="px-8 py-4 bg-slate-900 dark:bg-white text-white dark:text-black rounded-full hover:bg-slate-800 dark:hover:bg-white/90 transition-colors font-medium flex items-center gap-2 text-lg shadow-[0_0_40px_rgba(0,0,0,0.1)] dark:shadow-[0_0_40px_rgba(255,255,255,0.2)] cursor-pointer"
         >
-          {t('cta.download_windows', 'Download for Windows')} <Download size={20} />
+          Open FLOAT <ArrowRight size={20} />
         </button>
       </section>
 
       {/* Footer */}
       <footer className="py-16 border-t border-slate-200 dark:border-white/5 px-6 bg-slate-100 dark:bg-[#0A0A08] text-left">
-        <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-6 gap-8 text-sm mb-16">
+        <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-3 gap-8 text-sm mb-16">
           <div className="flex flex-col gap-4">
             <h4 className="text-slate-900 dark:text-white font-semibold mb-2">{t('footer.product', 'Product')}</h4>
             <a href="/features" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Features</a>
-            <a href="/features/agents" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.agents', 'Agents')}</a>
-            <a href="/features/team-rules" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.teams', 'Teams')}</a>
             <a href="/pricing" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.pricing', 'Pricing')}</a>
-            <a href="/features/debug" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.code_review', 'Code Review')}</a>
-            <a href="/features/cli" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.cli', 'CLI')}</a>
-            <a href="/features/agents" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.cloud_agents', 'Cloud Agents')}</a>
-            <a href="/features/desktop" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.composer', 'Composer')}</a>
-            <a href="/features/plugins" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.marketplace', 'Marketplace')}</a>
+            <a href="/models" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Models</a>
+            <a href="/evals" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Evaluations</a>
           </div>
           <div className="flex flex-col gap-4">
             <h4 className="text-slate-900 dark:text-white font-semibold mb-2">{t('footer.resources', 'Resources')}</h4>
-            <a href="#" onClick={(e) => { e.preventDefault(); handleStart(); }} className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer">{t('footer.download', 'Download')}</a>
             <a href="/resources/changelog" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.changelog', 'Changelog')}</a>
             <a href="/resources/docs" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.docs', 'Docs')}</a>
             <a href="/learn" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.learn', 'Learn')}</a>
             <a href="/resources" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.value_calculator', 'Resource Hub')}</a>
-            <a href="/resources/community" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.forum', 'Forum')}</a>
             <a href="/resources/help" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.help', 'Help')}</a>
-            <a href="/resources/guides" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.workshops', 'Guides')}</a>
-            <a href="/models/usage" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.status', 'Status & Usage')}</a>
-          </div>
-          <div className="flex flex-col gap-4">
-            <h4 className="text-slate-900 dark:text-white font-semibold mb-2">{t('footer.company', 'Company')}</h4>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.careers', 'Careers')}</a>
-            <a href="/resources/blog" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.blog', 'Blog')}</a>
-            <a href="/resources/community" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.community', 'Community')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.students', 'Students')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.brand', 'Brand')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.future', 'Future')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Anysphere</a>
+            <a href="/models/usage" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Usage</a>
           </div>
           <div className="flex flex-col gap-4">
             <h4 className="text-slate-900 dark:text-white font-semibold mb-2">{t('footer.legal', 'Legal')}</h4>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.terms_of_service', 'Terms of Service')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.acceptable_use', 'Acceptable Use Policy')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.grok_bot_terms', 'Grok Bot Terms')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.privacy_policy', 'Privacy Policy')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.data_use', 'Data Use')}</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.security', 'Security')}</a>
-          </div>
-          <div className="flex flex-col gap-4">
-            <h4 className="text-slate-900 dark:text-white font-semibold mb-2">{t('footer.connect', 'Connect')}</h4>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">X</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">LinkedIn</a>
-            <a href="#" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">YouTube</a>
+            <a href="/privacy" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Privacy &amp; Data Handling</a>
           </div>
         </div>
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center text-xs text-slate-500 dark:text-[#A1A1AA] gap-4">
-          <div>{t('footer.copyright', '© 2026 Anysphere, Inc.')} <span className="mx-2">✓</span> {t('footer.certifications', 'SOC 2 | ISO27001 | ISO42001 | AIUC-1 Certified')}</div>
+          <div>{t('footer.copyright', '© 2026 FLOAT, Inc.')}</div>
         </div>
       </footer>
     </div>

@@ -1,12 +1,12 @@
 export type ProviderId = 'google' | 'openai' | 'anthropic' | 'xai' | 'deepseek' | 'cursor' | 'auto';
-export type ModelStatus = 
-  | 'AVAILABLE' 
-  | 'CONFIG_REQUIRED' 
-  | 'PROVIDER_SUPPORTED_NOT_CONFIGURED' 
-  | 'NOT_CONFIGURED' 
-  | 'DISABLED' 
-  | 'ERROR' 
-  | 'UNAVAILABLE' 
+export type ModelStatus =
+  | 'AVAILABLE'
+  | 'CONFIG_REQUIRED'
+  | 'PROVIDER_SUPPORTED_NOT_CONFIGURED'
+  | 'NOT_CONFIGURED'
+  | 'DISABLED'
+  | 'ERROR'
+  | 'UNAVAILABLE'
   | 'UNKNOWN';
 
 export interface ModelCapability {

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { User, signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { useIDEStore } from './index';
+import { useOnboardingStore } from './onboardingStore';
 
 interface AuthState {
   user: User | null;
@@ -13,10 +14,17 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  user: auth.currentUser,
-  loading: !auth.currentUser,
-  isInitialized: !!auth.currentUser,
-  setUser: (user) => set({ user, loading: false, isInitialized: true }),
+  user: null,
+  loading: true,
+  isInitialized: false,
+  setUser: (user) => {
+    const previousUser = useAuthStore.getState().user;
+    set({ user, loading: false, isInitialized: true });
+    if (previousUser?.uid !== user?.uid) {
+      useIDEStore.getState().switchAccount(user?.uid ?? null);
+      useOnboardingStore.getState().syncOnboardingForUser(user?.uid ?? null);
+    }
+  },
   setLoading: (loading) => set({ loading }),
   logout: async () => {
     try {

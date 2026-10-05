@@ -1,8 +1,10 @@
-import {StrictMode} from 'react';
+import {StrictMode, Suspense, lazy} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { LanguageProvider } from './components/LanguageProvider';
 import './index.css';
+
+const LegacyCacheRecovery = lazy(() => import('./components/LegacyCacheRecovery').then((module) => ({ default: module.LegacyCacheRecovery })));
 
 // Global resilience handler to gracefully intercept benign cancellation and script errors
 if (typeof window !== 'undefined') {
@@ -27,11 +29,11 @@ if (typeof window !== 'undefined') {
 
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
-    const reasonStr = typeof reason === 'string' 
-      ? reason 
+    const reasonStr = typeof reason === 'string'
+      ? reason
       : (reason?.message || reason?.msg || JSON.stringify(reason || ''));
 
-    const isCancellation = 
+    const isCancellation =
       reason?.type === 'cancelation' ||
       reason?.type === 'cancelled' ||
       reason?.name === 'AbortError' ||
@@ -62,7 +64,7 @@ if (typeof window !== 'undefined') {
       ? error
       : (error?.message || error?.msg || JSON.stringify(error || ''));
 
-    const isCancellation = 
+    const isCancellation =
       message === 'Script error.' ||
       message.includes('Script error') ||
       message.includes('operation is manually canceled') ||
@@ -83,7 +85,10 @@ if (typeof window !== 'undefined') {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <LanguageProvider>
-      <App />
+      <Suspense fallback={<div className="min-h-screen bg-slate-50 dark:bg-[#0A0A0A] text-slate-500 dark:text-[#8B949E] grid place-items-center text-sm">Loading FLOAT…</div>}>
+        <App />
+        <LegacyCacheRecovery />
+      </Suspense>
     </LanguageProvider>
   </StrictMode>,
 );

@@ -4,6 +4,8 @@ export interface ToolExecutionContext {
   userId: string;
   projectId: string;
   projectName: string;
+  /** Present only for persisted background tasks that own an isolated Git worktree. */
+  agentTaskId?: string;
   virtualFiles: Map<string, { path: string; name?: string; content?: string; type: string }>;
   signal?: AbortSignal;
 }

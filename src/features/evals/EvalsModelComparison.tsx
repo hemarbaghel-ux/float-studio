@@ -8,7 +8,7 @@ export function EvalsModelComparison() {
   const [selectedModels, setSelectedModels] = useState<string[]>(['gpt-4o', 'gemini-3.1-flash-lite']);
 
   const completedRuns = useMemo(() => {
-    return runs.filter(r => r.status === 'completed' || r.status === 'Completed');
+    return runs.filter(r => (r.status === 'completed' || r.status === 'Completed') && typeof (r.finalScore ?? r.score) === 'number');
   }, [runs]);
 
   // Aggregate stats per model strictly from completed runs

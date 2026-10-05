@@ -3,6 +3,7 @@ import {
   EvalTask, 
   EvalRun, 
   Benchmark, 
+  Difficulty,
   HumanReview, 
   LeaderboardEntry, 
   ScoreBreakdown, 
@@ -13,9 +14,27 @@ import {
 } from '../types/evals';
 import { ChangeSet, Change } from '../types';
 import { ScoringEngine } from './scoringEngine';
+import { sanitizeProposalPath } from './agent/proposalService';
 import { ModelRouter } from './providers/router';
 import { INITIAL_MODELS } from '../features/ai/registry';
 import { ServerPrivacyGuard } from './privacyGuard';
+import {
+  deleteEvalTask,
+  failInterruptedEvalRun,
+  heartbeatEvalRun,
+  getEvalBenchmark,
+  getEvalRun,
+  getEvalTask,
+  listEvalBenchmarks,
+  listEvalRuns,
+  listEvalTasks,
+  listRunningEvalRuns,
+  listEvalReviews,
+  saveEvalReview,
+  saveEvalBenchmark,
+  saveEvalTask,
+  saveEvalRun,
+} from './evalPersistence';
 
 // Built-in standard evaluation tasks for coding, debugging, refactoring, and agentic workflows
 const INITIAL_TASKS: EvalTask[] = [
@@ -187,17 +206,54 @@ export class EvalEngine {
   private benchmarks: Benchmark[] = [...INITIAL_BENCHMARKS];
   private reviews: HumanReview[] = [];
   private modelRouter: ModelRouter;
+  private runWrites = new Map<string, Promise<void>>();
+  private runHeartbeats = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor() {
     this.modelRouter = new ModelRouter();
   }
 
   // Task Management
-  createTask(task: Omit<EvalTask, 'id' | 'createdAt' | 'updatedAt'>): EvalTask {
+  createTask(task: Omit<EvalTask, 'id' | 'createdAt' | 'updatedAt'>, ownerId?: string): EvalTask {
+    if (!task || typeof task.name !== 'string' || !task.name.trim() || task.name.length > 150) {
+      throw new Error('Evaluation task name is required and must be 150 characters or fewer.');
+    }
+    if (typeof task.prompt !== 'string' || !task.prompt.trim() || task.prompt.length > 10_000) {
+      throw new Error('Evaluation prompt is required and must be 10,000 characters or fewer.');
+    }
+    if (typeof task.description !== 'string' || task.description.length > 2_000) {
+      throw new Error('Evaluation description must be 2,000 characters or fewer.');
+    }
+    if (typeof task.category !== 'string' || !task.category.trim() || task.category.length > 50) {
+      throw new Error('Evaluation category is required and must be 50 characters or fewer.');
+    }
+    const difficulty = String(task.difficulty).toLowerCase();
+    const normalizedDifficulty = ({ easy: 'Easy', medium: 'Medium', hard: 'Hard', expert: 'Expert' } as Record<string, Difficulty>)[difficulty];
+    if (!normalizedDifficulty) throw new Error('Choose a supported evaluation difficulty.');
+    if (task.files && (!Array.isArray(task.files) || task.files.length > 100)) {
+      throw new Error('An evaluation task can include at most 100 files.');
+    }
+    const files = Array.isArray(task.files) ? task.files : [];
+    let totalBytes = 0;
+    const seenPaths = new Set<string>();
+    for (const file of files) {
+      if (!file || typeof file.path !== 'string' || file.path.length > 300 || typeof file.content !== 'string') {
+        throw new Error('Evaluation files need a valid relative path and text content.');
+      }
+      const pathValidation = sanitizeProposalPath(file.path);
+      if (pathValidation.error) throw new Error(`Evaluation file path is not allowed: ${pathValidation.error}`);
+      const normalizedPath = pathValidation.safePath;
+      if (seenPaths.has(normalizedPath)) throw new Error(`Evaluation file paths must be unique: ${file.path}`);
+      seenPaths.add(normalizedPath);
+      totalBytes += Buffer.byteLength(file.content, 'utf8');
+      if (totalBytes > 650 * 1024) throw new Error('Evaluation task files must total 650 KB or less.');
+    }
     const newTask: EvalTask = {
       ...task,
+      difficulty: normalizedDifficulty,
+      ownerId,
       id: uuidv4(),
-      files: task.files || [],
+      files,
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -205,16 +261,54 @@ export class EvalEngine {
     return newTask;
   }
 
-  getTasks(): EvalTask[] {
-    return this.tasks;
+  async createTaskDurable(task: Omit<EvalTask, 'id' | 'createdAt' | 'updatedAt'>, ownerId: string): Promise<EvalTask> {
+    const newTask = this.createTask(task, ownerId);
+    try {
+      await saveEvalTask(newTask);
+      return newTask;
+    } catch (error) {
+      this.tasks = this.tasks.filter((item) => item.id !== newTask.id);
+      throw error;
+    }
   }
 
-  getTask(id: string): EvalTask | undefined {
-    return this.tasks.find(t => t.id === id);
+  async deleteTaskDurable(id: string, ownerId: string): Promise<boolean> {
+    const local = this.tasks.find((item) => item.id === id);
+    if (local && (!local.ownerId || local.ownerId !== ownerId)) return false;
+    const removed = await deleteEvalTask(id, ownerId);
+    if (removed) this.tasks = this.tasks.filter((item) => item.id !== id);
+    return removed;
   }
 
-  deleteTask(id: string): boolean {
-    const idx = this.tasks.findIndex(t => t.id === id);
+  getTasks(ownerId?: string): EvalTask[] {
+    return this.tasks.filter(task => !task.ownerId || task.ownerId === ownerId);
+  }
+
+  async getTasksDurable(ownerId: string): Promise<EvalTask[]> {
+    const tasks = await listEvalTasks(ownerId);
+    for (const task of tasks) {
+      const index = this.tasks.findIndex((item) => item.id === task.id);
+      if (index >= 0) this.tasks[index] = task;
+      else this.tasks.push(task);
+    }
+    return this.getTasks(ownerId);
+  }
+
+  async getTaskDurable(id: string, ownerId: string): Promise<EvalTask | null> {
+    const local = this.getTask(id, ownerId);
+    if (local) return local;
+    const task = await getEvalTask(id, ownerId);
+    if (task) this.tasks.push(task);
+    return task;
+  }
+
+  getTask(id: string, ownerId?: string): EvalTask | undefined {
+    const task = this.tasks.find(t => t.id === id);
+    return task && (!task.ownerId || task.ownerId === ownerId) ? task : undefined;
+  }
+
+  deleteTask(id: string, ownerId?: string): boolean {
+    const idx = this.tasks.findIndex(t => t.id === id && t.ownerId === ownerId);
     if (idx >= 0) {
       this.tasks.splice(idx, 1);
       return true;
@@ -227,19 +321,59 @@ export class EvalEngine {
     return this.benchmarks;
   }
 
+  async getBenchmarksDurable(ownerId: string): Promise<Benchmark[]> {
+    const benchmarks = await listEvalBenchmarks(ownerId);
+    for (const benchmark of benchmarks) {
+      const index = this.benchmarks.findIndex((item) => item.id === benchmark.id);
+      if (index >= 0) this.benchmarks[index] = benchmark;
+      else this.benchmarks.push(benchmark);
+    }
+    return this.benchmarks.filter((benchmark) => !benchmark.ownerId || benchmark.ownerId === ownerId);
+  }
+
+  async getBenchmarkDurable(id: string, ownerId: string): Promise<Benchmark | null> {
+    const local = this.getBenchmark(id);
+    if (local && (!local.ownerId || local.ownerId === ownerId)) return local;
+    const benchmark = await getEvalBenchmark(id, ownerId);
+    if (benchmark) this.benchmarks.push(benchmark);
+    return benchmark;
+  }
+
   getBenchmark(id: string): Benchmark | undefined {
     return this.benchmarks.find(b => b.id === id);
   }
 
-  createBenchmark(bench: Omit<Benchmark, 'id' | 'createdAt' | 'updatedAt'>): Benchmark {
+  createBenchmark(bench: Omit<Benchmark, 'id' | 'createdAt' | 'updatedAt'>, ownerId?: string): Benchmark {
     const newBench: Benchmark = {
       ...bench,
+      ownerId,
       id: uuidv4(),
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
     this.benchmarks.push(newBench);
     return newBench;
+  }
+
+  async createBenchmarkDurable(bench: Omit<Benchmark, 'id' | 'createdAt' | 'updatedAt'>, ownerId: string): Promise<Benchmark> {
+    if (!bench || typeof bench.name !== 'string' || !bench.name.trim() || bench.name.length > 150) {
+      throw new Error('Benchmark name is required and must be 150 characters or fewer.');
+    }
+    if (!Array.isArray(bench.taskIds) || bench.taskIds.length > 100) {
+      throw new Error('A benchmark must reference 100 tasks or fewer.');
+    }
+    const availableTaskIds = new Set((await this.getTasksDurable(ownerId)).map((task) => task.id));
+    if (bench.taskIds.some((taskId) => typeof taskId !== 'string' || !availableTaskIds.has(taskId))) {
+      throw new Error('Benchmark tasks must belong to your account or the built-in catalog.');
+    }
+    const newBenchmark = this.createBenchmark({ ...bench, taskCount: bench.taskIds.length }, ownerId);
+    try {
+      await saveEvalBenchmark(newBenchmark);
+      return newBenchmark;
+    } catch (error) {
+      this.benchmarks = this.benchmarks.filter((item) => item.id !== newBenchmark.id);
+      throw error;
+    }
   }
 
   // Execution Pipeline (EvaluationRunner)
@@ -252,9 +386,22 @@ export class EvalEngine {
     parentRunId?: string,
     options?: { dataSharingAllowed?: boolean; dataSharingConsent?: boolean; userId?: string }
   ): Promise<EvalRun> {
-    const task = this.tasks.find(t => t.id === taskId);
+    let task = this.tasks.find(t => t.id === taskId && (!t.ownerId || t.ownerId === options?.userId));
+    if (!task && options?.userId) {
+      task = (await getEvalTask(taskId, options.userId)) || undefined;
+      if (task) this.tasks.push(task);
+    }
     if (!task) {
       throw new Error(`Evaluation task ${taskId} not found.`);
+    }
+    if (benchmarkId) {
+      const benchmark = this.benchmarks.find((item) => item.id === benchmarkId);
+      if (benchmark?.ownerId && benchmark.ownerId !== options?.userId) {
+        throw new Error(`Evaluation benchmark ${benchmarkId} not found.`);
+      }
+      if (!benchmark && options?.userId && !await getEvalBenchmark(benchmarkId, options.userId)) {
+        throw new Error(`Evaluation benchmark ${benchmarkId} not found.`);
+      }
     }
 
     // Runtime check for user's consent preference (defaults strictly to false)
@@ -297,8 +444,14 @@ export class EvalEngine {
 
     this.runs.unshift(run);
 
+    await this.persistRun(run);
+    this.startRunHeartbeat(run.id);
+
     // Run execution pipeline asynchronously
-    this.executePipeline(run, task).catch(err => {
+    this.executePipeline(run, task).then(async () => {
+      await this.persistRun(run);
+      this.stopRunHeartbeat(run.id);
+    }).catch(err => {
       console.error(`Evaluation run ${runId} execution error:`, err);
       run.status = 'failed';
       run.errorType = 'ExecutionError';
@@ -306,7 +459,8 @@ export class EvalEngine {
       run.completedAt = Date.now();
       run.durationMs = run.completedAt - run.startedAt;
       run.duration = Math.round(run.durationMs / 1000);
-    });
+      return this.persistRun(run).finally(() => this.stopRunHeartbeat(run.id));
+    }).catch((error) => console.error(`[EvalEngine] Could not persist run ${runId}:`, error));
 
     return run;
   }
@@ -351,7 +505,7 @@ export class EvalEngine {
         dataSharingAllowed: run.dataSharingConsent
       });
       outputText = response.text || '';
-      run.timeToFirstToken = 350; // recorded network TTFT
+      // This adapter returns a completed response; it does not expose first-token timing.
     } catch (e: any) {
       console.warn(`Evaluation execution aborted for ${run.modelId}:`, e.message);
       run.status = 'failed';
@@ -388,173 +542,63 @@ export class EvalEngine {
       run.actualCost = 0;
     }
 
-    // Step 4: Trace Agent Steps & Tool Calls
-    run.activity?.push({ type: 'info', message: 'Step 4/8: Recording agent step and tool execution trace', timestamp: Date.now() });
-    const toolCalls: ToolCallTrace[] = [
-      {
-        id: uuidv4(),
-        toolName: 'read_file',
-        arguments: { path: task.files[0]?.path || 'solution.py' },
-        output: { bytes: task.files[0]?.content.length || 100 },
-        durationMs: 12,
-        success: true,
-        timestamp: Date.now()
-      },
-      {
-        id: uuidv4(),
-        toolName: 'modify_file',
-        arguments: { path: task.files[0]?.path || 'solution.py' },
-        output: { status: 'applied' },
-        durationMs: 25,
-        success: true,
-        timestamp: Date.now() + 50
-      }
-    ];
-
-    const agentTrace: AgentTraceStep[] = [
-      {
-        stepNumber: 1,
-        phase: 'Inspecting',
-        message: `Inspected ${snapshotFiles.length} files in workspace`,
-        timestamp: Date.now() - 400,
-        toolCalls: [toolCalls[0]]
-      },
-      {
-        stepNumber: 2,
-        phase: 'Synthesis',
-        message: 'Synthesizing bug fix according to problem constraints',
-        timestamp: Date.now() - 200
-      },
-      {
-        stepNumber: 3,
-        phase: 'Patching',
-        message: 'Generated candidate patch and verified file structure',
-        timestamp: Date.now(),
-        toolCalls: [toolCalls[1]]
-      }
-    ];
-
-    run.toolTrace = toolCalls;
-    run.agentTrace = agentTrace;
-    run.agentSteps = agentTrace.length;
-    run.toolCalls = toolCalls.length;
+    // This evaluation path currently generates a response but does not run agent tools.
+    run.toolTrace = [];
+    run.agentTrace = [];
+    run.agentSteps = 0;
+    run.toolCalls = 0;
     run.filesRead = filesReadCount;
 
-    // Step 5: Capture Changeset & Unified Diff
-    run.activity?.push({ type: 'info', message: 'Step 5/8: Extracting code changeset and diff', timestamp: Date.now() });
+    // Capture only changes explicitly returned as file code blocks.
+    run.activity?.push({ type: 'info', message: 'Extracting proposed file changes from model output', timestamp: Date.now() });
     const { changeSet, updatedFiles } = this.extractChangeSet(task, snapshotFiles, outputText);
     run.changeSet = changeSet;
     filesChangedCount = changeSet.changes.length;
     run.filesChanged = filesChangedCount;
     run.patchCreated = filesChangedCount > 0;
 
-    // Step 6: Validate Patch Syntax & Structure
-    run.activity?.push({ type: 'info', message: 'Step 6/8: Validating patch syntax, expected files, and boundaries', timestamp: Date.now() });
+    // Lightweight structural checks are not a substitute for executing the project.
+    run.activity?.push({ type: 'info', message: 'Checking patch structure; project commands are not executed by this evaluation path', timestamp: Date.now() });
     const patchSyntaxValid = this.validateSyntax(changeSet);
-    const expectedFilesFound = (task.expectedFiles || []).every(exp => 
-      updatedFiles.some(f => f.path === exp) || snapshotFiles.some(f => f.path === exp)
-    );
     const forbiddenFilesTouched = (task.forbiddenFiles || []).some(forb => 
       changeSet.changes.some(c => c.path.includes(forb))
     );
     run.patchValid = patchSyntaxValid && !forbiddenFilesTouched;
 
-    // Step 7: Run Validation Pipeline (Build, Typecheck, Tests, Security)
-    run.activity?.push({ type: 'info', message: 'Step 7/8: Executing test assertions and validation commands', timestamp: Date.now() });
-    const testResults = this.runTestAssertions(task, updatedFiles);
-    const passedTestsCount = testResults.filter(t => t.status === 'Passed').length;
-    const failedTestsCount = testResults.filter(t => t.status === 'Failed').length;
-    run.testCount = testResults.length;
-    run.testsPassedCount = passedTestsCount;
-    run.testsFailedCount = failedTestsCount;
-    run.testsPassed = testResults.length > 0 ? failedTestsCount === 0 : true;
-
-    const buildResult: ValidationResult = {
-      command: task.buildCommands?.[0] || 'python -m py_compile',
-      exitCode: patchSyntaxValid ? 0 : 1,
-      durationMs: 45,
-      stdout: patchSyntaxValid ? 'Compilation check succeeded with 0 errors.' : 'SyntaxError: invalid syntax in patch',
-      stderr: patchSyntaxValid ? '' : 'SyntaxError',
-      status: patchSyntaxValid ? 'Passed' : 'Failed'
-    };
-    run.buildPassed = buildResult.exitCode === 0;
-
-    const typecheckResult: ValidationResult = {
-      command: task.typecheckCommands?.[0] || 'mypy check',
-      exitCode: patchSyntaxValid ? 0 : 1,
-      durationMs: 82,
-      stdout: 'Success: no type issues found in checked files.',
+    const notRun = (command: string | undefined): ValidationResult => ({
+      command: command || 'Not configured',
+      exitCode: null,
+      durationMs: 0,
+      stdout: '',
       stderr: '',
-      status: 'Passed'
-    };
-    run.typecheckPassed = true;
-
-    const lintResult: ValidationResult = {
-      command: task.lintCommands?.[0] || 'flake8 .',
-      exitCode: 0,
-      durationMs: 38,
-      stdout: 'Clean code style compliance.',
-      stderr: '',
-      status: 'Passed'
-    };
-    run.lintPassed = true;
-
-    const securityResult: ValidationResult = {
-      command: task.securityChecks?.[0] || 'bandit security scanner',
-      exitCode: forbiddenFilesTouched ? 1 : 0,
-      durationMs: 64,
-      stdout: forbiddenFilesTouched ? 'Security alert: forbidden path access attempt.' : 'No known security issues detected.',
-      stderr: '',
-      status: forbiddenFilesTouched ? 'Failed' : 'Passed'
-    };
-    run.securityPassed = securityResult.exitCode === 0;
-
-    run.validationResults = {
-      build: buildResult,
-      typecheck: typecheckResult,
-      lint: lintResult,
-      tests: testResults,
-      security: securityResult
-    };
-
-    // Step 8: Evidence-based Scoring via ScoringEngine
-    run.activity?.push({ type: 'info', message: 'Step 8/8: Calculating evidence-based score breakdown', timestamp: Date.now() });
-    const scoreBreakdown: ScoreBreakdown = ScoringEngine.calculateScore({
-      taskCompleted: run.testsPassed && run.patchValid && run.buildPassed,
-      tests: testResults,
-      buildResult,
-      typecheckResult,
-      lintResult,
-      securityResult,
-      patchValid: run.patchValid,
-      expectedFilesFound,
-      forbiddenFilesTouched,
-      syntaxValid: patchSyntaxValid,
-      regressionsCount: 0,
-      agentSteps: run.agentSteps,
-      toolErrors: 0,
-      toolCalls: run.toolCalls,
-      instructionViolations: forbiddenFilesTouched ? ['Forbidden file touched'] : []
+      errorSummary: 'Not executed by the model-generation evaluation path.',
+      status: 'Not Run'
     });
-
-    run.scoreBreakdown = scoreBreakdown;
-    run.score = scoreBreakdown.finalScore;
-    run.automatedScore = scoreBreakdown.finalScore;
-    run.finalScore = scoreBreakdown.finalScore;
-    
-    // Status resolution
-    run.status = run.score >= 70 ? 'completed' : 'failed';
-    if (run.status === 'failed') {
-      run.errorType = 'ValidationFailure';
-      run.errorMessage = `Test score ${run.score}/100 did not meet passing threshold. ${failedTestsCount} tests failed.`;
-    }
+    run.validationResults = {
+      build: notRun(task.buildCommands?.[0]),
+      typecheck: notRun(task.typecheckCommands?.[0]),
+      lint: notRun(task.lintCommands?.[0]),
+      tests: [],
+      security: notRun(task.securityChecks?.[0])
+    };
+    run.testCount = 0;
+    run.testsPassed = undefined;
+    run.buildPassed = undefined;
+    run.typecheckPassed = undefined;
+    run.lintPassed = undefined;
+    run.securityPassed = undefined;
+    run.score = undefined;
+    run.automatedScore = undefined;
+    run.finalScore = undefined;
+    run.scoreBreakdown = undefined;
+    run.status = 'completed';
 
     run.completedAt = Date.now();
     run.durationMs = run.completedAt - startTime;
     run.duration = Math.round(run.durationMs / 1000);
     run.activity?.push({ 
-      type: run.status === 'completed' ? 'success' : 'error', 
-      message: `Evaluation completed with score ${run.score}/100 in ${run.duration}s`, 
+      type: 'success',
+      message: `Model generation completed in ${run.duration}s. Project checks were not run and no benchmark score was assigned.`,
       timestamp: Date.now() 
     });
 
@@ -564,46 +608,14 @@ export class EvalEngine {
         runId: run.id,
         taskId: run.taskId,
         modelId: run.modelId,
-        score: run.score,
+        score: null,
         durationMs: run.durationMs,
-        testsPassed: run.testsPassed
+        testsPassed: null
       });
     } else {
       ServerPrivacyGuard.dispatchExternalTelemetry('evaluation_metrics_collector', false, null);
       ServerPrivacyGuard.logAudit('EvalEngine', `Evaluation run ${run.id} concluded in Privacy Mode. External telemetry, usage data, and dataset export blocked.`, false);
     }
-  }
-
-  /**
-   * Helper to generate targeted solution for the standard benchmarks when provider is not configured.
-   */
-  private generateTargetSolution(task: EvalTask, files: { path: string; content: string }[]): { text: string } {
-    if (task.id === 'task-debug-twosum' || task.category === 'Debugging') {
-      const fixedCode = `def find_target_pair(numbers, target):\n    seen = {}\n    for idx, num in enumerate(numbers):\n        diff = target - num\n        if diff in seen:\n            return (seen[diff], idx)\n        seen[num] = idx\n    return None\n`;
-      return {
-        text: `Here is the fix for the zero-index offset and duplicate lookup in \`solution.py\`:\n\n\`\`\`python:solution.py\n${fixedCode}\`\`\`\n\nExplanation:\n- Changed return indices from \`(seen[diff] + 1, idx + 1)\` to 0-based tuple \`(seen[diff], idx)\`.\n- Preserves hash map lookup order ensuring valid indices.`
-      };
-    }
-
-    if (task.id === 'task-code-retry-decorator') {
-      const fixedCode = `import asyncio\nimport functools\n\ndef async_retry(max_attempts=3, base_delay=0.1, max_delay=1.0, exceptions=(Exception,)):\n    def decorator(func):\n        @functools.wraps(func)\n        async def wrapper(*args, **kwargs):\n            delay = base_delay\n            for attempt in range(1, max_attempts + 1):\n                try:\n                    return await func(*args, **kwargs)\n                except exceptions as e:\n                    if attempt == max_attempts:\n                        raise\n                    await asyncio.sleep(delay)\n                    delay = min(delay * 2, max_delay)\n        return wrapper\n    return decorator\n`;
-      return {
-        text: `Here is the implementation of \`@async_retry\` in \`retry.py\`:\n\n\`\`\`python:retry.py\n${fixedCode}\`\`\`\n`
-      };
-    }
-
-    if (task.id === 'task-security-sanitizer') {
-      const fixedCode = `def find_user_records(cursor, username, status):\n    ALLOWED_STATUSES = {"active", "pending", "suspended"}\n    if status not in ALLOWED_STATUSES:\n        raise ValueError(f"Invalid status: {status}")\n    query = "SELECT id, username, email FROM users WHERE username = ? AND status = ?"\n    return cursor.execute(query, (username, status)).fetchall()\n`;
-      return {
-        text: `Here is the secured database query helper in \`db_helper.py\`:\n\n\`\`\`python:db_helper.py\n${fixedCode}\`\`\`\n`
-      };
-    }
-
-    // Default fallback generator
-    const firstFile = files[0];
-    return {
-      text: `Updated implementation for ${task.name}:\n\n\`\`\`${firstFile?.path || 'code.py'}\n${firstFile?.content || ''}\n# Resolved task constraints\n\`\`\`\n`
-    };
   }
 
   private extractChangeSet(task: EvalTask, originalFiles: { path: string; content: string }[], outputText: string): { changeSet: ChangeSet; updatedFiles: { path: string; content: string }[] } {
@@ -642,22 +654,10 @@ export class EvalEngine {
       }
     }
 
-    // If no explicit code block was matched, create a change on the primary file
-    if (changes.length === 0 && task.files.length > 0) {
-      const primary = task.files[0];
-      changes.push({
-        path: primary.path,
-        operation: 'modify',
-        originalContent: primary.content,
-        proposedContent: primary.content + '\n# Output verified\n',
-        status: 'approved'
-      });
-    }
-
     const changeSet: ChangeSet = {
       id: uuidv4(),
       description: `Evaluation patch generated for task: ${task.name}`,
-      status: 'applied',
+      status: 'pending_review',
       changes
     };
 
@@ -684,90 +684,79 @@ export class EvalEngine {
     return true;
   }
 
-  private runTestAssertions(task: EvalTask, files: { path: string; content: string }[]): TestResult[] {
-    const results: TestResult[] = [];
-
-    if (task.id === 'task-debug-twosum') {
-      const solutionFile = files.find(f => f.path === 'solution.py')?.content || '';
-      const hasZeroBased = solutionFile.includes('(seen[diff], idx)');
-      const noPlusOne = !solutionFile.includes('seen[diff] + 1');
-
-      results.push({
-        name: 'test_standard_two_sum_indices',
-        status: hasZeroBased && noPlusOne ? 'Passed' : 'Failed',
-        durationMs: 14,
-        expectedResult: '(0, 1)',
-        actualResult: hasZeroBased && noPlusOne ? '(0, 1)' : '(1, 2)',
-        failureReason: hasZeroBased && noPlusOne ? undefined : 'Index off-by-one: returned 1-based index'
-      });
-
-      results.push({
-        name: 'test_duplicate_elements_target',
-        status: hasZeroBased ? 'Passed' : 'Failed',
-        durationMs: 11,
-        expectedResult: '(0, 1)',
-        actualResult: hasZeroBased ? '(0, 1)' : 'KeyError',
-        failureReason: hasZeroBased ? undefined : 'KeyError on duplicate target pair'
-      });
-
-      results.push({
-        name: 'test_no_pair_returns_none',
-        status: solutionFile.includes('return None') ? 'Passed' : 'Failed',
-        durationMs: 8,
-        expectedResult: 'None',
-        actualResult: 'None'
-      });
-
-      return results;
-    }
-
-    if (task.id === 'task-code-retry-decorator') {
-      const code = files.find(f => f.path === 'retry.py')?.content || '';
-      const hasDecorator = code.includes('@functools.wraps') && code.includes('async def wrapper');
-      const hasSleep = code.includes('asyncio.sleep');
-      const hasMaxAttempts = code.includes('max_attempts');
-
-      results.push({
-        name: 'test_retry_on_transient_failure',
-        status: hasDecorator && hasSleep ? 'Passed' : 'Failed',
-        durationMs: 45,
-        expectedResult: 'Retried 3 times and succeeded on 3rd attempt',
-        actualResult: hasDecorator && hasSleep ? 'Retried 3 times and succeeded' : 'Function failed without retrying'
-      });
-
-      results.push({
-        name: 'test_max_attempts_exhaustion_raises',
-        status: hasMaxAttempts ? 'Passed' : 'Failed',
-        durationMs: 32,
-        expectedResult: 'ConnectionError re-raised after 3 attempts',
-        actualResult: 'ConnectionError re-raised'
-      });
-
-      return results;
-    }
-
-    // Default test suite execution
-    results.push({
-      name: 'test_specification_conformance',
-      status: files.length > 0 ? 'Passed' : 'Failed',
-      durationMs: 18,
-      expectedResult: 'Specification requirements satisfied',
-      actualResult: 'Specification requirements satisfied'
-    });
-    results.push({
-      name: 'test_edge_case_robustness',
-      status: files.length > 0 ? 'Passed' : 'Failed',
-      durationMs: 22,
-      expectedResult: 'Handled empty and null boundaries',
-      actualResult: 'Handled empty and null boundaries'
-    });
-
-    return results;
-  }
-
   // Run Queries
   getRuns(): EvalRun[] {
     return this.runs;
+  }
+
+  async getRunsDurable(ownerId: string): Promise<EvalRun[]> {
+    const runs = await listEvalRuns(ownerId);
+    for (const run of runs) {
+      const index = this.runs.findIndex((item) => item.id === run.id);
+      if (index >= 0) this.runs[index] = run;
+      else this.runs.push(run);
+    }
+    return this.runs.filter((run) => run.ownerId === ownerId).sort((a, b) => b.startedAt - a.startedAt);
+  }
+
+  async getRunDurable(id: string, ownerId: string): Promise<EvalRun | null> {
+    const local = this.getRun(id);
+    if (local?.ownerId === ownerId) return local;
+    const run = await getEvalRun(id, ownerId);
+    if (run) this.runs.unshift(run);
+    return run;
+  }
+
+  async persistRun(run: EvalRun): Promise<void> {
+    const prior = this.runWrites.get(run.id) || Promise.resolve();
+    const next = prior.catch(() => undefined).then(() => saveEvalRun(run));
+    this.runWrites.set(run.id, next);
+    try {
+      await next;
+    } finally {
+      if (this.runWrites.get(run.id) === next) this.runWrites.delete(run.id);
+    }
+  }
+
+  private startRunHeartbeat(runId: string) {
+    this.stopRunHeartbeat(runId);
+    const timer = setInterval(() => {
+      const run = this.getRun(runId);
+      if (!run || run.status !== 'running') {
+        this.stopRunHeartbeat(runId);
+        return;
+      }
+      void heartbeatEvalRun(runId).catch((error) => {
+        console.error(`[EvalEngine] Heartbeat failed for run ${runId}:`, error);
+      });
+    }, 10_000);
+    timer.unref?.();
+    this.runHeartbeats.set(runId, timer);
+  }
+
+  private stopRunHeartbeat(runId: string) {
+    const timer = this.runHeartbeats.get(runId);
+    if (timer) clearInterval(timer);
+    this.runHeartbeats.delete(runId);
+  }
+
+  async recoverInterruptedRuns() {
+    const running = await listRunningEvalRuns();
+    for (const run of running) {
+      const failed = await failInterruptedEvalRun(run.id);
+      if (!failed) continue;
+      const recovered = {
+        ...run,
+        status: 'failed',
+        errorType: 'WorkerInterrupted',
+        errorMessage: 'Evaluation was interrupted when its worker stopped. Retry this run.',
+        completedAt: Date.now(),
+        updatedAt: Date.now(),
+      } as EvalRun;
+      const index = this.runs.findIndex((item) => item.id === run.id);
+      if (index >= 0) this.runs[index] = recovered;
+      else this.runs.push(recovered);
+    }
   }
 
   getRun(id: string): EvalRun | undefined {
@@ -782,6 +771,8 @@ export class EvalEngine {
       run.durationMs = run.completedAt - run.startedAt;
       run.duration = Math.round(run.durationMs / 1000);
       run.activity?.push({ type: 'warning', message: 'Evaluation run cancelled by user', timestamp: Date.now() });
+      void this.persistRun(run).catch((error) => console.error(`[EvalEngine] Could not persist cancelled run ${id}:`, error));
+      this.stopRunHeartbeat(id);
       return true;
     }
     return false;
@@ -818,6 +809,7 @@ export class EvalEngine {
   getLeaderboard(benchmarkId?: string, minEvaluations = 1): LeaderboardEntry[] {
     const completedRuns = this.runs.filter(r => 
       (r.status === 'completed' || r.status === 'Completed') && 
+      typeof (r.finalScore ?? r.score) === 'number' &&
       (!benchmarkId || r.benchmarkId === benchmarkId) &&
       !r.isPrivate &&
       r.dataSharingConsent === true
@@ -897,6 +889,7 @@ export class EvalEngine {
     const runs = this.runs.filter(r => 
       r.modelId === modelId && 
       (r.status === 'completed' || r.status === 'Completed') &&
+      typeof (r.finalScore ?? r.score) === 'number' &&
       !r.isPrivate &&
       r.dataSharingConsent === true
     );
@@ -962,8 +955,28 @@ export class EvalEngine {
     return newReview;
   }
 
+  async addReviewDurable(review: Omit<HumanReview, 'id' | 'reviewTimestamp'>): Promise<HumanReview> {
+    const newReview = this.addReview(review);
+    try {
+      await saveEvalReview(newReview);
+      const run = this.getRun(review.runId);
+      if (run) await this.persistRun(run);
+      return newReview;
+    } catch (error) {
+      this.reviews = this.reviews.filter((item) => item.id !== newReview.id);
+      throw error;
+    }
+  }
+
   getReviews(runId: string): HumanReview[] {
     return this.reviews.filter(r => r.runId === runId);
+  }
+
+  async getReviewsDurable(runId: string, ownerId: string): Promise<HumanReview[]> {
+    const reviews = await listEvalReviews(runId, ownerId);
+    const ids = new Set(reviews.map((review) => review.id));
+    this.reviews = this.reviews.filter((review) => review.runId !== runId || review.ownerId !== ownerId || ids.has(review.id));
+    return reviews;
   }
 }
 

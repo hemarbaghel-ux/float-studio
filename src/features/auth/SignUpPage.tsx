@@ -30,9 +30,10 @@ export interface SignUpPageProps {
   initialMode?: 'signup' | 'signin' | 'reset';
   onClose?: () => void;
   isModal?: boolean;
+  returnTo?: string;
 }
 
-export function SignUpPage({ initialMode = 'signup', onClose, isModal = false }: SignUpPageProps) {
+export function SignUpPage({ initialMode = 'signup', onClose, isModal = false, returnTo }: SignUpPageProps) {
   const [mode, setMode] = useState<'signup' | 'signin' | 'reset'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,6 +45,12 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false }:
   const [brandHovered, setBrandHovered] = useState(false);
 
   const { startSession } = useIDEStore();
+
+  const navigateAfterAuth = () => {
+    const destination = returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/dashboard';
+    window.history.pushState({}, '', destination);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
 
   useEffect(() => {
     setMode(initialMode);
@@ -95,8 +102,7 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false }:
         if (onClose) {
           onClose();
         } else {
-          window.history.pushState({}, '', '/dashboard');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigateAfterAuth();
         }
       }, 150);
     } catch (err: any) {
@@ -177,8 +183,7 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false }:
         if (onClose) {
           onClose();
         } else {
-          window.history.pushState({}, '', '/dashboard');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigateAfterAuth();
         }
       }, 150);
     } catch (err: any) {
@@ -492,10 +497,11 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false }:
         {/* Footer Links */}
         <footer className="w-full pt-6 text-center text-[11px] text-slate-500">
           <a 
-            href="/pricing#terms" 
+            href="/terms"
             onClick={(e) => {
               e.preventDefault();
-              window.open('/pricing#terms', '_self');
+              window.history.pushState({}, '', '/terms');
+              window.dispatchEvent(new PopStateEvent('popstate'));
             }} 
             className="hover:text-slate-300 transition-colors"
           >
@@ -503,10 +509,11 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false }:
           </a>
           <span className="mx-2 text-slate-700">·</span>
           <a 
-            href="/pricing#privacy" 
+            href="/privacy"
             onClick={(e) => {
               e.preventDefault();
-              window.open('/pricing#privacy', '_self');
+              window.history.pushState({}, '', '/privacy');
+              window.dispatchEvent(new PopStateEvent('popstate'));
             }} 
             className="hover:text-slate-300 transition-colors"
           >

@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore';
 
 export function ContactModal({ onClose }: { onClose: () => void }) {
   const { user } = useAuthStore();
-  
+
   const [subject, setSubject] = useState('');
   const [category, setCategory] = useState<'Question' | 'Support' | 'Enterprise / Sales' | 'Feedback'>('Question');
   const [message, setMessage] = useState('');
@@ -55,7 +55,7 @@ export function ContactModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-      <div 
+      <div
         className="w-full max-w-lg bg-white dark:bg-[#161616] border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -70,7 +70,7 @@ export function ContactModal({ onClose }: { onClose: () => void }) {
               <p className="text-[11px] text-slate-400 dark:text-[#8B949E]">Direct line to FLOAT developer support and questions</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={onClose}
             aria-label="Close dialog"
             className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors cursor-pointer"

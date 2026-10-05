@@ -2,7 +2,7 @@ import { AIModel } from '../../types/ai';
 
 /**
  * 10 Featured models for the FLOAT model selector with verified metadata structure.
- * 
+ *
  * Supports:
  * - id
  * - displayName

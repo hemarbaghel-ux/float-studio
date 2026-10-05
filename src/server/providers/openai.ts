@@ -1,12 +1,13 @@
 import OpenAI from 'openai';
-import { 
-  AIProviderAdapter, 
-  AIProviderRequest, 
-  AIProviderResponse, 
-  AIProviderError, 
-  ProviderHealthCheckResult 
+import {
+  AIProviderAdapter,
+  AIProviderRequest,
+  AIProviderResponse,
+  AIProviderError,
+  ProviderHealthCheckResult
 } from './base';
 import { AgentRunner } from '../agent/agentRunner';
+import { PortableAgentRunner } from '../agent/portableAgentRunner';
 
 export function normalizeOpenAIError(error: any): AIProviderError {
   const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
@@ -321,78 +322,6 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-
-    const abortController = new AbortController();
-    if (req?.on) {
-      req.on('close', () => {
-        abortController.abort();
-      });
-    }
-
-    const sendEvent = (type: string, data: any) => {
-      if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
-      }
-    };
-
-    try {
-      const apiModel = this.resolveApiModel(model);
-      const result = await AgentRunner.run({
-        provider: 'openai',
-        model: apiModel,
-        prompt,
-        virtualFiles,
-        projectName: req.body?.projectName || 'Workspace',
-        projectId: req.body?.projectId || 'default-project',
-        userId: req.user?.uid || 'user',
-        onEvent: (event) => {
-          sendEvent('event', event);
-        },
-        onDelta: (delta) => {
-          sendEvent('delta', { text: delta });
-        },
-        signal: abortController.signal
-      });
-
-      sendEvent('result', {
-        text: result.text,
-        changeSet: result.changeSet
-      });
-    } catch (error: any) {
-      if (!abortController.signal.aborted) {
-        const normalized = normalizeOpenAIError(error);
-        const isCancelled = normalized.name === 'AbortError' || (normalized as any).type === 'cancelation';
-        if (isCancelled) {
-          sendEvent('event', {
-            type: 'cancelled',
-            message: 'Agent execution was stopped by user.'
-          });
-          sendEvent('result', {
-            text: '*(Agent task stopped)*',
-            changeSet: null
-          });
-        } else {
-          sendEvent('event', {
-            type: 'failed',
-            message: normalized.message
-          });
-          sendEvent('result', {
-            text: `**Agent Execution Error (${normalized.code || 'PROVIDER_ERROR'})**\n\n${normalized.message}`,
-            changeSet: null
-          });
-        }
-      }
-    } finally {
-      if (!res.writableEnded) {
-        res.end();
-      }
-    }
+    return PortableAgentRunner.run('openai', req, res, model, prompt, virtualFiles, process.env.OPENAI_API_KEY!);
   }
 }

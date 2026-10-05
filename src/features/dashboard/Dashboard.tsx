@@ -1,8 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { 
-  Search, Plus, Bot, Code2, Sparkles, 
-  ArrowUp, PanelLeftClose, PanelLeftOpen, 
+import {
+  Search, Plus, Bot, Code2, Sparkles,
+  ArrowUp, PanelLeftClose, PanelLeftOpen,
   Loader2, Check, ChevronDown, X,
   ArrowRight, Filter, SlidersHorizontal, MoreHorizontal
 } from 'lucide-react';
@@ -17,6 +17,15 @@ import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
 import { DASHBOARD_MODELS } from './dashboardModels';
 import { ModelSelector } from '../ai/ModelSelector';
+import { AgentSelector } from '../ai/AgentSelector';
+import { AgentManagerModal } from '../ai/AgentManagerModal';
+import { ChatList } from '../float/ChatList';
+import { ChatThread } from '../float/ChatThread';
+import { AutomationsPanel } from '../float/AutomationsPanel';
+import { useAutomationScheduler } from '../float/automationEngine';
+import { CloudSessionBanner, CloudSessionModal } from '../float/CloudSession';
+import { AttachMenu, AttachmentChips, SlashMenu, SuggestionChips, slashMatches, type Attachments } from '../float/ComposerExtras';
+import { exportZip, importFileList, importZip, mapToTree, parseStoredFiles } from '../float/projectIO';
 import { AccountMenu } from '../../components/AccountMenu';
 
 interface ProjectItem {
@@ -33,11 +42,13 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [attachments, setAttachments] = useState<Attachments>({});
 
   // Dedicated 10-model selection matching Cursor-style screenshot
-  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>('grok-4.7');
-  
+  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'grok-4.7');
+
   // Chats list & search
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -45,8 +56,8 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
   const { setProject, settings, toggleTheme } = useIDEStore();
   const { user, logout } = useAuthStore();
-  const { 
-    selectedModel, setSelectedModel, 
+  const {
+    selectedModel, setSelectedModel, selectedAgent, setSelectedAgent,
     models, setModels,
     agents, setAgents
   } = useAIStore();
@@ -56,6 +67,12 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    const openAgentManager = () => setShowAgentManager(true);
+    document.addEventListener('open-agent-manager', openAgentManager);
+    return () => document.removeEventListener('open-agent-manager', openAgentManager);
+  }, []);
 
   useEffect(() => {
     if (models.length === 0) setModels(INITIAL_MODELS);
@@ -137,26 +154,19 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
     try {
       const newProjectId = uuidv4();
       const title = textToSubmit.length > 36 ? textToSubmit.slice(0, 36) + '...' : textToSubmit;
-      
+
       useIDEStore.getState().setInitialPrompt(textToSubmit);
+      const starterFiles = {
+        'main.py': `# ${title}\n\ndef main():\n    print("Welcome to FLOAT AI workspace.")\n\nif __name__ == "__main__":\n    main()\n`,
+        'README.md': `# ${title}\n\nTask: ${textToSubmit}\n`,
+        ...attachments,
+      };
       setProject(
         title || 'New Workspace',
-        [
-          {
-            id: uuidv4(),
-            name: 'main.py',
-            type: 'file',
-            content: `# ${title}\n\ndef main():\n    print("Welcome to FLOAT AI workspace.")\n\nif __name__ == "__main__":\n    main()\n`
-          },
-          {
-            id: uuidv4(),
-            name: 'README.md',
-            type: 'file',
-            content: `# ${title}\n\nTask: ${textToSubmit}\n`
-          }
-        ],
+        mapToTree(starterFiles),
         newProjectId
       );
+      setAttachments({});
 
       const store = useIDEStore.getState();
       await store.saveProject();
@@ -179,11 +189,11 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
   return (
     <div className="flex h-screen w-screen bg-[#F8F8F7] dark:bg-[#0A0A0A] text-slate-900 dark:text-[#E6EDF3] font-sans overflow-hidden select-none transition-colors">
-      
+
       {/* ======================================================== */}
       {/* LEFT SIDEBAR                                             */}
       {/* ======================================================== */}
-      <aside 
+      <aside
         aria-label="Navigation Sidebar"
         className={`${
           sidebarCollapsed ? 'w-16' : 'w-64'
@@ -192,7 +202,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
         {/* Sidebar Header (Logo on left, Toggle and Search on right) */}
         <div className="h-12 flex items-center px-4 justify-between shrink-0">
           <div className="flex items-center gap-2">
-            <a 
+            <a
               href="/"
               onClick={(e) => {
                 e.preventDefault();
@@ -310,9 +320,9 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           <div className="mt-5 px-4 flex flex-col flex-1">
             <div className="flex items-center justify-between text-xs text-slate-400 dark:text-[#8B949E]">
               <span className="font-normal">Chats</span>
-              <button 
+              <button
                 onClick={() => fetchProjects()}
-                title="Filter chats" 
+                title="Filter chats"
                 className="hover:text-slate-600 dark:hover:text-white transition-colors cursor-pointer"
               >
                 <SlidersHorizontal size={13} />
@@ -414,58 +424,67 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 </div>
               )}
 
-              {/* Bottom Controls Row: + button, Model trigger, Send arrow */}
-              <div className="flex items-center justify-between pt-2">
-                <div className="flex items-center gap-1.5 relative">
-                  {/* + Button */}
-                  <button
-                    type="button"
-                    onClick={() => textareaRef.current?.focus()}
-                    className="w-6 h-6 rounded-full bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/15 text-slate-500 dark:text-[#8B949E] flex items-center justify-center cursor-pointer transition-colors"
-                    title="Add context"
-                  >
-                    <Plus size={13} />
-                  </button>
+              {/* Bottom bar: project attachments, model and agent selection, and send */}
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <AttachMenu
+                        dropDown
+                        disabled={isSubmitting}
+                        onAttach={(files) => setAttachments(prev => ({ ...prev, ...files }))}
+                      />
 
-                  {/* Active Model Trigger & Upgraded Model Selector with Hover Info Panel */}
-                  <ModelSelector
-                    activeModelId={selectedDashboardModelId}
-                    onModelChange={(id) => {
-                      setSelectedDashboardModelId(id);
-                      setSelectedModel(id);
-                    }}
-                    variant="composer"
-                    placement="bottom"
-                  />
-                </div>
+                      <ModelSelector
+                        activeModelId={selectedDashboardModelId}
+                        onModelChange={(id) => {
+                          setSelectedDashboardModelId(id);
+                          setSelectedModel(id);
+                        }}
+                        placement="auto"
+                        variant="composer"
+                      />
+                      <AgentSelector
+                        activeAgentId={selectedAgent}
+                        onAgentChange={(id) => {
+                          setSelectedAgent(id);
+                          const agent = agents.find((item) => item.id === id);
+                          if (agent?.defaultModel) {
+                            setSelectedModel(agent.defaultModel);
+                            setSelectedDashboardModelId(agent.defaultModel);
+                          }
+                        }}
+                        onAgentManagerOpen={() => document.dispatchEvent(new Event('open-agent-manager'))}
+                      />
+                    </div>
 
-                {/* Submit Arrow Up Button */}
-                <button
-                  type="button"
-                  onClick={() => handleStart()}
-                  disabled={!prompt.trim() || isSubmitting}
-                  aria-label="Send prompt"
-                  className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-                    prompt.trim() && !isSubmitting
-                      ? 'bg-slate-900 dark:bg-white text-white dark:text-black cursor-pointer shadow-xs scale-100'
-                      : 'bg-slate-300 dark:bg-white/20 text-white dark:text-white/40 cursor-not-allowed opacity-80'
-                  }`}
-                >
-                  {isSubmitting ? (
-                    <Loader2 size={12} className="animate-spin text-current" />
-                  ) : (
-                    <ArrowUp size={13} strokeWidth={2.5} />
-                  )}
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStart()}
+                      disabled={!prompt.trim() || isSubmitting}
+                      aria-label="Send prompt"
+                      className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                        prompt.trim() && !isSubmitting
+                          ? 'bg-slate-900 text-white dark:bg-white dark:text-black hover:opacity-90 shadow-md cursor-pointer scale-100'
+                          : 'bg-slate-100 dark:bg-white/5 text-slate-300 dark:text-[#6E7681] cursor-not-allowed opacity-60'
+                      }`}
+                    >
+                      {isSubmitting ? (
+                        <Loader2 size={16} className="animate-spin text-current" />
+                      ) : (
+                        <ArrowUp size={16} strokeWidth={2.5} />
+                      )}
+                    </button>
+                  </div>
               </div>
             </div>
-          </div>
         )}
       </main>
 
       {/* Settings Modal */}
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+      {showAgentManager && (
+        <AgentManagerModal onClose={() => setShowAgentManager(false)} />
       )}
     </div>
   );

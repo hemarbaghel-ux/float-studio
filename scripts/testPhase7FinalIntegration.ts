@@ -52,6 +52,13 @@ async function runPhase7Tests() {
     assert(false, `Failed resolving gpt-4o: ${e.message}`);
   }
 
+  try {
+    const xaiAdapter = router.getAdapterForModel('grok-4.7');
+    assert(xaiAdapter.id === 'xai', 'Resolves Grok 4.7 strictly to xAI adapter');
+  } catch (e: any) {
+    assert(false, `Failed resolving grok-4.7: ${e.message}`);
+  }
+
   // Unrecognized model rejected with clear message
   try {
     router.getAdapterForModel('fake-nonexistent-model-xyz');

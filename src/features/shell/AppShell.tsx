@@ -17,13 +17,13 @@ import { EvalsWorkspace } from '../evals/EvalsWorkspace';
 import { AgentsWorkspace } from '../agents/AgentsWorkspace';
 
 export function AppShell() {
-  const { saveProject, files, 
+  const { saveProject, files,
     activeWorkspace,
-    leftSidebarOpen, 
+    leftSidebarOpen,
     activeSidebarView,
-    rightSidebarOpen, 
+    rightSidebarOpen,
     bottomPanelOpen,
-    settings 
+    settings
   } = useIDEStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -71,12 +71,12 @@ export function AppShell() {
     const handleOpenAgentManager = () => setAgentManagerOpen(true);
     document.addEventListener('open-settings', handleOpenSettings);
     document.addEventListener('open-agent-manager', handleOpenAgentManager);
-    
+
     // Auto save logic
     const saveTimeout = setTimeout(() => {
       saveProject();
     }, 2000);
-    
+
     return () => {
       document.removeEventListener('open-settings', handleOpenSettings);
       document.removeEventListener('open-agent-manager', handleOpenAgentManager);
@@ -87,12 +87,12 @@ export function AppShell() {
   return (
     <div className="h-screen w-screen overflow-hidden bg-slate-100 dark:bg-[#000000] text-slate-800 dark:text-[#C9D1D9] flex flex-col font-sans selection:bg-slate-300 dark:selection:bg-white/20">
       <Header />
-      
+
       <div className="flex-1 flex min-w-0 overflow-hidden">
         <ActivityBar />
-        
+
         <div className="flex-1 flex min-w-0">
-        
+
         {leftSidebarOpen && (
           <div className="w-64 bg-white dark:bg-[#0A0A0A] border-r border-slate-200 dark:border-[#2A2A2A] shrink-0 flex flex-col">
             {activeSidebarView === 'explorer' ? <FileExplorer /> : <SearchPanel />}
@@ -105,7 +105,7 @@ export function AppShell() {
             {activeWorkspace === 'evals' && <EvalsWorkspace />}
             {activeWorkspace === 'agents' && <AgentsWorkspace />}
           </div>
-          
+
           {bottomPanelOpen && (
             <div className="h-48 border-t border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#080808] shrink-0">
               <BottomPanel />
@@ -118,7 +118,7 @@ export function AppShell() {
             <AIPanel />
           </div>
         )}
-        
+
         </div>
       </div>
 
@@ -128,4 +128,3 @@ export function AppShell() {
     </div>
   );
 }
-

@@ -8,7 +8,7 @@ export function EvalsAgentComparison() {
   const [selectedAgents, setSelectedAgents] = useState<string[]>(['main-agent', 'coder-agent', 'debugger-agent']);
 
   const completedRuns = useMemo(() => {
-    return runs.filter(r => r.status === 'completed' || r.status === 'Completed');
+    return runs.filter(r => (r.status === 'completed' || r.status === 'Completed') && typeof (r.finalScore ?? r.score) === 'number');
   }, [runs]);
 
   const agentStats = useMemo(() => {

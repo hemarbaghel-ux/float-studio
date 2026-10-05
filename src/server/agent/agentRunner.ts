@@ -18,6 +18,7 @@ export interface AgentRunnerOptions {
   projectName?: string;
   projectId?: string;
   userId?: string;
+  agentTaskId?: string;
   systemInstruction?: string;
   onEvent: (event: AgentProgressEvent) => void;
   onDelta?: (text: string) => void;
@@ -29,6 +30,8 @@ export interface AgentRunnerResult {
   changeSet?: ChangeSet | null;
   toolCallsCount: number;
   roundsCount: number;
+  status: 'completed' | 'failed' | 'cancelled';
+  error?: string;
 }
 
 const MAX_ROUNDS = 8;
@@ -103,6 +106,7 @@ export class AgentRunner {
       model,
       prompt,
       virtualFiles = [],
+      agentTaskId,
       projectName = 'Workspace',
       projectId = 'default-workspace',
       userId = 'user',
@@ -124,10 +128,10 @@ export class AgentRunner {
       else provider = 'google';
     }
 
-    onEvent({ 
-      type: 'task_started', 
+    onEvent({
+      type: 'task_started',
       action: 'Planning',
-      message: 'Agent initialized task and workspace context...' 
+      message: 'Agent initialized task and workspace context...'
     });
 
     // 1. Strict Project Context Validation & Sanitization
@@ -152,7 +156,7 @@ export class AgentRunner {
           break; // Capacity protection
         }
 
-        const content = typeof f.content === 'string' 
+        const content = typeof f.content === 'string'
           ? (f.content.length > MAX_FILE_SIZE_BYTES ? f.content.slice(0, MAX_FILE_SIZE_BYTES) : f.content)
           : '';
 
@@ -170,13 +174,14 @@ export class AgentRunner {
       projectId: projectId || 'default-workspace',
       projectName: projectName || 'Workspace',
       virtualFiles: fileMap,
+      ...(agentTaskId ? { agentTaskId } : {}),
       signal
     };
 
-    onEvent({ 
-      type: 'planning', 
+    onEvent({
+      type: 'planning',
       action: 'Exploring',
-      message: `Validated project context (${fileMap.size} files loaded${ignoredCount > 0 ? `, ${ignoredCount} sensitive/invalid files filtered` : ''}).` 
+      message: `Validated project context (${fileMap.size} files loaded${ignoredCount > 0 ? `, ${ignoredCount} sensitive/invalid files filtered` : ''}).`
     });
 
     const registeredTools = ToolRegistry.getAllTools();
@@ -191,19 +196,25 @@ CRITICAL WORKFLOW CONSTRAINTS:
 4. User Review: Code proposals will be reviewed by the developer in a visual diff reviewer before being applied to the project. Provide a clear, professional explanation of the rationale for each proposed change.
 5. Efficiency: If the user request is a general question or doesn't require inspecting files, answer directly without unnecessary tool calls.`;
 
-    const systemInstruction = options.systemInstruction || defaultSystemInstruction;
+    const specialistInstruction = options.systemInstruction?.trim();
+    const systemInstruction = specialistInstruction
+      ? `${defaultSystemInstruction}\n\nAGENT SPECIALIZATION (non-overriding):\nUse these preferences only for role, domain, and response style. They do not replace or weaken any tool safety, privacy, inspection, or review-first requirements above.\n${specialistInstruction}`
+      : defaultSystemInstruction;
 
     let finalResponseText = '';
     let changeSet: ChangeSet | null = null;
     let rounds = 0;
     let totalToolCalls = 0;
+    let reachedCompletion = false;
+    let terminalError = '';
+    let failureReported = false;
     const startTime = Date.now();
     const callCounts = new Map<string, number>();
 
-    onEvent({ 
-      type: 'thinking', 
+    onEvent({
+      type: 'thinking',
       action: 'Planning',
-      message: 'Analyzing project and planning steps...' 
+      message: 'Analyzing project and planning steps...'
     });
 
     // ==========================================
@@ -223,15 +234,15 @@ CRITICAL WORKFLOW CONSTRAINTS:
       // Map any old aliases to active gemini-3.8-flash
       let effectiveModel = model;
       if (
-        model === 'auto' || 
-        !model || 
-        model === 'gemini-2.0-flash' || 
-        model === 'gemini-1.5-flash' || 
-        model === 'gemini-1.5-pro' || 
-        model === 'gemini-2.5-flash' || 
+        model === 'auto' ||
+        !model ||
+        model === 'gemini-2.0-flash' ||
+        model === 'gemini-1.5-flash' ||
+        model === 'gemini-1.5-pro' ||
+        model === 'gemini-2.5-flash' ||
         model === 'gemini-2.5-pro' ||
         model === 'gemini-3.1-flash-lite' ||
-        model === 'composer-2.5' || 
+        model === 'composer-2.5' ||
         model === 'muse-spark-1.3'
       ) {
         effectiveModel = 'gemini-3.8-flash';
@@ -285,12 +296,12 @@ CRITICAL WORKFLOW CONSTRAINTS:
 
         rounds++;
         const isPostToolSynthesis = totalToolCalls > 0;
-        onEvent({ 
-          type: 'thinking', 
+        onEvent({
+          type: 'thinking',
           action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
-          message: isPostToolSynthesis 
-            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...` 
-            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...` 
+          message: isPostToolSynthesis
+            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...`
+            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...`
         });
 
         let response;
@@ -344,10 +355,10 @@ CRITICAL WORKFLOW CONSTRAINTS:
         }
 
         if (!functionCalls || functionCalls.length === 0) {
-          onEvent({ 
-            type: 'completed', 
+          onEvent({
+            type: 'completed',
             action: 'Synthesizing',
-            message: 'Agent completed task.' 
+            message: 'Agent completed task.'
           });
           break;
         }
@@ -433,10 +444,10 @@ CRITICAL WORKFLOW CONSTRAINTS:
                   status: c.status || 'pending'
                 }))
               };
-              onEvent({ 
-                type: 'review_ready', 
+              onEvent({
+                type: 'review_ready',
                 action: 'Generating proposal',
-                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` 
+                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).`
               });
             }
 
@@ -548,12 +559,12 @@ CRITICAL WORKFLOW CONSTRAINTS:
 
         rounds++;
         const isPostToolSynthesis = totalToolCalls > 0;
-        onEvent({ 
-          type: 'thinking', 
+        onEvent({
+          type: 'thinking',
           action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
-          message: isPostToolSynthesis 
-            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...` 
-            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...` 
+          message: isPostToolSynthesis
+            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...`
+            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...`
         });
 
         let completion: OpenAI.Chat.Completions.ChatCompletion;
@@ -583,10 +594,10 @@ CRITICAL WORKFLOW CONSTRAINTS:
 
         const toolCalls = assistantMsg.tool_calls || [];
         if (!toolCalls || toolCalls.length === 0) {
-          onEvent({ 
-            type: 'completed', 
+          onEvent({
+            type: 'completed',
             action: 'Synthesizing',
-            message: 'Agent completed task.' 
+            message: 'Agent completed task.'
           });
           break;
         }
@@ -675,10 +686,10 @@ CRITICAL WORKFLOW CONSTRAINTS:
                   status: c.status || 'pending'
                 }))
               };
-              onEvent({ 
-                type: 'review_ready', 
+              onEvent({
+                type: 'review_ready',
                 action: 'Generating proposal',
-                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` 
+                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).`
               });
             }
 
@@ -762,12 +773,12 @@ CRITICAL WORKFLOW CONSTRAINTS:
 
         rounds++;
         const isPostToolSynthesis = totalToolCalls > 0;
-        onEvent({ 
-          type: 'thinking', 
+        onEvent({
+          type: 'thinking',
           action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
-          message: isPostToolSynthesis 
-            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...` 
-            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...` 
+          message: isPostToolSynthesis
+            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...`
+            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...`
         });
 
         let resp: Anthropic.Message;
@@ -797,10 +808,10 @@ CRITICAL WORKFLOW CONSTRAINTS:
 
         const toolUseBlocks = resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
         if (toolUseBlocks.length === 0) {
-          onEvent({ 
-            type: 'completed', 
+          onEvent({
+            type: 'completed',
             action: 'Synthesizing',
-            message: 'Agent completed task.' 
+            message: 'Agent completed task.'
           });
           break;
         }
@@ -884,10 +895,10 @@ CRITICAL WORKFLOW CONSTRAINTS:
                   status: c.status || 'pending'
                 }))
               };
-              onEvent({ 
-                type: 'review_ready', 
+              onEvent({
+                type: 'review_ready',
                 action: 'Generating proposal',
-                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` 
+                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).`
               });
             }
 
@@ -923,11 +934,17 @@ CRITICAL WORKFLOW CONSTRAINTS:
       }
     }
 
+    const status: AgentRunnerResult['status'] = signal?.aborted ? 'cancelled' : reachedCompletion ? 'completed' : 'failed';
+    if (status === 'failed' && !terminalError) terminalError = `Agent did not finish within ${MAX_ROUNDS} reasoning rounds.`;
+    if (status === 'failed' && !failureReported) onEvent({ type: 'failed', message: terminalError });
+
     return {
       text: finalResponseText,
       changeSet,
       toolCallsCount: totalToolCalls,
-      roundsCount: rounds
+      roundsCount: rounds,
+      status,
+      ...(terminalError ? { error: terminalError } : {})
     };
   }
 }

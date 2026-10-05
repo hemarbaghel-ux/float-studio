@@ -33,6 +33,10 @@ export interface AIMessage {
   status?: 'sending' | 'streaming' | 'completed' | 'error' | 'cancelled';
   error?: string;
   conversationId?: string;
+  checkpoint?: FileNode[];
+  changes?: Record<string, { status: 'pending' | 'accepted' | 'rejected'; before?: string | null }>;
+  agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
+  cancelled?: boolean;
 }
 
 export interface EditorSelection {
@@ -81,6 +85,9 @@ export interface ChangeSet {
   proposalId?: string;
   ownerId?: string;
   projectId?: string;
+  agentBranch?: string;
+  agentBaseCommit?: string;
+  agentDiff?: string;
 }
 
 export interface Change {

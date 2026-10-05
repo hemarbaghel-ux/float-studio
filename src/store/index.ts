@@ -4,8 +4,9 @@ import { FileNode, OpenTab, AIMessage, EditorSettings, AIContextItem, TerminalEn
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { OperationType, handleFirestoreError } from '../lib/firestoreErrors';
-import { runPythonCode } from '../services/pythonRunner';
+import { executeProjectCommand } from '../services/projectExecution';
 import { flattenFileTree } from '../lib/utils';
+import { projectStorageKey } from './projectStorage';
 
 export const DEFAULT_PYTHON_FILES: FileNode[] = [
   {
@@ -39,8 +40,6 @@ Execution is performed live in the browser via Pyodide.
   }
 ];
 
-const STORAGE_KEY = 'float_active_project';
-
 interface StoredProject {
   projectId: string;
   projectName: string;
@@ -49,10 +48,10 @@ interface StoredProject {
   activeFileId: string | null;
 }
 
-const loadStoredProject = (): StoredProject => {
+const loadStoredProject = (ownerId?: string | null): StoredProject => {
   if (typeof window !== 'undefined') {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(projectStorageKey(ownerId));
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && Array.isArray(parsed.files) && parsed.files.length > 0) {
@@ -78,10 +77,10 @@ const loadStoredProject = (): StoredProject => {
   };
 };
 
-const saveStoredProject = (data: StoredProject) => {
+const saveStoredProject = (data: StoredProject, ownerId: string | null = auth.currentUser?.uid ?? null) => {
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(projectStorageKey(ownerId), JSON.stringify(data));
     } catch (e) {
       console.warn('Failed to save project to storage:', e);
     }
@@ -96,11 +95,13 @@ interface IDEState {
   projectName: string | null;
   files: FileNode[];
   setProject: (name: string, files: FileNode[], projectId?: string) => void;
+  switchAccount: (ownerId: string | null) => void;
   clearProject: () => void;
   saveProject: () => Promise<void>;
   updateFileContent: (id: string, content: string) => void;
   addFile: (parentId: string | null, file: FileNode) => void;
   deleteFile: (id: string) => void;
+  applyExecutionChanges: (changedFiles: Array<{ path: string; content?: string }>, deletedFiles: string[]) => void;
   
   // Tabs & Editor
   openTabs: OpenTab[];
@@ -115,19 +116,20 @@ interface IDEState {
   executionOutput: string;
   executionError: string | null;
   lastExecutionTimeMs: number | null;
+  setExecutionResult: (output: string, error: string | null, durationMs: number | null) => void;
   runActiveCode: () => Promise<void>;
   
   // Layout
   leftSidebarOpen: boolean;
   activeWorkspace: "code" | "evals" | "agents";
   setActiveWorkspace: (workspace: "code" | "evals" | "agents") => void;
-  activeSidebarView: 'explorer' | 'search';
+  activeSidebarView: 'explorer' | 'search' | 'source-control';
   rightSidebarOpen: boolean;
   bottomPanelOpen: boolean;
   bottomPanelTab: 'terminal' | 'problems' | 'output' | 'validation';
   setBottomPanelTab: (tab: 'terminal' | 'problems' | 'output' | 'validation') => void;
   toggleLeftSidebar: () => void;
-  setActiveSidebarView: (view: 'explorer' | 'search') => void;
+  setActiveSidebarView: (view: 'explorer' | 'search' | 'source-control') => void;
   toggleRightSidebar: () => void;
   toggleBottomPanel: () => void;
   initialPrompt: string | null;
@@ -246,7 +248,7 @@ const findFile = (nodes: FileNode[], id: string): FileNode | null => {
   return null;
 };
 
-const initialProject = loadStoredProject();
+const initialProject = loadStoredProject(auth.currentUser?.uid ?? null);
 
 export const useIDEStore = create<IDEState>((set, get) => ({
   hasStarted: true,
@@ -286,6 +288,23 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       get().saveProject();
     }
   },
+
+  switchAccount: (ownerId) => {
+    const project = loadStoredProject(ownerId);
+    set({
+      ...project,
+      aiMessages: [],
+      aiContext: [],
+      initialPrompt: null,
+      activeConversationId: null,
+      activeSelection: null,
+      terminalEntries: [],
+      isRunningCode: false,
+      executionOutput: '',
+      executionError: null,
+      lastExecutionTimeMs: null,
+    });
+  },
   
   clearProject: () => {
     const newId = uuidv4();
@@ -308,6 +327,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
 
   saveProject: async () => {
     const state = get();
+    const ownerId = auth.currentUser?.uid ?? null;
     let currentProjectId = state.projectId;
 
     if (!currentProjectId || currentProjectId === 'default-python-workspace') {
@@ -323,7 +343,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
         files: state.files,
         openTabs: state.openTabs,
         activeFileId: state.activeFileId
-      });
+      }, ownerId);
     }
 
     if (!state.projectName || !auth.currentUser) return;
@@ -334,6 +354,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     try {
       let docExists = false;
       let isOwner = false;
+      let ownershipCouldNotBeVerified = false;
 
       try {
         const snap = await getDoc(projectRef);
@@ -342,9 +363,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
           isOwner = snap.data().ownerId === user.uid;
         }
       } catch (readErr: any) {
-        // If read fails (e.g. insufficient permissions when doc belongs to another user), treat as not owned
-        docExists = false;
-        isOwner = false;
+        // A permission or network error does not prove that the ID is unused.
+        // Use a fresh ID rather than attempting to create over an unverifiable doc.
+        ownershipCouldNotBeVerified = true;
       }
 
       if (docExists && isOwner) {
@@ -356,7 +377,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
         });
       } else {
         // If document exists but is not owned by current user, allocate a fresh ID
-        if (docExists && !isOwner) {
+        if ((docExists && !isOwner) || ownershipCouldNotBeVerified) {
           currentProjectId = uuidv4();
           set({ projectId: currentProjectId });
           projectRef = doc(db, 'projects', currentProjectId);
@@ -366,7 +387,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
             files: state.files,
             openTabs: state.openTabs,
             activeFileId: state.activeFileId
-          });
+          }, ownerId);
         }
 
         await setDoc(projectRef, {
@@ -463,6 +484,59 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     return { files: newFiles, openTabs: newTabs, activeFileId: newActiveId };
   }),
 
+  applyExecutionChanges: (changedFiles, deletedFiles) => set((state) => {
+    const nextFiles = JSON.parse(JSON.stringify(state.files)) as FileNode[];
+    const findPath = (nodes: FileNode[], target: string, parentPath = ''): FileNode | null => {
+      for (const node of nodes) {
+        const currentPath = parentPath ? `${parentPath}/${node.name}` : node.name;
+        if (currentPath === target) return node;
+        const nested = node.children && findPath(node.children, target, currentPath);
+        if (nested) return nested;
+      }
+      return null;
+    };
+    const removePath = (nodes: FileNode[], target: string, parentPath = ''): boolean => {
+      for (let index = 0; index < nodes.length; index += 1) {
+        const currentPath = parentPath ? `${parentPath}/${nodes[index].name}` : nodes[index].name;
+        if (currentPath === target) { nodes.splice(index, 1); return true; }
+        if (nodes[index].children && removePath(nodes[index].children!, target, currentPath)) return true;
+      }
+      return false;
+    };
+    const openTabs = [...state.openTabs];
+    let activeFileId = state.activeFileId;
+    for (const deleted of deletedFiles) {
+      const oldNode = findPath(nextFiles, deleted);
+      if (oldNode) {
+        removePath(nextFiles, deleted);
+        const remainingTabs = openTabs.filter(tab => tab.fileId !== oldNode.id);
+        openTabs.splice(0, openTabs.length, ...remainingTabs);
+        if (activeFileId === oldNode.id) activeFileId = openTabs[0]?.fileId ?? null;
+      }
+    }
+    for (const changed of changedFiles) {
+      const segments = changed.path.split('/').filter(Boolean);
+      if (!segments.length) continue;
+      let level = nextFiles;
+      let parentPath = '';
+      for (const segment of segments.slice(0, -1)) {
+        parentPath = parentPath ? `${parentPath}/${segment}` : segment;
+        let folder = level.find(node => node.name === segment && node.type === 'folder');
+        if (!folder) { folder = { id: uuidv4(), name: segment, type: 'folder', children: [] }; level.push(folder); }
+        folder.children = folder.children || [];
+        level = folder.children;
+      }
+      const name = segments[segments.length - 1];
+      const existing = level.find(node => node.name === name && node.type === 'file');
+      if (existing) existing.content = changed.content ?? '';
+      else level.push({ id: uuidv4(), name, type: 'file', content: changed.content ?? '' });
+    }
+    const sort = (nodes: FileNode[]) => { nodes.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1); nodes.forEach(node => node.children && sort(node.children)); };
+    sort(nextFiles);
+    if (state.projectId && state.projectName) saveStoredProject({ projectId: state.projectId, projectName: state.projectName, files: nextFiles, openTabs, activeFileId });
+    return { files: nextFiles, openTabs, activeFileId };
+  }),
+
   openFile: (id) => set((state) => {
     const existing = state.openTabs.find(t => t.fileId === id);
     if (existing) {
@@ -530,6 +604,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
   executionOutput: '',
   executionError: null,
   lastExecutionTimeMs: null,
+  setExecutionResult: (executionOutput, executionError, lastExecutionTimeMs) => set({ executionOutput, executionError, lastExecutionTimeMs }),
 
   runActiveCode: async () => {
     const state = get();
@@ -558,8 +633,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       return;
     }
 
-    const fileName = targetFile.name;
-    const code = targetFile.content;
+    const fileName = flattenFileTree(state.files).find(file => file.id === targetFile!.id)?.path || targetFile.name;
 
     set({ 
       isRunningCode: true, 
@@ -573,50 +647,28 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       content: `python ${fileName}`
     });
 
-    const virtualFiles = flattenFileTree(state.files).map(f => ({
+    const virtualFiles = flattenFileTree(state.files).filter(file => file.type === 'file').map(f => ({
       path: f.path,
       content: f.content
     }));
 
     try {
-      const result = await runPythonCode(
-        code,
-        virtualFiles,
-        (stdoutChunk) => {
-          // Stream output chunk to terminal
-          state.addTerminalEntry({ type: 'output', content: stdoutChunk });
-        },
-        (stderrChunk) => {
-          state.addTerminalEntry({ type: 'error', content: stderrChunk });
-        },
-        (status) => {
-          state.addTerminalEntry({ type: 'output', content: `[Runtime] ${status}` });
-        }
-      );
-
-      if (result.success) {
-        state.addTerminalEntry({
-          type: 'output',
-          content: `\n[Process completed in ${result.executionTimeMs}ms]`
-        });
-        set({
-          executionOutput: result.output,
-          executionError: null,
-          lastExecutionTimeMs: result.executionTimeMs,
-          isRunningCode: false
-        });
-      } else {
-        state.addTerminalEntry({
-          type: 'error',
-          content: result.error || 'Execution failed with an unknown error.'
-        });
-        set({
-          executionOutput: result.output,
-          executionError: result.error || 'Execution error',
-          lastExecutionTimeMs: result.executionTimeMs,
-          isRunningCode: false
-        });
+      await state.saveProject();
+      const projectId = get().projectId;
+      if (!projectId) throw new Error('Save this workspace before running a server command.');
+      const result = await executeProjectCommand({
+        projectId,
+        command: `python ${fileName}`,
+        files: virtualFiles,
+        onOutput: (stream, text) => state.addTerminalEntry({ type: stream === 'stdout' ? 'output' : 'error', content: text })
+      });
+      if (result.changedFiles?.length || result.deletedFiles?.length) {
+        get().applyExecutionChanges(result.changedFiles || [], result.deletedFiles || []);
+        await get().saveProject();
       }
+      const failure = result.status === 'succeeded' ? null : `Process ${result.status} (exit code ${result.exitCode ?? 'unknown'}).`;
+      state.addTerminalEntry({ type: failure ? 'error' : 'output', content: `[${result.status}; exit code ${result.exitCode ?? 'unknown'}; ${result.durationMs}ms]` });
+      set({ executionOutput: '', executionError: failure, lastExecutionTimeMs: result.durationMs, isRunningCode: false });
     } catch (err: any) {
       const errMsg = err?.message || String(err);
       state.addTerminalEntry({

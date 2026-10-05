@@ -28,7 +28,7 @@ export interface FirestoreErrorInfo {
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
   const rawMsg = error instanceof Error ? error.message : (typeof error === 'string' ? error : (error as any)?.msg || JSON.stringify(error || ''));
-  const isCancelled = 
+  const isCancelled =
     (error as any)?.type === 'cancelation' ||
     (error as any)?.type === 'cancelled' ||
     (error as any)?.name === 'AbortError' ||

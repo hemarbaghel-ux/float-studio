@@ -1,9 +1,9 @@
 import { INITIAL_MODELS } from '../src/features/ai/registry';
 import { DASHBOARD_MODELS } from '../src/features/dashboard/dashboardModels';
-import { 
-  formatContextWindow, 
-  getModelCapabilitiesList, 
-  getVersionOrEffort, 
+import {
+  formatContextWindow,
+  getModelCapabilitiesList,
+  getVersionOrEffort,
   getAvailabilityDisplay,
   getCleanModelName,
   getModelProviderName

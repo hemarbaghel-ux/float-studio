@@ -7,6 +7,7 @@ import {
   ValidationStatus 
 } from '../types/validation';
 import { auth } from '../lib/firebase';
+import { useIDEStore } from './index';
 
 interface ValidationState {
   currentRun: ValidationRun | null;
@@ -91,9 +92,12 @@ export const useValidationStore = create<ValidationState>((set, get) => ({
     });
 
     try {
+      await useIDEStore.getState().saveProject();
+      const savedProjectId = useIDEStore.getState().projectId;
+      if (!savedProjectId) throw new Error('Save this workspace before running validation.');
       const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
 
-      const response = await fetch(`/api/projects/${projectId}/validation/run`, {
+      const response = await fetch(`/api/projects/${encodeURIComponent(savedProjectId)}/validation/run`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -114,6 +118,9 @@ export const useValidationStore = create<ValidationState>((set, get) => ({
 
       const data = await response.json();
       set({ currentRun: data.run, isRunning: false });
+      const checkOutput = data.run.checks.map((check: any) => `> ${check.name} — ${check.status}${check.exitCode !== undefined ? ` (exit ${check.exitCode ?? 'unavailable'})` : ''}\n${check.output || check.unsupportedReason || check.message || ''}`).join('\n\n');
+      const incomplete = data.run.checks.some((check: any) => check.status === 'failed' || check.status === 'unsupported');
+      useIDEStore.getState().setExecutionResult(checkOutput, incomplete ? data.run.summary : null, data.run.durationMs ?? null);
     } catch (err: any) {
       set({ 
         isRunning: false, 

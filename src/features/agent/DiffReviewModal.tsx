@@ -5,7 +5,6 @@ import { X, Check, XCircle, AlertTriangle, FileCode, CheckSquare, Square, Column
 import { cn, flattenFileTree } from '../../lib/utils';
 import { DiffEditor } from '@monaco-editor/react';
 import { auth } from '../../lib/firebase';
-import { computeContentHash } from '../../server/agent/proposalService';
 import { useValidationStore } from '../../store/validationStore';
 
 interface DiffReviewModalProps {
@@ -15,7 +14,7 @@ interface DiffReviewModalProps {
 
 export function DiffReviewModal({ changeSet, onClose }: DiffReviewModalProps) {
   const { files, projectId, settings, updateFileContent, addFile, deleteFile, saveProject, updateAiMessageChangeSet } = useIDEStore();
-  
+
   const [selectedChangeIdx, setSelectedChangeIdx] = useState(0);
   const [approvedPaths, setApprovedPaths] = useState<Set<string>>(() => {
     // Default: all pending changes are approved initially
@@ -37,9 +36,9 @@ export function DiffReviewModal({ changeSet, onClose }: DiffReviewModalProps) {
       if (change.operation === 'modify' || change.operation === 'delete') {
         if (!current) {
           conflicts.push(`${change.path} (file missing)`);
-        } else if (change.originalHash) {
-          const currentHash = computeContentHash(current.content || '');
-          if (currentHash !== change.originalHash) {
+        } else if (change.originalContent !== undefined) {
+          const normalize = (content: string) => content.replace(/\r\n/g, '\n');
+          if (normalize(current.content || '') !== normalize(change.originalContent)) {
             conflicts.push(`${change.path} (modified since proposal was created)`);
           }
         }
@@ -97,7 +96,7 @@ export function DiffReviewModal({ changeSet, onClose }: DiffReviewModalProps) {
   const ensureFolders = (pathParts: string[]): string | null => {
     let currentParentId: string | null = null;
     let currentPath = '';
-    
+
     for (const part of pathParts) {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
       const existing = flatFiles.find(f => f.path === currentPath);
@@ -260,14 +259,14 @@ export function DiffReviewModal({ changeSet, onClose }: DiffReviewModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity" 
-        onClick={() => !isSubmitting && onClose()} 
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
+        onClick={() => !isSubmitting && onClose()}
       />
 
       {/* Modal Dialog */}
       <div className="relative w-full max-w-6xl h-[88vh] bg-white dark:bg-[#0D1117] rounded-2xl shadow-2xl border border-slate-200 dark:border-[#30363D] flex flex-col overflow-hidden text-slate-800 dark:text-[#C9D1D9] z-10">
-        
+
         {/* Header Bar */}
         <div className="px-6 py-3.5 border-b border-slate-200 dark:border-[#30363D] flex items-center justify-between shrink-0 bg-slate-50 dark:bg-[#161B22]">
           <div className="flex items-center gap-3 min-w-0">
@@ -395,7 +394,7 @@ export function DiffReviewModal({ changeSet, onClose }: DiffReviewModalProps) {
 
         {/* Main Body */}
         <div className="flex flex-1 min-h-0">
-          
+
           {/* File Selector Sidebar */}
           <div className="w-72 border-r border-slate-200 dark:border-[#30363D] bg-slate-50/70 dark:bg-[#161B22] flex flex-col shrink-0">
             <div className="p-3 border-b border-slate-200 dark:border-[#30363D] flex items-center justify-between text-xs text-slate-500 dark:text-[#8B949E]">
@@ -423,8 +422,8 @@ export function DiffReviewModal({ changeSet, onClose }: DiffReviewModalProps) {
                     onClick={() => setSelectedChangeIdx(idx)}
                     className={cn(
                       "px-3.5 py-2.5 flex items-start gap-2.5 cursor-pointer transition-colors text-xs",
-                      isSelected 
-                        ? "bg-purple-50/80 dark:bg-[#21262D] border-l-2 border-l-purple-600 dark:border-l-purple-400" 
+                      isSelected
+                        ? "bg-purple-50/80 dark:bg-[#21262D] border-l-2 border-l-purple-600 dark:border-l-purple-400"
                         : "hover:bg-slate-100/70 dark:hover:bg-[#1F242C] border-l-2 border-l-transparent"
                     )}
                   >

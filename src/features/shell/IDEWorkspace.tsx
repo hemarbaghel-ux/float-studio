@@ -9,6 +9,7 @@ import { EditorArea } from '../editor/EditorArea';
 import { AIPanel } from '../ai/AIPanel';
 import { BottomPanel } from '../terminal/BottomPanel';
 import { SearchPanel } from '../search/SearchPanel';
+import { GitPanel } from '../git/GitPanel';
 import { CommandPalette } from '../command-palette/CommandPalette';
 import { SettingsModal } from '../settings/SettingsModal';
 
@@ -95,7 +96,7 @@ export function IDEWorkspace() {
         
         {leftSidebarOpen && (
           <div className="w-64 bg-white dark:bg-[#0A0A0A] border-r border-slate-200 dark:border-[#2A2A2A] shrink-0 flex flex-col">
-            {activeSidebarView === 'explorer' ? <FileExplorer /> : <SearchPanel />}
+            {activeSidebarView === 'explorer' ? <FileExplorer /> : activeSidebarView === 'search' ? <SearchPanel /> : <GitPanel />}
           </div>
         )}
 

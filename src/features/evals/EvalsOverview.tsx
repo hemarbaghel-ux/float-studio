@@ -17,19 +17,21 @@ export function EvalsOverview({ onNewEval, onNewTask, onRunBenchmark }: EvalsOve
   const { runs, tasks, benchmarks, setSelectedRun, setActiveTab } = useEvalStore();
 
   const completedRuns = runs.filter(r => r.status === 'completed' || r.status === 'Completed');
+  const scoredRuns = completedRuns.filter(r => typeof (r.finalScore ?? r.score) === 'number');
+  const testedRuns = completedRuns.filter(r => r.testsPassed !== undefined);
   const failedRuns = runs.filter(r => r.status === 'failed' || r.status === 'Failed');
   const runningRuns = runs.filter(r => r.status === 'running' || r.status === 'queued' || r.status === 'Running');
 
-  const hasData = completedRuns.length > 0;
+  const hasData = scoredRuns.length > 0;
 
   // Real aggregations strictly from completed runs (no fake numbers)
   const avgScore = hasData 
-    ? Math.round(completedRuns.reduce((acc, r) => acc + (r.finalScore ?? r.score ?? 0), 0) / completedRuns.length)
+    ? Math.round(scoredRuns.reduce((acc, r) => acc + (r.finalScore ?? r.score ?? 0), 0) / scoredRuns.length)
     : null;
 
   const passedTestsRuns = completedRuns.filter(r => r.testsPassed).length;
-  const avgTestPassRate = hasData
-    ? Math.round((passedTestsRuns / completedRuns.length) * 100)
+  const avgTestPassRate = testedRuns.length > 0
+    ? Math.round((passedTestsRuns / testedRuns.length) * 100)
     : null;
 
   const avgDuration = hasData
@@ -59,14 +61,14 @@ export function EvalsOverview({ onNewEval, onNewTask, onRunBenchmark }: EvalsOve
         <StatCard
           label="Avg Score"
           value={avgScore !== null ? `${avgScore}/100` : 'No data yet'}
-          subtext={hasData ? `${completedRuns.filter(r => (r.finalScore ?? r.score ?? 0) >= 70).length} passed benchmark` : 'Awaiting completed runs'}
+          subtext={hasData ? `${scoredRuns.filter(r => (r.finalScore ?? r.score ?? 0) >= 70).length} passed benchmark` : 'Awaiting scored evaluations'}
           icon={ShieldCheck}
           highlight={avgScore !== null ? (avgScore >= 70 ? 'text-emerald-400' : 'text-amber-400') : undefined}
         />
         <StatCard
           label="Test Pass Rate"
           value={avgTestPassRate !== null ? `${avgTestPassRate}%` : 'No data yet'}
-          subtext={hasData ? `${passedTestsRuns} of ${completedRuns.length} suites` : 'Unit tests verified'}
+          subtext={testedRuns.length ? `${passedTestsRuns} of ${testedRuns.length} suites` : 'No test results'}
           icon={CheckCircle2}
         />
         <StatCard

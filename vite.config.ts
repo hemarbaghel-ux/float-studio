@@ -18,5 +18,21 @@ export default defineConfig(() => {
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            // Firebase is shared by auth, project storage, and cloud-backed features.
+            // Split its largest modular packages so neither the app entry nor a
+            // single vendor chunk has to carry the complete SDK.
+            if (id.includes('/node_modules/@firebase/firestore/')) return 'firebase-firestore';
+            if (id.includes('/node_modules/@firebase/auth/')) return 'firebase-auth';
+            if (id.includes('/node_modules/@firebase/')) {
+              return 'firebase-vendor';
+            }
+          },
+        },
+      },
+    },
   };
 });

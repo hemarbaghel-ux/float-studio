@@ -23,7 +23,7 @@ process.on('unhandledRejection', (reason: any) => {
     ? reason
     : (reason?.message || reason?.msg || JSON.stringify(reason || ''));
 
-  const isCancellation = 
+  const isCancellation =
     reason?.type === 'cancelation' ||
     reason?.type === 'cancelled' ||
     reason?.name === 'AbortError' ||
@@ -43,7 +43,7 @@ process.on('uncaughtException', (err: any) => {
     ? err
     : (err?.message || err?.msg || JSON.stringify(err || ''));
 
-  const isCancellation = 
+  const isCancellation =
     err?.type === 'cancelation' ||
     err?.type === 'cancelled' ||
     err?.name === 'AbortError' ||

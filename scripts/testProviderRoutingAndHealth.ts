@@ -31,7 +31,7 @@ async function runTests() {
   console.log('--- Test Suite 1: Provider Health Check Structure ---');
   const healthResults = await router.checkAllProvidersHealth();
   assert(typeof healthResults === 'object' && healthResults !== null, 'Health results returned object');
-  
+
   for (const providerKey of ['google', 'openai', 'anthropic', 'xai']) {
     const pHealth = healthResults[providerKey];
     assert(pHealth !== undefined, `Health contains provider: ${providerKey}`);
@@ -41,10 +41,16 @@ async function runTests() {
     assert(typeof pHealth.modelAvailable === 'boolean', `${providerKey} has modelAvailable boolean: ${pHealth?.modelAvailable}`);
   }
 
-  // Google Gemini should be configured in this environment
-  assert(healthResults.google.configured === true, 'Google Gemini is configured in environment');
-  assert(healthResults.google.authenticated === true, 'Google Gemini is authenticated');
-  assert(healthResults.google.modelAvailable === true, 'Google Gemini models are available');
+  // Provider credentials and live API availability belong to deployment smoke
+  // tests. Local CI must not require production secrets or make paid requests.
+  const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+  if (!hasGeminiKey) {
+    console.log('  - Skipping Gemini credential and live API checks (no Gemini key configured)');
+  } else {
+    assert(healthResults.google.configured === true, 'Google Gemini is configured in environment');
+    assert(healthResults.google.authenticated === true, 'Google Gemini is authenticated');
+    assert(healthResults.google.modelAvailable === true, 'Google Gemini models are available');
+  }
 
   // Test 2: Model Registry & Metadata Verification
   console.log('\n--- Test Suite 2: Model Registry & API Model ID Separation ---');
@@ -169,6 +175,7 @@ async function runTests() {
   if (originalXAIKey) process.env.XAI_API_KEY = originalXAIKey;
 
   const liveRouter = new ModelRouter();
+  if (hasGeminiKey) {
   let streamedChunks = '';
   let streamResult: any = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -196,6 +203,9 @@ async function runTests() {
   assert(Boolean(streamResult.text), 'Gemini streaming returned response text');
   assert(streamedChunks.length > 0, 'Gemini streaming callback received deltas');
   assert(streamResult.text.includes('FLOAT_VERIFIED'), 'Gemini response contains expected content: FLOAT_VERIFIED');
+  } else {
+    console.log('  - Skipping Gemini generation/streaming checks (no Gemini key configured)');
+  }
 
   // Test 8: AbortSignal Handling in Streaming
   console.log('\n--- Test Suite 8: Streaming AbortSignal Cancellation ---');

@@ -1,24 +1,25 @@
-import { 
-  AIProviderAdapter, 
-  AIProviderRequest, 
-  AIProviderResponse, 
-  AIProviderError, 
-  ProviderHealthCheckResult 
+import {
+  AIProviderAdapter,
+  AIProviderRequest,
+  AIProviderResponse,
+  AIProviderError,
+  ProviderHealthCheckResult
 } from './base';
 import { GoogleGeminiAdapter } from './gemini';
 import { OpenAIAdapter } from './openai';
 import { AnthropicAdapter } from './anthropic';
 import { XAIAdapter } from './xai';
+import { DeepSeekAdapter } from './deepseek';
 import { ServerPrivacyGuard } from '../privacyGuard';
 
 export interface ModelRouteDefinition {
-  provider: 'google' | 'openai' | 'anthropic' | 'xai';
+  provider: 'google' | 'openai' | 'anthropic' | 'xai' | 'deepseek';
   apiModelId: string;
 }
 
 export class ModelRouter {
   private adapters: Map<string, AIProviderAdapter> = new Map();
-  
+
   // Strict, verified model mapping to provider + verified apiModelId
   // The UI display name or alias must never be treated as the actual API model ID
   private modelRoutes: Record<string, ModelRouteDefinition> = {
@@ -57,12 +58,24 @@ export class ModelRouter {
     'claude-fable-5.1': { provider: 'anthropic', apiModelId: 'claude-3-7-sonnet-20250219' },
     'claude-sonnet-5.5': { provider: 'anthropic', apiModelId: 'claude-3-5-sonnet-20241022' },
 
-    // xAI Models
+    // xAI
+    'grok-4.7': { provider: 'xai', apiModelId: 'grok-2-1212' },
     'grok-2-1212': { provider: 'xai', apiModelId: 'grok-2-1212' },
     'grok-2': { provider: 'xai', apiModelId: 'grok-2' },
+    'grok-2-vision-1212': { provider: 'xai', apiModelId: 'grok-2-vision-1212' },
     'grok-beta': { provider: 'xai', apiModelId: 'grok-beta' },
-    'grok-4.7': { provider: 'xai', apiModelId: 'grok-2-1212' },
-    'grok-4.6': { provider: 'xai', apiModelId: 'grok-2' }
+
+    // DeepSeek
+    'deepseek-chat': { provider: 'deepseek', apiModelId: 'deepseek-chat' },
+    'deepseek-reasoner': { provider: 'deepseek', apiModelId: 'deepseek-reasoner' }
+  };
+
+  private retiredModels: Record<string, string> = {
+    'gemini-2.0-flash': 'gemini-3.1-flash-lite',
+    'gemini-1.5-flash': 'gemini-3.1-flash-lite',
+    'gemini-1.5-pro': 'gemini-3.1-pro-preview',
+    'gemini-2.5-flash': 'gemini-3.1-flash-lite',
+    'gemini-2.5-pro': 'gemini-3.1-pro-preview'
   };
 
   constructor() {
@@ -70,6 +83,7 @@ export class ModelRouter {
     this.registerAdapter(new OpenAIAdapter());
     this.registerAdapter(new AnthropicAdapter());
     this.registerAdapter(new XAIAdapter());
+    this.registerAdapter(new DeepSeekAdapter());
   }
 
   registerAdapter(adapter: AIProviderAdapter) {
@@ -169,9 +183,9 @@ export class ModelRouter {
     return { route, adapter };
   }
 
-  async generateContent(request: { 
-    model: string; 
-    messages: any[]; 
+  async generateContent(request: {
+    model: string;
+    messages: any[];
     systemInstruction?: string;
     reasoningEffort?: 'low' | 'medium' | 'high';
     speed?: 'fast' | 'balanced' | 'slow';
@@ -180,7 +194,7 @@ export class ModelRouter {
     dataSharingAllowed?: boolean;
   }): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
-    
+
     const dataSharingAllowed = request.dataSharingAllowed !== undefined
       ? request.dataSharingAllowed === true
       : request.dataSharingConsent === true;
@@ -227,9 +241,9 @@ export class ModelRouter {
   }
 
   async generateContentStream(
-    request: { 
-      model: string; 
-      messages: any[]; 
+    request: {
+      model: string;
+      messages: any[];
       systemInstruction?: string;
       reasoningEffort?: 'low' | 'medium' | 'high';
       speed?: 'fast' | 'balanced' | 'slow';
@@ -241,7 +255,7 @@ export class ModelRouter {
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
-    
+
     const dataSharingAllowed = request.dataSharingAllowed !== undefined
       ? request.dataSharingAllowed === true
       : request.dataSharingConsent === true;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ALL_FEATURES, FEATURE_CATEGORIES } from './featureData';
+import { ALL_FEATURES, FEATURE_CATEGORIES, getCurrentReleaseFeatureSummary, isFeatureInCurrentRelease } from './featureData';
 import { ResourcesHeader } from '../resources/ResourcesHeader';
 import { ResourcesFooter } from '../resources/ResourcesFooter';
 import { ArrowRight, Sparkles, Layers } from 'lucide-react';
@@ -21,10 +21,10 @@ export function FeatureIndexPage() {
           Platform Architecture &amp; Capabilities
         </div>
         <h1 className="text-4xl md:text-6xl font-medium tracking-tight mb-6 text-slate-900 dark:text-white">
-          FLOAT Feature Catalog
+          FLOAT Features
         </h1>
         <p className="text-lg md:text-xl text-slate-600 dark:text-[#A1A1AA] max-w-2xl mx-auto leading-relaxed mb-8">
-          Detailed architectural breakdowns, workflows, engineering examples, and specifications for every capability in FLOAT.
+          Browse current workspace features and product concepts. Preview concepts are labeled clearly and are not available in this release.
         </p>
       </section>
 
@@ -57,13 +57,13 @@ export function FeatureIndexPage() {
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-bold text-[#FF5F56] uppercase tracking-wider">{feat.title}</span>
-                        <span className="text-[10px] text-slate-400 border border-slate-200 dark:border-white/10 px-2 py-0.5 rounded font-mono">{feat.requirementsAndLimitations.availabilityStatus}</span>
+                        <span className="text-[10px] text-slate-400 border border-slate-200 dark:border-white/10 px-2 py-0.5 rounded font-mono">{isFeatureInCurrentRelease(feat.slug) ? 'Available' : 'Preview concept'}</span>
                       </div>
                       <h3 className="font-semibold text-lg text-slate-900 dark:text-white mb-2 group-hover:text-[#FF5F56] transition-colors">
                         {feat.headline}
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-[#A1A1AA] leading-relaxed mb-6">
-                        {feat.introParagraph.slice(0, 140)}...
+                        {getCurrentReleaseFeatureSummary(feat.slug)?.summary || 'Preview concept. This capability is not available in the current release.'}
                       </p>
                     </div>
 

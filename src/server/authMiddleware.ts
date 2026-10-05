@@ -29,7 +29,9 @@ async function getGooglePublicKeys(): Promise<Record<string, string>> {
   }
 
   try {
-    const res = await fetch('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com');
+    const res = await fetch('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com', {
+      signal: AbortSignal.timeout(5_000)
+    });
     if (!res.ok) {
       throw new Error(`Failed to fetch certificates: ${res.status}`);
     }
@@ -86,11 +88,12 @@ export async function verifyFirebaseIdToken(token: string): Promise<{ uid: strin
   if (header.alg !== 'RS256') return null;
   if (payload.aud !== projectId) return null;
   if (payload.iss !== `https://securetoken.google.com/${projectId}`) return null;
-  if (!payload.sub || typeof payload.sub !== 'string') return null;
+  if (!payload.sub || typeof payload.sub !== 'string' || payload.sub.length > 128 || typeof header.kid !== 'string' || !header.kid) return null;
 
   const nowInSeconds = Math.floor(Date.now() / 1000);
-  if (payload.exp < nowInSeconds - 60) return null;
-  if (payload.iat > nowInSeconds + 60) return null;
+  // Do not accept an ID token after exp. A post-expiry grace window extends
+  // compromised/revoked credentials and is not needed for Firebase tokens.
+  if (!isFirebaseTokenTimeValid(payload.exp, payload.iat, nowInSeconds)) return null;
 
   try {
     const certs = await getGooglePublicKeys();
@@ -106,6 +109,11 @@ export async function verifyFirebaseIdToken(token: string): Promise<{ uid: strin
     console.error('Signature verification error:', err);
     return null;
   }
+}
+
+export function isFirebaseTokenTimeValid(exp: unknown, iat: unknown, nowInSeconds: number): boolean {
+  return Number.isSafeInteger(exp) && (exp as number) > nowInSeconds &&
+    Number.isSafeInteger(iat) && (iat as number) <= nowInSeconds + 60;
 }
 
 export async function requireAuth(req: any, res: Response, next: NextFunction) {

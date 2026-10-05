@@ -1,9 +1,9 @@
-export type AIErrorCode = 
-  | 'AUTH_ERROR' 
-  | 'MODEL_NOT_FOUND' 
-  | 'QUOTA_EXCEEDED' 
-  | 'RATE_LIMITED' 
-  | 'PROVIDER_ERROR' 
+export type AIErrorCode =
+  | 'AUTH_ERROR'
+  | 'MODEL_NOT_FOUND'
+  | 'QUOTA_EXCEEDED'
+  | 'RATE_LIMITED'
+  | 'PROVIDER_ERROR'
   | 'INVALID_REQUEST';
 
 export class AIProviderError extends Error {
@@ -84,4 +84,3 @@ export interface AIProviderAdapter {
     virtualFiles: any[]
   ): Promise<void>;
 }
-

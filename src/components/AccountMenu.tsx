@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useId } from 'react';
-import { 
-  Home, Settings, User as UserIcon, ArrowDownCircle, Sun, Moon, 
-  HelpCircle, LogOut, ChevronRight, Check, Sparkles, FileText, 
+import {
+  Home, Settings, User as UserIcon, ArrowDownCircle, Sun, Moon,
+  HelpCircle, LogOut, ChevronRight, Check, Sparkles, FileText,
   Laptop, SlidersHorizontal, Mail, Loader2, Palette
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
@@ -16,20 +16,20 @@ export interface AccountMenuProps {
   triggerElement?: React.ReactNode;
 }
 
-export function AccountMenu({ 
-  align = 'left', 
-  direction = 'up', 
+export function AccountMenu({
+  align = 'left',
+  direction = 'up',
   compact = false,
   className = '',
-  triggerElement 
+  triggerElement
 }: AccountMenuProps) {
   const { user, logout } = useAuthStore();
   const { settings, updateSettings } = useIDEStore();
-  
+
   const [isOpen, setIsOpen] = useState(false);
   const [activeSubmenu, setActiveSubmenu] = useState<'appearance' | 'help' | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  
+
   // Modals
   const [showContact, setShowContact] = useState(false);
 
@@ -59,7 +59,7 @@ export function AccountMenu({
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
       if (
-        menuRef.current && 
+        menuRef.current &&
         !menuRef.current.contains(target) &&
         triggerRef.current &&
         !triggerRef.current.contains(target) &&
@@ -264,11 +264,11 @@ export function AccountMenu({
         case 2: navigate('/settings'); break;
         case 3: navigate('/profile'); break;
         case 4: navigate('/download'); break;
-        case 5: 
+        case 5:
           setActiveSubmenu('appearance');
           setSubmenuFocusedIndex(0);
           break;
-        case 6: 
+        case 6:
           setActiveSubmenu('help');
           setSubmenuFocusedIndex(0);
           break;
@@ -283,13 +283,13 @@ export function AccountMenu({
   const themeLabel = settings.theme === 'dark' ? 'Dark' : settings.theme === 'light' ? 'Light' : 'System';
 
   return (
-    <div 
+    <div
       className={`relative inline-block text-left select-none ${className}`}
       onKeyDown={handleKeyDown}
     >
       {/* 1. Trigger Button */}
       {triggerElement ? (
-        <div 
+        <div
           onClick={() => {
             setIsOpen(!isOpen);
             setActiveSubmenu(null);
@@ -310,8 +310,8 @@ export function AccountMenu({
           aria-expanded={isOpen}
           title="Account Menu"
           className={`flex items-center gap-2.5 p-1.5 rounded-lg text-left transition-colors cursor-pointer w-full font-sans ${
-            isOpen 
-              ? 'bg-slate-200/80 dark:bg-white/10 text-slate-900 dark:text-white' 
+            isOpen
+              ? 'bg-slate-200/80 dark:bg-white/10 text-slate-900 dark:text-white'
               : 'hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9]'
           }`}
         >
@@ -365,8 +365,8 @@ export function AccountMenu({
               role="menuitem"
               tabIndex={focusedIndex === 0 ? 0 : -1}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer text-left ${
-                focusedIndex === 0 
-                  ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium' 
+                focusedIndex === 0
+                  ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium'
                   : 'hover:bg-slate-100 dark:hover:bg-white/5 text-slate-800 dark:text-[#E6EDF3]'
               }`}
             >
@@ -382,8 +382,8 @@ export function AccountMenu({
               role="menuitem"
               tabIndex={focusedIndex === 1 ? 0 : -1}
               className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-left ${
-                focusedIndex === 1 
-                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white' 
+                focusedIndex === 1
+                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white'
                   : 'hover:bg-slate-50 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9] hover:text-slate-900 dark:hover:text-white'
               }`}
             >
@@ -396,8 +396,8 @@ export function AccountMenu({
               role="menuitem"
               tabIndex={focusedIndex === 2 ? 0 : -1}
               className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-left ${
-                focusedIndex === 2 
-                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white' 
+                focusedIndex === 2
+                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white'
                   : 'hover:bg-slate-50 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9] hover:text-slate-900 dark:hover:text-white'
               }`}
             >
@@ -413,8 +413,8 @@ export function AccountMenu({
               role="menuitem"
               tabIndex={focusedIndex === 3 ? 0 : -1}
               className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-left ${
-                focusedIndex === 3 
-                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white' 
+                focusedIndex === 3
+                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white'
                   : 'hover:bg-slate-50 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9] hover:text-slate-900 dark:hover:text-white'
               }`}
             >
@@ -427,8 +427,8 @@ export function AccountMenu({
               role="menuitem"
               tabIndex={focusedIndex === 4 ? 0 : -1}
               className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-left ${
-                focusedIndex === 4 
-                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white' 
+                focusedIndex === 4
+                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white'
                   : 'hover:bg-slate-50 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9] hover:text-slate-900 dark:hover:text-white'
               }`}
             >
@@ -437,7 +437,7 @@ export function AccountMenu({
             </button>
 
             {/* Appearance Submenu Trigger */}
-            <div 
+            <div
               className="relative"
               onMouseEnter={() => handleMouseEnterParent('appearance')}
               onMouseLeave={handleMouseLeaveParent}
@@ -466,7 +466,7 @@ export function AccountMenu({
 
               {/* Appearance Submenu */}
               {activeSubmenu === 'appearance' && (
-                <div 
+                <div
                   ref={submenuRef}
                   role="menu"
                   aria-label="Appearance Options"
@@ -557,7 +557,7 @@ export function AccountMenu({
             </div>
 
             {/* Help Submenu Trigger */}
-            <div 
+            <div
               className="relative"
               onMouseEnter={() => handleMouseEnterParent('help')}
               onMouseLeave={handleMouseLeaveParent}
@@ -584,7 +584,7 @@ export function AccountMenu({
 
               {/* Help Submenu */}
               {activeSubmenu === 'help' && (
-                <div 
+                <div
                   ref={submenuRef}
                   role="menu"
                   aria-label="Help Options"

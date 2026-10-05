@@ -83,7 +83,7 @@ export interface TestResult {
 
 export interface ValidationResult {
   command: string;
-  exitCode: number;
+  exitCode: number | null;
   durationMs: number;
   stdout: string;
   stderr: string;

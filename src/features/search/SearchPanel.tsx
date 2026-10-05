@@ -1,44 +1,13 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useIDEStore } from '../../store';
 import { Search, File } from 'lucide-react';
-import { FileNode } from '../../types';
-
-interface SearchResult {
-  fileId: string;
-  fileName: string;
-  line: number;
-  content: string;
-}
+import { searchCodebase } from '../../services/codebaseSearch';
 
 export function SearchPanel() {
   const { files, openFile } = useIDEStore();
   const [query, setQuery] = useState('');
 
-  const searchInFiles = (nodes: FileNode[], query: string, currentResults: SearchResult[] = []) => {
-    if (!query) return currentResults;
-    const lowerQuery = query.toLowerCase();
-    
-    for (const node of nodes) {
-      if (node.type === 'file' && node.content) {
-        const lines = node.content.split('\n');
-        lines.forEach((lineContent, index) => {
-          if (lineContent.toLowerCase().includes(lowerQuery)) {
-            currentResults.push({
-              fileId: node.id,
-              fileName: node.name,
-              line: index + 1,
-              content: lineContent.trim()
-            });
-          }
-        });
-      } else if (node.type === 'folder' && node.children) {
-        searchInFiles(node.children, query, currentResults);
-      }
-    }
-    return currentResults;
-  };
-
-  const results = searchInFiles(files, query);
+  const results = useMemo(() => searchCodebase(files, query, { maxResults: 100, contextLines: 0 }), [files, query]);
 
   return (
     <div className="h-full flex flex-col text-sm bg-white dark:bg-[#0A0A0A]">
@@ -73,7 +42,7 @@ export function SearchPanel() {
               <span className="text-slate-400 dark:text-[#8B949E] ml-2 text-[10px]">line {result.line}</span>
             </div>
             <div className="text-[11px] text-slate-500 dark:text-[#8B949E] truncate pl-4 font-mono">
-              {result.content}
+              {result.contentExcerpt.replace(/^\d+:\s*/, '').trim()}
             </div>
           </div>
         ))}

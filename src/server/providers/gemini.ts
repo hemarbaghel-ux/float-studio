@@ -1,10 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
-import { 
-  AIProviderAdapter, 
-  AIProviderRequest, 
-  AIProviderResponse, 
-  AIProviderError, 
-  ProviderHealthCheckResult 
+import {
+  AIProviderAdapter,
+  AIProviderRequest,
+  AIProviderResponse,
+  AIProviderError,
+  ProviderHealthCheckResult
 } from './base';
 import { AgentRunner } from '../agent/agentRunner';
 
@@ -20,9 +20,9 @@ export function normalizeGeminiError(error: any): AIProviderError {
   const status = error?.status || error?.statusCode;
 
   if (
-    rawObj?.type === 'cancelation' || 
-    rawObj?.type === 'cancelled' || 
-    rawObj?.name === 'AbortError' || 
+    rawObj?.type === 'cancelation' ||
+    rawObj?.type === 'cancelled' ||
+    rawObj?.name === 'AbortError' ||
     /cancel/i.test(msg) ||
     /operation is manually canceled/i.test(msg)
   ) {
@@ -136,11 +136,11 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
   private resolveApiModel(model: string): string {
     // Map obsolete model identifiers to active gemini-3.8-flash
     if (
-      model === 'gemini-2.0-flash' || 
-      model === 'gemini-1.5-flash' || 
+      model === 'gemini-2.0-flash' ||
+      model === 'gemini-1.5-flash' ||
       model === 'gemini-1.5-pro' ||
       model === 'gemini-3.1-flash-lite' ||
-      model === 'composer-2.5' || 
+      model === 'composer-2.5' ||
       model === 'muse-spark-1.3' ||
       model === 'auto'
     ) {
@@ -158,9 +158,9 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         401
       );
     }
-    
+
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
       const contents = this.normalizeMessages(request.messages);
       const apiModel = this.resolveApiModel(request.apiModelId || request.model);
 
@@ -183,7 +183,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         inputTokens: response.usageMetadata.promptTokenCount || 0,
         outputTokens: response.usageMetadata.candidatesTokenCount || 0
       } : undefined;
-      
+
       return { text: response.text || '', usage };
     } catch (err: any) {
       throw normalizeGeminiError(err);
@@ -212,7 +212,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
       const contents = this.normalizeMessages(request.messages);
       const apiModel = this.resolveApiModel(request.apiModelId || request.model);
 
@@ -312,13 +312,15 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     });
 
     const abortController = new AbortController();
-    if (req?.on) {
-      req.on('close', () => {
-        abortController.abort();
-      });
-    }
+    // The request body is fully read before this handler starts. IncomingMessage's
+    // `close` can therefore fire before the model work finishes; watch the response
+    // instead so only a disconnected client cancels generation.
+    res.on('close', () => {
+      if (!res.writableEnded) abortController.abort();
+    });
 
     const sendEvent = (type: string, data: any) => {
+      if (abortController.signal.aborted || res.destroyed || res.writableEnded) return;
       res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
     };
 
@@ -331,6 +333,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         projectName: req.body?.projectName || 'Workspace',
         projectId: req.body?.projectId || 'default-project',
         userId: req.user?.uid || 'user',
+        systemInstruction: req.body.systemInstruction,
         onEvent: (event) => {
           sendEvent('event', event);
         },

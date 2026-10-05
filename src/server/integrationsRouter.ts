@@ -1,120 +1,40 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
-import fs from 'fs';
-import { requireAuth, verifyFirebaseIdToken } from './authMiddleware';
+import { requireAuth } from './authMiddleware';
+import {
+  consumeOAuthState,
+  deleteIntegrationConnection,
+  getIntegrationConnection,
+  listIntegrationConnections,
+  saveIntegrationConnection,
+  saveOAuthState,
+  type OAuthStateRecord,
+  type StoredIntegrationConnection,
+} from './integrationStore';
 
 export const integrationsRouter = Router();
 
-// Connection schema for server storage
-export interface StoredIntegrationConnection {
-  id: string;
-  userId: string;
-  provider: 'github' | 'gitlab' | string;
-  status: 'connected' | 'error' | 'expired';
-  accountId: string;
-  accountName: string;
-  avatarUrl?: string;
-  profileUrl?: string;
-  scopes: string[];
-  accessToken: string; // Strictly server-side only; never returned in API responses
-  refreshToken?: string;
-  tokenExpiresAt?: number;
-  createdAt: number;
-  lastVerifiedAt: number;
-}
-
-// State parameter record for CSRF protection and session binding
-interface OAuthStateRecord {
-  state: string;
-  provider: 'github' | 'gitlab';
-  userId: string;
-  redirectUri: string;
-  createdAt: number;
-  expiresAt: number;
-}
-
-// In-memory state store with 10-minute expiration
-const oauthStates = new Map<string, OAuthStateRecord>();
-
-// Clean expired states periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of oauthStates.entries()) {
-    if (val.expiresAt < now) {
-      oauthStates.delete(key);
-    }
-  }
-}, 60 * 1000);
-
-// Persistence store for connection records across dev server restarts
-const STORE_FILE = '/tmp/float_integrations_store.json';
-
-function loadConnections(): StoredIntegrationConnection[] {
-  try {
-    if (fs.existsSync(STORE_FILE)) {
-      const data = fs.readFileSync(STORE_FILE, 'utf8');
-      return JSON.parse(data);
-    }
-  } catch (err) {
-    console.error('[Integration Store] Failed to load store file:', err);
-  }
-  return [];
-}
-
-function saveConnections(records: StoredIntegrationConnection[]) {
-  try {
-    fs.writeFileSync(STORE_FILE, JSON.stringify(records, null, 2), 'utf8');
-  } catch (err) {
-    console.error('[Integration Store] Failed to save store file:', err);
-  }
-}
-
-let connections: StoredIntegrationConnection[] = loadConnections();
+export type { StoredIntegrationConnection } from './integrationStore';
 
 // Base App URL resolver: accurately derives domain from request, client origin, or environment
 export function getBaseAppUrl(req?: Request): string {
-  // 1. Explicit client-supplied origin (from browser window.location.origin)
-  if (req?.query?.origin && typeof req.query.origin === 'string') {
-    try {
-      const parsed = new URL(req.query.origin);
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-        return parsed.origin.replace(/\/+$/, '');
-      }
-    } catch {}
-  }
-
-  // 2. Client browser headers (Origin or Referer)
-  if (req) {
-    const originHeader = req.headers.origin;
-    if (typeof originHeader === 'string' && (originHeader.startsWith('http://') || originHeader.startsWith('https://'))) {
-      try {
-        return new URL(originHeader).origin.replace(/\/+$/, '');
-      } catch {}
-    }
-
-    const refererHeader = req.headers.referer;
-    if (typeof refererHeader === 'string' && (refererHeader.startsWith('http://') || refererHeader.startsWith('https://'))) {
-      try {
-        return new URL(refererHeader).origin.replace(/\/+$/, '');
-      } catch {}
-    }
-
-    // 3. Host / X-Forwarded-Host from reverse proxy
-    const forwardedHost = req.headers['x-forwarded-host'];
-    const hostHeader = (forwardedHost || req.headers.host);
-    if (hostHeader && typeof hostHeader === 'string') {
-      const host = hostHeader.split(',')[0].trim();
-      const proto = req.headers['x-forwarded-proto'] || (host.includes('localhost') ? 'http' : 'https');
-      return `${proto}://${host}`.replace(/\/+$/, '');
-    }
-  }
-
-  // 4. Fallback to process.env.APP_URL
+  // OAuth callback destinations must come from deployment configuration, never
+  // a client-supplied Origin or redirect_uri parameter.
   if (process.env.APP_URL) {
-    return process.env.APP_URL.replace(/\/+$/, '');
+    const configured = new URL(process.env.APP_URL.trim());
+    if (configured.protocol !== 'https:' && process.env.NODE_ENV === 'production') {
+      throw new Error('APP_URL must use HTTPS in production.');
+    }
+    return configured.origin;
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('APP_URL must be configured for production OAuth callbacks.');
+  }
+
+  const host = req?.headers.host;
+  if (host && !/[\s,/@]/.test(host)) return `${host.includes('localhost') ? 'http' : 'https'}://${host}`;
   return 'http://localhost:3000';
 }
 
@@ -127,31 +47,29 @@ export function getCallbackUrl(provider: string, req?: Request): string {
     return process.env.GITLAB_CALLBACK_URL.trim().replace(/\/+$/, '');
   }
 
-  // Allow client override via query param if valid URL
-  if (req?.query?.redirect_uri && typeof req.query.redirect_uri === 'string') {
-    try {
-      const parsed = new URL(req.query.redirect_uri);
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-        return parsed.href.replace(/\/+$/, '');
-      }
-    } catch {}
-  }
-
   const base = getBaseAppUrl(req);
   return `${base}/api/integrations/${provider}/callback`;
+}
+
+async function createOAuthState(provider: 'github' | 'gitlab', userId: string, redirectUri: string): Promise<string | null> {
+  const state = crypto.randomBytes(24).toString('hex');
+  const now = Date.now();
+  try {
+    await saveOAuthState({ state, provider, userId, redirectUri, createdAt: now, expiresAt: now + 10 * 60 * 1000 });
+    return state;
+  } catch (error: any) {
+    console.error('[OAuth] Could not persist state in Firestore:', error?.message || error);
+    return null;
+  }
 }
 
 // Provider configuration checker
 export const getConfiguredProviders = () => {
   const configured: string[] = [];
+  const encryptionKey = Buffer.from(process.env.FLOAT_OAUTH_ENCRYPTION_KEY || '', 'base64');
+  if (encryptionKey.length !== 32) return configured;
   if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) configured.push('github');
   if (process.env.GITLAB_CLIENT_ID && process.env.GITLAB_CLIENT_SECRET) configured.push('gitlab');
-  if (process.env.BITBUCKET_CLIENT_ID && process.env.BITBUCKET_CLIENT_SECRET) configured.push('bitbucket');
-  if (process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_SECRET) configured.push('slack');
-  if (process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET) configured.push('teams');
-  if (process.env.LINEAR_CLIENT_ID && process.env.LINEAR_CLIENT_SECRET) configured.push('linear');
-  if (process.env.JIRA_CLIENT_ID && process.env.JIRA_CLIENT_SECRET) configured.push('jira');
-  if (process.env.SENTRY_CLIENT_ID && process.env.SENTRY_CLIENT_SECRET) configured.push('sentry');
   return configured;
 };
 
@@ -186,42 +104,26 @@ integrationsRouter.get('/status', (req: Request, res: Response) => {
 });
 
 // 2. Fetch User-Owned Connections (Never exposes access tokens)
-integrationsRouter.get('/connections', requireAuth, (req: any, res: Response) => {
-  const userId = req.user.uid;
-  const userConnections = connections
-    .filter(c => c.userId === userId)
-    .map(({ id, provider, status, accountId, accountName, avatarUrl, profileUrl, scopes, createdAt, lastVerifiedAt }) => ({
-      id,
-      provider,
-      status,
-      accountId,
-      accountName,
-      avatarUrl,
-      profileUrl,
-      scopes,
-      createdAt,
-      lastVerifiedAt
-    }));
-
-  res.json({ connections: userConnections });
+integrationsRouter.get('/connections', requireAuth, async (req: any, res: Response) => {
+  try {
+    const userConnections = (await listIntegrationConnections(req.user.uid))
+      .map(({ id, provider, status, accountId, accountName, avatarUrl, profileUrl, scopes, createdAt, lastVerifiedAt }) => ({
+        id, provider, status, accountId, accountName, avatarUrl, profileUrl, scopes, createdAt, lastVerifiedAt,
+      }));
+    res.json({ connections: userConnections });
+  } catch (error: any) {
+    console.error('[Integration Store] Could not load connections:', error?.message || error);
+    res.status(503).json({ error: 'Integration storage is unavailable. Check Firebase Admin credentials and Firestore access.' });
+  }
 });
 
 // 3. Generate OAuth Authorization URL with CSRF state
-integrationsRouter.get('/:provider/auth-url', async (req: Request, res: Response) => {
+integrationsRouter.get('/:provider/auth-url', requireAuth, async (req: any, res: Response) => {
   const { provider } = req.params;
   const base = getBaseAppUrl(req);
   const redirectUri = getCallbackUrl(provider, req);
 
-  // Extract user identity if token supplied
-  let userId = 'anonymous';
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.substring(7).trim();
-    const verified = await verifyFirebaseIdToken(token);
-    if (verified) {
-      userId = verified.uid;
-    }
-  }
+  const userId = req.user.uid;
 
   if (provider === 'github') {
     const clientId = process.env.GITHUB_CLIENT_ID;
@@ -238,15 +140,8 @@ integrationsRouter.get('/:provider/auth-url', async (req: Request, res: Response
       });
     }
 
-    const state = crypto.randomBytes(24).toString('hex');
-    oauthStates.set(state, {
-      state,
-      provider: 'github',
-      userId,
-      redirectUri,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
-    });
+    const state = await createOAuthState('github', userId, redirectUri);
+    if (!state) return res.status(503).json({ error: 'OAuth state storage is unavailable. Check Firebase Admin credentials and Firestore access.' });
 
     const scopes = 'read:user repo';
     const authUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}&state=${state}`;
@@ -275,15 +170,8 @@ integrationsRouter.get('/:provider/auth-url', async (req: Request, res: Response
       });
     }
 
-    const state = crypto.randomBytes(24).toString('hex');
-    oauthStates.set(state, {
-      state,
-      provider: 'gitlab',
-      userId,
-      redirectUri,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
-    });
+    const state = await createOAuthState('gitlab', userId, redirectUri);
+    if (!state) return res.status(503).json({ error: 'OAuth state storage is unavailable. Check Firebase Admin credentials and Firestore access.' });
 
     const scopes = 'read_user read_repository';
     const authUrl = `https://gitlab.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${state}`;
@@ -304,7 +192,7 @@ integrationsRouter.get('/:provider/auth-url', async (req: Request, res: Response
 });
 
 // 4. Direct Connect Endpoint (Alternative redirect invocation)
-integrationsRouter.get('/:provider/connect', async (req: Request, res: Response) => {
+integrationsRouter.get('/:provider/connect', requireAuth, async (req: any, res: Response) => {
   const { provider } = req.params;
   const redirectUri = getCallbackUrl(provider, req);
 
@@ -323,15 +211,8 @@ integrationsRouter.get('/:provider/connect', async (req: Request, res: Response)
       `);
     }
 
-    const state = crypto.randomBytes(24).toString('hex');
-    oauthStates.set(state, {
-      state,
-      provider: 'github',
-      userId: 'direct-connect',
-      redirectUri,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 10 * 60 * 1000
-    });
+    const state = await createOAuthState('github', req.user.uid, redirectUri);
+    if (!state) return res.status(503).send('OAuth state storage is unavailable. Check Firebase Admin credentials and Firestore access.');
 
     const scopes = 'read:user repo';
     const authUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}&state=${state}`;
@@ -353,15 +234,8 @@ integrationsRouter.get('/:provider/connect', async (req: Request, res: Response)
       `);
     }
 
-    const state = crypto.randomBytes(24).toString('hex');
-    oauthStates.set(state, {
-      state,
-      provider: 'gitlab',
-      userId: 'direct-connect',
-      redirectUri,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 10 * 60 * 1000
-    });
+    const state = await createOAuthState('gitlab', req.user.uid, redirectUri);
+    if (!state) return res.status(503).send('OAuth state storage is unavailable. Check Firebase Admin credentials and Firestore access.');
 
     const scopes = 'read_user read_repository';
     const authUrl = `https://gitlab.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${state}`;
@@ -372,16 +246,25 @@ integrationsRouter.get('/:provider/connect', async (req: Request, res: Response)
 });
 
 // Helper for sending popup response HTML
-function renderPopupResponse(res: Response, success: boolean, payload: { provider: string; accountName?: string; error?: string }) {
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char]!);
+}
+
+function renderPopupResponse(res: Response, success: boolean, payload: { provider: string; accountName?: string; error?: string }, targetOrigin = '') {
   const safePayload = JSON.stringify({
     type: success ? 'OAUTH_AUTH_SUCCESS' : 'OAUTH_AUTH_ERROR',
     ...payload
-  });
+  }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
 
   const title = success ? 'Connected Successfully' : 'Authentication Error';
   const message = success
-    ? `Successfully connected ${payload.accountName || payload.provider}. This window will close automatically.`
-    : `Error: ${payload.error || 'Authorization failed'}. This window will close automatically.`;
+    ? `Successfully connected ${escapeHtml(payload.accountName || payload.provider)}. This window will close automatically.`
+    : `Error: ${escapeHtml(payload.error || 'Authorization failed')}. This window will close automatically.`;
+  const safeOrigin = (() => {
+    try { return new URL(targetOrigin).origin; } catch { return ''; }
+  })();
 
   res.send(`<!DOCTYPE html>
 <html>
@@ -420,13 +303,15 @@ function renderPopupResponse(res: Response, success: boolean, payload: { provide
       (function() {
         var payload = ${safePayload};
         if (window.opener) {
-          window.opener.postMessage(payload, '*');
+          if (${JSON.stringify(safeOrigin)}) {
+            window.opener.postMessage(payload, ${JSON.stringify(safeOrigin)});
+          }
           setTimeout(function() {
             window.close();
           }, 800);
         } else {
           setTimeout(function() {
-            window.location.href = '/?tab=integrations';
+          window.location.href = '/integrations';
           }, 1200);
         }
       })();
@@ -440,26 +325,33 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
   const { provider } = req.params;
   const { code, state, error, error_description } = req.query;
 
-  // Handle provider denied/cancelled error
-  if (error) {
-    const errorMsg = String(error_description || error || 'Authorization was cancelled by user');
-    console.warn(`[OAuth][${provider}] Provider returned error:`, errorMsg);
-    return renderPopupResponse(res, false, { provider, error: errorMsg });
-  }
-
-  if (!code || !state) {
+  if (!state) {
     return renderPopupResponse(res, false, { provider, error: 'Missing code or state parameter.' });
   }
 
   // Validate state
-  const stateRecord = oauthStates.get(String(state));
-  if (!stateRecord || stateRecord.expiresAt < Date.now()) {
+  let stateRecord: OAuthStateRecord | null;
+  try {
+    stateRecord = await consumeOAuthState(String(state));
+  } catch (storeError: any) {
+    console.error('[OAuth] Could not verify state from Firestore:', storeError?.message || storeError);
+    return renderPopupResponse(res, false, { provider, error: 'OAuth state storage is unavailable. Please retry after the service is restored.' });
+  }
+  if (!stateRecord || stateRecord.provider !== provider) {
     console.warn(`[OAuth][${provider}] Invalid or expired state token.`);
     return renderPopupResponse(res, false, { provider, error: 'Invalid or expired state parameter. Please try again.' });
   }
+  const callbackOrigin = new URL(stateRecord.redirectUri).origin;
 
-  // Remove used state to prevent replay
-  oauthStates.delete(String(state));
+  // Validate and consume state even when the user denies the provider request.
+  if (error) {
+    const errorMsg = String(error_description || error || 'Authorization was cancelled by user').slice(0, 500);
+    console.warn(`[OAuth][${provider}] Provider returned an authorization error.`);
+    return renderPopupResponse(res, false, { provider, error: errorMsg }, callbackOrigin);
+  }
+  if (!code) {
+    return renderPopupResponse(res, false, { provider, error: 'Missing authorization code.' }, callbackOrigin);
+  }
 
   try {
     if (provider === 'github') {
@@ -479,7 +371,8 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
           client_secret: clientSecret,
           code: String(code),
           redirect_uri: stateRecord.redirectUri
-        })
+        }),
+        signal: AbortSignal.timeout(15_000)
       });
 
       if (!tokenRes.ok) {
@@ -502,7 +395,8 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
           'Authorization': `Bearer ${accessToken}`,
           'Accept': 'application/vnd.github.v3+json',
           'User-Agent': 'FLOAT-AI'
-        }
+        },
+        signal: AbortSignal.timeout(15_000)
       });
 
       if (!userRes.ok) {
@@ -513,12 +407,10 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
       const accountName = githubUser.login || githubUser.name || 'GitHub User';
 
       // Upsert connection record for user
-      const existingIdx = connections.findIndex(
-        c => c.provider === 'github' && (c.userId === stateRecord.userId || c.accountId === String(githubUser.id))
-      );
+      const existingConnection = await getIntegrationConnection(stateRecord.userId, 'github');
 
       const connectionRecord: StoredIntegrationConnection = {
-        id: existingIdx >= 0 ? connections[existingIdx].id : uuidv4(),
+        id: existingConnection?.id || uuidv4(),
         userId: stateRecord.userId,
         provider: 'github',
         status: 'connected',
@@ -528,18 +420,13 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
         profileUrl: githubUser.html_url,
         scopes: tokenData.scope ? tokenData.scope.split(/[\s,]+/) : ['read:user', 'repo'],
         accessToken, // NEVER sent to frontend
-        createdAt: existingIdx >= 0 ? connections[existingIdx].createdAt : Date.now(),
+        createdAt: existingConnection?.createdAt || Date.now(),
         lastVerifiedAt: Date.now()
       };
 
-      if (existingIdx >= 0) {
-        connections[existingIdx] = connectionRecord;
-      } else {
-        connections.push(connectionRecord);
-      }
-      saveConnections(connections);
+      await saveIntegrationConnection(connectionRecord);
 
-      return renderPopupResponse(res, true, { provider: 'github', accountName });
+      return renderPopupResponse(res, true, { provider: 'github', accountName }, callbackOrigin);
     }
 
     if (provider === 'gitlab') {
@@ -559,7 +446,8 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
           code: String(code),
           grant_type: 'authorization_code',
           redirect_uri: stateRecord.redirectUri
-        })
+        }),
+        signal: AbortSignal.timeout(15_000)
       });
 
       if (!tokenRes.ok) {
@@ -580,7 +468,8 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
       const userRes = await fetch('https://gitlab.com/api/v4/user', {
         headers: {
           'Authorization': `Bearer ${accessToken}`
-        }
+        },
+        signal: AbortSignal.timeout(15_000)
       });
 
       if (!userRes.ok) {
@@ -590,12 +479,10 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
       const gitlabUser = await userRes.json();
       const accountName = gitlabUser.username || gitlabUser.name || 'GitLab User';
 
-      const existingIdx = connections.findIndex(
-        c => c.provider === 'gitlab' && (c.userId === stateRecord.userId || c.accountId === String(gitlabUser.id))
-      );
+      const existingConnection = await getIntegrationConnection(stateRecord.userId, 'gitlab');
 
       const connectionRecord: StoredIntegrationConnection = {
-        id: existingIdx >= 0 ? connections[existingIdx].id : uuidv4(),
+        id: existingConnection?.id || uuidv4(),
         userId: stateRecord.userId,
         provider: 'gitlab',
         status: 'connected',
@@ -607,24 +494,98 @@ integrationsRouter.get(['/:provider/callback', '/:provider/callback/'], async (r
         accessToken, // NEVER sent to frontend
         refreshToken: tokenData.refresh_token,
         tokenExpiresAt: tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : undefined,
-        createdAt: existingIdx >= 0 ? connections[existingIdx].createdAt : Date.now(),
+        createdAt: existingConnection?.createdAt || Date.now(),
         lastVerifiedAt: Date.now()
       };
 
-      if (existingIdx >= 0) {
-        connections[existingIdx] = connectionRecord;
-      } else {
-        connections.push(connectionRecord);
-      }
-      saveConnections(connections);
+      await saveIntegrationConnection(connectionRecord);
 
-      return renderPopupResponse(res, true, { provider: 'gitlab', accountName });
+      return renderPopupResponse(res, true, { provider: 'gitlab', accountName }, callbackOrigin);
     }
 
-    return renderPopupResponse(res, false, { provider, error: `Unsupported provider ${provider}` });
+    return renderPopupResponse(res, false, { provider, error: `Unsupported provider ${provider}` }, callbackOrigin);
   } catch (err: any) {
     console.error(`[OAuth][${provider}] Exchange failure:`, err.message);
-    return renderPopupResponse(res, false, { provider, error: err.message || 'Token exchange failed' });
+    return renderPopupResponse(res, false, { provider, error: (err.message || 'Token exchange failed').slice(0, 500) }, callbackOrigin);
+  }
+});
+
+// Download a repository archive through the user's GitHub connection. The access token
+// stays on the server; the client receives only the repository archive.
+integrationsRouter.get('/github/repositories/:owner/:repo/archive', requireAuth, async (req: any, res: Response) => {
+  const owner = String(req.params.owner || '');
+  const repo = String(req.params.repo || '');
+  const ref = typeof req.query.ref === 'string' ? req.query.ref.trim() : '';
+  if (!/^[\w.-]{1,100}$/.test(owner) || !/^[\w.-]{1,100}$/.test(repo) || ref.length > 200 || ref.includes('..')) {
+    return res.status(400).json({ error: 'Invalid repository or branch name.' });
+  }
+
+  let connection: StoredIntegrationConnection | null;
+  try {
+    connection = await getIntegrationConnection(req.user.uid, 'github');
+  } catch (error: any) {
+    console.error('[Integration Store] Could not load GitHub connection:', error?.message || error);
+    return res.status(503).json({ error: 'GitHub connection storage is unavailable. Check Firebase Admin credentials and Firestore access.' });
+  }
+  if (!connection || connection.status !== 'connected' || !connection.accessToken) {
+    return res.status(404).json({ error: 'Connect GitHub in Integrations to import private repositories.' });
+  }
+
+  try {
+    const encodedRef = ref ? `/${ref.split('/').map((part) => encodeURIComponent(part)).join('/')}` : '';
+    const path = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zipball${encodedRef}`;
+    const upstream = await fetch(path, {
+      headers: {
+        Authorization: `Bearer ${connection.accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'FLOAT-AI',
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (upstream.status === 401) {
+      connection.status = 'expired';
+      await saveIntegrationConnection(connection);
+      return res.status(401).json({ error: 'GitHub authorization expired. Reconnect GitHub and try again.' });
+    }
+    if (upstream.status === 404) {
+      return res.status(404).json({ error: 'Repository or branch was not found, or this GitHub account cannot access it.' });
+    }
+    if (!upstream.ok || !upstream.body) {
+      return res.status(502).json({ error: `GitHub archive request failed (HTTP ${upstream.status}).` });
+    }
+
+    const maxBytes = 20 * 1024 * 1024;
+    const contentLength = Number(upstream.headers.get('content-length') || 0);
+    if (contentLength > maxBytes) {
+      await upstream.body.cancel();
+      return res.status(413).json({ error: 'Repository archive exceeds the 20 MB import limit.' });
+    }
+
+    const reader = upstream.body.getReader();
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        return res.status(413).json({ error: 'Repository archive exceeds the 20 MB import limit.' });
+      }
+      chunks.push(Buffer.from(value));
+    }
+
+    connection.lastVerifiedAt = Date.now();
+    await saveIntegrationConnection(connection);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(Buffer.concat(chunks, size));
+  } catch (error: any) {
+    console.error('[Integrations][github] Archive import failed:', error?.message || error);
+    res.status(502).json({ error: 'Could not download this GitHub repository archive.' });
   }
 });
 
@@ -633,18 +594,17 @@ integrationsRouter.get('/:provider/repositories', requireAuth, async (req: any, 
   const { provider } = req.params;
   const userId = req.user.uid;
 
-  // Find user-owned connection
-  const connection = connections.find(c => c.provider === provider && (c.userId === userId || c.userId === 'anonymous' || c.userId === 'direct-connect'));
+  let connection: StoredIntegrationConnection | null;
+  try {
+    connection = await getIntegrationConnection(userId, provider);
+  } catch (error: any) {
+    console.error('[Integration Store] Could not load provider connection:', error?.message || error);
+    return res.status(503).json({ error: 'Integration storage is unavailable. Check Firebase Admin credentials and Firestore access.' });
+  }
   if (!connection || connection.status !== 'connected' || !connection.accessToken) {
     return res.status(404).json({
       error: `No active ${provider} connection found for this account. Please connect your account first.`
     });
-  }
-
-  // Associate anonymous/pending connection with authenticated user ID
-  if (connection.userId !== userId) {
-    connection.userId = userId;
-    saveConnections(connections);
   }
 
   try {
@@ -654,12 +614,13 @@ integrationsRouter.get('/:provider/repositories', requireAuth, async (req: any, 
           'Authorization': `Bearer ${connection.accessToken}`,
           'Accept': 'application/vnd.github.v3+json',
           'User-Agent': 'FLOAT-AI'
-        }
+        },
+        signal: AbortSignal.timeout(15_000)
       });
 
       if (repoRes.status === 401) {
         connection.status = 'expired';
-        saveConnections(connections);
+        await saveIntegrationConnection(connection);
         return res.status(401).json({
           error: 'GitHub authorization token has expired or was revoked. Please reconnect your account.'
         });
@@ -683,7 +644,7 @@ integrationsRouter.get('/:provider/repositories', requireAuth, async (req: any, 
       })) : [];
 
       connection.lastVerifiedAt = Date.now();
-      saveConnections(connections);
+      await saveIntegrationConnection(connection);
 
       return res.json({
         success: true,
@@ -696,12 +657,13 @@ integrationsRouter.get('/:provider/repositories', requireAuth, async (req: any, 
       const repoRes = await fetch('https://gitlab.com/api/v4/projects?membership=true&order_by=updated_at&per_page=30', {
         headers: {
           'Authorization': `Bearer ${connection.accessToken}`
-        }
+        },
+        signal: AbortSignal.timeout(15_000)
       });
 
       if (repoRes.status === 401) {
         connection.status = 'expired';
-        saveConnections(connections);
+        await saveIntegrationConnection(connection);
         return res.status(401).json({
           error: 'GitLab authorization token has expired or was revoked. Please reconnect your account.'
         });
@@ -725,7 +687,7 @@ integrationsRouter.get('/:provider/repositories', requireAuth, async (req: any, 
       })) : [];
 
       connection.lastVerifiedAt = Date.now();
-      saveConnections(connections);
+      await saveIntegrationConnection(connection);
 
       return res.json({
         success: true,
@@ -742,17 +704,18 @@ integrationsRouter.get('/:provider/repositories', requireAuth, async (req: any, 
 });
 
 // 7. Disconnect Integration
-integrationsRouter.post('/disconnect/:id', requireAuth, (req: any, res: Response) => {
+integrationsRouter.post('/disconnect/:id', requireAuth, async (req: any, res: Response) => {
   const { id } = req.params;
   const userId = req.user.uid;
-
-  const index = connections.findIndex(c => c.id === id && (c.userId === userId || c.userId === 'anonymous' || c.userId === 'direct-connect'));
-  if (index !== -1) {
-    const removed = connections.splice(index, 1)[0];
-    saveConnections(connections);
+  try {
+    const removed = await deleteIntegrationConnection(userId, id);
+    if (removed) {
     console.log(`[Integrations] Disconnected ${removed.provider} for user ${userId}`);
-    res.json({ success: true, provider: removed.provider });
-  } else {
+      return res.json({ success: true, provider: removed.provider });
+    }
     res.status(404).json({ error: 'Connection not found or unauthorized.' });
+  } catch (error: any) {
+    console.error('[Integration Store] Could not disconnect provider:', error?.message || error);
+    res.status(503).json({ error: 'Integration storage is unavailable. Check Firebase Admin credentials and Firestore access.' });
   }
 });
