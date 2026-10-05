@@ -19,9 +19,20 @@ export interface CodebaseSearchOptions {
   contextLines?: number;
 }
 
+interface IndexedFile {
+  id: string;
+  path: string;
+  name: string;
+  lines: string[];
+  tokens: string[];
+  frequencies: Map<string, number>;
+}
+
 /**
- * Searches the project's virtual file tree using ranked lexical retrieval.
- * Provides file paths, exact line numbers, and formatted contextual excerpts.
+ * Builds an in-memory inverted index for the current project and ranks matching
+ * lines using a BM25-style score. Tokenization understands camelCase, paths,
+ * punctuation and common code identifiers. The index is rebuilt from the
+ * current immutable file tree, so edits are searchable immediately.
  */
 export function searchCodebase(
   files: FileNode[],
@@ -31,117 +42,113 @@ export function searchCodebase(
   const query = rawQuery.trim();
   if (!query) return [];
 
-  const maxResults = options.maxResults ?? 15;
-  const caseSensitive = options.caseSensitive ?? false;
-  const contextLines = options.contextLines ?? 2;
+  const maxResults = Math.max(1, options.maxResults ?? 15);
+  const contextLines = Math.max(0, options.contextLines ?? 2);
+  const normalize = (value: string) => options.caseSensitive ? value : value.toLocaleLowerCase();
+  const queryTokens = tokenize(normalize(query));
+  if (!queryTokens.length) return [];
 
-  const needle = caseSensitive ? query : query.toLowerCase();
-  const flatFiles = flattenFileTree(files);
-  const results: SearchMatch[] = [];
+  const documents: IndexedFile[] = flattenFileTree(files)
+    .filter(file => file.type === 'file' && typeof file.content === 'string')
+    .map(file => {
+      const lines = (file.content ?? '').split(/\r?\n/);
+      const tokens = tokenize(normalize(`${file.path} ${file.content ?? ''}`));
+      const frequencies = new Map<string, number>();
+      for (const token of tokens) frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
+      return { id: file.id, path: file.path, name: file.name, lines, tokens, frequencies };
+    });
 
-  for (const file of flatFiles) {
-    if (file.type !== 'file' || !file.content) continue;
+  const documentFrequency = new Map<string, number>();
+  for (const token of new Set(queryTokens)) {
+    documentFrequency.set(token, documents.reduce((count, document) => count + Number(document.frequencies.has(token)), 0));
+  }
+  const averageLength = documents.reduce((sum, document) => sum + document.tokens.length, 0) / Math.max(1, documents.length);
+  const normalizedQuery = normalize(query);
+  const matches: SearchMatch[] = [];
 
-    const path = file.path;
-    const name = file.name || path.split('/').pop() || '';
-    const normPath = caseSensitive ? path : path.toLowerCase();
-    const normName = caseSensitive ? name : name.toLowerCase();
+  for (const document of documents) {
+    const path = normalize(document.path);
+    const name = normalize(document.name);
+    const exactPath = path === normalizedQuery || name === normalizedQuery;
+    const pathContains = path.includes(normalizedQuery);
+    const matchingLines: Array<{ line: number; score: number }> = [];
 
-    // 1. Path & Filename Match
-    if (normName === needle) {
-      // Exact file name match
-      results.push({
-        fileId: file.id,
-        filePath: path,
-        fileName: name,
-        matchType: 'path',
-        score: 100,
-        line: 1,
-        startLine: 1,
-        endLine: Math.min(10, file.content.split('\n').length),
-        contentExcerpt: file.content.split('\n').slice(0, 10).join('\n')
-      });
-    } else if (normName.includes(needle)) {
-      results.push({
-        fileId: file.id,
-        filePath: path,
-        fileName: name,
-        matchType: 'path',
-        score: 75,
-        line: 1,
-        startLine: 1,
-        endLine: Math.min(10, file.content.split('\n').length),
-        contentExcerpt: file.content.split('\n').slice(0, 10).join('\n')
-      });
-    } else if (normPath.includes(needle)) {
-      results.push({
-        fileId: file.id,
-        filePath: path,
-        fileName: name,
-        matchType: 'path',
-        score: 50,
-        line: 1,
-        startLine: 1,
-        endLine: Math.min(10, file.content.split('\n').length),
-        contentExcerpt: file.content.split('\n').slice(0, 10).join('\n')
-      });
-    }
+    for (let index = 0; index < document.lines.length; index += 1) {
+      const line = normalize(document.lines[index]);
+      const lineTokens = tokenize(line);
+      if (!lineTokens.length) continue;
+      const lineFrequency = new Map<string, number>();
+      for (const token of lineTokens) lineFrequency.set(token, (lineFrequency.get(token) ?? 0) + 1);
 
-    // 2. Content Line Match
-    const lines = file.content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const lineStr = lines[i];
-      const normLine = caseSensitive ? lineStr : lineStr.toLowerCase();
+      let score = 0;
+      for (const token of queryTokens) {
+        const tf = lineFrequency.get(token) ?? 0;
+        if (!tf) continue;
+        const df = documentFrequency.get(token) ?? 0;
+        const idf = Math.log(1 + (documents.length - df + 0.5) / (df + 0.5));
+        const lengthNorm = 1.2 * (0.25 + 0.75 * lineTokens.length / Math.max(1, averageLength));
+        score += idf * (tf * 2.2) / (tf + lengthNorm);
+      }
 
-      if (normLine.includes(needle)) {
-        const start = Math.max(0, i - contextLines);
-        const end = Math.min(lines.length - 1, i + contextLines);
-        const excerpt = lines
-          .slice(start, end + 1)
-          .map((l, idx) => `${start + idx + 1}: ${l}`)
-          .join('\n');
-
-        // Score based on exact occurrences and match location
-        const matchFrequency = (normLine.match(new RegExp(escapeRegex(needle), 'g')) || []).length;
-        const lineScore = 30 + Math.min(30, matchFrequency * 10);
-
-        results.push({
-          fileId: file.id,
-          filePath: path,
-          fileName: name,
-          matchType: 'content',
-          score: lineScore,
-          line: i + 1,
-          startLine: start + 1,
-          endLine: end + 1,
-          contentExcerpt: excerpt
-        });
-
-        // Skip ahead by contextLines to avoid redundant overlapping excerpts
-        i += contextLines;
+      if (score > 0) {
+        if (line.includes(normalizedQuery)) score *= 1.8;
+        // Identifier-shaped queries should favor declarations and references
+        // where the whole identifier appears, without requiring exact text.
+        if (queryTokens.length === 1 && new RegExp(`(^|\\W)${escapeRegex(queryTokens[0])}($|\\W)`, options.caseSensitive ? '' : 'i').test(document.lines[index])) score *= 1.2;
+        matchingLines.push({ line: index + 1, score });
       }
     }
-  }
 
-  // Sort descending by score, then by filePath
-  results.sort((a, b) => b.score - a.score || a.filePath.localeCompare(b.filePath));
+    if (exactPath || pathContains) {
+      const line = matchingLines[0]?.line ?? 1;
+      matches.push(makeMatch(document, line, exactPath ? 100 : 65, 'path', contextLines));
+    }
 
-  // Deduplicate matches from the same file with identical line spans
-  const seen = new Set<string>();
-  const deduplicated: SearchMatch[] = [];
-
-  for (const match of results) {
-    const key = `${match.filePath}:${match.startLine}-${match.endLine}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      deduplicated.push(match);
-      if (deduplicated.length >= maxResults) break;
+    matchingLines.sort((a, b) => b.score - a.score || a.line - b.line);
+    const selected: typeof matchingLines = [];
+    for (const candidate of matchingLines) {
+      if (selected.every(existing => Math.abs(existing.line - candidate.line) > contextLines * 2)) selected.push(candidate);
+      if (selected.length >= 3) break;
+    }
+    for (const candidate of selected) {
+      matches.push(makeMatch(document, candidate.line, candidate.score * 10, 'content', contextLines));
     }
   }
 
-  return deduplicated;
+  matches.sort((a, b) => b.score - a.score || a.filePath.localeCompare(b.filePath) || a.line - b.line);
+  const seen = new Set<string>();
+  return matches.filter(match => {
+    const key = `${match.filePath}:${match.startLine}-${match.endLine}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, maxResults);
 }
 
-function escapeRegex(string: string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function makeMatch(document: IndexedFile, line: number, score: number, matchType: SearchMatch['matchType'], contextLines: number): SearchMatch {
+  const start = Math.max(1, line - contextLines);
+  const end = Math.min(document.lines.length, line + contextLines);
+  return {
+    fileId: document.id,
+    filePath: document.path,
+    fileName: document.name,
+    matchType,
+    score,
+    line,
+    startLine: start,
+    endLine: end,
+    contentExcerpt: document.lines.slice(start - 1, end).map((text, index) => `${start + index}: ${text}`).join('\n')
+  };
+}
+
+function tokenize(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^\p{L}\p{N}_$]+/u)
+    .map(token => token.trim())
+    .filter(token => token.length > 1 && !/^[\d_]+$/.test(token));
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

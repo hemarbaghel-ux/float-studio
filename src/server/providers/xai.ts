@@ -1,4 +1,6 @@
 import { AIProviderAdapter, AIProviderRequest, AIProviderResponse } from './base';
+import { providerRequestSignal } from './requestSignal';
+import { PortableAgentRunner } from '../agent/portableAgentRunner';
 
 export function normalizeXAIError(error: any): Error {
   const msg = error?.message || String(error);
@@ -58,11 +60,17 @@ export class XAIAdapter implements AIProviderAdapter {
       }
     }
 
-    return {
+    const payload: Record<string, unknown> = {
       model: request.model,
       messages: formattedMessages,
       stream
     };
+
+    if (request.reasoningEffort) {
+      payload.reasoning_effort = request.reasoningEffort;
+    }
+
+    return payload;
   }
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
@@ -80,7 +88,8 @@ export class XAIAdapter implements AIProviderAdapter {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.XAI_API_KEY}`
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: providerRequestSignal()
       });
 
       if (!res.ok) {
@@ -121,7 +130,7 @@ export class XAIAdapter implements AIProviderAdapter {
           'Authorization': `Bearer ${process.env.XAI_API_KEY}`
         },
         body: JSON.stringify(payload),
-        signal
+        signal: providerRequestSignal(signal)
       });
 
       if (!res.ok) {
@@ -171,17 +180,17 @@ export class XAIAdapter implements AIProviderAdapter {
   }
 
   async runAgentLoop(
-    _req: any,
-    _res: any,
+    req: any,
+    res: any,
     model: string,
-    _prompt: string,
-    _virtualFiles: any[]
+    prompt: string,
+    virtualFiles: any[]
   ): Promise<void> {
     if (!this.isConfigured()) {
       throw new Error(
         `xAI is not configured on the FLOAT server. To run agents with "${model}", configure XAI_API_KEY.`
       );
     }
-    throw new Error('xAI autonomous agent loops are currently in preview. Use Gemini 3.1 Flash Lite for full tool execution.');
+    return PortableAgentRunner.run('xai', req, res, model, prompt, virtualFiles, process.env.XAI_API_KEY!);
   }
 }

@@ -25,6 +25,8 @@ export interface ValidationCheckResult {
   message?: string;
   diagnostics: ValidationDiagnostic[];
   unsupportedReason?: string;
+  output?: string;
+  exitCode?: number | null;
 }
 
 export interface ValidationRun {

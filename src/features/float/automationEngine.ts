@@ -4,7 +4,7 @@ import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
 import { ConsentService } from '../../services/consentService';
 import { filesToMap } from './projectIO';
-import { useAutomations, type Automation } from './automationStore';
+import { isAutomationOwnedBy, useAutomations, type Automation } from './automationStore';
 
 const MAX_CONTEXT_CHARS = 40_000;
 const inFlight = new Set<string>();
@@ -40,12 +40,13 @@ async function notifySlack(webhook: string, a: Automation, status: string, outpu
 export async function runAutomation(id: string): Promise<void> {
   const store = useAutomations.getState();
   const a = store.automations.find((x) => x.id === id);
-  if (!a || inFlight.has(id)) return;
+  const user = auth.currentUser;
+  // Automations are stored in browser-local storage. Never run legacy or
+  // another account's record using the currently signed-in user's session.
+  if (!a || !isAutomationOwnedBy(a, user?.uid) || inFlight.has(id)) return;
   inFlight.add(id);
   const runId = store.startRun(id);
   try {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Sign in to run automations.');
     const token = await user.getIdToken();
     const prompt = a.includeWorkspace ? `${a.prompt}\n\nUse this workspace as context:\n${workspaceContext()}` : a.prompt;
     const res = await fetch('/api/ai/chat', {
@@ -83,8 +84,10 @@ export function useAutomationScheduler() {
   useEffect(() => {
     const tick = () => {
       const now = Date.now();
+      const ownerId = auth.currentUser?.uid;
+      if (!ownerId) return;
       for (const a of useAutomations.getState().automations) {
-        if (a.enabled && a.trigger !== 'manual' && a.nextRunAt && a.nextRunAt <= now) void runAutomation(a.id);
+        if (isAutomationOwnedBy(a, ownerId) && a.enabled && a.trigger !== 'manual' && a.nextRunAt && a.nextRunAt <= now) void runAutomation(a.id);
       }
     };
     tick();

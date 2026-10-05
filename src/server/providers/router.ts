@@ -44,6 +44,7 @@ export class ModelRouter {
     'claude-3-opus-20240229': 'anthropic',
 
     // xAI
+    'grok-4.7': 'xai',
     'grok-2-1212': 'xai',
     'grok-2': 'xai',
     'grok-2-vision-1212': 'xai',

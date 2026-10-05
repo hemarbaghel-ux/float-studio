@@ -103,7 +103,7 @@ export const useAIStore = create<AIStore>((set) => ({
     google: { enabled: true, configured: true, defaultModel: 'gemini-3.1-flash-lite' },
     openai: { enabled: true, configured: false, defaultModel: 'gpt-4o' },
     anthropic: { enabled: true, configured: false, defaultModel: 'claude-3-7-sonnet-20250219' },
-    xai: { enabled: true, configured: false, defaultModel: 'grok-2-1212' },
+    xai: { enabled: true, configured: false, defaultModel: 'grok-4.7' },
     deepseek: { enabled: true, configured: false, defaultModel: 'deepseek-chat' },
     auto: { enabled: true, configured: true, defaultModel: 'gemini-3.1-flash-lite' },
   },

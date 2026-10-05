@@ -1,21 +1,78 @@
 import { v4 as uuidv4 } from 'uuid';
 import { AgentRunner } from './agent/agentRunner';
-import { db } from '../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { ProposalService } from './agent/proposalService';
 import { verifyFirebaseIdToken } from './authMiddleware';
+import { requireAuth } from './authMiddleware';
+import { asyncRoute } from './asyncRoute';
+import { adminDb, hasAdminCredentials } from './adminFirebase';
+import { projectProcessManager } from './execution/processManager';
+import { cleanupAgentGitWorktree, cleanupStaleAgentWorktrees, createAgentGitWorktree, getAgentWorktreeStatus, type AgentWorktreeSession } from './agent/agentGitWorktree';
+import {
+  appendAgentEvent,
+  claimQueuedAgentTask,
+  deleteAgentTaskWorkspace,
+  getAgentTaskWorkspace,
+  failInterruptedAgentTask,
+  getAgentTaskResult,
+  heartbeatAgentTask,
+  listAgentEvents,
+  listAgentTasks,
+  listAgentTaskResults,
+  listQueuedAgentTasks,
+  listRunningAgentTasks,
+  releaseAgentProjectLease,
+  readAgentTask,
+  saveAgentTask,
+  completeAgentTask,
+  saveAgentTaskWorkspace,
+  updateAgentTask,
+} from './agentPersistence';
+import { approveAgentTaskPullRequest, createAgentTaskPullRequest, mergeAgentTaskPullRequest, publishAgentTaskBranch, refreshAgentTaskPullRequest } from './github/gitRouter';
 
 // Sensitive patterns to exclude from any agent file context
 const SENSITIVE_PATTERNS = [
-  /^\.env($|\..*)/i,
-  /^node_modules\//i,
-  /^\.git\//i,
-  /^dist\//i,
-  /^build\//i,
-  /\.pem$/i,
-  /\.key$/i,
-  /id_rsa/i,
-  /^\.DS_Store$/i
+  /(^|\/)\.env($|\..*)/i,
+  /(^|\/)(node_modules|vendor|\.git|dist|build|coverage|target|\.next|\.cache|\.venv|venv|\.ssh|\.aws)(\/|$)/i,
+  /(^|\/)(?:secrets?|credentials?|service-account)(?:\.[^/]+)?(\/|$)/i,
+  /(^|\/)(\.npmrc|\.pypirc|\.netrc)(\/|$)/i,
+  /\.(pem|key|p12|pfx|keystore|crt|cer)$/i,
+  /(^|\/)(id_rsa|id_ed25519)(?:$|\.)/i,
+  /(^|\/)\.DS_Store$/i
 ];
+const BACKGROUND_AGENT_TIMEOUT_MS = 15 * 60 * 1000;
+const agentTaskCreationTimes = new Map<string, number[]>();
+
+function allowAgentTaskCreation(userId: string): boolean {
+  const now = Date.now();
+  const recent = (agentTaskCreationTimes.get(userId) || []).filter(timestamp => now - timestamp < 60_000);
+  if (recent.length >= 5) return false;
+  recent.push(now);
+  agentTaskCreationTimes.delete(userId);
+  if (!agentTaskCreationTimes.has(userId) && agentTaskCreationTimes.size >= 10_000) {
+    const oldest = agentTaskCreationTimes.keys().next().value;
+    if (oldest) agentTaskCreationTimes.delete(oldest);
+  }
+  agentTaskCreationTimes.set(userId, recent);
+  return true;
+}
+
+function flattenProjectFiles(raw: unknown): Array<{ path: string; name: string; content: string; type: string }> {
+  let tree: any;
+  try { tree = typeof raw === 'string' ? JSON.parse(raw) : raw; }
+  catch { throw new Error('The saved project file tree is invalid JSON.'); }
+  if (!Array.isArray(tree)) throw new Error('The saved project does not contain a valid file tree.');
+  const result: Array<{ path: string; name: string; content: string; type: string }> = [];
+  const visit = (nodes: any[], prefix = '') => {
+    for (const node of nodes) {
+      if (!node || typeof node.name !== 'string' || !node.name || node.name.includes('/') || node.name.includes('\\')) continue;
+      const filePath = prefix ? `${prefix}/${node.name}` : node.name;
+      if (node.type === 'folder') visit(Array.isArray(node.children) ? node.children : [], filePath);
+      else if (node.type === 'file' && typeof node.content === 'string') result.push({ path: filePath, name: node.name, content: node.content, type: 'file' });
+    }
+  };
+  visit(tree);
+  return result;
+}
 
 /**
  * 1. File Path Normalization & Sanitization
@@ -60,6 +117,9 @@ export function normalizeAndSanitizePath(rawPath: string): { safePath: string; e
   ) {
     return { safePath: '', error: 'Path traversal (../) is strictly forbidden.' };
   }
+  if (normalized.split('/').some(segment => !segment || segment === '.' || segment === '..')) {
+    return { safePath: '', error: 'Path contains an invalid or traversing segment.' };
+  }
 
   // Reject bare root folders
   if (['etc', 'var', 'usr', 'bin', 'sbin', 'root', 'proc', 'sys'].some(d => normalized === d || normalized.startsWith(`${d}/`))) {
@@ -103,10 +163,11 @@ export function validateAndNormalizeFileNodes(files: any[]): {
       continue;
     }
 
-    // Limit maximum file size (500KB)
-    let content = typeof file.content === 'string' ? file.content : '';
-    if (content.length > 500 * 1024) {
-      content = content.slice(0, 500 * 1024);
+    const content = typeof file.content === 'string' ? file.content : '';
+    if (Buffer.byteLength(content, 'utf8') > 500 * 1024) {
+      rejectedCount++;
+      errors.push(`File "${safePath}" exceeds the 500 KB agent context limit and was excluded.`);
+      continue;
     }
 
     safeFiles.push({
@@ -260,32 +321,18 @@ export async function validateProjectAccess(
     return { authorized: false, error: `Invalid project identifier "${projectId}".` };
   }
 
-  // If project exists in Firestore, enforce ownership check
+  if (!hasAdminCredentials()) {
+    return { authorized: false, error: 'Could not verify project ownership in Firestore because Firebase Admin credentials are not configured.' };
+  }
+
+  // Background work requires an actual persisted project and authoritative ownership.
   try {
-    const projectRef = doc(db, 'projects', sanitizedId);
-    const snap = await getDoc(projectRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      if (data.ownerId && data.ownerId !== userId) {
-        return { 
-          authorized: false, 
-          error: `Unauthorized: User "${userId}" does not have access to project "${sanitizedId}".` 
-        };
-      }
-    }
-  } catch (err: any) {
-    // If Firestore is offline or local workspace, verify against in-memory registry
+    const snap = await adminDb.collection('projects').doc(sanitizedId).get();
+    if (!snap.exists) return { authorized: false, error: 'Save the project to your account before starting a background agent.' };
+    if (snap.get('ownerId') !== userId) return { authorized: false, error: `Unauthorized: Project "${sanitizedId}" is not owned by this account.` };
+  } catch {
+    return { authorized: false, error: 'Could not verify project ownership in Firestore. Background task creation is unavailable.' };
   }
-
-  // Verify against in-memory orchestrator project registry
-  const registeredOwner = orchestrator.getProjectOwner(sanitizedId);
-  if (registeredOwner && registeredOwner !== userId) {
-    return {
-      authorized: false,
-      error: `Unauthorized: Project "${sanitizedId}" is owned by another user.`
-    };
-  }
-
   return { authorized: true };
 }
 
@@ -296,6 +343,10 @@ export class AgentOrchestrator {
   private tasks = new Map<string, any>();
   private events = new Map<string, any[]>();
   private projectOwners = new Map<string, string>(); // projectId -> userId
+  private readonly workerId = uuidv4();
+  private workerHeartbeats = new Map<string, ReturnType<typeof setInterval>>();
+  private activeControllers = new Map<string, AbortController>();
+  private startingWorkers = 0;
 
   getProjectOwner(projectId: string): string | undefined {
     return this.projectOwners.get(projectId);
@@ -307,9 +358,10 @@ export class AgentOrchestrator {
     }
   }
 
-  async createTask(taskData: any, userAuth?: { uid: string }): Promise<any> {
-    const userId = userAuth?.uid || taskData.userId || 'user';
-    const projectId = taskData.projectId || taskData.parentTaskId || 'default-workspace';
+  async createTask(taskData: any, userAuth?: { uid: string }, retrySnapshot?: any[]): Promise<any> {
+    const userId = userAuth?.uid;
+    const projectId = typeof taskData.projectId === 'string' ? taskData.projectId : '';
+    if (!userId) throw new Error('Authentication is required to start a background agent.');
 
     // 1. Strict Project Access Validation
     const accessCheck = await validateProjectAccess(userId, projectId);
@@ -320,9 +372,23 @@ export class AgentOrchestrator {
     // Register project ownership
     this.registerProjectOwner(projectId, userId);
 
-    // 2. Strict File Path Normalization
-    const rawFiles = taskData.context?.files || [];
-    const { safeFiles, rejectedCount, errors } = validateAndNormalizeFileNodes(rawFiles);
+    if (!hasAdminCredentials()) throw new Error('Durable background agents require Firebase Admin credentials and Firestore access.');
+    const projectSnapshot = await adminDb.collection('projects').doc(projectId).get();
+    if (!projectSnapshot.exists || projectSnapshot.get('ownerId') !== userId) throw new Error('Unauthorized: Project ownership changed before the agent snapshot was created.');
+    const projectData = projectSnapshot.data()!;
+    // Client-supplied file contents are never treated as authoritative task context.
+    const rawFiles = retrySnapshot || flattenProjectFiles(projectData.files).filter(file => !SENSITIVE_PATTERNS.some(pattern => pattern.test(file.path))).slice(0, 200);
+    const validated = validateAndNormalizeFileNodes(rawFiles);
+    let remainingBytes = 700 * 1024;
+    const safeFiles = validated.safeFiles.filter((file) => {
+      const size = Buffer.byteLength(file.content, 'utf8');
+      if (size > remainingBytes) return false;
+      remainingBytes -= size;
+      return true;
+    });
+    const rejectedCount = validated.rejectedCount + (validated.safeFiles.length - safeFiles.length);
+    const errors = validated.errors;
+    if (!safeFiles.length) throw new Error('Save at least one supported text file in this project before starting an agent.');
 
     // 3. Agent Role & Model ID Validation
     const assignedAgentId = AGENT_ROLES[taskData.assignedAgentId] 
@@ -333,29 +399,41 @@ export class AgentOrchestrator {
     if (modelId === 'gemini-2.0-flash' || modelId === 'gemini-1.5-flash') {
       modelId = 'gemini-3.1-flash-lite';
     }
+    if (typeof modelId !== 'string' || !/^gemini-/.test(modelId)) {
+      throw new Error('Background agents currently use the Gemini agent loop. Select a Gemini model for this task.');
+    }
 
     const taskId = uuidv4();
     const task = {
-      ...taskData,
-      id: taskId,
       name: String(taskData.name || 'Agent Task').slice(0, 200),
       description: String(taskData.description || '').slice(0, 5000),
+      id: taskId,
       projectId,
       ownerId: userId,
       assignedAgentId,
       modelId,
+      requestedChecks: Array.isArray(taskData.requestedChecks) ? [...new Set(taskData.requestedChecks.filter((check: unknown) => ['test', 'lint', 'typecheck', 'build'].includes(String(check))))].slice(0, 4) : [],
       status: 'QUEUED',
       progress: 0,
       context: {
-        ...(taskData.context || {}),
-        files: safeFiles
+        objectives: Array.isArray(taskData.context?.objectives) ? taskData.context.objectives.slice(0, 20) : [],
+        workspaceSnapshotId: taskId,
+        sourceProjectUpdatedAt: projectData.updatedAt?.toMillis?.() || Date.now(),
+        sourceProjectName: String(projectData.name || 'Workspace').slice(0, 200),
       },
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
 
+    await saveAgentTaskWorkspace(taskId, userId, projectId, safeFiles);
+    try { await saveAgentTask(task); }
+    catch (error) {
+      await deleteAgentTaskWorkspace(taskId, userId).catch(() => undefined);
+      throw error;
+    }
+
     this.tasks.set(taskId, task);
-    this.events.set(taskId, [
+    const initialEvents = [
       {
         id: uuidv4(),
         taskId,
@@ -381,167 +459,220 @@ export class AgentOrchestrator {
         payload: { safeFilesCount: safeFiles.length, rejectedCount, errors },
         timestamp: Date.now()
       }
-    ]);
+    ].map((event) => ({ ...event, ownerId: userId }));
+    this.events.set(taskId, initialEvents);
+    await Promise.all(initialEvents.map((event) => appendAgentEvent(event)));
 
-    // Asynchronously begin task processing
-    setTimeout(() => this.processTask(taskId), 300);
+    void this.processTask(taskId).catch((error) => {
+      console.error(`[AgentOrchestrator] Task ${taskId} could not start:`, error);
+      const current = this.tasks.get(taskId);
+      if (current && !['CANCELLED', 'PAUSED'].includes(current.status)) {
+        current.error = 'Agent task failed to start. Review task events and retry.';
+        void this.updateTaskStatus(taskId, 'FAILED');
+        this.logEvent(taskId, 'agent_error', current.error);
+      }
+    });
     return task;
   }
 
   private async processTask(taskId: string) {
-    const task = this.tasks.get(taskId);
-    if (!task || task.status === 'CANCELLED' || task.status === 'PAUSED') return;
-
-    // STEP 1: Verify Project Access Before Any Tool Execution
-    this.updateTaskStatus(taskId, 'PLANNING', 10);
-    const accessCheck = await validateProjectAccess(task.ownerId, task.projectId);
-    if (!accessCheck.authorized) {
-      this.logEvent(taskId, 'access_denied', accessCheck.error || 'Project access validation failed.');
-      this.updateTaskStatus(taskId, 'FAILED');
-      return;
-    }
-    this.logEvent(taskId, 'project_access_verified', `Confirmed project access for "${task.projectId}".`);
-
-    // STEP 2: Normalize and Re-Sanitize Files Context
-    const { safeFiles, rejectedCount } = validateAndNormalizeFileNodes(task.context?.files || []);
-    task.context.files = safeFiles;
-    this.logEvent(taskId, 'file_paths_normalized', `Validated ${safeFiles.length} file path(s) before execution.`);
-
-    // STEP 3: Verify Tool Permissions for Assigned Agent Role
-    const roleConfig = AGENT_ROLES[task.assignedAgentId] || AGENT_ROLES['main-agent'];
-    this.logEvent(
-      taskId, 
-      'tool_permissions_verified', 
-      `Agent "${task.assignedAgentId}" authorized with permissions: [${roleConfig.allowedTools.join(', ')}].`
-    );
-
-    await new Promise(resolve => setTimeout(resolve, 500));
-    if (this.tasks.get(taskId)?.status === 'PAUSED' || this.tasks.get(taskId)?.status === 'CANCELLED') return;
-
-    // STEP 4: Execution Step
-    if (task.assignedAgentId === 'main-agent') {
-      this.logEvent(taskId, 'agent_progress', 'Main Agent is delegating tasks to authorized specialist agents.');
-
-      // Subtasks inherit authorized project, ownerId, and sanitized files
-      const subtask1 = await this.createTask({
-        name: `[Sub-task] UI Implementation for: ${task.name}`,
-        description: task.description ? `Frontend UI: ${task.description}` : 'Implement the frontend components.',
-        assignedAgentId: 'ui-agent',
-        modelId: 'gemini-3.1-flash-lite',
-        parentTaskId: taskId,
-        projectId: task.projectId,
-        userId: task.ownerId,
-        context: { files: safeFiles }
-      }, { uid: task.ownerId });
-
-      const subtask2 = await this.createTask({
-        name: `[Sub-task] Backend Integration for: ${task.name}`,
-        description: task.description ? `Backend API: ${task.description}` : 'Implement the backend APIs and logic.',
-        assignedAgentId: 'backend-agent',
-        modelId: 'gemini-3.1-flash-lite',
-        parentTaskId: taskId,
-        projectId: task.projectId,
-        userId: task.ownerId,
-        context: { files: safeFiles }
-      }, { uid: task.ownerId });
-
-      this.updateTaskStatus(taskId, 'EXECUTING', 40);
-
-      // Wait for subtasks with timeout guard
-      let subtasksFinished = false;
-      const waitStart = Date.now();
-      const MAX_WAIT_MS = 30000;
-
-      while (!subtasksFinished) {
-        if (this.tasks.get(taskId)?.status === 'PAUSED' || this.tasks.get(taskId)?.status === 'CANCELLED') return;
-
-        if (Date.now() - waitStart > MAX_WAIT_MS) {
-          this.logEvent(taskId, 'subtask_timeout', 'Subtask coordination timed out after 30 seconds.');
-          this.updateTaskStatus(taskId, 'FAILED', this.tasks.get(taskId)?.progress || 40);
-          return;
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        const st1 = this.tasks.get(subtask1.id);
-        const st2 = this.tasks.get(subtask2.id);
-
-        if (st1?.status === 'FAILED' || st2?.status === 'FAILED') {
-          this.logEvent(taskId, 'subtask_failed', 'One or more subtasks encountered a failure.');
-          this.updateTaskStatus(taskId, 'FAILED');
-          return;
-        }
-
-        if (st1?.status === 'CANCELLED' || st2?.status === 'CANCELLED') {
-          this.logEvent(taskId, 'subtask_cancelled', 'A delegated subtask was cancelled.');
-          this.updateTaskStatus(taskId, 'CANCELLED');
-          return;
-        }
-
-        if (st1 && st2 && st1.status === 'COMPLETED' && st2.status === 'COMPLETED') {
-          subtasksFinished = true;
-        }
+    if (this.activeControllers.size + this.startingWorkers >= 2) return;
+    this.startingWorkers += 1;
+    let task: any;
+    try {
+      const canClaim = await claimQueuedAgentTask(taskId, this.workerId);
+      if (!canClaim) return;
+      task = this.tasks.get(taskId) || await readAgentTask(taskId);
+      if (!task || task.status === 'CANCELLED' || task.status === 'PAUSED') {
+        if (task?.ownerId) await releaseAgentProjectLease(taskId, task.ownerId, this.workerId);
+        return;
       }
+    } finally { this.startingWorkers -= 1; }
+    this.tasks.set(taskId, task);
+    this.startWorkerHeartbeat(taskId);
+    const controller = new AbortController();
+    this.activeControllers.set(taskId, controller);
+    let worktree: AgentWorktreeSession | null = null;
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, BACKGROUND_AGENT_TIMEOUT_MS);
+    timeout.unref?.();
+    try {
+      await this.updateTaskStatus(taskId, 'PLANNING', 5);
+      const accessCheck = await validateProjectAccess(task.ownerId, task.projectId);
+      if (!accessCheck.authorized) throw new Error(accessCheck.error || 'Project access validation failed.');
+      const workspace = await getAgentTaskWorkspace(taskId, task.ownerId);
+      if (!workspace) throw new Error('The task workspace snapshot is missing or no longer belongs to this account.');
+      const { safeFiles, rejectedCount } = validateAndNormalizeFileNodes(workspace);
+      if (!safeFiles.length) throw new Error('The isolated task workspace contains no supported text files.');
+      this.logEvent(taskId, 'workspace_isolated', `Loaded ${safeFiles.length} files from the immutable task snapshot${rejectedCount ? `; ${rejectedCount} unsafe files were excluded` : ''}.`);
+      worktree = await createAgentGitWorktree(taskId, task.ownerId, safeFiles, controller.signal);
+      this.logEvent(taskId, 'git_worktree_created', `Created isolated Git branch ${worktree.branch} at ${worktree.baseCommit.slice(0, 12)}. Agent changes are confined to this task worktree.`, { branch: worktree.branch, baseCommit: worktree.baseCommit });
+      const roleConfig = AGENT_ROLES[task.assignedAgentId] || AGENT_ROLES['main-agent'];
+      this.logEvent(taskId, 'tool_permissions_verified', `Agent "${task.assignedAgentId}" has tools: ${roleConfig.allowedTools.join(', ')}.`);
+      if (!task.description?.trim()) throw new Error('Add a task description before starting an agent task.');
+      if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured on this deployment.');
 
-      this.logEvent(taskId, 'agent_progress', 'Delegated sub-agents completed their tasks. Reviewing results.');
-    } else {
-      this.updateTaskStatus(taskId, 'EXECUTING', 30);
-      this.logEvent(taskId, 'agent_progress', `Agent "${task.assignedAgentId}" is executing requested steps.`);
-
-      // If task contains real prompt and project files, execute real reasoning with AgentRunner
-      if (task.description && process.env.GEMINI_API_KEY && safeFiles.length > 0) {
-        try {
-          const result = await AgentRunner.run({
-            model: task.modelId && task.modelId.startsWith('gemini') && task.modelId !== 'gemini-2.0-flash' 
-              ? task.modelId 
-              : 'gemini-3.1-flash-lite',
-            prompt: task.description,
-            virtualFiles: safeFiles,
-            projectName: task.name || 'Workspace',
-            projectId: task.projectId,
-            userId: task.ownerId,
-            onEvent: (event) => {
-              // Intercept tool calls to log tool permissions verification
-              if (event.type === 'tool_started' && event.tool) {
-                const perm = validateToolPermission(task.assignedAgentId, event.tool);
-                if (!perm.allowed) {
-                  this.logEvent(taskId, 'tool_permission_denied', perm.error || 'Tool permission denied.');
-                  return;
-                }
-              }
-              this.logEvent(taskId, event.type, event.message, event.args);
-            }
-          });
-
-          if (result.changeSet) {
-            this.logEvent(taskId, 'review_ready', 'Code changes generated and ready for review', result.changeSet);
+      await this.updateTaskStatus(taskId, 'EXECUTING', 20);
+      const run = AgentRunner.run({
+        model: task.modelId || 'gemini-3.1-flash-lite', prompt: task.description,
+        virtualFiles: safeFiles, projectName: task.context?.sourceProjectName || task.name,
+        projectId: task.projectId, userId: task.ownerId, agentTaskId: task.id, signal: controller.signal,
+        systemInstruction: `${roleConfig.name}. Return a reviewable FLOAT code proposal for requested code changes.`,
+        onEvent: event => {
+          if (event.type === 'tool_started' && event.tool) {
+            const permission = validateToolPermission(task.assignedAgentId, event.tool);
+            if (!permission.allowed) { this.logEvent(taskId, 'tool_permission_denied', permission.error || 'Tool permission denied.'); return; }
+            const stage = ['search_project', 'search_codebase', 'read_project_file', 'read_file', 'list_project_files', 'list_files', 'get_project_context'].includes(event.tool) ? 'INSPECTING' : 'WAITING_FOR_TOOL';
+            void this.updateTaskStatus(taskId, stage, 35);
           }
-        } catch (err: any) {
-          this.logEvent(taskId, 'agent_error', `Agent execution note: ${err.message}`);
+          if (event.type === 'tool_completed' || event.type === 'tool_failed') void this.updateTaskStatus(taskId, 'EXECUTING', 50);
+          // Tool args may contain entire source files or inline credentials.
+          // Persist only the bounded human-readable progress text, never raw args.
+          this.logEvent(taskId, event.type, event.message.slice(0, 500));
         }
-      } else {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      });
+      const result = await waitForAgentOrAbort(run, controller.signal);
+      if (controller.signal.aborted) throw new Error(timedOut ? 'Agent exceeded the 15 minute task deadline.' : 'Agent task was interrupted.');
+      if (result.status !== 'completed') throw new Error(result.error || 'Agent loop did not complete successfully.');
+
+      const durableResult: Record<string, any> = {
+        text: String(result.text || '').slice(0, 40_000),
+        changeSet: result.changeSet || null,
+        toolCallsCount: result.toolCallsCount,
+        roundsCount: result.roundsCount,
+      };
+      const isolatedDiff = await getAgentWorktreeStatus(taskId, task.ownerId);
+      durableResult.gitWorkspace = isolatedDiff;
+      if (durableResult.changeSet) Object.assign(durableResult.changeSet, { agentBranch: isolatedDiff.branch, agentBaseCommit: isolatedDiff.baseCommit, agentDiff: isolatedDiff.diff });
+      if (result.changeSet && task.requestedChecks?.length) {
+        await this.updateTaskStatus(taskId, 'VALIDATING', 75);
+        const checkResults = await this.runTaskChecks(task, safeFiles, result.changeSet, controller.signal);
+        durableResult.validation = checkResults;
       }
+      if (controller.signal.aborted) throw new Error(timedOut ? 'Agent exceeded the 15 minute task deadline.' : 'Agent task was interrupted.');
+      await cleanupAgentGitWorktree(taskId, task.ownerId);
+      worktree = null;
+      this.logEvent(taskId, 'git_worktree_cleaned', 'Removed the task-private Git branch and worktree after saving its review diff.');
+      const completed = await completeAgentTask(taskId, task.ownerId, this.workerId, durableResult);
+      if (!completed) {
+        const latest = await readAgentTask(taskId);
+        if (latest) this.tasks.set(taskId, latest);
+        throw new Error(`Agent task could not be completed because its durable state is ${latest?.status || 'unavailable'}.`);
+      }
+      task.result = durableResult;
+      task.status = 'COMPLETED';
+      task.progress = 100;
+      task.updatedAt = Date.now();
+      this.tasks.set(taskId, task);
+      this.logEvent(taskId, result.changeSet ? 'review_ready' : 'agent_completed', result.changeSet ? 'Code proposal generated and validation results recorded for review.' : 'Agent completed with a response.', {
+        description: result.changeSet?.description, changeCount: result.changeSet?.changes?.length || 0,
+        validation: durableResult.validation?.map((check: any) => ({ type: check.type, status: check.status, exitCode: check.exitCode }))
+      });
+      this.logEvent(taskId, 'task_completed', 'Agent run completed. Review any proposed changes and actual check results before applying them.');
+    } catch (error: any) {
+      const durableCurrent = await readAgentTask(taskId).catch(() => null);
+      if (durableCurrent) this.tasks.set(taskId, durableCurrent);
+      const current = durableCurrent || this.tasks.get(taskId);
+      if (['PAUSED', 'CANCELLED'].includes(current?.status)) {
+        await ProposalService.rejectAgentTaskProposals(taskId, task.projectId, task.ownerId).catch(error => console.warn(`[AgentOrchestrator] Could not reject proposals from interrupted task ${taskId}:`, error));
+        return;
+      }
+      task.error = timedOut ? 'Agent task exceeded the 15 minute deadline.' : error?.message || 'Agent execution failed.';
+      this.logEvent(taskId, timedOut ? 'task_timeout' : 'agent_error', task.error);
+      await this.updateTaskStatus(taskId, 'FAILED');
+      await ProposalService.rejectAgentTaskProposals(taskId, task.projectId, task.ownerId).catch(cleanupError => console.warn(`[AgentOrchestrator] Could not reject incomplete task proposals for ${taskId}:`, cleanupError));
+    } finally {
+      clearTimeout(timeout);
+      if (worktree) {
+        try {
+          await cleanupAgentGitWorktree(taskId, task?.ownerId);
+          this.logEvent(taskId, 'git_worktree_cleaned', 'Removed the task-private Git worktree after saving its review diff.');
+        } catch (cleanupError: any) {
+          this.logEvent(taskId, 'git_worktree_cleanup_failed', cleanupError?.message || 'Task-private Git worktree cleanup failed.');
+        }
+      }
+      if (task?.ownerId) await releaseAgentProjectLease(taskId, task.ownerId, this.workerId).catch(error => {
+        console.error(`[AgentOrchestrator] Could not release project lease for task ${taskId}:`, error);
+      });
+      if (this.activeControllers.get(taskId) === controller) this.activeControllers.delete(taskId);
+      this.stopWorkerHeartbeat(taskId);
+      if (this.activeControllers.size < 2) setTimeout(() => { void this.recoverQueuedTasks(); }, 500).unref?.();
     }
-
-    if (this.tasks.get(taskId)?.status === 'PAUSED' || this.tasks.get(taskId)?.status === 'CANCELLED') return;
-
-    // STEP 5: Validation & Completion
-    this.updateTaskStatus(taskId, 'VALIDATING', 80);
-    this.logEvent(taskId, 'validation_started', 'Validating changes and file integrity before completion.');
-
-    await new Promise(resolve => setTimeout(resolve, 600));
-
-    this.updateTaskStatus(taskId, 'COMPLETED', 100);
-    this.logEvent(taskId, 'task_completed', 'Task completed successfully with all security checks verified.');
   }
 
-  updateTaskStatus(taskId: string, status: string, progress?: number) {
+  private async recoverQueuedTasks() {
+    if (this.activeControllers.size >= 2) return;
+    const queued = await listQueuedAgentTasks();
+    for (const task of queued) {
+      if (this.activeControllers.size >= 2) break;
+      this.tasks.set(task.id, task);
+      void this.processTask(task.id).catch(error => console.error(`[AgentOrchestrator] Queued task ${task.id} failed:`, error));
+    }
+  }
+
+  private async runTaskChecks(task: any, sourceFiles: any[], changeSet: any, signal: AbortSignal): Promise<any[]> {
+    const fileMap = new Map(sourceFiles.map(file => [file.path, String(file.content || '')]));
+    for (const change of changeSet.changes || []) {
+      if (change.operation === 'delete') fileMap.delete(change.path);
+      else fileMap.set(change.path, String(change.proposedContent || ''));
+    }
+    const files = [...fileMap].map(([path, content]) => ({ path, content }));
+    let packageJson: any = {};
+    try { packageJson = JSON.parse(files.find(file => file.path === 'package.json')?.content || '{}'); }
+    catch { packageJson = {}; }
+    const scripts = packageJson.scripts || {};
+    const definitions: Record<string, { script?: string; command: string; timeoutMs: number }> = {
+      test: { script: scripts.test, command: 'npm test', timeoutMs: 5 * 60_000 },
+      lint: { script: scripts.lint, command: 'npm run lint', timeoutMs: 5 * 60_000 },
+      typecheck: { script: scripts.typecheck || scripts['check-types'] || scripts.check || (files.some(file => file.path === 'tsconfig.json') ? 'tsconfig' : undefined), command: scripts.typecheck ? 'npm run typecheck' : scripts['check-types'] ? 'npm run check-types' : scripts.check ? 'npm run check' : 'npm exec --offline -- tsc --noEmit', timeoutMs: 5 * 60_000 },
+      build: { script: scripts.build, command: 'npm run build', timeoutMs: 10 * 60_000 },
+    };
+    const results: any[] = [];
+    for (const type of task.requestedChecks as string[]) {
+      if (signal.aborted) break;
+      const definition = definitions[type];
+      if (!definition) continue;
+      if (!definition.script && !(type === 'typecheck' && files.some(file => file.path === 'tsconfig.json'))) {
+        results.push({ type, status: 'unsupported', exitCode: null, output: '', message: `No ${type} script is configured in the task workspace.` });
+        this.logEvent(task.id, 'check_skipped', `The ${type} check did not run because the workspace does not configure it.`);
+        continue;
+      }
+      if (!projectProcessManager.available) {
+        results.push({ type, status: 'unsupported', exitCode: null, output: '', message: 'Isolated Docker execution is not configured; this command did not run.' });
+        this.logEvent(task.id, 'check_unavailable', `The ${type} check did not run because isolated Docker execution is not configured.`);
+        continue;
+      }
+      this.logEvent(task.id, 'check_started', `Running ${type} in an isolated, network-disabled project container.`, { command: definition.command });
+      const result = await projectProcessManager.execute({ ownerId: task.ownerId, projectId: task.id, command: definition.command, files, timeoutMs: definition.timeoutMs, signal });
+      results.push({ type, status: result.status, exitCode: result.exitCode, durationMs: result.durationMs, stdout: result.stdout.slice(0, 16_000), stderr: result.stderr.slice(0, 16_000), error: result.error });
+      this.logEvent(task.id, 'check_completed', `${type} execution returned ${result.status} (exit code ${result.exitCode ?? 'unknown'}).`, { durationMs: result.durationMs });
+    }
+    return results;
+  }
+
+  async updateTaskStatus(taskId: string, status: string, progress?: number): Promise<void> {
     const task = this.tasks.get(taskId);
     if (task) {
+      if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status) && task.status !== status) return;
+      if (['PAUSED', 'CANCELLED'].includes(task.status) && !['PAUSED', 'CANCELLED'].includes(status)) return;
       task.status = status;
       if (progress !== undefined) task.progress = Math.max(task.progress, progress);
       task.updatedAt = Date.now();
       this.tasks.set(taskId, task);
+      const patch: Record<string, unknown> = { status, workerId: this.workerId };
+      if (progress !== undefined) patch.progress = task.progress;
+      if (task.error) patch.error = task.error;
+      const persisted = await updateAgentTask(taskId, patch).catch((error) => {
+        console.error(`[AgentOrchestrator] Could not persist task ${taskId} status:`, error);
+        return false;
+      });
+      if (!persisted) {
+        const latest = await readAgentTask(taskId).catch(() => null);
+        if (latest) this.tasks.set(taskId, latest);
+      }
+      if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(status)) {
+        this.stopWorkerHeartbeat(taskId);
+      }
     }
   }
 
@@ -551,15 +682,160 @@ export class AgentOrchestrator {
       id: uuidv4(),
       taskId,
       agentId: task?.assignedAgentId || 'system',
+      ...(task?.ownerId ? { ownerId: task.ownerId } : {}),
       type,
       message,
       timestamp: Date.now(),
-      payload
+      ...(payload !== undefined ? { payload } : {})
     };
     if (!this.events.has(taskId)) {
       this.events.set(taskId, []);
     }
     this.events.get(taskId)?.push(event);
+    void appendAgentEvent(event).catch((error) => {
+      console.error(`[AgentOrchestrator] Could not persist task event ${event.id}:`, error);
+    });
+  }
+
+  private startWorkerHeartbeat(taskId: string) {
+    this.stopWorkerHeartbeat(taskId);
+    const timer = setInterval(async () => {
+      try {
+        const latest = await readAgentTask(taskId);
+        if (!latest) return;
+        if (['PAUSED', 'CANCELLED', 'QUEUED'].includes(latest.status) || latest.workerId !== this.workerId) {
+          const current = this.tasks.get(taskId);
+          if (current && ['PAUSED', 'CANCELLED'].includes(latest.status)) current.status = latest.status;
+          this.activeControllers.get(taskId)?.abort();
+          this.stopWorkerHeartbeat(taskId);
+          return;
+        }
+        const heartbeat = await heartbeatAgentTask(taskId, this.workerId);
+        if (!heartbeat.active) {
+          const current = this.tasks.get(taskId);
+          if (current && ['PAUSED', 'CANCELLED'].includes(heartbeat.status || '')) current.status = heartbeat.status;
+          this.activeControllers.get(taskId)?.abort();
+          this.stopWorkerHeartbeat(taskId);
+        }
+      } catch (error) {
+        console.error(`[AgentOrchestrator] Heartbeat failed for task ${taskId}:`, error);
+        this.logEvent(taskId, 'worker_lease_lost', 'The worker could not renew its project lease; stopping this task to prevent concurrent workspace work.');
+        this.activeControllers.get(taskId)?.abort();
+        this.stopWorkerHeartbeat(taskId);
+      }
+    }, 2_000);
+    timer.unref?.();
+    this.workerHeartbeats.set(taskId, timer);
+  }
+
+  private stopWorkerHeartbeat(taskId: string) {
+    const timer = this.workerHeartbeats.get(taskId);
+    if (timer) clearInterval(timer);
+    this.workerHeartbeats.delete(taskId);
+  }
+
+  async setTaskStatusDurable(taskId: string, status: string) {
+    const task = this.tasks.get(taskId);
+    if (!task) throw new Error('Task not found.');
+    if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status) && task.status !== status) {
+      throw new Error(`Task is already ${task.status.toLowerCase()} and cannot be changed.`);
+    }
+    if (status === 'PAUSED' && !['QUEUED', 'PLANNING', 'INSPECTING', 'WAITING_FOR_TOOL', 'EXECUTING', 'VALIDATING'].includes(task.status)) {
+      throw new Error('Only queued or running tasks can be paused.');
+    }
+    if (status === 'QUEUED' && task.status !== 'PAUSED') {
+      throw new Error('Only paused tasks can be resumed.');
+    }
+    task.status = status;
+    task.updatedAt = Date.now();
+    this.tasks.set(taskId, task);
+    const persisted = await updateAgentTask(taskId, { status, progress: task.progress });
+    if (!persisted) {
+      const latest = await readAgentTask(taskId);
+      if (latest) this.tasks.set(taskId, latest);
+      throw new Error('Task state changed in another worker. Refresh and retry.');
+    }
+    if (status === 'PAUSED' || status === 'CANCELLED') this.activeControllers.get(taskId)?.abort();
+    if (['COMPLETED', 'FAILED', 'CANCELLED', 'PAUSED'].includes(status)) this.stopWorkerHeartbeat(taskId);
+  }
+
+  async getTaskDurable(taskId: string, userId: string) {
+    const task = await readAgentTask(taskId);
+    if (!task || task.ownerId !== userId) return null;
+    task.result = await getAgentTaskResult(taskId, userId);
+    this.tasks.set(taskId, task);
+    return task;
+  }
+
+  async getTasksDurable(userId: string) {
+    const persisted = await listAgentTasks(userId);
+    const results = await listAgentTaskResults(userId);
+    for (const task of persisted) task.result = results[task.id] ?? null;
+    for (const task of persisted) this.tasks.set(task.id, task);
+    return persisted.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async getEventsDurable(userId: string, taskId?: string) {
+    const persisted = await listAgentEvents(userId, taskId);
+    if (taskId) this.events.set(taskId, persisted);
+    else {
+      for (const event of persisted) {
+        const list = this.events.get(event.taskId) || [];
+        if (!list.some((item) => item.id === event.id)) list.push(event);
+        this.events.set(event.taskId, list);
+      }
+    }
+    return persisted;
+  }
+
+  async resumeTaskDurable(taskId: string) {
+    await this.setTaskStatusDurable(taskId, 'QUEUED');
+    this.logEvent(taskId, 'task_resumed', 'Task resumed by user.');
+    setTimeout(() => {
+      void this.processTask(taskId).catch((error) => {
+        console.error(`[AgentOrchestrator] Resumed task ${taskId} failed:`, error);
+        void this.updateTaskStatus(taskId, 'FAILED');
+      });
+    }, 0);
+  }
+
+  async retryTaskDurable(taskId: string, userId: string) {
+    const task = await this.getTaskDurable(taskId, userId);
+    if (!task) throw new Error('Task not found or access denied.');
+    if (!['FAILED', 'CANCELLED'].includes(task.status)) throw new Error('Only failed or cancelled tasks can be retried.');
+    const files = await getAgentTaskWorkspace(taskId, userId);
+    if (!files) throw new Error('The original task workspace snapshot is no longer available.');
+    return this.createTask({
+      name: `${String(task.name).slice(0, 180)} (retry)`, description: task.description,
+      assignedAgentId: task.assignedAgentId, modelId: task.modelId, projectId: task.projectId,
+      requestedChecks: task.requestedChecks, context: task.context,
+    }, { uid: userId }, files);
+  }
+
+  async recoverDurableTasks() {
+    await cleanupStaleAgentWorktrees().catch(error => console.warn('[AgentOrchestrator] Stale task worktree cleanup failed:', error));
+    const running = await listRunningAgentTasks();
+    for (const task of running) {
+      const failed = await failInterruptedAgentTask(task);
+      if (!failed) continue;
+      await releaseAgentProjectLease(task.id, task.ownerId, task.workerId || '').catch(error => console.warn(`[AgentOrchestrator] Recovered project lease cleanup failed for ${task.id}:`, error));
+      await cleanupAgentGitWorktree(task.id, task.ownerId).catch(error => console.warn(`[AgentOrchestrator] Recovered Git worktree cleanup failed for ${task.id}:`, error));
+      await ProposalService.rejectAgentTaskProposals(task.id, task.projectId, task.ownerId).catch(error => console.warn(`[AgentOrchestrator] Recovered proposal cleanup failed for ${task.id}:`, error));
+      const taskError = { ...task, status: 'FAILED', error: 'This task was interrupted when its worker stopped. Resume or submit it again.' };
+      this.tasks.set(task.id, taskError);
+      this.logEvent(task.id, 'worker_interrupted', taskError.error);
+      await this.updateTaskStatus(task.id, 'FAILED');
+    }
+
+    const queued = await listQueuedAgentTasks();
+    for (const task of queued) {
+      if (this.activeControllers.size >= 2) break;
+      this.tasks.set(task.id, task);
+      void this.processTask(task.id).catch((error) => {
+        console.error(`[AgentOrchestrator] Could not recover queued task ${task.id}:`, error);
+        void this.updateTaskStatus(task.id, 'FAILED');
+      });
+    }
   }
 
   getTask(taskId: string, userId?: string) {
@@ -598,6 +874,15 @@ export class AgentOrchestrator {
   }
 }
 
+function waitForAgentOrAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error('Agent task interrupted.'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('Agent task interrupted.'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
 export const orchestrator = new AgentOrchestrator();
 
 /**
@@ -606,96 +891,202 @@ export const orchestrator = new AgentOrchestrator();
 export function setupAgentOrchestratorRoutes(app: any) {
   // Helper to resolve user from auth header or request
   const resolveUser = async (req: any): Promise<{ uid: string } | null> => {
+    if (req.user?.uid) return { uid: req.user.uid };
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7).trim();
       const verified = await verifyFirebaseIdToken(token);
       if (verified) return verified;
     }
-    if (req.user?.uid) {
-      return { uid: req.user.uid };
-    }
-    if (req.body?.userId && typeof req.body.userId === 'string') {
-      return { uid: req.body.userId };
-    }
-    return { uid: 'user' };
+    return null;
   };
 
+  app.use('/api/agents', requireAuth);
+
+  if (hasAdminCredentials()) {
+    void orchestrator.recoverDurableTasks().catch((error) => {
+      console.error('[AgentOrchestrator] Durable task recovery failed:', error);
+    });
+    const recoveryTimer = setInterval(() => {
+      void orchestrator.recoverDurableTasks().catch((error) => {
+        console.error('[AgentOrchestrator] Durable task recovery failed:', error);
+      });
+    }, 30_000);
+    recoveryTimer.unref?.();
+  } else {
+    console.warn('[AgentOrchestrator] Firestore task persistence is unavailable; configure Application Default Credentials.');
+  }
+
   // 1. Create agent task
-  app.post('/api/agents/tasks', async (req: any, res: any) => {
+  app.post('/api/agents/tasks', asyncRoute(async (req: any, res: any) => {
     try {
       const user = await resolveUser(req);
+      if (user && !allowAgentTaskCreation(user.uid)) return res.status(429).json({ error: 'Background agent task creation limit reached. Try again in a minute.' });
       const task = await orchestrator.createTask(req.body, user || undefined);
       res.status(201).json(task);
     } catch (err: any) {
-      const status = err.message?.includes('Unauthorized') ? 403 : 400;
+      const status = err.message?.includes('Unauthorized') ? 403 : /Firestore|credentials|verify project ownership/i.test(err.message || '') ? 503 : 400;
       res.status(status).json({ error: err.message || 'Failed to create task.' });
     }
-  });
+  }));
 
   // 2. Get task by ID
-  app.get('/api/agents/tasks/:id', async (req: any, res: any) => {
+  app.get('/api/agents/tasks/:id', asyncRoute(async (req: any, res: any) => {
     const user = await resolveUser(req);
-    const task = orchestrator.getTask(req.params.id, user?.uid);
+    const task = user ? await orchestrator.getTaskDurable(req.params.id, user.uid) : null;
     if (task) {
       res.json(task);
     } else {
       res.status(404).json({ error: 'Task not found or access denied.' });
     }
-  });
+  }));
 
   // 3. List tasks
-  app.get('/api/agents/tasks', async (req: any, res: any) => {
+  app.get('/api/agents/tasks', asyncRoute(async (req: any, res: any) => {
     const user = await resolveUser(req);
-    res.json(orchestrator.getTasks(user?.uid));
-  });
+    res.json(user ? await orchestrator.getTasksDurable(user.uid) : []);
+  }));
 
   // 4. Get all events
-  app.get('/api/agents/events', async (req: any, res: any) => {
+  app.get('/api/agents/events', asyncRoute(async (req: any, res: any) => {
     const user = await resolveUser(req);
-    res.json(orchestrator.getAllEvents(user?.uid));
-  });
+    res.json(user ? await orchestrator.getEventsDurable(user.uid) : []);
+  }));
 
   // 5. Get events for a specific task
-  app.get('/api/agents/tasks/:id/events', async (req: any, res: any) => {
+  app.get('/api/agents/tasks/:id/events', asyncRoute(async (req: any, res: any) => {
     const user = await resolveUser(req);
-    const events = orchestrator.getEvents(req.params.id, user?.uid);
+    const task = user ? await orchestrator.getTaskDurable(req.params.id, user.uid) : null;
+    if (!task) return res.status(404).json({ error: 'Task not found or access denied.' });
+    const events = await orchestrator.getEventsDurable(user!.uid, req.params.id);
     res.json(events);
-  });
+  }));
+
+  // Authenticated task-scoped Firestore event stream. Last-Event-ID lets clients resume without polling.
+  app.get('/api/agents/tasks/:id/events/stream', asyncRoute(async (req: any, res: any) => {
+    const user = await resolveUser(req);
+    const task = user ? await orchestrator.getTaskDurable(req.params.id, user.uid) : null;
+    if (!task) return res.status(404).json({ error: 'Task not found or access denied.' });
+    if (!hasAdminCredentials()) return res.status(503).json({ error: 'Agent event streaming requires Firebase Admin credentials.' });
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(': FLOAT agent event stream connected\n\n');
+    let cursor = parseAgentEventCursor(String(req.headers['last-event-id'] || ''));
+    let firstSnapshot = true;
+    const emit = (event: any) => {
+      if (res.writableEnded || res.destroyed || event.ownerId !== user!.uid) return;
+      const timestamp = Number(event.timestamp) || 0;
+      const sequence = Number(event.sequence) || timestamp;
+      if (cursor && (sequence < cursor.sequence || (sequence === cursor.sequence && String(event.id) <= cursor.eventId))) return;
+      const sseId = `${sequence}:${event.id}`;
+      if (!res.write(`id: ${sseId}\nevent: agent-event\ndata: ${JSON.stringify(event)}\n\n`)) {
+        // Backpressure is bounded by disconnecting the slow client; the durable event log is replayable.
+        res.destroy();
+        return;
+      }
+      cursor = { sequence, eventId: String(event.id) };
+    };
+    const query = adminDb.collection('agentTaskEvents').where('taskId', '==', req.params.id);
+    const unsubscribe = query.onSnapshot(snapshot => {
+      const docs = firstSnapshot ? snapshot.docs.map(document => document.data()).sort((a: any, b: any) => Number(a.sequence || a.timestamp) - Number(b.sequence || b.timestamp) || String(a.id).localeCompare(String(b.id))).slice(-100) : snapshot.docChanges().filter(change => change.type === 'added').map(change => change.doc.data());
+      firstSnapshot = false;
+      docs.sort((a: any, b: any) => Number(a.sequence || a.timestamp) - Number(b.sequence || b.timestamp) || String(a.id).localeCompare(String(b.id))).forEach(emit);
+    }, error => {
+      console.error(`[AgentOrchestrator] Event stream failed for task ${req.params.id}:`, error);
+      if (!res.destroyed) res.end();
+    });
+    const keepAlive = setInterval(() => { if (!res.destroyed) res.write(': keep-alive\n\n'); }, 20_000);
+    keepAlive.unref?.();
+    const close = () => { clearInterval(keepAlive); unsubscribe(); };
+    res.on('close', close);
+    req.on('aborted', close);
+  }));
 
   // 6. Pause task
-  app.post('/api/agents/tasks/:id/pause', async (req: any, res: any) => {
+  app.post('/api/agents/tasks/:id/pause', asyncRoute(async (req: any, res: any) => {
     const user = await resolveUser(req);
-    const task = orchestrator.getTask(req.params.id, user?.uid);
+    const task = user ? await orchestrator.getTaskDurable(req.params.id, user.uid) : null;
     if (!task) {
       return res.status(404).json({ error: 'Task not found or access denied.' });
     }
-    orchestrator.updateTaskStatus(req.params.id, 'PAUSED');
-    orchestrator.logEvent(req.params.id, 'task_paused', 'Task paused by user.');
-    res.json({ success: true });
-  });
+    try {
+      await orchestrator.setTaskStatusDurable(req.params.id, 'PAUSED');
+      orchestrator.logEvent(req.params.id, 'task_paused', 'Task paused by user.');
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(409).json({ error: error.message || 'Task could not be paused.' });
+    }
+  }));
 
   // 7. Resume task
-  app.post('/api/agents/tasks/:id/resume', async (req: any, res: any) => {
+  app.post('/api/agents/tasks/:id/resume', asyncRoute(async (req: any, res: any) => {
     const user = await resolveUser(req);
-    const task = orchestrator.getTask(req.params.id, user?.uid);
+    const task = user ? await orchestrator.getTaskDurable(req.params.id, user.uid) : null;
     if (!task) {
       return res.status(404).json({ error: 'Task not found or access denied.' });
     }
-    orchestrator.updateTaskStatus(req.params.id, 'QUEUED');
-    orchestrator.logEvent(req.params.id, 'task_resumed', 'Task resumed by user.');
-    res.json({ success: true });
+    try {
+      await orchestrator.resumeTaskDurable(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(409).json({ error: error.message || 'Task could not be resumed.' });
+    }
+  }));
+
+  app.post('/api/agents/tasks/:id/retry', asyncRoute(async (req: any, res: any) => {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ error: 'Sign in to retry this task.' });
+    try {
+      const task = await orchestrator.retryTaskDurable(req.params.id, user.uid);
+      res.status(201).json(task);
+    } catch (error: any) {
+      res.status(error.message?.includes('not found or access denied') ? 404 : 409).json({ error: error.message || 'Task retry failed.' });
+    }
+  }));
+
+  const runAgentGitHubAction = (action: (task: any, ownerId: string, body: any) => Promise<Record<string, unknown>>) => asyncRoute(async (req: any, res: any) => {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ error: 'Sign in to use GitHub with this agent task.' });
+    const task = await orchestrator.getTaskDurable(req.params.id, user.uid);
+    if (!task) return res.status(404).json({ error: 'Agent task not found or access denied.' });
+    try {
+      const result = await action(task, user.uid, req.body || {});
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      const status = Number(error.status) || (/credentials|Firestore|integration storage/i.test(error.message || '') ? 503 : 500);
+      res.status(status).json({ error: error.message || 'GitHub operation failed safely.', ...(error.details || {}) });
+    }
   });
 
+  // Use the project's linked repository and encrypted OAuth connection; task operations never move its current/default branch.
+  app.post('/api/agents/tasks/:id/github/publish', runAgentGitHubAction((task, ownerId) => publishAgentTaskBranch(task, ownerId)));
+  app.post('/api/agents/tasks/:id/github/pull-request', runAgentGitHubAction((task, ownerId) => createAgentTaskPullRequest(task, ownerId)));
+  app.post('/api/agents/tasks/:id/github/approve', runAgentGitHubAction((task, ownerId) => approveAgentTaskPullRequest(task, ownerId)));
+  app.post('/api/agents/tasks/:id/github/refresh', runAgentGitHubAction((task, ownerId) => refreshAgentTaskPullRequest(task, ownerId)));
+  app.post('/api/agents/tasks/:id/github/merge', runAgentGitHubAction((task, ownerId, body) => mergeAgentTaskPullRequest(task, ownerId, body.confirmed === true)));
+
   // 8. Cancel task
-  app.post('/api/agents/tasks/:id/cancel', async (req: any, res: any) => {
+  app.post('/api/agents/tasks/:id/cancel', asyncRoute(async (req: any, res: any) => {
     const user = await resolveUser(req);
-    const task = orchestrator.getTask(req.params.id, user?.uid);
+    const task = user ? await orchestrator.getTaskDurable(req.params.id, user.uid) : null;
     if (!task) {
       return res.status(404).json({ error: 'Task not found or access denied.' });
     }
-    orchestrator.updateTaskStatus(req.params.id, 'CANCELLED');
-    orchestrator.logEvent(req.params.id, 'task_cancelled', 'Task cancelled by user.');
-    res.json({ success: true });
-  });
+    try {
+      await orchestrator.setTaskStatusDurable(req.params.id, 'CANCELLED');
+      orchestrator.logEvent(req.params.id, 'task_cancelled', 'Task cancelled by user.');
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(409).json({ error: error.message || 'Task could not be cancelled.' });
+    }
+  }));
+}
+
+function parseAgentEventCursor(value: string): { sequence: number; eventId: string } | null {
+  const match = /^(\d+):(.+)$/.exec(value);
+  return match ? { sequence: Number(match[1]), eventId: match[2] } : null;
 }

@@ -22,22 +22,16 @@ export const INTEGRATION_REGISTRY: IntegrationDefinition[] = [
     id: 'github', 
     name: 'GitHub', 
     category: 'Code Hosting', 
-    description: 'Connect GitHub to access repositories, automate pull request reviews, and give AI agents rich codebase context.',
+    description: 'Connect a GitHub account for authenticated repository access. Features depend on the integration settings enabled by your deployment.',
     requiredScopes: ['read:user', 'repo']
   },
   { 
     id: 'gitlab', 
     name: 'GitLab', 
     category: 'Code Hosting', 
-    description: 'Connect GitLab to access projects, read repository code, and give AI agents codebase awareness.',
+    description: 'Connect a GitLab account when GitLab OAuth is configured for your deployment.',
     requiredScopes: ['read_user', 'read_repository']
   },
-  { id: 'bitbucket', name: 'Bitbucket Cloud', category: 'Code Hosting', description: 'Connect Bitbucket Cloud for Cloud Agents, repository access, and enhanced codebase context.' },
-  { id: 'slack', name: 'Slack', category: 'Communication', description: 'Work with Cloud Agents from Slack.' },
-  { id: 'teams', name: 'Microsoft Teams', category: 'Communication', description: 'Work with Cloud Agents from Microsoft Teams.' },
-  { id: 'linear', name: 'Linear', category: 'Project Management', description: 'Connect a Linear workspace to delegate issues to Cloud Agents.' },
-  { id: 'jira', name: 'Jira', category: 'Project Management', description: 'Connect a Jira site to delegate issues to Cloud Agents.' },
-  { id: 'sentry', name: 'Sentry', category: 'Monitoring', description: 'Use Sentry issue events in Automations.' },
 ];
 
 export interface IntegrationConnection {

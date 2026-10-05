@@ -7,14 +7,16 @@ export function EvalsReports() {
   const { runs, tasks, exportRuns } = useEvalStore();
 
   const completedRuns = runs.filter(r => r.status === 'completed' || r.status === 'Completed');
-  const hasData = completedRuns.length > 0;
+  const scoredRuns = completedRuns.filter(r => typeof (r.finalScore ?? r.score) === 'number');
+  const testedRuns = completedRuns.filter(r => r.testsPassed !== undefined);
+  const hasData = scoredRuns.length > 0;
 
   const avgScore = hasData 
-    ? Math.round(completedRuns.reduce((acc, r) => acc + (r.finalScore ?? r.score ?? 0), 0) / completedRuns.length)
+    ? Math.round(scoredRuns.reduce((acc, r) => acc + (r.finalScore ?? r.score ?? 0), 0) / scoredRuns.length)
     : 0;
 
   const passedTestsCount = completedRuns.filter(r => r.testsPassed).length;
-  const passRate = hasData ? Math.round((passedTestsCount / completedRuns.length) * 100) : 0;
+  const passRate = testedRuns.length ? Math.round((passedTestsCount / testedRuns.length) * 100) : 0;
 
   const totalCost = Number(completedRuns.reduce((acc, r) => acc + (r.actualCost ?? r.estimatedCost ?? 0), 0).toFixed(5));
   const totalTokens = completedRuns.reduce((acc, r) => acc + (r.totalTokens ?? 0), 0);

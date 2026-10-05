@@ -12,7 +12,6 @@ import { useI18nStore, SUPPORTED_LANGUAGES } from '../../store/i18nStore';
 import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
 import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
 import { useConsentStore } from '../../store/consentStore';
-import { CURRENT_POLICY_VERSION } from '../../services/consentService';
 
 export function SettingsPage() {
   const [activeCategory, setActiveCategory] = useState<'general' | 'appearance' | 'editor' | 'ai' | 'notifications' | 'privacy'>('general');
@@ -583,18 +582,17 @@ export function SettingsPage() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Product Improvement & Diagnostics</h4>
+                  <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Optional diagnostic logging</h4>
                       <span className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider ${
                         preferences.sharingEnabled 
                           ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-400' 
                           : 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-300'
                       }`}>
-                        {preferences.sharingEnabled ? 'Sharing Enabled' : 'Privacy Mode (OFF)'}
+                        {preferences.sharingEnabled ? 'Enabled (development diagnostics)' : 'Disabled'}
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-1 leading-relaxed">
-                      Allow FLOAT to gather anonymized system error codes, model latencies, and interaction counts to diagnose bugs. 
-                      Never includes source code, passwords, API keys, or raw files.
+                      Optional telemetry is not connected to an external analytics service in this release. This preference only gates diagnostic logging in development. AI prompts and attached context still pass through the configured server to your selected model provider.
                     </p>
                   </div>
 
@@ -608,7 +606,7 @@ export function SettingsPage() {
                         const target = !preferences.sharingEnabled;
                         const ok = await updateConsent(target, 'settings');
                         if (ok) {
-                          setConsentSuccessMsg(target ? 'Optional data sharing enabled.' : 'Data sharing disabled. Privacy mode active.');
+                          setConsentSuccessMsg(target ? 'Diagnostic logging preference enabled.' : 'Diagnostic logging preference disabled.');
                           setTimeout(() => setConsentSuccessMsg(null), 3500);
                         }
                       }}
@@ -627,8 +625,8 @@ export function SettingsPage() {
 
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#161616] border border-slate-100 dark:border-white/5 text-xs grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
-                    <span className="text-slate-400 block text-[11px]">Policy Version</span>
-                    <span className="font-mono text-slate-700 dark:text-[#C9D1D9]">v{preferences.policyVersion || CURRENT_POLICY_VERSION}</span>
+                    <span className="text-slate-400 block text-[11px]">Consent record version</span>
+                    <span className="font-mono text-slate-700 dark:text-[#C9D1D9]">Draft</span>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[11px]">Storage Target</span>
@@ -652,22 +650,22 @@ export function SettingsPage() {
                       onClick={async () => {
                         const ok = await withdrawConsent();
                         if (ok) {
-                          setConsentSuccessMsg('Consent successfully withdrawn. All optional data sharing stopped.');
+                          setConsentSuccessMsg('Diagnostic logging preference reset to disabled.');
                           setTimeout(() => setConsentSuccessMsg(null), 3500);
                         }
                       }}
                       className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-700 dark:text-[#C9D1D9] hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer font-medium"
                     >
-                      Withdraw Consent
+                      Reset preference
                     </button>
-                    <span className="text-slate-400 text-[11px]">Immediately terminates all optional telemetry.</span>
+                    <span className="text-slate-400 text-[11px]">Sets the preference to disabled.</span>
                   </div>
 
                   <a 
                     href="/privacy" 
                     className="text-blue-500 hover:underline flex items-center gap-1 text-xs"
                   >
-                    <span>Read Privacy Policy</span>
+                    <span>Read data-handling draft</span>
                     <ExternalLink size={12} />
                   </a>
                 </div>

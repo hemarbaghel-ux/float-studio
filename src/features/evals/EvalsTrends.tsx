@@ -9,7 +9,7 @@ export function EvalsTrends() {
 
   const completedRuns = useMemo(() => {
     return runs
-      .filter(r => r.status === 'completed' || r.status === 'Completed')
+      .filter(r => (r.status === 'completed' || r.status === 'Completed') && typeof (r.finalScore ?? r.score) === 'number')
       .sort((a, b) => a.startedAt - b.startedAt);
   }, [runs]);
 

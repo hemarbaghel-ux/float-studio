@@ -1,4 +1,6 @@
 import { AIProviderAdapter, AIProviderRequest, AIProviderResponse } from './base';
+import { providerRequestSignal } from './requestSignal';
+import { PortableAgentRunner } from '../agent/portableAgentRunner';
 
 export function normalizeOpenAIError(error: any): Error {
   const msg = error?.message || String(error);
@@ -98,7 +100,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: providerRequestSignal()
       });
 
       if (!res.ok) {
@@ -139,7 +142,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
           'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
         },
         body: JSON.stringify(payload),
-        signal
+        signal: providerRequestSignal(signal)
       });
 
       if (!res.ok) {
@@ -189,17 +192,17 @@ export class OpenAIAdapter implements AIProviderAdapter {
   }
 
   async runAgentLoop(
-    _req: any,
-    _res: any,
+    req: any,
+    res: any,
     model: string,
-    _prompt: string,
-    _virtualFiles: any[]
+    prompt: string,
+    virtualFiles: any[]
   ): Promise<void> {
     if (!this.isConfigured()) {
       throw new Error(
         `OpenAI is not configured on the FLOAT server. To run agents with "${model}", configure OPENAI_API_KEY.`
       );
     }
-    throw new Error('OpenAI autonomous agent loops are currently in preview. Use Gemini 3.1 Flash Lite for full tool execution.');
+    return PortableAgentRunner.run('openai', req, res, model, prompt, virtualFiles, process.env.OPENAI_API_KEY!);
   }
 }

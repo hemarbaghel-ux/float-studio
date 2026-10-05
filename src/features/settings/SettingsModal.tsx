@@ -6,7 +6,6 @@ import { FloatLogo } from '../../components/FloatLogo';
 import { cn } from '../../lib/utils';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { useConsentStore } from '../../store/consentStore';
-import { CURRENT_POLICY_VERSION } from '../../services/consentService';
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const { settings, updateSettings } = useIDEStore();
@@ -409,8 +408,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           {activeSection === 'privacy' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Data Sharing & Consent</h3>
-                <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-0.5">Control optional product telemetry and review privacy governance</p>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Optional diagnostic logging</h3>
+                <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-0.5">The public privacy notice is still a draft.</p>
               </div>
 
               {consentSuccessMsg && (
@@ -431,17 +430,17 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-slate-900 dark:text-white">Product Improvement Data</span>
+                      <span className="text-sm font-semibold text-slate-900 dark:text-white">Diagnostic logging preference</span>
                       <span className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase ${
                         preferences.sharingEnabled 
                           ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-400' 
                           : 'bg-slate-200 text-slate-700 dark:bg-white/10 dark:text-slate-300'
                       }`}>
-                        {preferences.sharingEnabled ? 'Sharing Active' : 'Privacy Mode (OFF)'}
+                        {preferences.sharingEnabled ? 'Enabled (development diagnostics)' : 'Disabled'}
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-1">
-                      Allow FLOAT to collect non-sensitive performance latencies and error codes. Prompts and source code are strictly excluded.
+                      Optional telemetry is not connected to an external analytics service in this release. This preference only gates diagnostic logging in development. AI prompts and attached context still pass through the configured server to the selected model provider.
                     </p>
                   </div>
 
@@ -454,7 +453,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                       const target = !preferences.sharingEnabled;
                       const ok = await updateConsent(target, 'settings');
                       if (ok) {
-                        setConsentSuccessMsg(target ? 'Optional data sharing enabled.' : 'Data sharing disabled. Privacy mode active.');
+                        setConsentSuccessMsg(target ? 'Diagnostic logging preference enabled.' : 'Diagnostic logging preference disabled.');
                         setTimeout(() => setConsentSuccessMsg(null), 3000);
                       }
                     }}
@@ -471,7 +470,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 </div>
 
                 <div className="pt-3 border-t border-slate-200 dark:border-white/5 text-[11px] text-slate-500 dark:text-[#8B949E] flex items-center justify-between">
-                  <span>Policy Version: v{preferences.policyVersion || CURRENT_POLICY_VERSION}</span>
+                  <span>Consent record: Draft</span>
                   <span>{preferences.syncedWithCloud ? 'Cloud Synced' : 'Local Storage'}</span>
                 </div>
               </div>
@@ -483,13 +482,13 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   onClick={async () => {
                     const ok = await withdrawConsent();
                     if (ok) {
-                      setConsentSuccessMsg('Consent withdrawn successfully.');
+                      setConsentSuccessMsg('Diagnostic logging preference reset to disabled.');
                       setTimeout(() => setConsentSuccessMsg(null), 3000);
                     }
                   }}
                   className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-xs font-medium text-slate-700 dark:text-[#C9D1D9] hover:bg-slate-100 dark:hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  Withdraw All Consent
+                  Reset Preference
                 </button>
 
                 <a 
@@ -498,7 +497,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   rel="noreferrer"
                   className="text-xs text-blue-500 hover:underline flex items-center gap-1"
                 >
-                  <span>Read Privacy Policy</span>
+                  <span>Read data-handling draft</span>
                   <ExternalLink size={12} />
                 </a>
               </div>

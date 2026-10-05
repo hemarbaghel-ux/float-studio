@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CheckCircle2, Clock, Loader2, Pause, Play, Plus, Trash2, Workflow, X, XCircle, ExternalLink } from 'lucide-react';
-import { useAutomations, describeTrigger, type Automation, type TriggerKind } from './automationStore';
+import { isAutomationOwnedBy, useAutomations, describeTrigger, type Automation, type TriggerKind } from './automationStore';
 import { runAutomation } from './automationEngine';
+import { useAuthStore } from '../../store/authStore';
 
 const TEMPLATES: { name: string; prompt: string; trigger: TriggerKind; everyMinutes?: number; dailyAt?: string }[] = [
   {
@@ -54,11 +55,13 @@ function Editor({ initial, onClose }: { initial?: Partial<Automation>; onClose: 
   const [dailyAt, setDailyAt] = useState(initial?.dailyAt ?? '09:00');
   const [includeWorkspace, setInclude] = useState(initial?.includeWorkspace ?? true);
   const [slackWebhook, setSlack] = useState(initial?.slackWebhook ?? '');
-  const valid = name.trim() && prompt.trim() && (!slackWebhook || /^https:\/\/hooks\.slack\.com\//.test(slackWebhook));
+  const ownerId = useAuthStore((state) => state.user?.uid);
+  const valid = Boolean(ownerId && name.trim() && prompt.trim() && (!slackWebhook || /^https:\/\/hooks\.slack\.com\//.test(slackWebhook)));
 
   const save = () => {
     if (!valid) return;
-    const data = { name: name.trim(), prompt: prompt.trim(), trigger, everyMinutes, dailyAt, includeWorkspace, slackWebhook: slackWebhook.trim() || undefined };
+    if (!ownerId) return;
+    const data = { ownerId, name: name.trim(), prompt: prompt.trim(), trigger, everyMinutes, dailyAt, includeWorkspace, slackWebhook: slackWebhook.trim() || undefined };
     if (initial?.id) update(initial.id, data);
     else create({ ...data, enabled: true });
     onClose();
@@ -145,7 +148,9 @@ function Editor({ initial, onClose }: { initial?: Partial<Automation>; onClose: 
 }
 
 export function AutomationsPanel() {
-  const { automations, update, remove } = useAutomations();
+  const { automations: storedAutomations, update, remove } = useAutomations();
+  const ownerId = useAuthStore((state) => state.user?.uid);
+  const automations = useMemo(() => storedAutomations.filter((automation) => isAutomationOwnedBy(automation, ownerId)), [storedAutomations, ownerId]);
   const [editing, setEditing] = useState<Partial<Automation> | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const current = useMemo(() => automations.find((a) => a.id === selected) ?? automations[0], [automations, selected]);
@@ -167,6 +172,7 @@ export function AutomationsPanel() {
           </div>
           <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Developer Automations</h2>
           <p className="text-sm text-slate-500 dark:text-[#8B949E] mt-1">Run agent tasks on a schedule or on demand, with results posted here and to Slack.</p>
+          {!ownerId && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Sign in to create and run automations. Your saved automations are scoped to your account on this browser.</p>}
         </div>
         <button
           onClick={() => setEditing({})}
@@ -238,7 +244,7 @@ export function AutomationsPanel() {
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     onClick={() => void runAutomation(current.id)}
-                    disabled={current.runs[0]?.status === 'running'}
+                    disabled={!ownerId || current.runs[0]?.status === 'running'}
                     className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-black text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                   >
                     {current.runs[0]?.status === 'running' ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run now

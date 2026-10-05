@@ -31,6 +31,10 @@ export interface CodeProposal {
   projectId: string;
   conversationId?: string;
   agentId?: string;
+  agentTaskId?: string;
+  agentBranch?: string;
+  agentBaseCommit?: string;
+  agentDiff?: string;
   description: string;
   status: ProposalStatus;
   affectedFiles: string[];

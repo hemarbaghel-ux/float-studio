@@ -133,7 +133,7 @@ export function IntegrationsPage() {
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-semibold text-slate-900 dark:text-white tracking-tight">Integrations</h1>
         <p className="text-slate-500 dark:text-[#A1A1AA] max-w-3xl">
-          Connect your development tools and services to give FLOAT deeper project context, automation, and agent capabilities.
+          Connect GitHub or GitLab when OAuth credentials are configured for this deployment. Additional integrations are not available in this release.
         </p>
       </div>
 

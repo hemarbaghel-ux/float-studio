@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { ConsentService, CURRENT_POLICY_VERSION } from '../services/consentService';
 import { ConsentPreferences, ConsentSource } from '../types/consent';
+import { auth } from '../lib/firebase';
 
 interface ConsentState {
   preferences: ConsentPreferences;
@@ -22,20 +23,24 @@ export const useConsentStore = create<ConsentState>((set, get) => ({
   error: null,
 
   initialize: async () => {
-    set({ isLoading: true, error: null });
+    const ownerAtStart = auth.currentUser?.uid ?? null;
+    set({ isLoading: true, error: null, preferences: ConsentService.getLocalConsent(ownerAtStart) });
     try {
       const prefs = await ConsentService.loadConsent();
+      if ((auth.currentUser?.uid ?? null) !== ownerAtStart) return;
       set({ preferences: prefs, isLoading: false });
     } catch (e: any) {
       console.warn('Failed to load consent:', e);
-      set({ isLoading: false });
+      if ((auth.currentUser?.uid ?? null) === ownerAtStart) set({ isLoading: false });
     }
   },
 
   updateConsent: async (sharingEnabled: boolean, source: ConsentSource = 'settings') => {
+    const ownerAtStart = auth.currentUser?.uid ?? null;
     set({ isSaving: true, error: null });
     try {
       const updated = await ConsentService.saveConsent(sharingEnabled, source);
+      if ((auth.currentUser?.uid ?? null) !== ownerAtStart) return false;
       set({ preferences: updated, isSaving: false });
       return true;
     } catch (e: any) {
@@ -46,7 +51,7 @@ export const useConsentStore = create<ConsentState>((set, get) => ({
       } catch {
         if (e.message) message = e.message;
       }
-      set({ error: message, isSaving: false });
+      if ((auth.currentUser?.uid ?? null) === ownerAtStart) set({ error: message, isSaving: false });
       return false;
     }
   },

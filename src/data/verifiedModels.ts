@@ -852,6 +852,51 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
   // --- xAI Models ---
   // ==========================================
   {
+    id: 'grok-4.7',
+    exactModelId: 'grok-4.7',
+    displayName: 'Grok 4.7',
+    providerId: 'xai',
+    family: 'grok',
+    category: 'flagship_coding',
+    snapshotVersion: 'grok-4.7',
+    releaseDate: '2026-09-28',
+    docUrl: 'https://docs.x.ai/developers/grok-4-7',
+    description: 'xAI frontier model for coding and agentic tasks, with native function calling and configurable reasoning.',
+    contextWindow: 500000,
+    maxOutputTokens: 0,
+    modalities: ['text', 'image'],
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: true,
+      structuredOutput: true,
+      streaming: true,
+      longContext: true
+    },
+    pricing: {
+      inputCostPer1M: 2.00,
+      outputCostPer1M: 6.00,
+      currency: 'USD',
+      pricingUnit: 'per 1M tokens',
+      effectiveDate: '2026-09-28',
+      sourceUrl: 'https://docs.x.ai/developers/grok-4-7'
+    },
+    limitations: [
+      'Grok 4.7 Fast is not available through the public xAI API; this entry uses the public grok-4.7 model.',
+      'Requires server-side XAI_API_KEY.'
+    ],
+    intendedUseCases: [
+      'Agentic software engineering and code review',
+      'Long-context coding and reasoning'
+    ],
+    speed: 'fast',
+    reasoningEffort: 'high',
+    supportedEfforts: ['low', 'medium', 'high'],
+    availabilityStatus: 'CONFIG_REQUIRED',
+    availabilityDetails: 'Supported through the xAI API. Requires XAI_API_KEY on the server.'
+  },
+  {
     id: 'grok-2-1212',
     exactModelId: 'grok-2-1212',
     displayName: 'Grok 2',

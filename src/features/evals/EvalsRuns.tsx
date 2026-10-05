@@ -204,7 +204,8 @@ export function EvalsRuns({ onNewEval }: EvalsRunsProps) {
                 {filteredRuns.map(run => {
                   const modelMeta = INITIAL_MODELS.find(m => m.id === run.modelId);
                   const isRunning = run.status === 'running' || run.status === 'queued' || run.status === 'Running';
-                  const isPassed = (run.status === 'completed' || run.status === 'Completed') && (run.finalScore ?? run.score ?? 0) >= 70;
+                  const hasScore = typeof (run.finalScore ?? run.score) === 'number';
+                  const isPassed = (run.status === 'completed' || run.status === 'Completed') && hasScore && (run.finalScore ?? run.score ?? 0) >= 70;
 
                   return (
                     <tr
@@ -226,11 +227,13 @@ export function EvalsRuns({ onNewEval }: EvalsRunsProps) {
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium ${
                           isRunning ? 'bg-amber-950/60 text-amber-300 border border-amber-800' :
+                          !hasScore ? 'bg-slate-800 text-slate-300 border border-slate-700' :
                           isPassed ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800' :
                           'bg-red-950/60 text-red-300 border border-red-800'
                         }`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${
                             isRunning ? 'bg-amber-400 animate-pulse' :
+                            !hasScore ? 'bg-slate-400' :
                             isPassed ? 'bg-emerald-400' : 'bg-red-400'
                           }`} />
                           <span className="capitalize">{run.status}</span>

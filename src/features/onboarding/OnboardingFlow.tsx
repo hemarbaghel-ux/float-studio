@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useOnboardingStore } from '../../store/onboardingStore';
+import { useAuthStore } from '../../store/authStore';
 import { useConsentStore } from '../../store/consentStore';
 import { useIntegrationStore, RepositoryItem } from '../../store/integrationStore';
 import { IntegrationSetupModal } from '../integrations/IntegrationSetupModal';
@@ -7,7 +8,6 @@ import { launchOAuthFlow, ActiveOAuthSession } from '../../lib/oauthPopup';
 import { User, Users, Check, Github, Gitlab, Shield, Lock, EyeOff, Loader2, AlertCircle, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { FloatLogo } from '../../components/FloatLogo';
-import { CURRENT_POLICY_VERSION } from '../../services/consentService';
 
 export function OnboardingFlow() {
   const [step, setStep] = useState(1);
@@ -21,6 +21,7 @@ export function OnboardingFlow() {
 
   const { updateConsent, isSaving, error: consentError, clearError } = useConsentStore();
   const { connections, getAuthUrl, getRepositories, fetchIntegrations } = useIntegrationStore();
+  const { user } = useAuthStore();
 
   const [connectingProvider, setConnectingProvider] = useState<'github' | 'gitlab' | null>(null);
   const [setupModalProvider, setSetupModalProvider] = useState<'github' | 'gitlab' | null>(null);
@@ -132,7 +133,7 @@ export function OnboardingFlow() {
   };
 
   const handleComplete = () => {
-    setOnboarded(true);
+    setOnboarded(true, user?.uid);
   };
 
   return (
@@ -228,8 +229,8 @@ export function OnboardingFlow() {
           </button>
           
           <div className="text-xs text-[#A1A1AA] flex flex-col gap-1">
-            <span>You're logged in as user@example.com</span>
-            <a href="#" className="text-[#3b82f6] hover:underline">Learn more about our plans</a>
+            <span>Signed in as {user?.email || 'your account'}</span>
+            <a href="/pricing" className="text-[#3b82f6] hover:underline">View current availability</a>
           </div>
         </div>
       )}
@@ -237,8 +238,8 @@ export function OnboardingFlow() {
       {step === 3 && (
         <div className="max-w-xl w-full px-6 flex flex-col items-center">
           <FloatLogo className="w-12 h-12 mb-6" />
-          <h1 className="text-xl font-semibold mb-2">Data Sharing & Privacy</h1>
-          <p className="text-[#A1A1AA] text-sm mb-6 text-center">Control whether optional diagnostics and usage metrics are shared</p>
+          <h1 className="text-xl font-semibold mb-2">Optional diagnostics</h1>
+          <p className="text-[#A1A1AA] text-sm mb-6 text-center">Choose whether FLOAT may record optional diagnostic events.</p>
 
           {/* Real Error Banner if save failed */}
           {consentError && (
@@ -261,9 +262,9 @@ export function OnboardingFlow() {
           <div className="w-full bg-[#161616] border border-white/10 rounded-xl p-5 mb-5 space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <span className="font-semibold text-[15px] block">Optional Product Telemetry</span>
+                <span className="font-semibold text-[15px] block">Optional diagnostic logging</span>
                 <span className="text-xs text-[#8B949E]">
-                  {dataSharing ? 'Enabled — sharing non-sensitive metrics' : 'Disabled — maximum privacy mode (Default)'}
+                  {dataSharing ? 'Enabled for supported diagnostic logging' : 'Disabled'}
                 </span>
               </div>
 
@@ -287,16 +288,15 @@ export function OnboardingFlow() {
             </div>
 
             <p className="text-xs text-[#A1A1AA] leading-relaxed">
-              When enabled, FLOAT collects anonymized system performance (latencies, error codes, feature usage frequency) to diagnose issues. 
-              <strong className="text-white"> Your prompts, source code files, API keys, and passwords are never used to train public models.</strong>
+              The current release does not send optional telemetry to an analytics collector; the preference is stored with your account and only enables diagnostic logging in development. AI requests still send your prompt and attached context through the configured server to the selected provider. Provider data handling depends on that provider's terms and configuration.
             </p>
 
             <div className="pt-2 border-t border-white/5 flex items-center justify-between text-xs text-[#8B949E]">
               <span className="flex items-center gap-1.5">
                 <Shield size={13} className="text-emerald-400" />
-                <span>Default: OFF (Privacy by default)</span>
+                <span>Default: OFF</span>
               </span>
-              <span>Policy v{CURRENT_POLICY_VERSION}</span>
+              <span>Notice status: Draft</span>
             </div>
           </div>
 
@@ -307,23 +307,23 @@ export function OnboardingFlow() {
               onClick={() => setShowLearnMore(!showLearnMore)}
               className="text-xs text-[#8B949E] hover:text-white transition-colors flex items-center gap-1 cursor-pointer mx-auto"
             >
-              <span>{showLearnMore ? 'Hide data disclosure details' : 'Learn more about data handling & retention'}</span>
+              <span>{showLearnMore ? 'Hide details' : 'About data handling'}</span>
               {showLearnMore ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </button>
 
             {showLearnMore && (
               <div className="mt-3 p-4 rounded-xl bg-[#141414] border border-white/10 text-xs text-[#A1A1AA] space-y-3 animate-in fade-in duration-150">
                 <div className="space-y-1">
-                  <span className="font-semibold text-white block">1. What data is collected?</span>
-                  <p>When OFF: No telemetry or optional analytics. When ON: Only system latency, HTTP status codes, and feature activation counts. No codebase files or prompts are stored in training sets.</p>
+                  <span className="font-semibold text-white block">1. Optional diagnostics</span>
+                  <p>An external analytics collector is not configured in this release. The preference gates optional diagnostic logging in development builds; do not treat it as a production analytics control.</p>
                 </div>
                 <div className="space-y-1">
                   <span className="font-semibold text-white block">2. Who processes AI requests?</span>
-                  <p>Essential prompts are routed directly over TLS to your chosen AI providers (Google Gemini, OpenAI, Anthropic, or xAI) to generate your answers. Disabling this toggle does not prevent normal AI functionality.</p>
+                  <p>AI requests pass through the configured FLOAT server and then to the selected provider. This preference does not change that processing. Review the provider and deployment terms before sending sensitive information.</p>
                 </div>
                 <div className="space-y-1">
                   <span className="font-semibold text-white block">3. Can I change my mind later?</span>
-                  <p>Yes. You can toggle data sharing ON or immediately withdraw consent anytime under Settings → Privacy & Data.</p>
+                  <p>You can change this preference under Settings → Privacy & Data. The published privacy notice is still a draft.</p>
                 </div>
                 <div className="pt-2 border-t border-white/5">
                   <a 
@@ -332,7 +332,7 @@ export function OnboardingFlow() {
                     rel="noreferrer"
                     className="text-xs text-blue-400 hover:underline flex items-center gap-1"
                   >
-                    <span>Read Full Privacy Policy</span>
+                    <span>Read data-handling draft</span>
                     <ExternalLink size={12} />
                   </a>
                 </div>

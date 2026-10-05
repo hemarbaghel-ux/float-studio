@@ -5,6 +5,7 @@ import {
 } from 'firebase/firestore';
 import { AIMessage } from '../types';
 import { OperationType, handleFirestoreError } from '../lib/firestoreErrors';
+import { conversationCacheKey, conversationListCacheKey } from './conversationCacheKeys';
 
 export interface ConversationRecord {
   id: string;
@@ -24,17 +25,14 @@ export interface ConversationMeta {
   messageCount: number;
 }
 
-const STORAGE_PREFIX = 'float_conv_';
-const LIST_PREFIX = 'float_conv_list_';
-
 export class ConversationService {
   /**
    * Local storage helpers for instant hydration & offline resilience
    */
-  static getLocalList(projectId: string): ConversationMeta[] {
+  static getLocalList(projectId: string, ownerId: string | null = auth.currentUser?.uid ?? null): ConversationMeta[] {
     if (typeof window === 'undefined') return [];
     try {
-      const raw = localStorage.getItem(`${LIST_PREFIX}${projectId}`);
+      const raw = localStorage.getItem(conversationListCacheKey(projectId, ownerId));
       if (raw) {
         const list = JSON.parse(raw);
         if (Array.isArray(list)) return list;
@@ -45,19 +43,19 @@ export class ConversationService {
     return [];
   }
 
-  static saveLocalList(projectId: string, list: ConversationMeta[]): void {
+  static saveLocalList(projectId: string, list: ConversationMeta[], ownerId: string | null = auth.currentUser?.uid ?? null): void {
     if (typeof window === 'undefined') return;
     try {
-      localStorage.setItem(`${LIST_PREFIX}${projectId}`, JSON.stringify(list));
+      localStorage.setItem(conversationListCacheKey(projectId, ownerId), JSON.stringify(list));
     } catch (e) {
       console.warn('Failed to persist local conversation list:', e);
     }
   }
 
-  static getLocalConversation(conversationId: string): ConversationRecord | null {
+  static getLocalConversation(conversationId: string, ownerId: string | null = auth.currentUser?.uid ?? null): ConversationRecord | null {
     if (typeof window === 'undefined') return null;
     try {
-      const raw = localStorage.getItem(`${STORAGE_PREFIX}${conversationId}`);
+      const raw = localStorage.getItem(conversationCacheKey(conversationId, ownerId));
       if (raw) return JSON.parse(raw);
     } catch (e) {
       console.warn(`Failed to parse local conversation ${conversationId}:`, e);
@@ -65,13 +63,13 @@ export class ConversationService {
     return null;
   }
 
-  static saveLocalConversation(record: ConversationRecord): void {
+  static saveLocalConversation(record: ConversationRecord, ownerId: string | null = auth.currentUser?.uid ?? null): void {
     if (typeof window === 'undefined') return;
     try {
-      localStorage.setItem(`${STORAGE_PREFIX}${record.id}`, JSON.stringify(record));
+      localStorage.setItem(conversationCacheKey(record.id, ownerId), JSON.stringify(record));
       
       // Update list index
-      const list = this.getLocalList(record.projectId);
+      const list = this.getLocalList(record.projectId, ownerId);
       const existingIdx = list.findIndex(c => c.id === record.id);
       const meta: ConversationMeta = {
         id: record.id,
@@ -87,18 +85,18 @@ export class ConversationService {
       } else {
         list.unshift(meta);
       }
-      this.saveLocalList(record.projectId, list);
+      this.saveLocalList(record.projectId, list, ownerId);
     } catch (e) {
       console.warn(`Failed to persist local conversation ${record.id}:`, e);
     }
   }
 
-  static deleteLocal(conversationId: string, projectId: string): void {
+  static deleteLocal(conversationId: string, projectId: string, ownerId: string | null = auth.currentUser?.uid ?? null): void {
     if (typeof window === 'undefined') return;
     try {
-      localStorage.removeItem(`${STORAGE_PREFIX}${conversationId}`);
-      const list = this.getLocalList(projectId).filter(c => c.id !== conversationId);
-      this.saveLocalList(projectId, list);
+      localStorage.removeItem(conversationCacheKey(conversationId, ownerId));
+      const list = this.getLocalList(projectId, ownerId).filter(c => c.id !== conversationId);
+      this.saveLocalList(projectId, list, ownerId);
     } catch (e) {
       console.warn('Failed to delete local conversation:', e);
     }
@@ -108,10 +106,9 @@ export class ConversationService {
    * Cloud Firestore persistence with strict owner verification
    */
   static async syncToCloud(record: ConversationRecord): Promise<void> {
-    // Always save locally first
-    this.saveLocalConversation(record);
-
     const user = auth.currentUser;
+    // Keep an offline copy in the current account's own local cache.
+    this.saveLocalConversation(record, user?.uid ?? null);
     if (!user) return; // Unauthenticated users use local storage only
 
     const convRef = doc(db, 'conversations', record.id);
@@ -131,8 +128,18 @@ export class ConversationService {
         isOwner = false;
       }
 
-      // Cap stored messages payload string length for safety (< 2MB)
-      const serializedMessages = JSON.stringify(record.messages).slice(0, 1900000);
+      // Keep the serialized payload below Firestore's document limit. Drop oldest
+      // turns as whole messages; slicing JSON can leave an unreadable partial record.
+      const cloudMessages = [...record.messages].slice(-24);
+      let serializedMessages = JSON.stringify(cloudMessages);
+      while (serializedMessages.length > 850_000 && cloudMessages.length > 1) {
+        cloudMessages.shift();
+        serializedMessages = JSON.stringify(cloudMessages);
+      }
+      if (serializedMessages.length > 850_000) {
+        console.warn(`Conversation ${record.id} is too large for Firestore; the complete local copy was kept.`);
+        return;
+      }
 
       if (docExists && isOwner) {
         await updateDoc(convRef, {
@@ -140,6 +147,9 @@ export class ConversationService {
           messages: serializedMessages,
           updatedAt: serverTimestamp()
         });
+      } else if (docExists) {
+        console.error(`Refusing to overwrite conversation ${record.id} owned by another account.`);
+        return;
       } else {
         await setDoc(convRef, {
           ownerId: user.uid,
@@ -157,8 +167,8 @@ export class ConversationService {
   }
 
   static async fetchCloudList(projectId: string): Promise<ConversationMeta[]> {
-    const local = this.getLocalList(projectId);
     const user = auth.currentUser;
+    const local = this.getLocalList(projectId, user?.uid ?? null);
     if (!user) return local;
 
     try {
@@ -194,7 +204,7 @@ export class ConversationService {
       cloudList.sort((a, b) => b.updatedAt - a.updatedAt);
 
       if (cloudList.length > 0) {
-        this.saveLocalList(projectId, cloudList);
+        this.saveLocalList(projectId, cloudList, user.uid);
         return cloudList;
       }
     } catch (err) {
@@ -205,8 +215,8 @@ export class ConversationService {
   }
 
   static async fetchCloudConversation(conversationId: string): Promise<AIMessage[] | null> {
-    const local = this.getLocalConversation(conversationId);
     const user = auth.currentUser;
+    const local = this.getLocalConversation(conversationId, user?.uid ?? null);
     if (!user) return local?.messages || null;
 
     try {
@@ -225,7 +235,7 @@ export class ConversationService {
               createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now(),
               updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : Date.now(),
               messages
-            });
+            }, user.uid);
             return messages;
           }
         }
@@ -238,8 +248,8 @@ export class ConversationService {
   }
 
   static async deleteConversation(conversationId: string, projectId: string): Promise<void> {
-    this.deleteLocal(conversationId, projectId);
     const user = auth.currentUser;
+    this.deleteLocal(conversationId, projectId, user?.uid ?? null);
     if (!user) return;
 
     try {
@@ -261,22 +271,22 @@ export class ConversationService {
     const trimmed = newTitle.trim().slice(0, 190);
     if (!trimmed) return;
 
-    // Update local cache
-    const local = this.getLocalConversation(conversationId);
+    const user = auth.currentUser;
+    // Update only the signed-in account's local cache.
+    const local = this.getLocalConversation(conversationId, user?.uid ?? null);
     if (local) {
       local.title = trimmed;
       local.updatedAt = Date.now();
-      this.saveLocalConversation(local);
+      this.saveLocalConversation(local, user?.uid ?? null);
     }
-    const list = this.getLocalList(projectId);
+    const list = this.getLocalList(projectId, user?.uid ?? null);
     const item = list.find(c => c.id === conversationId);
     if (item) {
       item.title = trimmed;
       item.updatedAt = Date.now();
-      this.saveLocalList(projectId, list);
+      this.saveLocalList(projectId, list, user?.uid ?? null);
     }
 
-    const user = auth.currentUser;
     if (!user) return;
 
     try {

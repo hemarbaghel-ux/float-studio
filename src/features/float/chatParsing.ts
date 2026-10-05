@@ -103,4 +103,4 @@ export const AGENT_SYSTEM_PROMPT = `You are FLOAT, an expert AI coding agent wor
 - To delete a file, output: \`\`\`delete path=old/file.ts\`\`\`
 - Never output partial files or "rest unchanged" placeholders inside path blocks. Use normal fenced blocks (without path=) for snippets that should not be written.
 - Keep explanations short: a one-line plan before the edits, and a brief summary (plus how to run/test) after.
-- If tests exist or you add them, name them *.test.js so they run with \`npm test\` in the cloud sandbox.`;
+- If tests exist or you add them, use the repository's configured test command for this browser worker environment.`;

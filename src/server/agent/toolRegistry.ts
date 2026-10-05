@@ -1,31 +1,23 @@
 import { ToolDefinition, ToolResult, ToolExecutionContext } from './types';
 import { searchCodebase } from '../../services/codebaseSearch';
 import { ProposalService } from './proposalService';
+import { applyAgentChangesToWorktree } from './agentGitWorktree';
 
 // Patterns to exclude from file listings and reads
-const SENSITIVE_PATTERNS = [
-  /^\.env($|\..*)/i,
-  /^node_modules\//i,
-  /^\.git\//i,
-  /^dist\//i,
-  /^build\//i,
-  /\.pem$/i,
-  /\.key$/i,
-  /id_rsa/i,
-  /^\.DS_Store$/i
-];
+const SENSITIVE_SEGMENT = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.))/i;
+const SENSITIVE_EXTENSION = /\.(?:pem|key|p12|pfx|keystore|crt|cer)$/i;
 
 function isSensitivePath(filePath: string): boolean {
-  const norm = filePath.replace(/^\/+/, '');
-  return SENSITIVE_PATTERNS.some(pattern => pattern.test(norm));
+  const norm = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+  return norm.split('/').some(segment => SENSITIVE_SEGMENT.test(segment)) || SENSITIVE_EXTENSION.test(norm);
 }
 
 function sanitizePath(rawPath: string): { safePath: string; error?: string } {
   if (!rawPath || typeof rawPath !== 'string') {
     return { safePath: '', error: 'Path is required.' };
   }
-  const normalized = rawPath.trim().replace(/^\/+/, '');
-  if (normalized.includes('../') || normalized.includes('..\\')) {
+  const normalized = rawPath.trim().replace(/\\/g, '/');
+  if (normalized.includes('\0') || normalized.startsWith('/') || /^[a-z]:/i.test(normalized) || normalized.split('/').some(part => !part || part === '.' || part === '..')) {
     return { safePath: '', error: 'Path traversal (../) is strictly forbidden.' };
   }
   if (isSensitivePath(normalized)) {
@@ -311,9 +303,10 @@ const proposeChangesTool: ToolDefinition = {
       return { success: false, error: '"changes" must be a non-empty array of file change objects.' };
     }
 
-    const proposalResult = ProposalService.createProposal({
+    const proposalResult = await ProposalService.createProposalDurable({
       ownerId: context.userId,
       projectId: context.projectId,
+      agentTaskId: context.agentTaskId,
       description,
       rawChanges,
       virtualFiles: context.virtualFiles
@@ -325,6 +318,21 @@ const proposeChangesTool: ToolDefinition = {
 
     const proposal = proposalResult.proposal;
 
+    let worktree: { branch: string; baseCommit: string; diff: string } | undefined;
+    if (context.agentTaskId) {
+      try {
+        worktree = await applyAgentChangesToWorktree(context.agentTaskId, context.userId, proposal.changes, context.signal);
+        proposal.agentTaskId = context.agentTaskId;
+        proposal.agentBranch = worktree.branch;
+        proposal.agentBaseCommit = worktree.baseCommit;
+        proposal.agentDiff = worktree.diff;
+        await ProposalService.persistProposalMetadata(proposal);
+      } catch (error: any) {
+        await ProposalService.rejectProposalDurable(proposal.id, context.userId, context.userId).catch(() => undefined);
+        return { success: false, error: error?.message || 'Could not update the isolated agent worktree with this proposal.' };
+      }
+    }
+
     return {
       success: true,
       output: {
@@ -334,6 +342,7 @@ const proposeChangesTool: ToolDefinition = {
         affectedFiles: proposal.affectedFiles,
         changesCount: proposal.changes.length,
         changes: proposal.changes,
+        ...(worktree ? { worktree } : {}),
         proposal
       }
     };

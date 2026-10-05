@@ -1,28 +1,20 @@
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import { CodeProposal, ProposalChange, DiffStats, ProposalStatus } from '../../types/proposal';
+import { getCodeProposal, listCodeProposals, saveCodeProposal } from './proposalPersistence';
 
-const SENSITIVE_PATTERNS = [
-  /^\.env($|\..*)/i,
-  /^node_modules\//i,
-  /^\.git\//i,
-  /^dist\//i,
-  /^build\//i,
-  /\.pem$/i,
-  /\.key$/i,
-  /id_rsa/i,
-  /^\.DS_Store$/i
-];
+const SENSITIVE_SEGMENT = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.))/i;
+const SENSITIVE_EXTENSION = /\.(?:pem|key|p12|pfx|keystore|crt|cer)$/i;
 
 export function sanitizeProposalPath(rawPath: string): { safePath: string; error?: string } {
   if (!rawPath || typeof rawPath !== 'string') {
     return { safePath: '', error: 'File path is required.' };
   }
-  const normalized = rawPath.trim().replace(/^\/+/, '');
-  if (normalized.includes('../') || normalized.includes('..\\')) {
+  const normalized = rawPath.trim().replace(/\\/g, '/');
+  if (normalized.includes('\0') || normalized.startsWith('/') || /^[a-z]:/i.test(normalized) || normalized.split('/').some(part => !part || part === '.' || part === '..')) {
     return { safePath: '', error: 'Path traversal (../) is strictly forbidden.' };
   }
-  if (SENSITIVE_PATTERNS.some(p => p.test(normalized))) {
+  if (normalized.split('/').some(part => SENSITIVE_SEGMENT.test(part)) || SENSITIVE_EXTENSION.test(normalized)) {
     return { safePath: '', error: `Access to sensitive path "${normalized}" is forbidden.` };
   }
   return { safePath: normalized };
@@ -72,6 +64,7 @@ export interface CreateProposalInput {
   description: string;
   conversationId?: string;
   agentId?: string;
+  agentTaskId?: string;
   rawChanges: Array<{
     path: string;
     operation: 'create' | 'modify' | 'delete' | 'rename';
@@ -85,7 +78,7 @@ export class ProposalService {
   private static activeLocks = new Set<string>();
 
   static createProposal(input: CreateProposalInput): { proposal?: CodeProposal; error?: string } {
-    const { ownerId, projectId, description, conversationId, agentId, rawChanges, virtualFiles } = input;
+    const { ownerId, projectId, description, conversationId, agentId, agentTaskId, rawChanges, virtualFiles } = input;
 
     if (!rawChanges || !Array.isArray(rawChanges) || rawChanges.length === 0) {
       return { error: 'Proposal must contain at least one file change.' };
@@ -141,6 +134,7 @@ export class ProposalService {
       projectId,
       conversationId,
       agentId,
+      agentTaskId,
       description: description?.trim() || 'Proposed Code Changes',
       status: 'pending_review',
       affectedFiles,
@@ -157,6 +151,45 @@ export class ProposalService {
     return this.proposals.get(proposalId);
   }
 
+  static async createProposalDurable(input: CreateProposalInput): Promise<{ proposal?: CodeProposal; error?: string }> {
+    const result = this.createProposal(input);
+    if (!result.proposal) return result;
+    try {
+      await saveCodeProposal(result.proposal);
+      return result;
+    } catch (error: any) {
+      this.proposals.delete(result.proposal.id);
+      return { error: error.message || 'Could not store the proposal. Reduce the number or size of changed files.' };
+    }
+  }
+
+  static async persistProposalMetadata(proposal: CodeProposal): Promise<void> {
+    await saveCodeProposal(proposal);
+  }
+
+  static async rejectAgentTaskProposals(taskId: string, projectId: string, ownerId: string): Promise<void> {
+    const proposals = await this.listProposalsDurable(projectId, ownerId);
+    for (const proposal of proposals) {
+      if (proposal.agentTaskId === taskId && ['pending_review', 'applying'].includes(proposal.status)) {
+        await this.rejectProposalDurable(proposal.id, ownerId, ownerId);
+      }
+    }
+  }
+
+  static async getProposalDurable(proposalId: string, ownerId: string): Promise<CodeProposal | null> {
+    const cached = this.proposals.get(proposalId);
+    if (cached?.ownerId === ownerId) return cached;
+    const proposal = await getCodeProposal(proposalId, ownerId);
+    if (proposal) this.proposals.set(proposalId, proposal);
+    return proposal;
+  }
+
+  static async listProposalsDurable(projectId: string, ownerId: string): Promise<CodeProposal[]> {
+    const proposals = await listCodeProposals(projectId, ownerId);
+    for (const proposal of proposals) this.proposals.set(proposal.id, proposal);
+    return proposals;
+  }
+
   static listProposalsForProject(projectId: string): CodeProposal[] {
     const list: CodeProposal[] = [];
     for (const p of this.proposals.values()) {
@@ -165,6 +198,30 @@ export class ProposalService {
       }
     }
     return list.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  static async applyProposalDurable(
+    proposalId: string,
+    ownerId: string,
+    options: { userId: string; approvedPaths?: string[]; currentFiles: Array<{ path: string; content?: string }> }
+  ) {
+    if (!await this.getProposalDurable(proposalId, ownerId)) {
+      return { success: false, status: 'failed' as ProposalStatus, error: 'Proposal not found.' };
+    }
+    const result = await this.applyProposal(proposalId, options);
+    const proposal = this.proposals.get(proposalId);
+    if (proposal) await saveCodeProposal(proposal);
+    return result;
+  }
+
+  static async rejectProposalDurable(proposalId: string, ownerId: string, userId: string) {
+    if (!await this.getProposalDurable(proposalId, ownerId)) {
+      return { success: false, status: 'failed' as ProposalStatus, error: 'Proposal not found.' };
+    }
+    const result = this.rejectProposal(proposalId, userId);
+    const proposal = this.proposals.get(proposalId);
+    if (proposal && result.success) await saveCodeProposal(proposal);
+    return result;
   }
 
   static checkConflicts(

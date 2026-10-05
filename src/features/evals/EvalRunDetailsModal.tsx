@@ -87,7 +87,9 @@ export function EvalRunDetailsModal({ run, onClose }: EvalRunDetailsModalProps) 
   const changes = run.changeSet?.changes || [];
   const selectedChange = changes[selectedChangeIdx];
   const isRunning = run.status === 'running' || run.status === 'queued' || run.status === 'Running';
-  const isSuccess = (run.status === 'completed' || run.status === 'Completed') && (run.finalScore || run.score || 0) >= 70;
+  const hasScore = typeof run.finalScore === 'number' || typeof run.score === 'number';
+  const isSuccess = (run.status === 'completed' || run.status === 'Completed') && hasScore && (run.finalScore ?? run.score ?? 0) >= 70;
+  const isUnscoredCompletion = (run.status === 'completed' || run.status === 'Completed') && !hasScore;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 sm:p-6 overflow-hidden">
@@ -98,7 +100,7 @@ export function EvalRunDetailsModal({ run, onClose }: EvalRunDetailsModalProps) 
           <div className="flex items-center gap-3">
             <div className={`w-3 h-3 rounded-full ${
               isRunning ? 'bg-amber-400 animate-pulse' :
-              isSuccess ? 'bg-emerald-400' : 'bg-red-400'
+              isSuccess ? 'bg-emerald-400' : isUnscoredCompletion ? 'bg-slate-400' : 'bg-red-400'
             }`} />
             <div>
               <div className="flex items-center gap-2">
@@ -277,7 +279,9 @@ export function EvalRunDetailsModal({ run, onClose }: EvalRunDetailsModalProps) 
                 <div className="p-4 bg-[#161B22] border border-[#30363D] rounded-lg">
                   <div className="text-xs text-[#8B949E]">Test Assertions</div>
                   <div className="text-lg font-bold text-white mt-1 flex items-center gap-2">
-                    {run.testsPassed ? (
+                    {run.testsPassed === undefined ? (
+                      <span className="text-slate-400">Not Run</span>
+                    ) : run.testsPassed ? (
                       <span className="text-emerald-400 flex items-center gap-1">
                         <CheckCircle2 size={18} /> Passed ({run.testsPassedCount ?? 'All'})
                       </span>
@@ -288,14 +292,16 @@ export function EvalRunDetailsModal({ run, onClose }: EvalRunDetailsModalProps) 
                     )}
                   </div>
                   <div className="text-xs text-[#8B949E] mt-1">
-                    {run.testCount ? `${run.testCount} total tests executed` : 'Synthesized unit tests'}
+                    {run.testCount ? `${run.testCount} total tests executed` : 'No project tests were executed'}
                   </div>
                 </div>
 
                 <div className="p-4 bg-[#161B22] border border-[#30363D] rounded-lg">
                   <div className="text-xs text-[#8B949E]">Code Compilation / Build</div>
                   <div className="text-lg font-bold text-white mt-1">
-                    {run.buildPassed ? (
+                    {run.buildPassed === undefined ? (
+                      <span className="text-slate-400">Not Run</span>
+                    ) : run.buildPassed ? (
                       <span className="text-emerald-400 flex items-center gap-1">
                         <CheckCircle2 size={18} /> Build Passed
                       </span>
@@ -306,25 +312,25 @@ export function EvalRunDetailsModal({ run, onClose }: EvalRunDetailsModalProps) 
                     )}
                   </div>
                   <div className="text-xs text-[#8B949E] mt-1">
-                    Exit Code 0 verified in isolated container
+                    {run.validationResults?.build?.errorSummary || 'No build command was executed'}
                   </div>
                 </div>
 
                 <div className="p-4 bg-[#161B22] border border-[#30363D] rounded-lg">
-                  <div className="text-xs text-[#8B949E]">Patch Validity</div>
+                <div className="text-xs text-[#8B949E]">Basic Patch Structure</div>
                   <div className="text-lg font-bold text-white mt-1">
                     {run.patchValid ? (
                       <span className="text-emerald-400 flex items-center gap-1">
-                        <CheckCircle2 size={18} /> Valid Syntax
+                        <CheckCircle2 size={18} /> Delimiters Balanced
                       </span>
                     ) : (
                       <span className="text-red-400 flex items-center gap-1">
-                        <AlertTriangle size={18} /> Invalid Patch
+                        <AlertTriangle size={18} /> Structure Check Failed
                       </span>
                     )}
                   </div>
                   <div className="text-xs text-[#8B949E] mt-1">
-                    {run.filesChanged || 0} files modified cleanly
+                    {run.filesChanged || 0} files proposed · basic delimiter check only
                   </div>
                 </div>
               </div>
@@ -510,7 +516,7 @@ export function EvalRunDetailsModal({ run, onClose }: EvalRunDetailsModalProps) 
               <div className="border border-[#30363D] rounded-lg bg-[#161B22] overflow-hidden">
                 <div className="px-4 py-3 border-b border-[#30363D] text-xs font-semibold text-white flex items-center justify-between">
                   <span>Unit Test Results ({run.validationResults?.tests?.length || 0})</span>
-                  <span className="text-[#8B949E] font-normal">Executed against candidate patch</span>
+                  <span className="text-[#8B949E] font-normal">{run.validationResults?.tests?.length ? 'Recorded test execution' : 'No project tests were run'}</span>
                 </div>
                 <div className="divide-y divide-[#30363D]">
                   {run.validationResults?.tests && run.validationResults.tests.length > 0 ? (
@@ -546,9 +552,9 @@ export function EvalRunDetailsModal({ run, onClose }: EvalRunDetailsModalProps) 
                   <div className="px-4 py-2.5 border-b border-[#30363D] text-xs font-semibold text-white flex items-center justify-between">
                     <span className="font-mono">{run.validationResults.build.command}</span>
                     <span className={`text-[11px] font-bold ${
-                      run.validationResults.build.exitCode === 0 ? 'text-emerald-400' : 'text-red-400'
+                      run.validationResults.build.status === 'Not Run' ? 'text-slate-400' : run.validationResults.build.exitCode === 0 ? 'text-emerald-400' : 'text-red-400'
                     }`}>
-                      Exit Code: {run.validationResults.build.exitCode} ({run.validationResults.build.status})
+                      {run.validationResults.build.status === 'Not Run' ? 'Not Run' : `Exit Code: ${run.validationResults.build.exitCode} (${run.validationResults.build.status})`}
                     </span>
                   </div>
                   <pre className="p-3 bg-[#090D13] text-xs font-mono text-[#C9D1D9] whitespace-pre-wrap">

@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useIDEStore } from '../../store';
 import { useValidationStore } from '../../store/validationStore';
-import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loader2, CheckCircle2 } from 'lucide-react';
+import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loader2, CheckCircle2, Square } from 'lucide-react';
 import { cn, flattenFileTree } from '../../lib/utils';
-import { runPythonCode } from '../../services/pythonRunner';
+import { executeProjectCommand } from '../../services/projectExecution';
 import { ValidationPanel } from '../../components/panels/ValidationPanel';
 import { isShellCommand, runShell } from '../float/sandbox';
 import { useCloudSession } from '../float/cloudSessionStore';
@@ -31,6 +31,7 @@ export function BottomPanel() {
   const [inputVal, setInputVal] = useState('');
   const [isExecutingInput, setIsExecutingInput] = useState(false);
   const terminalEndRef = useRef<HTMLDivElement>(null);
+  const executionController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -48,92 +49,85 @@ export function BottomPanel() {
       return;
     }
 
-    if (isShellCommand(trimmed) && !trimmed.startsWith('python')) {
-      if (!useCloudSession.getState().active) {
-        if (trimmed !== 'ls') {
-          addTerminalEntry({ type: 'error', content: `'${trimmed.split(/\s+/)[0]}' runs in a Cloud Agent session. Start one from the banner above the composer (or type: session start).` });
-          return;
-        }
-      } else {
+    if (useCloudSession.getState().active && isShellCommand(trimmed)) {
         setIsExecutingInput(true);
         try {
           const { output, code } = await runShell(trimmed, sandboxFs());
-          if (output) addTerminalEntry({ type: code === 0 ? 'output' : 'error', content: output });
+          if (output) addTerminalEntry({ type: code === 0 ? 'output' : 'error', content: `[Browser worker] ${output}` });
         } catch (err: any) {
           addTerminalEntry({ type: 'error', content: err?.message || String(err) });
         } finally {
           setIsExecutingInput(false);
         }
         return;
-      }
     }
 
     if (trimmed === 'session start' || trimmed === 'session stop' || trimmed === 'session') {
       const cs = useCloudSession.getState();
-      if (trimmed === 'session start') cs.start('ap-south-1', '2 vCPU · 4 GB');
+      if (trimmed === 'session start') cs.start('Local browser', 'Isolated worker');
       if (trimmed === 'session stop') cs.stop();
       const now = useCloudSession.getState();
-      addTerminalEntry({ type: 'output', content: now.active ? `Cloud session active (${now.region}, ${now.machine}). node, npm test, grep, cat... are available.` : 'No cloud session. Type: session start' });
-      return;
-    }
-
-    if (trimmed === 'ls') {
-      const virtualFiles = flattenFileTree(files);
-      const list = virtualFiles.map(f => f.path).join('  ');
-      addTerminalEntry({ type: 'output', content: list || '(empty project)' });
+      addTerminalEntry({ type: 'output', content: now.active ? `Browser worker active (${now.machine}). Only supported in-browser commands are available; this is not a remote shell.` : 'Browser worker is off. Type: session start to enable supported commands.' });
       return;
     }
 
     if (trimmed === 'help') {
       addTerminalEntry({
         type: 'output',
-        content: `FLOAT Python Environment Commands:
-  python <filename>   Execute a Python file (e.g., python main.py)
-  <python_code>       Execute Python code directly (e.g., print(2 + 2))
-  ls                  List all workspace files
+        content: `FLOAT project terminal:
+  Commands execute in the authorized project’s isolated server container.
+  npm test / npm run lint / npm run build / npm run typecheck
+  python <file.py>, node <file.js>, git status, and other shell commands
   clear               Clear the terminal screen
   help                Display this assistance message
 
-Cloud Agent session (type: session start):
-  node <file.js>      Run a JavaScript file in the sandbox
-  npm test            Run *.test.js / *.spec.js with a Jest-compatible runner
-  cat grep head tail wc tree touch rm mkdir echo   File utilities`
+Browser worker (type: session start):
+  This is a separate, limited in-browser interpreter and is not a server shell.`
       });
       return;
     }
 
     setIsExecutingInput(true);
-    const virtualFiles = flattenFileTree(files).map(f => ({ path: f.path, content: f.content }));
-
+    const controller = new AbortController();
+    executionController.current = controller;
+    let stdout = '';
+    let stderr = '';
     try {
-      let codeToRun = trimmed;
-      if (trimmed.startsWith('python ')) {
-        const targetPath = trimmed.replace('python ', '').trim();
-        const found = virtualFiles.find(f => f.path === targetPath || f.path.endsWith('/' + targetPath));
-        if (found && found.content !== undefined) {
-          codeToRun = found.content;
-        } else {
-          addTerminalEntry({ type: 'error', content: `python: can't open file '${targetPath}': No such file or directory` });
-          setIsExecutingInput(false);
-          return;
+      await useIDEStore.getState().saveProject();
+      const state = useIDEStore.getState();
+      if (!state.projectId) throw new Error('Save this workspace before running a server command.');
+      const virtualFiles = flattenFileTree(state.files).filter(file => file.type === 'file').map(file => ({ path: file.path, content: file.content }));
+      const result = await executeProjectCommand({
+        projectId: state.projectId,
+        command: trimmed,
+        files: virtualFiles,
+        signal: controller.signal,
+        onOutput: (stream, text) => {
+          if (stream === 'stdout') stdout += text;
+          else stderr += text;
+          addTerminalEntry({ type: stream === 'stdout' ? 'output' : 'error', content: text });
         }
+      });
+      if (result.changedFiles?.length || result.deletedFiles?.length) {
+        useIDEStore.getState().applyExecutionChanges(result.changedFiles || [], result.deletedFiles || []);
+        await useIDEStore.getState().saveProject();
       }
-
-      const result = await runPythonCode(
-        codeToRun,
-        virtualFiles,
-        (out) => addTerminalEntry({ type: 'output', content: out }),
-        (err) => addTerminalEntry({ type: 'error', content: err })
-      );
-
-      if (result.success && result.output && result.output !== '(Program exited with code 0 and no output)') {
-        addTerminalEntry({ type: 'output', content: result.output });
-      } else if (!result.success && result.error) {
-        addTerminalEntry({ type: 'error', content: result.error });
-      }
+      const output = stdout + stderr;
+      const failure = result.status === 'succeeded' ? null : `${result.status === 'timed_out' ? 'Process timed out' : result.status === 'cancelled' ? 'Process cancelled' : 'Process exited with code ' + result.exitCode}${stderr ? `\n${stderr}` : ''}`;
+      useIDEStore.getState().setExecutionResult(output, failure, result.durationMs);
+      addTerminalEntry({ type: failure ? 'error' : 'output', content: `[${result.status}; exit code ${result.exitCode ?? 'unknown'}; ${result.durationMs}ms]` });
     } catch (err: any) {
-      addTerminalEntry({ type: 'error', content: err?.message || String(err) });
+      if (controller.signal.aborted) {
+        const message = 'Process cancellation requested. The server is stopping the isolated container.';
+        addTerminalEntry({ type: 'error', content: message });
+        useIDEStore.getState().setExecutionResult(stdout + stderr, message, null);
+      } else {
+        const message = err?.message || String(err);
+        addTerminalEntry({ type: 'error', content: message });
+        useIDEStore.getState().setExecutionResult(stdout + stderr, message, null);
+      }
     } finally {
+      executionController.current = null;
       setIsExecutingInput(false);
     }
   };
@@ -185,13 +179,10 @@ Cloud Agent session (type: session start):
           )}
 
           {bottomPanelTab === 'terminal' && (
-            <button
-              onClick={clearTerminal}
-              title="Clear Terminal"
-              className="p-1 text-slate-400 dark:text-[#8B949E] hover:bg-slate-200 dark:hover:bg-[#1C1C1C] hover:text-slate-800 dark:hover:text-white rounded transition-colors cursor-pointer"
-            >
-              <Trash2 size={13} />
-            </button>
+            <>
+              {isExecutingInput && <button onClick={() => executionController.current?.abort()} title="Stop process" className="p-1 text-rose-500 hover:bg-slate-200 dark:hover:bg-[#1C1C1C] rounded"><Square size={13} fill="currentColor" /></button>}
+              <button onClick={clearTerminal} title="Clear Terminal" className="p-1 text-slate-400 dark:text-[#8B949E] hover:bg-slate-200 dark:hover:bg-[#1C1C1C] hover:text-slate-800 dark:hover:text-white rounded transition-colors cursor-pointer"><Trash2 size={13} /></button>
+            </>
           )}
 
           <button 
@@ -242,7 +233,7 @@ Cloud Agent session (type: session start):
                 disabled={isExecutingInput}
                 onChange={(e) => setInputVal(e.target.value)}
                 className="flex-1 bg-transparent outline-none caret-blue-600 dark:caret-[#79C0FF] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#555]" 
-                placeholder={isExecutingInput ? 'Executing in Pyodide...' : 'Enter python command or expression (e.g., print(42), python main.py)...'} 
+                placeholder={isExecutingInput ? 'Process running…' : 'Run a project command (e.g. npm test, git status, python main.py)…'}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && inputVal) {
                     handleCommand(inputVal);
@@ -260,7 +251,7 @@ Cloud Agent session (type: session start):
             {isRunningCode ? (
               <div className="flex items-center gap-2 text-blue-500 py-2 px-2">
                 <Loader2 size={14} className="animate-spin" />
-                <span>Executing Python code in Pyodide...</span>
+                <span>Executing an isolated project command...</span>
               </div>
             ) : executionOutput || executionError ? (
               <div className="space-y-3">
@@ -289,7 +280,7 @@ Cloud Agent session (type: session start):
             ) : (
               <div className="px-2 py-4 text-slate-500 dark:text-[#8B949E] flex flex-col gap-2">
                 <p>No output generated yet.</p>
-                <p className="text-[11px]">Click <strong className="text-emerald-500">Run</strong> in the top navigation or press <kbd className="px-1.5 py-0.5 bg-slate-200 dark:bg-white/10 rounded font-mono text-[10px]">Ctrl+Enter</kbd> to execute your active Python file.</p>
+                <p className="text-[11px]">Run a project command in the Terminal, or click <strong className="text-emerald-500">Run</strong> to execute the active Python file in the isolated project runner.</p>
               </div>
             )}
           </div>
@@ -302,7 +293,7 @@ Cloud Agent session (type: session start):
               <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-500 font-mono text-xs flex items-start gap-2.5">
                 <AlertCircle size={16} className="shrink-0 mt-0.5" />
                 <div className="space-y-1">
-                  <div className="font-semibold">Python Execution Error</div>
+                  <div className="font-semibold">Project Execution / Validation Error</div>
                   <div className="whitespace-pre-wrap opacity-90">{executionError}</div>
                 </div>
               </div>

@@ -8,11 +8,14 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../lib/firebase';
 import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
+import { useAuthStore } from '../../store/authStore';
 import { ConsentService } from '../../services/consentService';
+import { ConversationService } from '../../services/conversationService';
 import { runPythonCode } from '../../services/pythonRunner';
 import { flattenFileTree } from '../../lib/utils';
-import type { AIContextItem, FileNode } from '../../types';
+import type { AIContextItem, ChangeSet, FileNode } from '../../types';
 import { ModelSelector } from '../ai/ModelSelector';
+import { AgentSelector } from '../ai/AgentSelector';
 import { AGENT_SYSTEM_PROMPT, diffRows, diffStats, parseSegments, type Segment } from './chatParsing';
 import { filesToMap, exportZip, parseStoredFiles } from './projectIO';
 import { sandboxFs } from './workspaceFs';
@@ -32,24 +35,26 @@ interface ThreadMessage {
   checkpoint?: FileNode[];
   /** model messages: path -> status, plus the file content before the change was accepted */
   changes?: Record<string, { status: ChangeStatus; before?: string | null }>;
+  changeSet?: ChangeSet;
+  agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   error?: string;
   cancelled?: boolean;
 }
 
 const MAX_CHECKPOINTS = 12;
-const storageKey = (id: string) => `float_chat_${id}`;
+const storageKey = (id: string, ownerId: string) => `float_chat_${ownerId}_${id}`;
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-function loadThread(id: string): ThreadMessage[] {
+function loadThread(id: string, ownerId: string): ThreadMessage[] {
   try {
-    const raw = localStorage.getItem(storageKey(id));
+    const raw = localStorage.getItem(storageKey(id, ownerId));
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 
-function saveThread(id: string, messages: ThreadMessage[]) {
+function saveThread(id: string, ownerId: string, messages: ThreadMessage[]) {
   // keep only the newest checkpoints to stay within localStorage limits
   let kept = 0;
   const trimmed = [...messages].reverse().map((m) => {
@@ -58,7 +63,7 @@ function saveThread(id: string, messages: ThreadMessage[]) {
     return kept > MAX_CHECKPOINTS ? { ...m, checkpoint: undefined } : m;
   }).reverse();
   try {
-    localStorage.setItem(storageKey(id), JSON.stringify(trimmed));
+    localStorage.setItem(storageKey(id, ownerId), JSON.stringify(trimmed));
   } catch (e) {
     console.warn('Chat history too large to store locally', e);
   }
@@ -76,16 +81,27 @@ function fileContent(path: string): string | undefined {
   return filesToMap(useIDEStore.getState().files)[path];
 }
 
+function isSafeWorkspacePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/');
+  return !!normalized && !normalized.startsWith('/') && !/^[a-z]:/i.test(normalized) &&
+    !normalized.includes('\0') && !normalized.split('/').some((part) => part === '..') &&
+    !/(^|\/)\.env(?:\/|\.|$)|(^|\/)(id_rsa|id_ed25519)(?:\.|$)|\.(pem|key|p12|pfx|keystore)$/i.test(normalized);
+}
+
 /* ----------------------------------------------------------------------------------------- */
 
 export function ChatThread({ chatId }: { chatId: string }) {
+  const ownerId = useAuthStore((s) => s.user?.uid);
+  const messagesOwnerId = useRef(ownerId);
+  const messagesBelongToPreviousAccount = messagesOwnerId.current !== ownerId;
   const projectId = useIDEStore((s) => s.projectId);
   const projectName = useIDEStore((s) => s.projectName);
   const files = useIDEStore((s) => s.files);
-  const { selectedModel, setSelectedModel } = useAIStore();
+  const { selectedModel, setSelectedModel, selectedAgent, setSelectedAgent, agents } = useAIStore();
   const [loadingProject, setLoadingProject] = useState(projectId !== chatId);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ThreadMessage[]>(() => loadThread(chatId));
+  const [messages, setMessages] = useState<ThreadMessage[]>(() => ownerId ? loadThread(chatId, ownerId) : []);
+  const [historyLoading, setHistoryLoading] = useState(() => !ownerId || loadThread(chatId, ownerId).length === 0);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [drawer, setDrawer] = useState<'files' | 'terminal' | null>(null);
@@ -101,8 +117,16 @@ export function ChatThread({ chatId }: { chatId: string }) {
   // Load the project when opening /chat/:id directly (refresh / shared link)
   useEffect(() => {
     let cancelled = false;
-    setMessages(loadThread(chatId));
+    abortRef.current?.abort();
+    messagesOwnerId.current = ownerId;
+    setLoadError(null);
+    setMessages(ownerId ? loadThread(chatId, ownerId) : []);
+    setHistoryLoading(!ownerId || loadThread(chatId, ownerId).length === 0);
     startedRef.current = false;
+    if (!ownerId) {
+      setLoadingProject(false);
+      return () => { cancelled = true; };
+    }
     if (useIDEStore.getState().projectId === chatId) {
       setLoadingProject(false);
       return;
@@ -124,9 +148,77 @@ export function ChatThread({ chatId }: { chatId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [chatId]);
+  }, [chatId, ownerId, projectId]);
 
-  useEffect(() => saveThread(chatId, messages), [chatId, messages]);
+  useEffect(() => {
+    if (!messagesBelongToPreviousAccount && ownerId) saveThread(chatId, ownerId, messages);
+  }, [chatId, ownerId, messages, messagesBelongToPreviousAccount]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!ownerId) {
+      setMessages([]);
+      setHistoryLoading(false);
+      return () => { cancelled = true; };
+    }
+    const cached = loadThread(chatId, ownerId);
+    setMessages(cached);
+    if (cached.length) {
+      setHistoryLoading(false);
+      return () => { cancelled = true; };
+    }
+
+    setHistoryLoading(true);
+    void ConversationService.fetchCloudConversation(chatId)
+      .then((cloudMessages) => {
+        if (cancelled) return;
+        if (cloudMessages?.length) {
+          setMessages(cloudMessages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: message.content,
+            createdAt: message.timestamp || Date.now(),
+            checkpoint: message.checkpoint,
+            changes: message.changes,
+            changeSet: message.changeSet,
+            agentEvents: message.agentEvents,
+            error: message.error,
+            cancelled: message.cancelled,
+          })));
+        }
+      })
+      .catch((error) => console.warn('Could not restore cloud chat history:', error))
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [chatId, ownerId, projectId]);
+
+  useEffect(() => {
+    if (messagesBelongToPreviousAccount || !ownerId || historyLoading || streaming || messages.length === 0) return;
+    const timer = setTimeout(() => {
+      const persisted = messages.slice(-24).map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        timestamp: message.createdAt,
+        changes: message.changes,
+        changeSet: message.changeSet,
+        agentEvents: message.agentEvents,
+        error: message.error,
+        cancelled: message.cancelled,
+      }));
+      void ConversationService.syncToCloud({
+        id: chatId,
+        projectId: chatId,
+        title: projectName || 'Untitled Chat',
+        createdAt: persisted[0]?.timestamp || Date.now(),
+        updatedAt: Date.now(),
+        messages: persisted,
+      });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [chatId, ownerId, projectName, messages, streaming, historyLoading, messagesBelongToPreviousAccount]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: streaming ? 'auto' : 'smooth' });
@@ -142,8 +234,10 @@ export function ChatThread({ chatId }: { chatId: string }) {
   const send = useCallback(
     async (text: string, opts: { retryOf?: string } = {}) => {
       const prompt = text.trim();
-      if (!prompt || streaming) return;
+      if (!prompt || streaming || historyLoading) return;
       const user = auth.currentUser;
+      const activeAgent = agents.find((agent) => agent.id === selectedAgent);
+      const useToolAgent = activeAgent?.mode === 'agent' || activeAgent?.mode === 'edit';
       const history = opts.retryOf ? messages.slice(0, messages.findIndex((m) => m.id === opts.retryOf)) : messages;
       const userMsg: ThreadMessage = {
         id: uid(),
@@ -173,13 +267,12 @@ export function ChatThread({ chatId }: { chatId: string }) {
           path,
           content,
         }));
-        const fileIndex = `Workspace "${useIDEStore.getState().projectName || 'Project'}" files:\n${Object.keys(map).map((p) => `- ${p}`).join('\n') || '(empty)'}\n\n`;
         const requestMessages = [
           ...base.filter((m) => m.content && !m.error).map((m) => ({ role: m.role, parts: [{ text: m.content }] })),
-          { role: 'user', parts: [{ text: fileIndex + prompt }] },
+          { role: 'user', parts: [{ text: prompt }] },
         ];
         abortRef.current = new AbortController();
-        const res = await fetch('/api/ai/chat', {
+        const res = await fetch(useToolAgent ? '/api/ai/agent' : '/api/ai/chat', {
           method: 'POST',
           signal: abortRef.current.signal,
           headers: {
@@ -187,11 +280,22 @@ export function ChatThread({ chatId }: { chatId: string }) {
             Authorization: `Bearer ${token}`,
             'X-Float-Data-Sharing': ConsentService.isSharingAllowed() ? 'true' : 'false',
           },
-          body: JSON.stringify({
+          body: JSON.stringify(useToolAgent ? {
+            prompt: `${prompt}${contextItems.filter((item) => item.type === 'attachment').map((item) => `\n\n--- ${item.path} ---\n${item.content}`).join('')}`,
+            conversationHistory: base.filter((message) => message.content && !message.error)
+              .slice(-12)
+              .map((message) => ({ role: message.role, content: message.content })),
+            virtualFiles: flattenFileTree(useIDEStore.getState().files),
+            model: selectedModel,
+            agentId: selectedAgent,
+            systemInstruction: activeAgent?.systemInstructions,
+            projectName: useIDEStore.getState().projectName || 'Project Workspace',
+            projectId: chatId,
+          } : {
             messages: requestMessages,
             model: selectedModel,
             reasoningEffort: useAIStore.getState().selectedEffort,
-            systemInstruction: AGENT_SYSTEM_PROMPT,
+            systemInstruction: activeAgent?.systemInstructions || AGENT_SYSTEM_PROMPT,
             contextItems,
             projectName: useIDEStore.getState().projectName || 'Project Workspace',
             projectId: chatId,
@@ -206,18 +310,34 @@ export function ChatThread({ chatId }: { chatId: string }) {
         const decoder = new TextDecoder();
         let buffer = '';
         let full = '';
+        const agentEvents: NonNullable<ThreadMessage['agentEvents']> = [];
+        let finalChangeSet: ChangeSet | undefined;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split('\n\n');
+          const events = buffer.split(/\r?\n\r?\n/);
           buffer = events.pop() || '';
           for (const evt of events) {
-            const line = evt.split('\n').find((l) => l.startsWith('data:'));
+            const line = evt.split(/\r?\n/).find((l) => l.startsWith('data:'));
             if (!line) continue;
             try {
               const data = JSON.parse(line.slice(5).trim());
-              if (data.type === 'delta' && data.text) {
+              if (useToolAgent && data.type === 'event') {
+                const event = data.data || {};
+                agentEvents.push(event);
+                patch({ agentEvents: [...agentEvents] });
+                if (event.type === 'failed') throw new Error(event.message || 'Agent execution failed.');
+              } else if (useToolAgent && data.type === 'delta') {
+                full += data.data?.text || data.text || '';
+                patch({ content: full, agentEvents: [...agentEvents] });
+              } else if (useToolAgent && data.type === 'result') {
+                finalChangeSet = data.data?.changeSet;
+                // Keep code proposals structured. Re-encoding file contents as fenced
+                // Markdown corrupts files that themselves contain triple backticks.
+                full = data.data?.text || full;
+                patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents] });
+              } else if (data.type === 'delta' && data.text) {
                 full += data.text;
                 patch({ content: full });
               } else if (data.type === 'done') {
@@ -234,7 +354,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
         }
         const pending: Record<string, { status: ChangeStatus }> = {};
         for (const seg of parseSegments(full)) if (seg.kind !== 'text') pending[seg.path] = { status: 'pending' };
-        patch({ content: full || '(No response)', changes: pending });
+        patch({ content: full || '(No response)', changes: pending, changeSet: finalChangeSet, agentEvents: agentEvents.length ? agentEvents : undefined });
       } catch (e: any) {
         if (e?.name === 'AbortError') patch({ cancelled: true });
         else patch({ error: e?.message || String(e) });
@@ -243,19 +363,19 @@ export function ChatThread({ chatId }: { chatId: string }) {
         setStreaming(false);
       }
     },
-    [messages, streaming, selectedModel, chatId],
+    [messages, streaming, historyLoading, selectedModel, selectedAgent, agents, chatId],
   );
 
   // Auto-send the prompt typed on the home screen
   useEffect(() => {
-    if (loadingProject || startedRef.current) return;
+    if (loadingProject || historyLoading || startedRef.current) return;
     const initial = useIDEStore.getState().initialPrompt;
     if (initial && useIDEStore.getState().projectId === chatId) {
       startedRef.current = true;
       useIDEStore.getState().setInitialPrompt(null);
       void send(initial);
     }
-  }, [loadingProject, chatId, send]);
+  }, [loadingProject, historyLoading, chatId, send]);
 
   /* ---------------------------- change review ---------------------------- */
 
@@ -266,8 +386,29 @@ export function ChatThread({ chatId }: { chatId: string }) {
 
   const applySegment = (msgId: string, seg: Segment) => {
     if (seg.kind === 'text') return;
+    if (!isSafeWorkspacePath(seg.path)) {
+      setMessages((prev) => prev.map((message) => message.id === msgId
+        ? { ...message, error: `Refused an unsafe workspace path: ${seg.path}` }
+        : message));
+      return;
+    }
     const fs = sandboxFs();
     const before = fileContent(seg.path);
+    const message = messages.find((item) => item.id === msgId);
+    const proposalChange = message?.changeSet?.changes.find((change) => change.path === seg.path);
+    if (proposalChange?.operation === 'create' && before !== undefined) {
+      setMessages((prev) => prev.map((item) => item.id === msgId
+        ? { ...item, error: `Cannot create ${seg.path}: a file with that path already exists.` }
+        : item));
+      return;
+    }
+    if ((proposalChange?.operation === 'modify' || proposalChange?.operation === 'delete') &&
+        proposalChange.originalContent !== undefined && before !== proposalChange.originalContent) {
+      setMessages((prev) => prev.map((item) => item.id === msgId
+        ? { ...item, error: `Cannot apply ${seg.path}: it changed after this proposal was generated. Ask the agent to review the latest file.` }
+        : item));
+      return;
+    }
     if (seg.kind === 'delete') fs.remove(seg.path);
     else fs.write(seg.path, seg.content);
     setChange(msgId, seg.path, 'accepted', before === undefined ? null : before);
@@ -391,7 +532,11 @@ export function ChatThread({ chatId }: { chatId: string }) {
         {/* messages */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-5">
-            {messages.length === 0 && (
+            {historyLoading ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-xs text-slate-400 dark:text-[#8B949E]">
+                <Loader2 size={13} className="animate-spin" /> Restoring conversation…
+              </div>
+            ) : messages.length === 0 && (
               <div className="text-center text-sm text-slate-500 dark:text-[#8B949E] py-16">
                 Ask FLOAT to build, fix bugs or explain code. Mention files with <code className="font-mono">@</code>, use <code className="font-mono">/</code> for commands.
               </div>
@@ -456,7 +601,8 @@ export function ChatThread({ chatId }: { chatId: string }) {
                 value={input}
                 onChange={(e) => onInputChange(e.target.value, e.target.selectionStart)}
                 onKeyDown={onKeyDown}
-                placeholder="Ask FLOAT to build, fix bugs, explore... (@ to mention files)"
+                disabled={historyLoading}
+                placeholder={historyLoading ? 'Restoring conversation…' : 'Ask FLOAT to build, fix bugs, explore... (@ to mention files)'}
                 rows={1}
                 className="w-full bg-transparent px-4 pt-3 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#6E7681] focus:outline-none resize-none"
               />
@@ -470,6 +616,15 @@ export function ChatThread({ chatId }: { chatId: string }) {
                       setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}${Object.keys(added).slice(0, 3).map((p) => `@${p}`).join(' ')} `);
                     }}
                   />
+                  <AgentSelector
+                    activeAgentId={selectedAgent}
+                    onAgentChange={(id) => {
+                      setSelectedAgent(id);
+                      const agent = agents.find((item) => item.id === id);
+                      if (agent?.defaultModel) setSelectedModel(agent.defaultModel);
+                    }}
+                    onAgentManagerOpen={() => document.dispatchEvent(new Event('open-agent-manager'))}
+                  />
                   <ModelSelector activeModelId={selectedModel} onModelChange={setSelectedModel} placement="top" variant="composer" />
                 </div>
                 {streaming ? (
@@ -479,7 +634,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
                 ) : (
                   <button
                     onClick={() => void send(input)}
-                    disabled={!input.trim()}
+                    disabled={!input.trim() || historyLoading}
                     aria-label="Send"
                     className="w-8 h-8 rounded-full flex items-center justify-center bg-slate-900 text-white dark:bg-white dark:text-black disabled:bg-slate-100 disabled:text-slate-300 dark:disabled:bg-white/5 dark:disabled:text-[#6E7681] cursor-pointer disabled:cursor-not-allowed"
                   >
@@ -531,12 +686,36 @@ function AssistantMessage({
   onReject: (seg: Segment) => void;
   onUndo: (seg: Segment) => void;
 }) {
-  const segments = useMemo(() => parseSegments(msg.content), [msg.content]);
+  const segments = useMemo(() => {
+    if (!msg.changeSet?.changes.length) return parseSegments(msg.content);
+    const prose = msg.content.trim()
+      ? [{ kind: 'text' as const, text: msg.content }]
+      : [];
+    const proposed = msg.changeSet.changes.map((change): Segment => change.operation === 'delete'
+      ? { kind: 'delete', path: change.path }
+      : { kind: 'file', path: change.path, lang: change.path.split('.').pop() || '', content: change.proposedContent ?? '', complete: true });
+    return [...prose, ...proposed];
+  }, [msg.content, msg.changeSet]);
   const edits = segments.filter((s) => s.kind !== 'text') as Exclude<Segment, { kind: 'text' }>[];
   const pending = edits.filter((s) => (msg.changes?.[s.path]?.status ?? 'pending') === 'pending' && (s.kind === 'delete' || s.complete));
 
   return (
     <div className="flex flex-col gap-2.5">
+      {!!msg.agentEvents?.length && (
+        <div className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50/70 dark:bg-white/[0.02] px-3 py-2">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 dark:text-[#8B949E]">
+            {streaming ? <Loader2 size={11} className="animate-spin text-blue-500" /> : <Check size={11} className="text-emerald-500" />}
+            Agent activity · {msg.agentEvents.length} step{msg.agentEvents.length === 1 ? '' : 's'}
+          </div>
+          <div className="flex flex-col gap-1">
+            {msg.agentEvents.slice(-4).map((event, index) => (
+              <div key={`${index}-${event.message}`} className="truncate text-[11px] text-slate-500 dark:text-[#8B949E]">
+                {event.message || event.action || event.type || 'Working…'}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {segments.length === 0 && streaming && (
         <div className="flex items-center gap-2 text-xs text-slate-400">
           <Loader2 size={12} className="animate-spin" /> Thinking…
@@ -783,7 +962,7 @@ function MiniTerminal() {
         const res = await runPythonCode(code ?? '', Object.entries(map).map(([path, content]) => ({ path, content })));
         setLines((l) => [...l, { type: res.success ? 'out' : 'err', text: (res.success ? res.output : res.error) || '' }]);
       } else if (!active) {
-        setLines((l) => [...l, { type: 'err', text: 'Shell commands need a Cloud Agent session. Click "Start session" below.' }]);
+        setLines((l) => [...l, { type: 'err', text: 'Shell commands need the browser worker. Enable it below to continue.' }]);
       } else if (isShellCommand(c) || c === 'help') {
         const { output, code } = await runShell(c, sandboxFs());
         if (output) setLines((l) => [...l, { type: code === 0 ? 'out' : 'err', text: output }]);
@@ -801,7 +980,7 @@ function MiniTerminal() {
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[#0A0A0A] text-[#C9D1D9] font-mono text-[11px]">
       <div className="flex-1 overflow-y-auto p-3 space-y-1">
-        <div className="text-[#6E7681]">{active ? 'Cloud sandbox ready. Try: npm test, node index.js, ls, help. Python: python main.py' : 'Python runs locally (python main.py). Start a cloud session for node / npm test / shell.'}</div>
+        <div className="text-[#6E7681]">{active ? 'Browser worker ready. Try: npm test, node index.js, ls, help. Python: python main.py' : 'Python runs in Pyodide (python main.py). Enable the browser worker for node and supported shell commands.'}</div>
         {lines.map((l, i) => (
           <div key={i} className={`whitespace-pre-wrap break-words ${l.type === 'cmd' ? 'text-white' : l.type === 'err' ? 'text-rose-400' : ''}`}>
             {l.type === 'cmd' ? `$ ${l.text}` : l.text}

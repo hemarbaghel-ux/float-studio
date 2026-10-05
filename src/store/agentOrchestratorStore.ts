@@ -1,13 +1,14 @@
 import { create } from 'zustand';
 import { AgentTask, AgentEvent, AgentApproval } from '../types/agents';
 import { v4 as uuidv4 } from 'uuid';
+import { apiFetch } from '../services/api';
 
 interface AgentOrchestratorState {
   tasks: AgentTask[];
   events: AgentEvent[];
   approvals: AgentApproval[];
   
-  createTask: (task: Omit<AgentTask, 'id' | 'status' | 'progress' | 'createdAt' | 'updatedAt'>) => void;
+  createTask: (task: Pick<AgentTask, 'name' | 'description' | 'assignedAgentId' | 'modelId' | 'context'> & { projectId: string; requestedChecks?: AgentTask['requestedChecks'] }) => Promise<void>;
   updateTaskStatus: (taskId: string, status: AgentTask['status'], progress?: number) => void;
   pauseTask: (taskId: string) => void;
   resumeTask: (taskId: string) => void;
@@ -18,6 +19,7 @@ interface AgentOrchestratorState {
   resolveApproval: (approvalId: string, status: 'approved' | 'denied') => void;
   fetchTasks: () => Promise<void>;
   fetchEvents: (taskId: string) => Promise<void>;
+  receiveTaskEvent: (taskId: string, event: AgentEvent) => void;
 }
 
 export const useAgentOrchestratorStore = create<AgentOrchestratorState>((set, get) => ({
@@ -25,17 +27,17 @@ export const useAgentOrchestratorStore = create<AgentOrchestratorState>((set, ge
   events: [],
   approvals: [],
 
-  createTask: (taskData) => set((state) => {
-    const newTask: AgentTask = {
-      ...taskData,
-      id: uuidv4(),
-      status: 'QUEUED',
-      progress: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    return { tasks: [...state.tasks, newTask] };
-  }),
+  createTask: async (taskData) => {
+    const response = await apiFetch('/api/agents/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(taskData),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not create agent task.');
+    const task = result as AgentTask;
+    set((state) => ({ tasks: [task, ...state.tasks.filter((item) => item.id !== task.id)] }));
+  },
 
   updateTaskStatus: (taskId, status, progress) => set((state) => ({
     tasks: state.tasks.map(t => 
@@ -46,7 +48,7 @@ export const useAgentOrchestratorStore = create<AgentOrchestratorState>((set, ge
   })),
 
   pauseTask: (taskId) => {
-    fetch(`/api/agents/tasks/${taskId}/pause`, { method: 'POST' }).catch(console.error);
+    apiFetch(`/api/agents/tasks/${taskId}/pause`, { method: 'POST' }).catch(console.error);
     set((state) => ({
       tasks: state.tasks.map(t => 
         t.id === taskId && ['QUEUED', 'PLANNING', 'INSPECTING', 'EXECUTING'].includes(t.status)
@@ -57,7 +59,7 @@ export const useAgentOrchestratorStore = create<AgentOrchestratorState>((set, ge
   },
 
   resumeTask: (taskId) => {
-    fetch(`/api/agents/tasks/${taskId}/resume`, { method: 'POST' }).catch(console.error);
+    apiFetch(`/api/agents/tasks/${taskId}/resume`, { method: 'POST' }).catch(console.error);
     set((state) => ({
       tasks: state.tasks.map(t => 
         t.id === taskId && t.status === 'PAUSED'
@@ -68,7 +70,7 @@ export const useAgentOrchestratorStore = create<AgentOrchestratorState>((set, ge
   },
 
   cancelTask: (taskId) => {
-    fetch(`/api/agents/tasks/${taskId}/cancel`, { method: 'POST' }).catch(console.error);
+    apiFetch(`/api/agents/tasks/${taskId}/cancel`, { method: 'POST' }).catch(console.error);
     set((state) => ({
       tasks: state.tasks.map(t => 
         t.id === taskId && !['COMPLETED', 'FAILED'].includes(t.status)
@@ -92,7 +94,7 @@ export const useAgentOrchestratorStore = create<AgentOrchestratorState>((set, ge
 
   fetchTasks: async () => {
     try {
-      const res = await fetch('/api/agents/tasks');
+      const res = await apiFetch('/api/agents/tasks');
       const data = await res.json();
       set({ tasks: data });
     } catch (err) {
@@ -102,7 +104,7 @@ export const useAgentOrchestratorStore = create<AgentOrchestratorState>((set, ge
 
   fetchEvents: async (taskId) => {
     try {
-      const res = await fetch(`/api/agents/tasks/${taskId}/events`);
+      const res = await apiFetch(`/api/agents/tasks/${taskId}/events`);
       const data = await res.json();
       set(state => {
         const existingIds = new Set(state.events.map(e => e.id));
@@ -112,5 +114,17 @@ export const useAgentOrchestratorStore = create<AgentOrchestratorState>((set, ge
     } catch (err) {
       console.error(err);
     }
-  }
+  },
+
+  receiveTaskEvent: (taskId, event) => set(state => {
+    const existing = state.events.some(item => item.id === event.id);
+    return {
+      events: existing ? state.events : [...state.events, event],
+      tasks: state.tasks.map(task => task.id === taskId ? {
+        ...task,
+        lastEvent: { id: event.id, type: String(event.type), message: String(event.message || ''), timestamp: event.timestamp },
+        updatedAt: Math.max(task.updatedAt, event.timestamp),
+      } : task),
+    };
+  }),
 }));

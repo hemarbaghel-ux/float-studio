@@ -218,8 +218,8 @@ service cloud.firestore {
     }
 
     match /benchmarks/{benchmarkId} {
-      allow read: if isSignedIn();
-      allow list: if isSignedIn();
+      allow read: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() &&
                     isValidId(benchmarkId) &&
                     isValidBenchmark(incoming()) &&
@@ -234,8 +234,7 @@ service cloud.firestore {
     }
 
     match /evalReviews/{reviewId} {
-      allow read: if isSignedIn();
-      allow list: if isSignedIn();
+      allow read, list: if isSignedIn() && existing().ownerId == request.auth.uid;
       allow create: if isSignedIn() &&
                     isValidId(reviewId) &&
                     isValidEvalReview(incoming()) &&

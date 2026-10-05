@@ -10,13 +10,30 @@ export interface AgentTask {
   progress: number; // 0-100
   createdAt: number;
   updatedAt: number;
-  dependencies: string[]; // Task IDs
+  dependencies?: string[]; // Task IDs
   parentTaskId?: string;
+  projectId?: string;
+  ownerId?: string;
   result?: any;
+  github?: {
+    repository?: string;
+    branch?: string;
+    baseBranch?: string;
+    baseSha?: string;
+    commitSha?: string;
+    commitUrl?: string;
+    publishedAt?: number;
+    pullRequest?: { number?: number; title?: string; state?: string; url?: string; draft?: boolean; merged?: boolean; mergeable?: boolean | null; reviewState?: string; headSha?: string; base?: string; head?: string } | null;
+  };
   error?: string;
+  requestedChecks?: Array<'test' | 'lint' | 'typecheck' | 'build'>;
+  lastEvent?: { id: string; type: string; message: string; timestamp: number };
   context: {
-    files: string[];
-    objectives: string[];
+    files?: Array<{ path: string; content: string; name?: string; type?: string }>;
+    objectives?: string[];
+    workspaceSnapshotId?: string;
+    sourceProjectUpdatedAt?: number;
+    sourceProjectName?: string;
   };
 }
 

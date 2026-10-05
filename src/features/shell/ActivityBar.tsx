@@ -1,5 +1,5 @@
 import React from 'react';
-import { Files, Search, Settings, MessageSquare, Terminal, Bot, BarChart2, ShieldAlert, Cpu, Sun, Moon, CheckCircle2 } from 'lucide-react';
+import { Files, Search, Settings, MessageSquare, Terminal, Bot, BarChart2, ShieldAlert, Cpu, Sun, Moon, CheckCircle2, GitBranch } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { cn } from '../../lib/utils';
 import { FloatLogo } from '../../components/FloatLogo';
@@ -45,6 +45,16 @@ export function ActivityBar() {
             setActiveSidebarView('search');
           }} 
           title="Search" 
+        />
+        <ActivityIcon
+          icon={GitBranch}
+          isActive={leftSidebarOpen && activeSidebarView === 'source-control'}
+          onClick={() => {
+            if (!leftSidebarOpen) toggleLeftSidebar();
+            else if (activeSidebarView === 'source-control') toggleLeftSidebar();
+            setActiveSidebarView('source-control');
+          }}
+          title="Source Control"
         />
       </div>
       

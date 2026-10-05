@@ -18,6 +18,8 @@ import { SettingsModal } from '../settings/SettingsModal';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
 import { ModelSelector } from '../ai/ModelSelector';
+import { AgentSelector } from '../ai/AgentSelector';
+import { AgentManagerModal } from '../ai/AgentManagerModal';
 import { ChatList } from '../float/ChatList';
 import { ChatThread } from '../float/ChatThread';
 import { AutomationsPanel } from '../float/AutomationsPanel';
@@ -40,6 +42,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   
   // Chats list & search
@@ -137,6 +140,12 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    const openAgentManager = () => setShowAgentManager(true);
+    document.addEventListener('open-agent-manager', openAgentManager);
+    return () => document.removeEventListener('open-agent-manager', openAgentManager);
+  }, []);
 
   useEffect(() => {
     if (models.length === 0) setModels(INITIAL_MODELS);
@@ -688,6 +697,15 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                         placement="auto"
                         variant="composer"
                       />
+                      <AgentSelector
+                        activeAgentId={selectedAgent}
+                        onAgentChange={(id) => {
+                          setSelectedAgent(id);
+                          const agent = agents.find((item) => item.id === id);
+                          if (agent?.defaultModel) setSelectedModel(agent.defaultModel);
+                        }}
+                        onAgentManagerOpen={() => document.dispatchEvent(new Event('open-agent-manager'))}
+                      />
                     </div>
 
                     <button
@@ -743,6 +761,9 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+      {showAgentManager && (
+        <AgentManagerModal onClose={() => setShowAgentManager(false)} />
       )}
     </div>
   );

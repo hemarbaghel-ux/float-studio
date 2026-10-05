@@ -19,10 +19,12 @@ export function normalizePath(p: string) {
 
 const BINARY = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|woff2?|ttf|eot|mp[34]|mov|wasm|lock|exe|dll|so)$/i;
 const SKIP = /(^|\/)(node_modules|\.git|dist|build|\.next|\.cache|coverage|__pycache__|\.venv|venv)(\/|$)/;
+const SENSITIVE = /(^|\/)\.env(?:\/|\.|$)|(^|\/)(id_rsa|id_ed25519)(?:\.|$)|\.(pem|key|p12|pfx|keystore)$/i;
 export const MAX_IMPORT_FILES = 300;
+export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 
 export function isImportable(path: string, size: number) {
-  return !BINARY.test(path) && !SKIP.test(path) && size < 400_000;
+  return !BINARY.test(path) && !SKIP.test(path) && !SENSITIVE.test(path) && size < 400_000;
 }
 
 /** Map of path -> content for the sandbox / AI context. */
@@ -65,11 +67,18 @@ export async function importZip(file: File): Promise<Record<string, string>> {
   const tops = new Set(entries.map((e) => e.name.split('/')[0]));
   const strip = tops.size === 1 && entries.every((e) => e.name.includes('/'));
   const out: Record<string, string> = {};
+  let totalSize = 0;
   for (const e of entries) {
+    if (/(^|\/)\.\.(\/|$)/.test(e.name) || e.name.includes('\0')) continue;
     const p = normalizePath(strip ? e.name.split('/').slice(1).join('/') : e.name);
-    if (!p || !isImportable(p, 0)) continue;
+    if (!p || !isImportable(p, Number((e as any)._data?.uncompressedSize || 0))) continue;
     if (Object.keys(out).length >= MAX_IMPORT_FILES) break;
-    out[p] = await e.async('string');
+    const content = await e.async('string');
+    const size = new TextEncoder().encode(content).byteLength;
+    if (!isImportable(p, size)) continue;
+    if (totalSize + size > MAX_IMPORT_BYTES) throw new Error('Repository exceeds the 10 MB text import limit. Import a smaller folder or branch.');
+    totalSize += size;
+    out[p] = content;
   }
   return out;
 }
@@ -79,9 +88,13 @@ export async function importFileList(list: FileList | File[]): Promise<Record<st
   const rels = arr.map((f) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name);
   const strip = rels.length > 0 && rels.every((r) => r.includes('/')) && new Set(rels.map((r) => r.split('/')[0])).size === 1;
   const out: Record<string, string> = {};
+  let totalSize = 0;
   for (let i = 0; i < arr.length && Object.keys(out).length < MAX_IMPORT_FILES; i++) {
+    if (/(^|\/)\.\.(\/|$)/.test(rels[i]) || rels[i].includes('\0')) continue;
     const rel = normalizePath(strip ? rels[i].split('/').slice(1).join('/') : rels[i]);
     if (!rel || !isImportable(rel, arr[i].size)) continue;
+    totalSize += arr[i].size;
+    if (totalSize > MAX_IMPORT_BYTES) throw new Error('Folder exceeds the 10 MB text import limit. Choose a smaller folder.');
     out[rel] = await arr[i].text();
   }
   return out;

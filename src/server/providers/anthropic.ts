@@ -1,4 +1,6 @@
 import { AIProviderAdapter, AIProviderRequest, AIProviderResponse } from './base';
+import { providerRequestSignal } from './requestSignal';
+import { PortableAgentRunner } from '../agent/portableAgentRunner';
 
 export function normalizeAnthropicError(error: any): Error {
   const msg = error?.message || String(error);
@@ -107,7 +109,8 @@ export class AnthropicAdapter implements AIProviderAdapter {
           'x-api-key': process.env.ANTHROPIC_API_KEY!,
           'anthropic-version': '2023-06-01'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: providerRequestSignal()
       });
 
       if (!res.ok) {
@@ -153,7 +156,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
           'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify(payload),
-        signal
+        signal: providerRequestSignal(signal)
       });
 
       if (!res.ok) {
@@ -204,17 +207,17 @@ export class AnthropicAdapter implements AIProviderAdapter {
   }
 
   async runAgentLoop(
-    _req: any,
-    _res: any,
+    req: any,
+    res: any,
     model: string,
-    _prompt: string,
-    _virtualFiles: any[]
+    prompt: string,
+    virtualFiles: any[]
   ): Promise<void> {
     if (!this.isConfigured()) {
       throw new Error(
         `Anthropic is not configured on the FLOAT server. To run agents with "${model}", configure ANTHROPIC_API_KEY.`
       );
     }
-    throw new Error('Anthropic autonomous agent loops are currently in preview. Use Gemini 3.1 Flash Lite for full tool execution.');
+    return PortableAgentRunner.run('anthropic', req, res, model, prompt, virtualFiles, process.env.ANTHROPIC_API_KEY!);
   }
 }

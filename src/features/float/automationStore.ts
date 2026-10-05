@@ -14,6 +14,8 @@ export interface AutomationRun {
 
 export interface Automation {
   id: string;
+  /** Firebase account that owns this browser-local automation. */
+  ownerId?: string;
   name: string;
   prompt: string;
   trigger: TriggerKind;
@@ -28,6 +30,10 @@ export interface Automation {
   lastRunAt?: number;
   nextRunAt?: number;
   runs: AutomationRun[];
+}
+
+export function isAutomationOwnedBy(automation: Pick<Automation, 'ownerId'>, ownerId?: string | null): boolean {
+  return Boolean(ownerId && automation.ownerId && automation.ownerId === ownerId);
 }
 
 export function computeNextRun(a: Pick<Automation, 'trigger' | 'everyMinutes' | 'dailyAt' | 'enabled'>, from = Date.now()): number | undefined {

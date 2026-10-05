@@ -133,6 +133,7 @@ export function ModelSelector({
     if (model.id === 'o1-mini') return 'Fast';
     if (model.id === 'gpt-4.5-preview') return 'Frontier';
     if (model.id === 'grok-2-1212') return 'High Fast';
+    if (model.id === 'grok-4.7') return 'High Fast';
     if (model.id === 'grok-2-vision-1212') return 'Vision';
     if (model.id === 'grok-beta') return 'Fast';
     if (model.id === 'deepseek-chat') return 'Fast';

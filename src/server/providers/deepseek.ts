@@ -1,4 +1,5 @@
 import { AIProviderAdapter, AIProviderRequest, AIProviderResponse } from './base';
+import { providerRequestSignal } from './requestSignal';
 
 export function normalizeDeepSeekError(error: any): Error {
   const msg = error?.message || String(error);
@@ -80,7 +81,8 @@ export class DeepSeekAdapter implements AIProviderAdapter {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: providerRequestSignal()
       });
 
       if (!res.ok) {
@@ -121,7 +123,7 @@ export class DeepSeekAdapter implements AIProviderAdapter {
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
         },
         body: JSON.stringify(payload),
-        signal
+        signal: providerRequestSignal(signal)
       });
 
       if (!res.ok) {

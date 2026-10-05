@@ -1,5 +1,5 @@
 /**
- * Float cloud sandbox: executes JavaScript from the virtual codebase inside an isolated
+ * Float browser worker: executes JavaScript from the virtual codebase inside an isolated
  * Web Worker with a CommonJS loader, a Jest-compatible test runner, and a small POSIX-ish shell.
  */
 import { normalizePath } from './projectIO';
@@ -185,7 +185,7 @@ export interface ShellFs {
   remove: (p: string) => void;
 }
 
-const HELP = `Float cloud sandbox — supported commands:
+const HELP = `FLOAT browser worker — supported commands:
   ls [dir]  tree  cat <file>  head/tail <file>  wc -l <file>  grep <pattern> [path]
   echo <text> [> file]  touch <file>  rm <file>  mkdir <dir>  pwd  clear
   node <file.js>  npm test | npm run test | npx jest | npx vitest run  npm run <script>`;
@@ -307,7 +307,7 @@ async function runOne(cmd: string, fs: ShellFs): Promise<{ output: string; code:
         if (script === 'float-test') return runOne('npm test', fs);
         return runOne(script, fs);
       }
-      if (/^(i|install|ci|add)\b/.test(sub)) return { output: `up to date, audited ${Object.keys(files).length} packages in 0.4s\n\nfound 0 vulnerabilities`, code: 0 };
+      if (/^(i|install|ci|add)\b/.test(sub)) return { output: 'Package installation is unavailable in the browser worker. Run this command in the isolated project terminal.', code: 1 };
       return { output: `${bin}: '${sub}' is not supported in the Float sandbox`, code: 1 };
     }
     default:
@@ -317,7 +317,7 @@ async function runOne(cmd: string, fs: ShellFs): Promise<{ output: string; code:
 
 const SHELL_BINS = new Set(['ls', 'tree', 'cat', 'head', 'tail', 'wc', 'grep', 'echo', 'touch', 'mkdir', 'rm', 'pwd', 'node', 'npm', 'npx', 'yarn', 'pnpm']);
 
-/** True when the command should be handled by the Float cloud sandbox shell (not Pyodide). */
+/** True when the command should be handled by the Float browser worker shell (not Pyodide). */
 export function isShellCommand(cmd: string) {
   const first = cmd.trim().split(/\s+/)[0];
   return SHELL_BINS.has(first) || cmd.includes('&&');

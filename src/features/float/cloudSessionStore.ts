@@ -13,7 +13,7 @@ export interface CloudSessionState {
   closeModal: () => void;
 }
 
-/** Cloud Agent session: unlocks the sandbox (node, npm test, shell) in the terminal and automations. */
+/** Local browser sandbox toggle for the workspace terminal. */
 export const useCloudSession = create<CloudSessionState>()(
   persist(
     (set) => ({

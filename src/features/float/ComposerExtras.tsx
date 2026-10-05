@@ -1,10 +1,37 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FileUp, FolderUp, Github, Loader2, Package, Paperclip, Plus, X, LayoutDashboard, Cpu, Bug, Wand2, TestTube2, FileText, SearchCode } from 'lucide-react';
 import { importFileList, importZip } from './projectIO';
+import { auth } from '../../lib/firebase';
 
 export type Attachments = Record<string, string>;
 
-/** "+" button: attach files, a folder, a .zip or a public GitHub repo to the new chat. */
+async function readRepositoryArchive(response: Response): Promise<Blob> {
+  const maxBytes = 20 * 1024 * 1024;
+  const announcedSize = Number(response.headers.get('content-length') || 0);
+  if (announcedSize > maxBytes) throw new Error('Repository archive exceeds the 20 MB download limit.');
+  if (!response.body) {
+    const blob = await response.blob();
+    if (blob.size > maxBytes) throw new Error('Repository archive exceeds the 20 MB download limit.');
+    return blob;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error('Repository archive exceeds the 20 MB download limit.');
+    }
+    chunks.push(value);
+  }
+  return new Blob(chunks, { type: 'application/zip' });
+}
+
+/** "+" button: attach files, a folder, a .zip or a GitHub repository to the new chat. */
 export function AttachMenu({ onAttach, disabled, dropDown }: { onAttach: (files: Attachments, label: string) => void; disabled?: boolean; dropDown?: boolean }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -50,9 +77,35 @@ export function AttachMenu({ onAttach, disabled, dropDown }: { onAttach: (files:
       const m = repo.trim().replace(/\.git$/, '').match(/(?:github\.com\/)?([\w.-]+)\/([\w.-]+)(?:\/tree\/([\w./-]+))?/);
       if (!m) throw new Error('Use owner/repo or a github.com URL.');
       const [, owner, name, ref] = m;
-      const res = await fetch(`https://api.github.com/repos/${owner}/${name}/zipball${ref ? `/${ref}` : ''}`);
-      if (!res.ok) throw new Error(res.status === 404 ? 'Repository not found (private repos need GitHub sync).' : `GitHub returned ${res.status}`);
-      const blob = await res.blob();
+      let blob: Blob | undefined;
+      const user = auth.currentUser;
+      if (user) {
+        const token = await user.getIdToken();
+        const branchQuery = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+        const connectedRes = await fetch(
+          `/api/integrations/github/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/archive${branchQuery}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (connectedRes.ok) {
+          blob = await readRepositoryArchive(connectedRes);
+        } else if (connectedRes.status === 401) {
+          const data = await connectedRes.json().catch(() => ({}));
+          throw new Error(data.error || 'Reconnect GitHub and try again.');
+        } else if (connectedRes.status !== 404) {
+          const data = await connectedRes.json().catch(() => ({}));
+          throw new Error(data.error || `GitHub import failed (HTTP ${connectedRes.status}).`);
+        }
+      }
+      if (!blob) {
+        const publicUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/zipball${ref ? `/${ref.split('/').map(encodeURIComponent).join('/')}` : ''}`;
+        const res = await fetch(publicUrl);
+        if (!res.ok) {
+          throw new Error(res.status === 404
+            ? 'Repository not found. Connect GitHub in Integrations to import a private repository.'
+            : `GitHub returned ${res.status}`);
+        }
+        blob = await readRepositoryArchive(res);
+      }
       const files = await importZip(new File([blob], `${name}.zip`));
       return [files, `${owner}/${name}`];
     });
@@ -79,7 +132,7 @@ export function AttachMenu({ onAttach, disabled, dropDown }: { onAttach: (files:
         <div className={`absolute left-0 ${dropDown ? 'top-full mt-2' : 'bottom-full mb-2'} z-40 w-64 rounded-xl border border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#141414] p-1 shadow-2xl`}>
           {showRepo ? (
             <div className="p-2">
-              <div className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-[#8B949E]">Public GitHub repository</div>
+              <div className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-[#8B949E]">GitHub repository</div>
               <input
                 autoFocus
                 value={repo}
@@ -100,7 +153,7 @@ export function AttachMenu({ onAttach, disabled, dropDown }: { onAttach: (files:
               <Item icon={FileUp} label="Upload files" hint="Text & code files" onClick={() => fileRef.current?.click()} />
               <Item icon={FolderUp} label="Upload folder" hint="Keeps folder structure" onClick={() => folderRef.current?.click()} />
               <Item icon={Package} label="Import .zip" hint="node_modules & binaries skipped" onClick={() => zipRef.current?.click()} />
-              <Item icon={Github} label="Import GitHub repo" hint="Public repositories" onClick={() => setShowRepo(true)} />
+              <Item icon={Github} label="Import GitHub repo" hint="Public or connected private repos" onClick={() => setShowRepo(true)} />
             </>
           )}
           {error && <div className="m-1 rounded-md bg-rose-50 dark:bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-600 dark:text-rose-400">{error}</div>}

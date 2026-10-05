@@ -81,6 +81,62 @@ async function getPyodide(onStatus?: (status: string) => void): Promise<any> {
 /**
  * Fallback lightweight Python execution engine in case CDN / WebAssembly is blocked
  */
+function evaluateFallbackValue(expression: string, variables: Record<string, any>): any {
+  const value = expression.trim();
+  if (Object.prototype.hasOwnProperty.call(variables, value)) return variables[value];
+  if (value === 'True') return true;
+  if (value === 'False') return false;
+  if (value === 'None') return null;
+  if (/^"[\s\S]*"$/.test(value)) {
+    try { return JSON.parse(value); } catch { return value.slice(1, -1); }
+  }
+  if (/^'[\s\S]*'$/.test(value)) return value.slice(1, -1).replace(/\\(['\\])/g, '$1');
+
+  // Parse a deliberately small arithmetic grammar; never execute fallback input as JS.
+  if (value.replace(/\d+(?:\.\d+)?|[()+\-*/%]|\s/g, '')) return undefined;
+  const tokens = value.match(/\d+(?:\.\d+)?|[()+\-*/%]/g) || [];
+  let position = 0;
+  const primary = (): number => {
+    const token = tokens[position++];
+    if (token === '(') {
+      const nested = sum();
+      if (tokens[position++] !== ')') throw new Error('Unclosed parenthesis');
+      return nested;
+    }
+    if (token === '+') return primary();
+    if (token === '-') return -primary();
+    if (!token || !/^\d/.test(token)) throw new Error('Expected a number');
+    return Number(token);
+  };
+  const product = (): number => {
+    let result = primary();
+    while (['*', '/', '%'].includes(tokens[position])) {
+      const operator = tokens[position++];
+      const operand = primary();
+      if ((operator === '/' || operator === '%') && operand === 0) throw new Error('Division by zero');
+      result = operator === '*' ? result * operand : operator === '/' ? result / operand : result % operand;
+    }
+    return result;
+  };
+  const sum = (): number => {
+    let result = product();
+    while (tokens[position] === '+' || tokens[position] === '-') {
+      const operator = tokens[position++];
+      const operand = product();
+      result = operator === '+' ? result + operand : result - operand;
+    }
+    return result;
+  };
+
+  try {
+    if (!tokens.length) return undefined;
+    const result = sum();
+    return position === tokens.length && Number.isFinite(result) ? result : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function fallbackPythonExecution(
   code: string,
   onStdout?: (text: string) => void,
@@ -101,21 +157,8 @@ function fallbackPythonExecution(
       // Handle simple print(...)
       if (line.startsWith('print(') && line.endsWith(')')) {
         const inner = line.slice(6, -1);
-        let val = inner;
-
-        // Try evaluating simple strings or arithmetic
-        try {
-          if ((inner.startsWith('"') && inner.endsWith('"')) || (inner.startsWith("'") && inner.endsWith("'"))) {
-            val = inner.slice(1, -1);
-          } else if (localVars[inner] !== undefined) {
-            val = String(localVars[inner]);
-          } else {
-            // Check for f-string or simple math
-            val = eval(inner);
-          }
-        } catch {
-          val = inner;
-        }
+        const parsed = evaluateFallbackValue(inner, localVars);
+        const val = parsed === undefined ? inner : parsed;
 
         const outStr = String(val) + '\n';
         fullOutput += outStr;
@@ -128,11 +171,8 @@ function fallbackPythonExecution(
         const [k, ...v] = line.split('=');
         const key = k.trim();
         const valueExpr = v.join('=').trim();
-        try {
-          localVars[key] = eval(valueExpr);
-        } catch {
-          localVars[key] = valueExpr;
-        }
+        const parsed = evaluateFallbackValue(valueExpr, localVars);
+        localVars[key] = parsed === undefined ? valueExpr : parsed;
       }
     }
 

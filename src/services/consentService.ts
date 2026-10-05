@@ -2,8 +2,12 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { UserConsent, ConsentSource, ConsentPreferences } from '../types/consent';
 
-export const CURRENT_POLICY_VERSION = '2026.1';
+export const CURRENT_POLICY_VERSION = 'draft';
 const LOCAL_STORAGE_KEY = 'float_data_sharing_consent_v1';
+
+export function consentStorageKey(userId: string | null): string {
+  return userId ? `${LOCAL_STORAGE_KEY}:user:${encodeURIComponent(userId)}` : `${LOCAL_STORAGE_KEY}:guest`;
+}
 
 enum OperationType {
   CREATE = 'create',
@@ -56,9 +60,9 @@ export class ConsentService {
   /**
    * Reads stored local preference. Defaults to FALSE for new users (privacy by default).
    */
-  static getLocalConsent(): ConsentPreferences {
+  static getLocalConsent(userId: string | null = auth.currentUser?.uid ?? null): ConsentPreferences {
     try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const stored = localStorage.getItem(consentStorageKey(userId));
       if (stored) {
         const parsed = JSON.parse(stored);
         return {
@@ -85,9 +89,9 @@ export class ConsentService {
   /**
    * Saves local preference cache.
    */
-  static setLocalConsent(prefs: ConsentPreferences): void {
+  static setLocalConsent(prefs: ConsentPreferences, userId: string | null = auth.currentUser?.uid ?? null): void {
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(prefs));
+      localStorage.setItem(consentStorageKey(userId), JSON.stringify(prefs));
     } catch (e) {
       console.warn('Could not save consent to localStorage:', e);
     }
@@ -130,7 +134,7 @@ export class ConsentService {
       }
     }
 
-    this.setLocalConsent(localPrefs);
+    this.setLocalConsent(localPrefs, user?.uid ?? null);
     return localPrefs;
   }
 
@@ -139,7 +143,7 @@ export class ConsentService {
    */
   static async loadConsent(): Promise<ConsentPreferences> {
     const user = auth.currentUser;
-    const local = this.getLocalConsent();
+    const local = this.getLocalConsent(user?.uid ?? null);
 
     if (!user || !user.uid) {
       return local;
@@ -162,7 +166,7 @@ export class ConsentService {
           syncedWithCloud: true
         };
 
-        this.setLocalConsent(prefs);
+        this.setLocalConsent(prefs, user.uid);
         return prefs;
       } else {
         // If not in cloud yet, but user previously made a choice in localStorage, sync it now
@@ -189,7 +193,7 @@ export class ConsentService {
    * Checks whether telemetry or optional data sharing is permitted.
    */
   static isSharingAllowed(): boolean {
-    const local = this.getLocalConsent();
+    const local = this.getLocalConsent(auth.currentUser?.uid ?? null);
     return local.sharingEnabled === true;
   }
 }

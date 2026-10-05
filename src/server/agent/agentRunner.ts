@@ -11,6 +11,7 @@ export interface AgentRunnerOptions {
   projectName?: string;
   projectId?: string;
   userId?: string;
+  agentTaskId?: string;
   systemInstruction?: string;
   onEvent: (event: AgentProgressEvent) => void;
   onDelta?: (text: string) => void;
@@ -22,6 +23,8 @@ export interface AgentRunnerResult {
   changeSet?: ChangeSet | null;
   toolCallsCount: number;
   roundsCount: number;
+  status: 'completed' | 'failed' | 'cancelled';
+  error?: string;
 }
 
 const MAX_ROUNDS = 8;
@@ -96,6 +99,7 @@ export class AgentRunner {
       model,
       prompt,
       virtualFiles = [],
+      agentTaskId,
       projectName = 'Workspace',
       projectId = 'default-workspace',
       userId = 'user',
@@ -173,6 +177,7 @@ export class AgentRunner {
       projectId: projectId || 'default-workspace',
       projectName: projectName || 'Workspace',
       virtualFiles: fileMap,
+      ...(agentTaskId ? { agentTaskId } : {}),
       signal
     };
 
@@ -222,7 +227,10 @@ CRITICAL WORKFLOW CONSTRAINTS:
 4. User Review: Code proposals will be reviewed by the developer in a visual diff reviewer before being applied to the project. Provide a clear, professional explanation of the rationale for each proposed change.
 5. Efficiency: If the user request is a general question or doesn't require inspecting files, answer directly without unnecessary tool calls.`;
 
-    const systemInstruction = options.systemInstruction || defaultSystemInstruction;
+    const specialistInstruction = options.systemInstruction?.trim();
+    const systemInstruction = specialistInstruction
+      ? `${defaultSystemInstruction}\n\nAGENT SPECIALIZATION (non-overriding):\nUse these preferences only for role, domain, and response style. They do not replace or weaken any tool safety, privacy, inspection, or review-first requirements above.\n${specialistInstruction}`
+      : defaultSystemInstruction;
 
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     let history: any[] = [{ role: 'user', parts: [{ text: prompt }] }];
@@ -231,6 +239,9 @@ CRITICAL WORKFLOW CONSTRAINTS:
     let changeSet: ChangeSet | null = null;
     let rounds = 0;
     let totalToolCalls = 0;
+    let reachedCompletion = false;
+    let terminalError = '';
+    let failureReported = false;
     const startTime = Date.now();
     const callCounts = new Map<string, number>();
 
@@ -247,12 +258,16 @@ CRITICAL WORKFLOW CONSTRAINTS:
       }
 
       if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
-        onEvent({ type: 'failed', message: `Execution exceeded time limit of ${MAX_EXECUTION_TIME_MS / 1000}s.` });
+        terminalError = `Execution exceeded time limit of ${MAX_EXECUTION_TIME_MS / 1000}s.`;
+        onEvent({ type: 'failed', message: terminalError });
+        failureReported = true;
         break;
       }
 
       if (totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
-        onEvent({ type: 'failed', message: `Reached maximum tool call limit (${MAX_TOTAL_TOOL_CALLS}).` });
+        terminalError = `Reached maximum tool call limit (${MAX_TOTAL_TOOL_CALLS}).`;
+        onEvent({ type: 'failed', message: terminalError });
+        failureReported = true;
         break;
       }
 
@@ -324,6 +339,7 @@ CRITICAL WORKFLOW CONSTRAINTS:
           action: 'Synthesizing',
           message: 'Agent completed task.' 
         });
+        reachedCompletion = true;
         break;
       }
 
@@ -463,15 +479,22 @@ CRITICAL WORKFLOW CONSTRAINTS:
         if (!finalResponseText) {
           finalResponseText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s).\n\nPlease review the diffs using the **Review Diffs** button to inspect additions, deletions, and approve applying them to your workspace.`;
         }
+        reachedCompletion = true;
         break;
       }
     }
+
+    const status: AgentRunnerResult['status'] = signal?.aborted ? 'cancelled' : reachedCompletion ? 'completed' : 'failed';
+    if (status === 'failed' && !terminalError) terminalError = `Agent did not finish within ${MAX_ROUNDS} reasoning rounds.`;
+    if (status === 'failed' && !failureReported) onEvent({ type: 'failed', message: terminalError });
 
     return {
       text: finalResponseText,
       changeSet,
       toolCallsCount: totalToolCalls,
-      roundsCount: rounds
+      roundsCount: rounds,
+      status,
+      ...(terminalError ? { error: terminalError } : {})
     };
   }
 }

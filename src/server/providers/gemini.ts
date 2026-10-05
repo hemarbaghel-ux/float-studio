@@ -72,7 +72,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     }
     
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
       const contents = this.normalizeMessages(request.messages);
 
       const config: Record<string, any> = {};
@@ -114,7 +114,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
       const contents = this.normalizeMessages(request.messages);
 
       const config: Record<string, any> = {};
@@ -208,11 +208,15 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     });
 
     const abortController = new AbortController();
-    req.on('close', () => {
-      abortController.abort();
+    // The request body is fully read before this handler starts. IncomingMessage's
+    // `close` can therefore fire before the model work finishes; watch the response
+    // instead so only a disconnected client cancels generation.
+    res.on('close', () => {
+      if (!res.writableEnded) abortController.abort();
     });
 
     const sendEvent = (type: string, data: any) => {
+      if (abortController.signal.aborted || res.destroyed || res.writableEnded) return;
       res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
     };
 
@@ -224,6 +228,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         projectName: req.body.projectName || 'Workspace',
         projectId: req.body.projectId || 'default-project',
         userId: req.user?.uid || 'user',
+        systemInstruction: req.body.systemInstruction,
         onEvent: (event) => {
           sendEvent('event', event);
         },
