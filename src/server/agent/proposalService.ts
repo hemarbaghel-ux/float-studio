@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import { CodeProposal, ProposalChange, DiffStats, ProposalStatus } from '../../types/proposal';
 import { getCodeProposal, listCodeProposals, saveCodeProposal } from './proposalPersistence';
+import { hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from '../adminFirebase';
 
 const SENSITIVE_SEGMENT = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.))/i;
 const SENSITIVE_EXTENSION = /\.(?:pem|key|p12|pfx|keystore|crt|cer)$/i;
@@ -154,17 +155,27 @@ export class ProposalService {
   static async createProposalDurable(input: CreateProposalInput): Promise<{ proposal?: CodeProposal; error?: string }> {
     const result = this.createProposal(input);
     if (!result.proposal) return result;
+    if (!hasAdminCredentials()) return result;
     try {
       await saveCodeProposal(result.proposal);
       return result;
     } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+        return result;
+      }
       this.proposals.delete(result.proposal.id);
       return { error: error.message || 'Could not store the proposal. Reduce the number or size of changed files.' };
     }
   }
 
   static async persistProposalMetadata(proposal: CodeProposal): Promise<void> {
-    await saveCodeProposal(proposal);
+    if (!hasAdminCredentials()) return;
+    try {
+      await saveCodeProposal(proposal);
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) markAdminCredentialsUnavailable(error);
+    }
   }
 
   static async rejectAgentTaskProposals(taskId: string, projectId: string, ownerId: string): Promise<void> {
@@ -179,15 +190,31 @@ export class ProposalService {
   static async getProposalDurable(proposalId: string, ownerId: string): Promise<CodeProposal | null> {
     const cached = this.proposals.get(proposalId);
     if (cached?.ownerId === ownerId) return cached;
-    const proposal = await getCodeProposal(proposalId, ownerId);
-    if (proposal) this.proposals.set(proposalId, proposal);
-    return proposal;
+    if (!hasAdminCredentials()) return null;
+    try {
+      const proposal = await getCodeProposal(proposalId, ownerId);
+      if (proposal) this.proposals.set(proposalId, proposal);
+      return proposal;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) markAdminCredentialsUnavailable(error);
+      return null;
+    }
   }
 
   static async listProposalsDurable(projectId: string, ownerId: string): Promise<CodeProposal[]> {
-    const proposals = await listCodeProposals(projectId, ownerId);
-    for (const proposal of proposals) this.proposals.set(proposal.id, proposal);
-    return proposals;
+    if (!hasAdminCredentials()) {
+      return this.listProposalsForProject(projectId).filter((p) => p.ownerId === ownerId);
+    }
+    try {
+      const proposals = await listCodeProposals(projectId, ownerId);
+      for (const proposal of proposals) this.proposals.set(proposal.id, proposal);
+      return proposals;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+      }
+      return this.listProposalsForProject(projectId).filter((p) => p.ownerId === ownerId);
+    }
   }
 
   static listProposalsForProject(projectId: string): CodeProposal[] {
@@ -210,7 +237,11 @@ export class ProposalService {
     }
     const result = await this.applyProposal(proposalId, options);
     const proposal = this.proposals.get(proposalId);
-    if (proposal) await saveCodeProposal(proposal);
+    if (proposal && hasAdminCredentials()) {
+      await saveCodeProposal(proposal).catch((err) => {
+        if (isPermissionDeniedError(err)) markAdminCredentialsUnavailable(err);
+      });
+    }
     return result;
   }
 
@@ -220,7 +251,11 @@ export class ProposalService {
     }
     const result = this.rejectProposal(proposalId, userId);
     const proposal = this.proposals.get(proposalId);
-    if (proposal && result.success) await saveCodeProposal(proposal);
+    if (proposal && result.success && hasAdminCredentials()) {
+      await saveCodeProposal(proposal).catch((err) => {
+        if (isPermissionDeniedError(err)) markAdminCredentialsUnavailable(err);
+      });
+    }
     return result;
   }
 

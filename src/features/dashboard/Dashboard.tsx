@@ -4,7 +4,8 @@ import {
   Search, Plus, Bot, Code2, Sparkles,
   ArrowUp, PanelLeftClose, PanelLeftOpen,
   Loader2, Check, ChevronDown, X,
-  ArrowRight, Filter, SlidersHorizontal, MoreHorizontal
+  ArrowRight, Filter, SlidersHorizontal, MoreHorizontal,
+  BarChart3
 } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { useAuthStore } from '../../store/authStore';
@@ -14,6 +15,7 @@ import { db } from '../../lib/firebase';
 import { FloatLogo } from '../../components/FloatLogo';
 import { SettingsModal } from '../settings/SettingsModal';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
+import { UsageAnalyticsView } from './UsageAnalyticsView';
 import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
 import { DASHBOARD_MODELS } from './dashboardModels';
 import { ModelSelector } from '../ai/ModelSelector';
@@ -128,6 +130,8 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       files = [];
     }
     setProject(project.name || 'Untitled Project', files, project.id);
+    setActiveTab('new-chat');
+    setPrompt('');
     window.history.pushState({}, '', '/chat/' + project.id);
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
@@ -170,6 +174,8 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
       const store = useIDEStore.getState();
       await store.saveProject();
+      fetchProjects();
+      setPrompt('');
       window.history.pushState({}, '', '/chat/' + store.projectId);
       window.dispatchEvent(new PopStateEvent('popstate'));
     } catch (err: any) {
@@ -313,12 +319,32 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               </span>
             )}
           </button>
+
+          {/* Usage Analytics Button */}
+          <button
+            onClick={() => {
+              setActiveTab('usage');
+              window.history.pushState({}, '', '/dashboard/usage');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }}
+            title="Usage Analytics"
+            className={`w-full flex items-center ${
+              sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
+            } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              activeTab === 'usage' || activeTab === 'analytics'
+                ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
+                : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <BarChart3 size={15} className="text-slate-600 dark:text-[#8B949E] shrink-0" />
+            {!sidebarCollapsed && <span>Usage Analytics</span>}
+          </button>
         </div>
 
         {/* Chats Section */}
         {!sidebarCollapsed && (
-          <div className="mt-5 px-4 flex flex-col flex-1">
-            <div className="flex items-center justify-between text-xs text-slate-400 dark:text-[#8B949E]">
+          <div className="mt-5 px-4 flex flex-col flex-1 overflow-hidden">
+            <div className="flex items-center justify-between text-xs text-slate-400 dark:text-[#8B949E] mb-2 shrink-0">
               <span className="font-normal">Chats</span>
               <button
                 onClick={() => fetchProjects()}
@@ -329,8 +355,33 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               </button>
             </div>
 
-            <div className="flex-1 flex flex-col items-center justify-center text-xs text-slate-400 dark:text-[#6E7681] font-normal py-12">
-              No Agents Yet
+            <div className="flex-1 overflow-y-auto space-y-1">
+              {loadingProjects ? (
+                <div className="flex items-center justify-center py-6 text-xs text-slate-400 dark:text-[#6E7681]">
+                  <Loader2 size={13} className="animate-spin mr-1.5" /> Loading...
+                </div>
+              ) : projects.length === 0 ? (
+                <div className="flex flex-col items-center justify-center text-xs text-slate-400 dark:text-[#6E7681] font-normal py-8 text-center">
+                  No chats yet
+                </div>
+              ) : (
+                projects.map((p) => (
+                  <div
+                    key={p.id}
+                    onClick={() => handleResumeProject(p)}
+                    className="group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer text-slate-700 dark:text-[#C9D1D9] transition-colors"
+                  >
+                    <span className="truncate flex-1 font-normal text-left">{p.name}</span>
+                    <button
+                      onClick={(e) => handleDeleteProject(e, p.id)}
+                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-opacity p-0.5"
+                      title="Delete chat"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
@@ -363,7 +414,11 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       {/* MAIN CONTENT AREA                                        */}
       {/* ======================================================== */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative bg-[#F8F8F7] dark:bg-[#0A0A0A] transition-colors">
-        {activeTab === 'integrations' ? (
+        {activeTab === 'usage' || activeTab === 'analytics' ? (
+          <div className="w-full h-full p-6 md:p-8 max-w-7xl mx-auto flex flex-col gap-6">
+            <UsageAnalyticsView />
+          </div>
+        ) : activeTab === 'integrations' ? (
           <div className="w-full h-full p-6 md:p-8 max-w-6xl mx-auto">
             <IntegrationsPage />
           </div>
@@ -384,6 +439,88 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             <div className="bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-6 text-center text-slate-500 dark:text-[#8B949E] text-xs">
               No active automation workers yet. Start a new chat to configure tasks.
             </div>
+          </div>
+        ) : activeTab === 'codebase' || activeTab === 'projects' ? (
+          <div className="w-full h-full p-6 md:p-8 max-w-5xl mx-auto flex flex-col gap-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                  Your Projects & Codebases
+                </h2>
+                <p className="text-sm text-slate-500 dark:text-[#8B949E] mt-1">
+                  Manage your active workspaces, agent configurations, and repositories.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setActiveTab('new-chat');
+                  setPrompt('');
+                  window.history.pushState({}, '', '/');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }}
+                className="px-3.5 py-1.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-lg text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus size={14} />
+                <span>New Chat</span>
+              </button>
+            </div>
+
+            {loadingProjects ? (
+              <div className="flex items-center justify-center py-16 text-xs text-slate-400">
+                <Loader2 size={16} className="animate-spin mr-2" /> Loading projects...
+              </div>
+            ) : projects.length === 0 ? (
+              <div className="bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-8 text-center flex flex-col items-center">
+                <Code2 size={36} className="text-slate-300 dark:text-[#333] mb-3" />
+                <h3 className="text-sm font-semibold text-slate-800 dark:text-white mb-1">No Projects Found</h3>
+                <p className="text-xs text-slate-500 dark:text-[#8B949E] max-w-sm mb-4">
+                  Start a new chat to have FLOAT create and maintain a project workspace for you.
+                </p>
+                <button
+                  onClick={() => {
+                    setActiveTab('new-chat');
+                    setPrompt('');
+                    window.history.pushState({}, '', '/');
+                    window.dispatchEvent(new PopStateEvent('popstate'));
+                  }}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 text-slate-900 dark:text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Start New Chat
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {projects.map((p) => (
+                  <div
+                    key={p.id}
+                    onClick={() => handleResumeProject(p)}
+                    className="bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] hover:border-slate-400 dark:hover:border-[#444] rounded-xl p-5 shadow-xs transition-all cursor-pointer flex flex-col justify-between group"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between">
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
+                          {p.name}
+                        </h3>
+                        <button
+                          onClick={(e) => handleDeleteProject(e, p.id)}
+                          className="text-slate-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                          title="Delete project"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-1">
+                        Active Workspace
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100 dark:border-white/5 text-[11px] text-slate-400">
+                      <span>Click to open chat</span>
+                      <ArrowRight size={13} className="text-slate-400 group-hover:translate-x-0.5 transition-transform" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           /* ====================================================== */

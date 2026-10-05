@@ -2,9 +2,65 @@ import { AIModel, Agent } from '../../types/ai';
 import { VERIFIED_MODELS } from '../../data/verifiedModels';
 import { DASHBOARD_MODELS } from '../dashboard/dashboardModels';
 
-const dashboardModelIds = new Set(DASHBOARD_MODELS.map(m => m.id));
+const dashboardModelIds = new Set([...DASHBOARD_MODELS.map(m => m.id), 'float-basic']);
+
+export const FLOAT_BASIC_MODEL: AIModel = {
+  id: 'float-basic',
+  exactModelId: 'gemini-3.8-flash',
+  apiModelId: 'gemini-3.8-flash',
+  providerId: 'google',
+  provider: 'FLOAT',
+  tier: 'Free',
+  displayName: 'FLOAT Basic',
+  shortName: 'FLOAT Basic',
+  family: 'float',
+  description: 'Everyday developer model for basic coding assistance, simple functions, code explanations, step-by-step plans, and straightforward debugging on the Free tier.',
+  capabilities: {
+    coding: true,
+    reasoning: true,
+    vision: false,
+    tools: true,
+    structuredOutput: true,
+    streaming: true,
+    longContext: false
+  },
+  capabilitiesList: ['Coding', 'Reviewing', 'Planning', 'Debugging', 'Exploring', 'UI assistance'],
+  contextWindow: 131072,
+  status: 'AVAILABLE',
+  speed: 'fast',
+  version: 'basic',
+  reasoningLevel: 'Free · Basic coding assistance',
+  isNew: false,
+  supportsStreaming: true,
+  supportsTools: true,
+  supportsVision: false,
+  supportsReasoning: false,
+  availability: 'Available',
+  pricing: {
+    inputCost: 0,
+    outputCost: 0,
+    currency: 'USD',
+    effectiveDate: '2025-01-01'
+  },
+  limits: { maxOutputTokens: 8192 },
+  limitations: [
+    'Basic coding assistance tier: not optimized for large-scale architectural redesign or complex multi-repository refactoring.',
+    'Does not perform long autonomous agent runs, production infrastructure management, or automatic git pushes.',
+    'Server-side proposal review and explicit apply/reject workflows remain strictly enforced.'
+  ],
+  intendedUseCases: [
+    'Small code changes, simple functions, and code snippets',
+    'Explaining obvious issues, common bugs, and code-quality feedback',
+    'Step-by-step planning and basic implementation guides',
+    'Analyzing straightforward errors and stack traces',
+    'Exploring and understanding project files and functions',
+    'Creating or modifying basic UI components and layouts'
+  ],
+  availabilityDetails: 'Operational on the Free tier. Powered by FLOAT server-side Google Gemini architecture.'
+};
 
 export const INITIAL_MODELS: AIModel[] = [
+  FLOAT_BASIC_MODEL,
   ...DASHBOARD_MODELS,
   {
     id: 'auto',

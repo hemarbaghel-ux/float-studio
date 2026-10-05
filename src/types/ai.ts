@@ -1,4 +1,4 @@
-export type ProviderId = 'google' | 'openai' | 'anthropic' | 'xai' | 'deepseek' | 'cursor' | 'auto';
+export type ProviderId = 'google' | 'openai' | 'anthropic' | 'xai' | 'cursor' | 'auto';
 export type ModelStatus =
   | 'AVAILABLE'
   | 'CONFIG_REQUIRED'
@@ -25,6 +25,7 @@ export interface AIModel {
   apiModelId?: string;
   providerId: ProviderId;
   provider?: string;
+  tier?: 'Free' | 'Pro' | 'Enterprise' | string;
   displayName: string;
   shortName?: string;
   family: string;

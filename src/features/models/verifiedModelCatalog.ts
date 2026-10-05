@@ -86,6 +86,47 @@ export const VERIFIED_BENCHMARK_DEFINITIONS: BenchmarkDefinition[] = [
 
 export const VERIFIED_MODELS: VerifiedModel[] = [
   {
+    id: 'float-basic',
+    displayName: 'FLOAT Basic',
+    providerId: 'google',
+    family: 'float',
+    version: 'basic',
+    releaseDate: '2025-01-01',
+    status: 'AVAILABLE',
+    statusReason: 'Operational on the Free tier. Powered by FLOAT server-side Google Gemini architecture.',
+    officialDocUrl: 'https://float.ai/docs/models/float-basic',
+    description: 'Everyday developer model for basic coding assistance, simple functions, code explanations, step-by-step plans, and straightforward debugging on the Free tier.',
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      vision: false,
+      tools: true,
+      structuredOutput: true,
+      streaming: true
+    },
+    contextWindow: 131072,
+    maxOutputTokens: 8192,
+    supportedModalities: ['text'],
+    pricing: {
+      inputCostPerMillion: 0,
+      outputCostPerMillion: 0,
+      cachedInputCostPerMillion: 0,
+      currency: 'USD',
+      effectiveDate: '2025-01-01',
+      sourceUrl: 'https://float.ai/pricing',
+      sourceName: 'FLOAT AI Free Tier',
+      pricingUnit: 'per 1M tokens',
+      notes: 'Free tier everyday developer model'
+    },
+    benchmarks: [],
+    limitations: [
+      'Basic coding assistance tier: not optimized for large-scale architectural redesign or complex multi-repository refactoring.',
+      'Does not perform long autonomous agent runs, production infrastructure management, or automatic git pushes.',
+      'Server-side proposal review and explicit apply/reject workflows remain strictly enforced.'
+    ],
+    lastVerified: '2025-01-01'
+  },
+  {
     id: 'gemini-3.8-flash',
     displayName: 'Gemini 3.8 Flash',
     providerId: 'google',

@@ -75,6 +75,7 @@ export function ModelSelector({
 
   // Helper to map model to display speed/effort label
   const getSpeedLabel = (model: AIModel): string => {
+    if (model.id === 'float-basic') return 'Free · Basic coding assistance';
     if (model.reasoningLevel) {
       return model.reasoningLevel;
     }
@@ -93,8 +94,6 @@ export function ModelSelector({
     if (model.id === 'grok-4.7') return 'High Fast';
     if (model.id === 'grok-2-vision-1212') return 'Vision';
     if (model.id === 'grok-beta') return 'Fast';
-    if (model.id === 'deepseek-chat') return 'Fast';
-    if (model.id === 'deepseek-reasoner') return 'Reasoning';
 
     switch (model.speed) {
       case 'fast': return 'Fast';

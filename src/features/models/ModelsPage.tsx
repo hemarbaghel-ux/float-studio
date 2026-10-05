@@ -87,8 +87,10 @@ export function ModelsPage() {
       if (m.id === 'auto') return false;
 
       // Provider filter
-      if (filterProvider !== 'All' && m.providerId !== filterProvider.toLowerCase()) {
-        return false;
+      if (filterProvider !== 'All') {
+        const fp = filterProvider.toLowerCase();
+        const matchesProvider = m.providerId === fp || (m.provider && m.provider.toLowerCase() === fp);
+        if (!matchesProvider) return false;
       }
 
       // Capability filter
@@ -380,6 +382,7 @@ export function ModelsPage() {
                         className="bg-[#12161F] border border-[#21262D] rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-[#7C3AED]"
                       >
                         <option value="All">All Providers</option>
+                        <option value="FLOAT">FLOAT</option>
                         <option value="Google">Google</option>
                         <option value="OpenAI">OpenAI</option>
                         <option value="Anthropic">Anthropic</option>
@@ -427,12 +430,17 @@ export function ModelsPage() {
                                 {model.displayName}
                               </h3>
                               <span className="text-[11px] font-mono text-[#8B949E] capitalize">
-                                {model.providerId} • {model.snapshotVersion || model.family}
+                                {model.provider || model.providerId} • {model.snapshotVersion || model.family}
                               </span>
                             </div>
 
                             {/* Live verified status badge */}
-                            {isModelAvailable ? (
+                            {model.tier === 'Free' || model.id === 'float-basic' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 shrink-0">
+                                <CheckCircle2 size={10} className="text-emerald-400" />
+                                Free Tier
+                              </span>
+                            ) : isModelAvailable ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 shrink-0">
                                 <CheckCircle2 size={10} className="text-emerald-400" />
                                 Available

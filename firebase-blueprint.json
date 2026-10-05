@@ -367,9 +367,56 @@
         }
       },
       "required": ["userId", "sharingEnabled", "policyVersion", "source", "updatedAt"]
+    },
+    "UserSubscription": {
+      "title": "UserSubscription",
+      "description": "Stores user subscription status, plan tier, and Stripe reference identifiers",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase user ID who owns the subscription",
+          "maxLength": 128
+        },
+        "planId": {
+          "type": "string",
+          "description": "Current subscription plan identifier",
+          "enum": ["free", "pro", "business", "ultimate"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Stripe subscription status",
+          "enum": ["active", "trialing", "past_due", "canceled", "unpaid", "incomplete", "incomplete_expired"]
+        },
+        "stripeCustomerId": {
+          "type": "string",
+          "description": "Stripe customer identifier"
+        },
+        "stripeSubscriptionId": {
+          "type": "string",
+          "description": "Stripe subscription identifier"
+        },
+        "currentPeriodEnd": {
+          "type": "number",
+          "description": "Unix timestamp in seconds when the current period ends"
+        },
+        "cancelAtPeriodEnd": {
+          "type": "boolean",
+          "description": "Whether the subscription is scheduled to cancel at period end"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp in milliseconds when subscription was last updated"
+        }
+      },
+      "required": ["userId", "planId", "status", "updatedAt"]
     }
   },
   "firestore": {
+    "/userSubscriptions/{userId}": {
+      "schema": { "$ref": "#/entities/UserSubscription" },
+      "description": "Stores user subscription records verified via Stripe webhooks"
+    },
     "/projects/{projectId}": {
       "schema": { "$ref": "#/entities/Project" },
       "description": "Stores user projects"

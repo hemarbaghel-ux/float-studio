@@ -55,8 +55,15 @@ export const ModelRow: React.FC<ModelRowProps> = ({
         )}
       </div>
 
-      {/* Right controls: Optional NEW badge, Setup badge, Touch/Info trigger, Checkmark */}
+      {/* Right controls: Optional FREE badge, Optional NEW badge, Setup badge, Touch/Info trigger, Checkmark */}
       <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+        {/* Free tier badge */}
+        {(model.tier === 'Free' || model.id === 'float-basic') && (
+          <span className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded leading-none">
+            FREE
+          </span>
+        )}
+
         {/* Availability / Config warning */}
         {model.status === 'CONFIG_REQUIRED' && (
           <span className="text-[9px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1 py-0.5 rounded leading-none">

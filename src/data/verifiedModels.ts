@@ -67,6 +67,62 @@ export interface VerifiedModel {
  */
 export const VERIFIED_MODELS: VerifiedModel[] = [
   // ==========================================
+  // --- FLOAT Models (Free Tier) ---
+  // ==========================================
+  {
+    id: 'float-basic',
+    exactModelId: 'gemini-3.8-flash',
+    displayName: 'FLOAT Basic',
+    providerId: 'google',
+    family: 'float',
+    category: 'efficient',
+    snapshotVersion: 'float-basic-v1',
+    releaseDate: '2025-01-01',
+    docUrl: 'https://float.ai/docs/models/float-basic',
+    description: 'Everyday developer model for basic coding assistance, simple functions, code explanations, step-by-step plans, and straightforward debugging on the Free tier.',
+    contextWindow: 131072,
+    maxOutputTokens: 8192,
+    modalities: ['text'],
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: false,
+      audio: false,
+      structuredOutput: true,
+      streaming: true,
+      longContext: false
+    },
+    pricing: {
+      inputCostPer1M: 0,
+      outputCostPer1M: 0,
+      cachedInputCostPer1M: 0,
+      currency: 'USD',
+      pricingUnit: 'per 1M tokens',
+      effectiveDate: '2025-01-01',
+      sourceUrl: 'https://float.ai/pricing'
+    },
+    limitations: [
+      'Basic coding assistance tier: not optimized for large-scale architectural redesign or complex multi-repository refactoring.',
+      'Does not perform long autonomous agent runs, production infrastructure management, or automatic git pushes.',
+      'Server-side proposal review and explicit apply/reject workflows remain strictly enforced.'
+    ],
+    intendedUseCases: [
+      'Small code changes, simple functions, and code snippets',
+      'Explaining obvious issues, common bugs, and code-quality feedback',
+      'Step-by-step planning and basic implementation guides',
+      'Analyzing straightforward errors and stack traces',
+      'Exploring and understanding project files and functions',
+      'Creating or modifying basic UI components and layouts'
+    ],
+    speed: 'fast',
+    reasoningEffort: 'low',
+    supportedEfforts: ['low'],
+    availabilityStatus: 'AVAILABLE',
+    availabilityDetails: 'Operational on the Free tier. Powered by FLOAT server-side Google Gemini architecture.',
+    deprecationStatus: 'active'
+  },
+  // ==========================================
   // --- Google Gemini Models ---
   // ==========================================
   {
@@ -1022,99 +1078,6 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     speed: 'fast',
     availabilityStatus: 'CONFIG_REQUIRED',
     availabilityDetails: 'Supported by FLOAT adapter architecture. Requires XAI_API_KEY on the server.'
-  },
-
-  // ==========================================
-  // --- DeepSeek Models ---
-  // ==========================================
-  {
-    id: 'deepseek-chat',
-    exactModelId: 'deepseek-chat',
-    displayName: 'DeepSeek V3',
-    providerId: 'deepseek',
-    family: 'deepseek',
-    category: 'flagship_coding',
-    snapshotVersion: 'deepseek-chat',
-    releaseDate: '2024-12-26',
-    docUrl: 'https://api-docs.deepseek.com/',
-    description: 'DeepSeek-V3 flagship Mixture-of-Experts (MoE) coding model trained on extensive open-source code repositories with high benchmark accuracy.',
-    contextWindow: 65536,
-    maxOutputTokens: 8192,
-    modalities: ['text'],
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      tools: true,
-      vision: false,
-      structuredOutput: true,
-      streaming: true,
-      longContext: true
-    },
-    pricing: {
-      inputCostPer1M: 0.27,
-      outputCostPer1M: 1.10,
-      cachedInputCostPer1M: 0.07,
-      currency: 'USD',
-      pricingUnit: 'per 1M tokens',
-      effectiveDate: '2024-12-26',
-      sourceUrl: 'https://www.deepseek.com/'
-    },
-    limitations: [
-      'Context window limited to 64,000 tokens.',
-      'Requires server-side DEEPSEEK_API_KEY.'
-    ],
-    intendedUseCases: [
-      'High-performance full-stack coding at low inference cost',
-      'Algorithmic problem-solving and unit test authoring'
-    ],
-    speed: 'fast',
-    availabilityStatus: 'CONFIG_REQUIRED',
-    availabilityDetails: 'Supported by FLOAT adapter architecture. Requires DEEPSEEK_API_KEY on the server.'
-  },
-  {
-    id: 'deepseek-reasoner',
-    exactModelId: 'deepseek-reasoner',
-    displayName: 'DeepSeek R1',
-    providerId: 'deepseek',
-    family: 'deepseek',
-    category: 'advanced_reasoning',
-    snapshotVersion: 'deepseek-reasoner',
-    releaseDate: '2025-01-20',
-    docUrl: 'https://api-docs.deepseek.com/',
-    description: 'DeepSeek-R1 open-weights frontier reasoning model trained via large-scale reinforcement learning to produce long internal chains of thought.',
-    contextWindow: 65536,
-    maxOutputTokens: 8192,
-    modalities: ['text'],
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      tools: true,
-      vision: false,
-      structuredOutput: true,
-      streaming: true,
-      longContext: true
-    },
-    pricing: {
-      inputCostPer1M: 0.55,
-      outputCostPer1M: 2.19,
-      cachedInputCostPer1M: 0.14,
-      currency: 'USD',
-      pricingUnit: 'per 1M tokens',
-      effectiveDate: '2025-01-20',
-      sourceUrl: 'https://www.deepseek.com/'
-    },
-    limitations: [
-      'Generates chain-of-thought tokens prior to final completion which adds to response latency.',
-      'Requires server-side DEEPSEEK_API_KEY.'
-    ],
-    intendedUseCases: [
-      'Complex algorithmic proofs and mathematical logic verification',
-      'Deep architectural root-cause debugging and verification'
-    ],
-    speed: 'balanced',
-    reasoningEffort: 'high',
-    availabilityStatus: 'CONFIG_REQUIRED',
-    availabilityDetails: 'Supported by FLOAT adapter architecture. Requires DEEPSEEK_API_KEY on the server.'
   }
 ];
 

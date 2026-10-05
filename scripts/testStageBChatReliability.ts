@@ -63,9 +63,15 @@ async function runStageBTests() {
     assert.strictEqual(adapter.id, 'xai');
   });
 
-  test('Maps deepseek-reasoner to deepseek provider', () => {
-    const adapter = router.getAdapterForModel('deepseek-reasoner');
-    assert.strictEqual(adapter.id, 'deepseek');
+  test('Rejects deepseek models with MODEL_NOT_FOUND error (no silent fallback)', () => {
+    assert.throws(
+      () => router.getAdapterForModel('deepseek-reasoner'),
+      /DeepSeek models .* have been removed|not recognized or supported/
+    );
+    assert.throws(
+      () => router.getAdapterForModel('deepseek-chat'),
+      /DeepSeek models .* have been removed|not recognized or supported/
+    );
   });
 
   test('Rejects unrecognized model without silent fallback', () => {
@@ -82,7 +88,7 @@ async function runStageBTests() {
     assert.ok(status.openai, 'OpenAI status must be present');
     assert.ok(status.anthropic, 'Anthropic status must be present');
     assert.ok(status.xai, 'xAI status must be present');
-    assert.ok(status.deepseek, 'DeepSeek status must be present');
+    assert.strictEqual(status.deepseek, undefined, 'DeepSeek status must not be present');
   });
 
   // Test 5: Sliding Window Rate Limiter Logic

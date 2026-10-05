@@ -18,6 +18,7 @@ import { sanitizeProposalPath } from './agent/proposalService';
 import { ModelRouter } from './providers/router';
 import { INITIAL_MODELS } from '../features/ai/registry';
 import { ServerPrivacyGuard } from './privacyGuard';
+import { hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from './adminFirebase';
 import {
   deleteEvalTask,
   failInterruptedEvalRun,
@@ -263,10 +264,15 @@ export class EvalEngine {
 
   async createTaskDurable(task: Omit<EvalTask, 'id' | 'createdAt' | 'updatedAt'>, ownerId: string): Promise<EvalTask> {
     const newTask = this.createTask(task, ownerId);
+    if (!hasAdminCredentials()) return newTask;
     try {
       await saveEvalTask(newTask);
       return newTask;
-    } catch (error) {
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+        return newTask;
+      }
       this.tasks = this.tasks.filter((item) => item.id !== newTask.id);
       throw error;
     }
@@ -275,9 +281,18 @@ export class EvalEngine {
   async deleteTaskDurable(id: string, ownerId: string): Promise<boolean> {
     const local = this.tasks.find((item) => item.id === id);
     if (local && (!local.ownerId || local.ownerId !== ownerId)) return false;
-    const removed = await deleteEvalTask(id, ownerId);
-    if (removed) this.tasks = this.tasks.filter((item) => item.id !== id);
-    return removed;
+    if (!hasAdminCredentials()) return this.deleteTask(id, ownerId);
+    try {
+      const removed = await deleteEvalTask(id, ownerId);
+      if (removed) this.tasks = this.tasks.filter((item) => item.id !== id);
+      return removed;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+        return this.deleteTask(id, ownerId);
+      }
+      throw error;
+    }
   }
 
   getTasks(ownerId?: string): EvalTask[] {
@@ -285,11 +300,20 @@ export class EvalEngine {
   }
 
   async getTasksDurable(ownerId: string): Promise<EvalTask[]> {
-    const tasks = await listEvalTasks(ownerId);
-    for (const task of tasks) {
-      const index = this.tasks.findIndex((item) => item.id === task.id);
-      if (index >= 0) this.tasks[index] = task;
-      else this.tasks.push(task);
+    if (!hasAdminCredentials()) return this.getTasks(ownerId);
+    try {
+      const tasks = await listEvalTasks(ownerId);
+      for (const task of tasks) {
+        const index = this.tasks.findIndex((item) => item.id === task.id);
+        if (index >= 0) this.tasks[index] = task;
+        else this.tasks.push(task);
+      }
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+      } else {
+        console.warn('[EvalEngine] Failed to load durable tasks:', error?.message || error);
+      }
     }
     return this.getTasks(ownerId);
   }
@@ -297,9 +321,17 @@ export class EvalEngine {
   async getTaskDurable(id: string, ownerId: string): Promise<EvalTask | null> {
     const local = this.getTask(id, ownerId);
     if (local) return local;
-    const task = await getEvalTask(id, ownerId);
-    if (task) this.tasks.push(task);
-    return task;
+    if (!hasAdminCredentials()) return null;
+    try {
+      const task = await getEvalTask(id, ownerId);
+      if (task) this.tasks.push(task);
+      return task;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+      }
+      return null;
+    }
   }
 
   getTask(id: string, ownerId?: string): EvalTask | undefined {
@@ -322,11 +354,20 @@ export class EvalEngine {
   }
 
   async getBenchmarksDurable(ownerId: string): Promise<Benchmark[]> {
-    const benchmarks = await listEvalBenchmarks(ownerId);
-    for (const benchmark of benchmarks) {
-      const index = this.benchmarks.findIndex((item) => item.id === benchmark.id);
-      if (index >= 0) this.benchmarks[index] = benchmark;
-      else this.benchmarks.push(benchmark);
+    if (!hasAdminCredentials()) return this.benchmarks.filter((benchmark) => !benchmark.ownerId || benchmark.ownerId === ownerId);
+    try {
+      const benchmarks = await listEvalBenchmarks(ownerId);
+      for (const benchmark of benchmarks) {
+        const index = this.benchmarks.findIndex((item) => item.id === benchmark.id);
+        if (index >= 0) this.benchmarks[index] = benchmark;
+        else this.benchmarks.push(benchmark);
+      }
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+      } else {
+        console.warn('[EvalEngine] Failed to load durable benchmarks:', error?.message || error);
+      }
     }
     return this.benchmarks.filter((benchmark) => !benchmark.ownerId || benchmark.ownerId === ownerId);
   }
@@ -334,9 +375,17 @@ export class EvalEngine {
   async getBenchmarkDurable(id: string, ownerId: string): Promise<Benchmark | null> {
     const local = this.getBenchmark(id);
     if (local && (!local.ownerId || local.ownerId === ownerId)) return local;
-    const benchmark = await getEvalBenchmark(id, ownerId);
-    if (benchmark) this.benchmarks.push(benchmark);
-    return benchmark;
+    if (!hasAdminCredentials()) return null;
+    try {
+      const benchmark = await getEvalBenchmark(id, ownerId);
+      if (benchmark) this.benchmarks.push(benchmark);
+      return benchmark;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+      }
+      return null;
+    }
   }
 
   getBenchmark(id: string): Benchmark | undefined {
@@ -690,11 +739,22 @@ export class EvalEngine {
   }
 
   async getRunsDurable(ownerId: string): Promise<EvalRun[]> {
-    const runs = await listEvalRuns(ownerId);
-    for (const run of runs) {
-      const index = this.runs.findIndex((item) => item.id === run.id);
-      if (index >= 0) this.runs[index] = run;
-      else this.runs.push(run);
+    if (!hasAdminCredentials()) {
+      return this.runs.filter((run) => run.ownerId === ownerId).sort((a, b) => b.startedAt - a.startedAt);
+    }
+    try {
+      const runs = await listEvalRuns(ownerId);
+      for (const run of runs) {
+        const index = this.runs.findIndex((item) => item.id === run.id);
+        if (index >= 0) this.runs[index] = run;
+        else this.runs.push(run);
+      }
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+      } else {
+        console.warn('[EvalEngine] Failed to load durable runs:', error?.message || error);
+      }
     }
     return this.runs.filter((run) => run.ownerId === ownerId).sort((a, b) => b.startedAt - a.startedAt);
   }
@@ -702,14 +762,33 @@ export class EvalEngine {
   async getRunDurable(id: string, ownerId: string): Promise<EvalRun | null> {
     const local = this.getRun(id);
     if (local?.ownerId === ownerId) return local;
-    const run = await getEvalRun(id, ownerId);
-    if (run) this.runs.unshift(run);
-    return run;
+    if (!hasAdminCredentials()) return null;
+    try {
+      const run = await getEvalRun(id, ownerId);
+      if (run) this.runs.unshift(run);
+      return run;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+      }
+      return null;
+    }
   }
 
   async persistRun(run: EvalRun): Promise<void> {
+    if (!hasAdminCredentials()) return;
     const prior = this.runWrites.get(run.id) || Promise.resolve();
-    const next = prior.catch(() => undefined).then(() => saveEvalRun(run));
+    const next = prior.catch(() => undefined).then(async () => {
+      try {
+        await saveEvalRun(run);
+      } catch (error: any) {
+        if (isPermissionDeniedError(error)) {
+          markAdminCredentialsUnavailable(error);
+        } else {
+          throw error;
+        }
+      }
+    });
     this.runWrites.set(run.id, next);
     try {
       await next;
@@ -719,6 +798,7 @@ export class EvalEngine {
   }
 
   private startRunHeartbeat(runId: string) {
+    if (!hasAdminCredentials()) return;
     this.stopRunHeartbeat(runId);
     const timer = setInterval(() => {
       const run = this.getRun(runId);
@@ -727,7 +807,12 @@ export class EvalEngine {
         return;
       }
       void heartbeatEvalRun(runId).catch((error) => {
-        console.error(`[EvalEngine] Heartbeat failed for run ${runId}:`, error);
+        if (isPermissionDeniedError(error)) {
+          markAdminCredentialsUnavailable(error);
+          this.stopRunHeartbeat(runId);
+        } else {
+          console.error(`[EvalEngine] Heartbeat failed for run ${runId}:`, error);
+        }
       });
     }, 10_000);
     timer.unref?.();
@@ -741,6 +826,7 @@ export class EvalEngine {
   }
 
   async recoverInterruptedRuns() {
+    if (!hasAdminCredentials()) return;
     const running = await listRunningEvalRuns();
     for (const run of running) {
       const failed = await failInterruptedEvalRun(run.id);
@@ -957,12 +1043,17 @@ export class EvalEngine {
 
   async addReviewDurable(review: Omit<HumanReview, 'id' | 'reviewTimestamp'>): Promise<HumanReview> {
     const newReview = this.addReview(review);
+    if (!hasAdminCredentials()) return newReview;
     try {
       await saveEvalReview(newReview);
       const run = this.getRun(review.runId);
       if (run) await this.persistRun(run);
       return newReview;
-    } catch (error) {
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+        return newReview;
+      }
       this.reviews = this.reviews.filter((item) => item.id !== newReview.id);
       throw error;
     }
@@ -973,10 +1064,20 @@ export class EvalEngine {
   }
 
   async getReviewsDurable(runId: string, ownerId: string): Promise<HumanReview[]> {
-    const reviews = await listEvalReviews(runId, ownerId);
-    const ids = new Set(reviews.map((review) => review.id));
-    this.reviews = this.reviews.filter((review) => review.runId !== runId || review.ownerId !== ownerId || ids.has(review.id));
-    return reviews;
+    if (!hasAdminCredentials()) {
+      return this.reviews.filter((r) => r.runId === runId && (!r.ownerId || r.ownerId === ownerId));
+    }
+    try {
+      const reviews = await listEvalReviews(runId, ownerId);
+      const ids = new Set(reviews.map((review) => review.id));
+      this.reviews = this.reviews.filter((review) => review.runId !== runId || review.ownerId !== ownerId || ids.has(review.id));
+      return reviews;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+      }
+      return this.reviews.filter((r) => r.runId === runId && (!r.ownerId || r.ownerId === ownerId));
+    }
   }
 }
 

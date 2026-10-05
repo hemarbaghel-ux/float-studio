@@ -234,6 +234,7 @@ CRITICAL WORKFLOW CONSTRAINTS:
       // Map any old aliases to active gemini-3.8-flash
       let effectiveModel = model;
       if (
+        model === 'float-basic' ||
         model === 'auto' ||
         !model ||
         model === 'gemini-2.0-flash' ||

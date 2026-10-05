@@ -84,7 +84,7 @@ async function runTests() {
   assert(geminiRoute.route.apiModelId === 'gemini-3.8-flash', 'gemini-3.8-flash resolves to gemini-3.8-flash API ID');
 
   // Test 4: NO Silent Fallback to Gemini when Model Fails or is Unknown
-  console.log('\n--- Test Suite 4: Prohibition of Silent Fallbacks ---');
+  console.log('\n--- Test Suite 4: Prohibition of Silent Fallbacks & DeepSeek Removal ---');
   let unknownModelError: any = null;
   try {
     router.resolveRoute('non-existent-super-model-9000');
@@ -94,6 +94,33 @@ async function runTests() {
   assert(unknownModelError instanceof AIProviderError, 'Unknown model throws AIProviderError');
   assert(unknownModelError?.code === 'MODEL_NOT_FOUND', 'Unknown model error code is MODEL_NOT_FOUND');
   assert(unknownModelError?.statusCode === 404, 'Unknown model status is 404');
+
+  // Verify DeepSeek models are completely removed from catalog and routing
+  const deepseekInVerified = VERIFIED_MODELS.some(m => m.id.includes('deepseek') || m.providerId === ('deepseek' as any));
+  assert(!deepseekInVerified, 'Zero DeepSeek models exist in VERIFIED_MODELS');
+
+  const providerStatus = router.getProviderStatus();
+  assert(providerStatus.deepseek === undefined, 'DeepSeek provider does not exist in ModelRouter getProviderStatus()');
+
+  let deepseekChatError: any = null;
+  try {
+    router.resolveRoute('deepseek-chat');
+  } catch (err) {
+    deepseekChatError = err;
+  }
+  assert(deepseekChatError instanceof AIProviderError, 'deepseek-chat throws AIProviderError');
+  assert(deepseekChatError?.code === 'MODEL_NOT_FOUND', 'deepseek-chat error code is MODEL_NOT_FOUND');
+  assert(deepseekChatError?.statusCode === 404, 'deepseek-chat status code is 404');
+
+  let deepseekReasonerError: any = null;
+  try {
+    router.getAdapterForModel('deepseek-reasoner');
+  } catch (err) {
+    deepseekReasonerError = err;
+  }
+  assert(deepseekReasonerError instanceof AIProviderError, 'deepseek-reasoner throws AIProviderError');
+  assert(deepseekReasonerError?.code === 'MODEL_NOT_FOUND', 'deepseek-reasoner error code is MODEL_NOT_FOUND');
+  assert(deepseekReasonerError?.statusCode === 404, 'deepseek-reasoner status code is 404');
 
   // Test 5: Missing API Key Handling (Clear AUTH_ERROR)
   console.log('\n--- Test Suite 5: Missing API Key Behavior ---');

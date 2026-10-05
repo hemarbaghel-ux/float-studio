@@ -1,41 +1,42 @@
-import { lazy, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useIDEStore, applyThemeToDocument } from './store';
 import { useOnboardingStore } from './store/onboardingStore';
 import { useAuthStore } from './store/authStore';
-const AppShell = lazy(() => import('./features/shell/AppShell').then((module) => ({ default: module.AppShell })));
-const LandingPage = lazy(() => import('./features/landing/LandingPage').then((module) => ({ default: module.LandingPage })));
-const ModelsPage = lazy(() => import('./features/models/ModelsPage').then((module) => ({ default: module.ModelsPage })));
-const ModelsFilteredPage = lazy(() => import('./features/models/ModelsFilteredPage').then((module) => ({ default: module.ModelsFilteredPage })));
-const EvalsPage = lazy(() => import('./features/evals/EvalsPage').then((module) => ({ default: module.EvalsPage })));
-const UsageDashboard = lazy(() => import('./features/models/UsageDashboard').then((module) => ({ default: module.UsageDashboard })));
-const ModelDetailsPage = lazy(() => import('./features/models/ModelDetailsPage').then((module) => ({ default: module.ModelDetailsPage })));
-const OnboardingFlow = lazy(() => import('./features/onboarding/OnboardingFlow').then((module) => ({ default: module.OnboardingFlow })));
-const Dashboard = lazy(() => import('./features/dashboard/Dashboard').then((module) => ({ default: module.Dashboard })));
-const PricingPage = lazy(() => import('./features/pricing/PricingPage').then((module) => ({ default: module.PricingPage })));
-const SignUpPage = lazy(() => import('./features/auth/SignUpPage').then((module) => ({ default: module.SignUpPage })));
-const ResourcesPage = lazy(() => import('./features/resources/ResourcesPage').then((module) => ({ default: module.ResourcesPage })));
-const DocsPage = lazy(() => import('./features/resources/DocsPage').then((module) => ({ default: module.DocsPage })));
-const GuidesPage = lazy(() => import('./features/resources/GuidesPage').then((module) => ({ default: module.GuidesPage })));
-const ChangelogPage = lazy(() => import('./features/resources/ChangelogPage').then((module) => ({ default: module.ChangelogPage })));
-const HelpPage = lazy(() => import('./features/resources/HelpPage').then((module) => ({ default: module.HelpPage })));
-const BlogPage = lazy(() => import('./features/resources/BlogPage').then((module) => ({ default: module.BlogPage })));
-const CommunityPage = lazy(() => import('./features/resources/CommunityPage').then((module) => ({ default: module.CommunityPage })));
-const LearnPage = lazy(() => import('./features/learn/LearnPage').then((module) => ({ default: module.LearnPage })));
-const FeatureDetailPage = lazy(() => import('./features/featurePages/FeatureDetailPage').then((module) => ({ default: module.FeatureDetailPage })));
-const FeatureIndexPage = lazy(() => import('./features/featurePages/FeatureIndexPage').then((module) => ({ default: module.FeatureIndexPage })));
-const SettingsPage = lazy(() => import('./features/settings/SettingsPage').then((module) => ({ default: module.SettingsPage })));
-const ProfilePage = lazy(() => import('./features/profile/ProfilePage').then((module) => ({ default: module.ProfilePage })));
-const DownloadPage = lazy(() => import('./features/download/DownloadPage').then((module) => ({ default: module.DownloadPage })));
-const PrivacyPolicyPage = lazy(() => import('./features/resources/PrivacyPolicyPage').then((module) => ({ default: module.PrivacyPolicyPage })));
-const TermsPage = lazy(() => import('./features/resources/TermsPage').then((module) => ({ default: module.TermsPage })));
+import { LandingPage } from './features/landing/LandingPage';
+import { ModelsPage } from './features/models/ModelsPage';
+import { ModelsFilteredPage } from './features/models/ModelsFilteredPage';
+import { ModelsEvalsPage } from './features/models/ModelsEvalsPage';
+import { EvalsPage } from './features/evals/EvalsPage';
+import { UsageDashboard } from './features/models/UsageDashboard';
+import { ModelDetailsPage } from './features/models/ModelDetailsPage';
+import { OnboardingFlow } from './features/onboarding/OnboardingFlow';
+import { Dashboard } from './features/dashboard/Dashboard';
+import { PricingPage } from './features/pricing/PricingPage';
+import { SignUpPage } from './features/auth/SignUpPage';
+import { ResourcesPage } from './features/resources/ResourcesPage';
+import { DocsPage } from './features/resources/DocsPage';
+import { GuidesPage } from './features/resources/GuidesPage';
+import { ChangelogPage } from './features/resources/ChangelogPage';
+import { HelpPage } from './features/resources/HelpPage';
+import { BlogPage } from './features/resources/BlogPage';
+import { CommunityPage } from './features/resources/CommunityPage';
+import { LearnPage } from './features/learn/LearnPage';
+import { FeatureDetailPage } from './features/featurePages/FeatureDetailPage';
+import { FeatureIndexPage } from './features/featurePages/FeatureIndexPage';
+import { SettingsPage } from './features/settings/SettingsPage';
+import { ProfilePage } from './features/profile/ProfilePage';
+import { DownloadPage } from './features/download/DownloadPage';
+import { PrivacyPolicyPage } from './features/resources/PrivacyPolicyPage';
 import { useConsentStore } from './store/consentStore';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './lib/firebase';
 import { Loader2 } from 'lucide-react';
 import { FloatLogo } from './components/FloatLogo';
 
 export default function App() {
-  const { hasStarted, settings } = useIDEStore();
+  const { projectName, hasStarted, startSession, settings } = useIDEStore();
   const { hasCompletedOnboarding } = useOnboardingStore();
-  const { user, loading } = useAuthStore();
+  const { user, loading, setUser, setLoading } = useAuthStore();
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
 
   useEffect(() => {
@@ -43,23 +44,21 @@ export default function App() {
       setCurrentPath(window.location.pathname);
     };
     window.addEventListener('popstate', handleLocationChange);
-
+    
     // Intercept a tag clicks for simple routing
     const handleAnchorClick = (e: MouseEvent) => {
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       const target = e.target as HTMLElement;
       const anchor = target.closest('a');
-      if (anchor && anchor.href && !anchor.target && !anchor.hasAttribute('download')) {
+      if (anchor && anchor.href && anchor.href.startsWith(window.location.origin)) {
         const url = new URL(anchor.href);
         if (
-          url.origin === window.location.origin && (
-          url.pathname.startsWith('/models') ||
-          url.pathname.startsWith('/evals') ||
-          url.pathname.startsWith('/pricing') ||
-          url.pathname.startsWith('/resources') ||
-          url.pathname.startsWith('/learn') ||
-          url.pathname.startsWith('/features') ||
-          url.pathname.startsWith('/chat/') ||
+          url.pathname.startsWith('/models') || 
+          url.pathname.startsWith('/evals') || 
+          url.pathname.startsWith('/pricing') || 
+          url.pathname.startsWith('/resources') || 
+          url.pathname.startsWith('/learn') || 
+          url.pathname.startsWith('/features') || 
+          url.pathname.startsWith('/chat/') || 
           url.pathname === '/' ||
           url.pathname === '/dashboard' ||
           url.pathname === '/workspace' ||
@@ -67,6 +66,10 @@ export default function App() {
           url.pathname === '/projects' ||
           url.pathname === '/automations' ||
           url.pathname === '/integrations' ||
+          url.pathname === '/usage' ||
+          url.pathname === '/analytics' ||
+          url.pathname === '/dashboard/usage' ||
+          url.pathname === '/dashboard/analytics' ||
           url.pathname === '/sign-up' ||
           url.pathname === '/signup' ||
           url.pathname === '/sign-in' ||
@@ -77,24 +80,16 @@ export default function App() {
           url.pathname === '/settings' ||
           url.pathname === '/profile' ||
           url.pathname === '/download' ||
-          url.pathname === '/privacy' ||
-          url.pathname === '/help' ||
-          url.pathname === '/terms'
-          )
+          url.pathname === '/help'
         ) {
           e.preventDefault();
-          const samePage = url.pathname === window.location.pathname;
-          window.history.pushState({}, '', `${url.pathname}${url.search}${url.hash}`);
+          window.history.pushState({}, '', url.pathname);
           setCurrentPath(url.pathname);
-          if (url.hash && samePage) {
-            const id = decodeURIComponent(url.hash.slice(1));
-            document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
-          }
         }
       }
     };
     document.addEventListener('click', handleAnchorClick);
-
+    
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
       document.removeEventListener('click', handleAnchorClick);
@@ -106,8 +101,15 @@ export default function App() {
   }, [settings.theme]);
 
   useEffect(() => {
-    void useConsentStore.getState().initialize();
-  }, [user?.uid]);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      useConsentStore.getState().initialize();
+      if (currentUser && !hasStarted) {
+        startSession(); // Auto start session if logged in
+      }
+    });
+    return () => unsubscribe();
+  }, [setUser, hasStarted, startSession]);
 
   if (loading) {
     return (
@@ -119,14 +121,6 @@ export default function App() {
         </div>
       </div>
     );
-  }
-
-  const requiresAccount = [
-    '/dashboard', '/workspace', '/ide', '/automations', '/integrations',
-    '/projects', '/settings', '/profile', '/models/usage', '/evals', '/models/evals',
-  ].includes(currentPath) || currentPath.startsWith('/chat/');
-  if (!user && requiresAccount) {
-    return <SignUpPage initialMode="signin" returnTo={`${currentPath}${window.location.search}${window.location.hash}`} />;
   }
 
   if (currentPath.startsWith('/models/gpt/') && currentPath.length > '/models/gpt/'.length) {
@@ -218,7 +212,7 @@ export default function App() {
   }
 
   if (currentPath === '/sign-in' || currentPath === '/signin' || currentPath === '/login') {
-    return <SignUpPage initialMode="signin" />;
+    return <Dashboard initialTab="new-chat" />;
   }
 
   if (currentPath === '/forgot-password' || currentPath === '/reset-password') {
@@ -228,9 +222,6 @@ export default function App() {
   // Account & Application routes
   if (currentPath === '/privacy') {
     return <PrivacyPolicyPage />;
-  }
-  if (currentPath === '/terms') {
-    return <TermsPage />;
   }
   if (currentPath === '/settings') {
     return <SettingsPage />;
@@ -246,6 +237,14 @@ export default function App() {
   }
 
   // Dashboard route for specific tabs
+  if (
+    currentPath === '/usage' ||
+    currentPath === '/analytics' ||
+    currentPath === '/dashboard/usage' ||
+    currentPath === '/dashboard/analytics'
+  ) {
+    return <Dashboard initialTab="usage" />;
+  }
   if (currentPath === '/integrations') {
     return <Dashboard initialTab="integrations" />;
   }
@@ -259,9 +258,9 @@ export default function App() {
     return <Dashboard initialTab="new-chat" />;
   }
 
-  // Explicit route for IDE workspace or active chat
+  // Route workspace or active chat to Dashboard
   if (currentPath === '/workspace' || currentPath === '/ide' || currentPath.startsWith('/chat/')) {
-    return <AppShell />;
+    return <Dashboard initialTab="new-chat" />;
   }
 
   if (currentPath === '/models' || currentPath.startsWith('/models')) {
@@ -270,6 +269,14 @@ export default function App() {
 
   // 1. First time visitors or unauthenticated users see the landing page, unless visiting login / dashboard
   if (!user || !hasStarted) {
+    if (
+      currentPath === '/sign-in' || 
+      currentPath === '/signin' || 
+      currentPath === '/login' || 
+      currentPath === '/dashboard'
+    ) {
+      return <Dashboard initialTab="new-chat" />;
+    }
     return <LandingPage />;
   }
 
@@ -283,6 +290,6 @@ export default function App() {
     return <Dashboard initialTab="new-chat" />;
   }
 
-  // 4. Default to AppShell for active projects
-  return <AppShell />;
+  // 4. Default to Dashboard
+  return <Dashboard initialTab="new-chat" />;
 }

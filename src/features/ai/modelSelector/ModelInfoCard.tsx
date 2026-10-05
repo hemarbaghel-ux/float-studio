@@ -67,6 +67,7 @@ export function getCleanModelName(displayName: string, shortName?: string): stri
 }
 
 export function getModelProviderName(model: AIModel): string {
+  if (model.id === 'float-basic') return 'FLOAT';
   if (model.provider) return model.provider;
   switch (model.providerId?.toLowerCase()) {
     case 'google': return 'Google';
@@ -79,6 +80,9 @@ export function getModelProviderName(model: AIModel): string {
 }
 
 export function getVersionOrEffort(model: AIModel): string {
+  if (model.id === 'float-basic') {
+    return 'Free · Basic coding assistance';
+  }
   if (model.version) {
     return `Version: ${model.version}`;
   }
@@ -155,8 +159,15 @@ export const ModelInfoCard: React.FC<ModelInfoCardProps> = ({
           <h4 className="text-[14px] font-semibold text-slate-900 dark:text-white leading-tight tracking-tight">
             {modelShortName}
           </h4>
-          <div className="text-[11px] text-slate-500 dark:text-[#8B949E] mt-0.5">
-            Provider: {providerName}
+          <div className="flex items-center gap-1.5 mt-0.5">
+            {(model.tier === 'Free' || model.id === 'float-basic') && (
+              <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded leading-none">
+                Free Tier
+              </span>
+            )}
+            <span className="text-[11px] text-slate-500 dark:text-[#8B949E]">
+              Provider: {providerName}
+            </span>
           </div>
         </div>
 

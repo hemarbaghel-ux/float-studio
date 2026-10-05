@@ -4,7 +4,7 @@ import { ProposalService } from './agent/proposalService';
 import { verifyFirebaseIdToken } from './authMiddleware';
 import { requireAuth } from './authMiddleware';
 import { asyncRoute } from './asyncRoute';
-import { adminDb, hasAdminCredentials } from './adminFirebase';
+import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from './adminFirebase';
 import { projectProcessManager } from './execution/processManager';
 import { cleanupAgentGitWorktree, cleanupStaleAgentWorktrees, createAgentGitWorktree, getAgentWorktreeStatus, type AgentWorktreeSession } from './agent/agentGitWorktree';
 import {
@@ -399,8 +399,8 @@ export class AgentOrchestrator {
     if (modelId === 'gemini-2.0-flash' || modelId === 'gemini-1.5-flash') {
       modelId = 'gemini-3.1-flash-lite';
     }
-    if (typeof modelId !== 'string' || !/^gemini-/.test(modelId)) {
-      throw new Error('Background agents currently use the Gemini agent loop. Select a Gemini model for this task.');
+    if (typeof modelId !== 'string' || (!/^gemini-/.test(modelId) && modelId !== 'float-basic' && modelId !== 'auto')) {
+      throw new Error('Background agents currently use the Gemini agent loop. Select a Gemini model or FLOAT Basic for this task.');
     }
 
     const taskId = uuidv4();
@@ -760,32 +760,77 @@ export class AgentOrchestrator {
   }
 
   async getTaskDurable(taskId: string, userId: string) {
-    const task = await readAgentTask(taskId);
-    if (!task || task.ownerId !== userId) return null;
-    task.result = await getAgentTaskResult(taskId, userId);
-    this.tasks.set(taskId, task);
-    return task;
+    if (!hasAdminCredentials()) {
+      const task = this.tasks.get(taskId);
+      if (!task || (task.ownerId && task.ownerId !== userId)) return null;
+      return task;
+    }
+    try {
+      const task = await readAgentTask(taskId);
+      if (!task || task.ownerId !== userId) return null;
+      task.result = await getAgentTaskResult(taskId, userId);
+      this.tasks.set(taskId, task);
+      return task;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+        const task = this.tasks.get(taskId);
+        if (!task || (task.ownerId && task.ownerId !== userId)) return null;
+        return task;
+      }
+      throw error;
+    }
   }
 
   async getTasksDurable(userId: string) {
-    const persisted = await listAgentTasks(userId);
-    const results = await listAgentTaskResults(userId);
-    for (const task of persisted) task.result = results[task.id] ?? null;
-    for (const task of persisted) this.tasks.set(task.id, task);
-    return persisted.sort((a, b) => b.createdAt - a.createdAt);
+    if (!hasAdminCredentials()) {
+      return Array.from(this.tasks.values())
+        .filter((task) => !task.ownerId || task.ownerId === userId)
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+    try {
+      const persisted = await listAgentTasks(userId);
+      const results = await listAgentTaskResults(userId);
+      for (const task of persisted) task.result = results[task.id] ?? null;
+      for (const task of persisted) this.tasks.set(task.id, task);
+      return persisted.sort((a, b) => b.createdAt - a.createdAt);
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+        return Array.from(this.tasks.values())
+          .filter((task) => !task.ownerId || task.ownerId === userId)
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      }
+      throw error;
+    }
   }
 
   async getEventsDurable(userId: string, taskId?: string) {
-    const persisted = await listAgentEvents(userId, taskId);
-    if (taskId) this.events.set(taskId, persisted);
-    else {
-      for (const event of persisted) {
-        const list = this.events.get(event.taskId) || [];
-        if (!list.some((item) => item.id === event.id)) list.push(event);
-        this.events.set(event.taskId, list);
+    if (!hasAdminCredentials()) {
+      if (taskId) {
+        return this.events.get(taskId) || [];
       }
+      return this.getAllEvents(userId);
     }
-    return persisted;
+    try {
+      const persisted = await listAgentEvents(userId, taskId);
+      if (taskId) this.events.set(taskId, persisted);
+      else {
+        for (const event of persisted) {
+          const list = this.events.get(event.taskId) || [];
+          if (!list.some((item) => item.id === event.id)) list.push(event);
+          this.events.set(event.taskId, list);
+        }
+      }
+      return persisted;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        markAdminCredentialsUnavailable(error);
+        if (taskId) return this.events.get(taskId) || [];
+        return this.getAllEvents(userId);
+      }
+      throw error;
+    }
   }
 
   async resumeTaskDurable(taskId: string) {
@@ -813,6 +858,7 @@ export class AgentOrchestrator {
   }
 
   async recoverDurableTasks() {
+    if (!hasAdminCredentials()) return;
     await cleanupStaleAgentWorktrees().catch(error => console.warn('[AgentOrchestrator] Stale task worktree cleanup failed:', error));
     const running = await listRunningAgentTasks();
     for (const task of running) {
@@ -904,13 +950,27 @@ export function setupAgentOrchestratorRoutes(app: any) {
   app.use('/api/agents', requireAuth);
 
   if (hasAdminCredentials()) {
-    void orchestrator.recoverDurableTasks().catch((error) => {
-      console.error('[AgentOrchestrator] Durable task recovery failed:', error);
-    });
-    const recoveryTimer = setInterval(() => {
-      void orchestrator.recoverDurableTasks().catch((error) => {
-        console.error('[AgentOrchestrator] Durable task recovery failed:', error);
-      });
+    let recoveryTimer: NodeJS.Timeout | undefined;
+    const runRecovery = async () => {
+      try {
+        await orchestrator.recoverDurableTasks();
+      } catch (error: any) {
+        if (isPermissionDeniedError(error)) {
+          markAdminCredentialsUnavailable(error);
+          if (recoveryTimer) clearInterval(recoveryTimer);
+          console.warn('[AgentOrchestrator] Firestore task persistence is unavailable (PERMISSION_DENIED); durable task recovery disabled.');
+        } else {
+          console.error('[AgentOrchestrator] Durable task recovery failed:', error);
+        }
+      }
+    };
+    void runRecovery();
+    recoveryTimer = setInterval(() => {
+      if (!hasAdminCredentials()) {
+        if (recoveryTimer) clearInterval(recoveryTimer);
+        return;
+      }
+      void runRecovery();
     }, 30_000);
     recoveryTimer.unref?.();
   } else {

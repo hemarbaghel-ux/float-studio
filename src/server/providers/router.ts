@@ -9,11 +9,10 @@ import { GoogleGeminiAdapter } from './gemini';
 import { OpenAIAdapter } from './openai';
 import { AnthropicAdapter } from './anthropic';
 import { XAIAdapter } from './xai';
-import { DeepSeekAdapter } from './deepseek';
 import { ServerPrivacyGuard } from '../privacyGuard';
 
 export interface ModelRouteDefinition {
-  provider: 'google' | 'openai' | 'anthropic' | 'xai' | 'deepseek';
+  provider: 'google' | 'openai' | 'anthropic' | 'xai';
   apiModelId: string;
 }
 
@@ -25,6 +24,9 @@ export class ModelRouter {
   private modelRoutes: Record<string, ModelRouteDefinition> = {
     // Auto / Default
     'auto': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
+
+    // Free Tier Model
+    'float-basic': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
 
     // Google Gemini Models
     'gemini-3.8-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
@@ -63,11 +65,7 @@ export class ModelRouter {
     'grok-2-1212': { provider: 'xai', apiModelId: 'grok-2-1212' },
     'grok-2': { provider: 'xai', apiModelId: 'grok-2' },
     'grok-2-vision-1212': { provider: 'xai', apiModelId: 'grok-2-vision-1212' },
-    'grok-beta': { provider: 'xai', apiModelId: 'grok-beta' },
-
-    // DeepSeek
-    'deepseek-chat': { provider: 'deepseek', apiModelId: 'deepseek-chat' },
-    'deepseek-reasoner': { provider: 'deepseek', apiModelId: 'deepseek-reasoner' }
+    'grok-beta': { provider: 'xai', apiModelId: 'grok-beta' }
   };
 
   private retiredModels: Record<string, string> = {
@@ -83,7 +81,6 @@ export class ModelRouter {
     this.registerAdapter(new OpenAIAdapter());
     this.registerAdapter(new AnthropicAdapter());
     this.registerAdapter(new XAIAdapter());
-    this.registerAdapter(new DeepSeekAdapter());
   }
 
   registerAdapter(adapter: AIProviderAdapter) {
@@ -145,6 +142,14 @@ export class ModelRouter {
         'The model gemini-2.0-flash has been retired by Google. Please update your code to use gemini-3.8-flash.',
         'MODEL_NOT_FOUND',
         'Google Gemini',
+        404
+      );
+    }
+    if (modelId.toLowerCase().startsWith('deepseek')) {
+      throw new AIProviderError(
+        `DeepSeek models (${modelId}) have been removed and are no longer supported by FLOAT AI. Please choose a supported model from Google Gemini, Anthropic Claude, OpenAI, or xAI.`,
+        'MODEL_NOT_FOUND',
+        'FLOAT',
         404
       );
     }

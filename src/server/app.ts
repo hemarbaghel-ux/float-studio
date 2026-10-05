@@ -1,5 +1,6 @@
 import { setupAgentOrchestratorRoutes } from './agentOrchestrator';
 import { integrationsRouter } from './integrationsRouter';
+import { subscriptionRouter, handleStripeWebhook } from './subscription/subscriptionRouter';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -8,7 +9,7 @@ import { evalEngine } from './evalEngine';
 import { ServerPrivacyGuard } from './privacyGuard';
 import { requireAuth } from './authMiddleware';
 import { asyncRoute } from './asyncRoute';
-import { adminDb, hasAdminCredentials } from './adminFirebase';
+import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from './adminFirebase';
 import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService } from './agent/proposalService';
@@ -24,10 +25,18 @@ export async function startServer() {
 
   // Keep ordinary JSON endpoints small. Authenticated AI routes install a larger
   // parser after authentication because repository context can be several MB.
+  // Stripe webhooks require pristine raw buffer for cryptographic signature verification.
   app.use((req, res, next) => {
+    if (req.path === '/api/subscription/webhook') return next();
     if (req.path === '/api/ai/chat' || req.path === '/api/ai/agent') return next();
     return express.json({ limit: '12mb' })(req, res, next);
   });
+
+  // Stripe Webhook Endpoint (requires raw body buffer)
+  app.post('/api/subscription/webhook', express.raw({ type: 'application/json' }), asyncRoute(handleStripeWebhook));
+
+  // Subscription & Checkout Routes
+  app.use('/api/subscription', subscriptionRouter);
 
   // Health check endpoint for Cloud Run and monitoring
   app.get('/api/health', (_req, res) => {
@@ -704,13 +713,27 @@ export async function startServer() {
   // Evals contain user work and can trigger paid model calls. Require Firebase auth.
   app.use('/api/evals', requireAuth);
   if (hasAdminCredentials()) {
-    void evalEngine.recoverInterruptedRuns().catch((error) => {
-      console.error('[EvalEngine] Interrupted run recovery failed:', error);
-    });
-    const evalRecoveryTimer = setInterval(() => {
-      void evalEngine.recoverInterruptedRuns().catch((error) => {
-        console.error('[EvalEngine] Interrupted run recovery failed:', error);
-      });
+    let evalRecoveryTimer: NodeJS.Timeout | undefined;
+    const runEvalRecovery = async () => {
+      try {
+        await evalEngine.recoverInterruptedRuns();
+      } catch (error: any) {
+        if (isPermissionDeniedError(error)) {
+          markAdminCredentialsUnavailable(error);
+          if (evalRecoveryTimer) clearInterval(evalRecoveryTimer);
+          console.warn('[EvalEngine] Firestore run persistence is unavailable (PERMISSION_DENIED); interrupted run recovery disabled.');
+        } else {
+          console.error('[EvalEngine] Interrupted run recovery failed:', error);
+        }
+      }
+    };
+    void runEvalRecovery();
+    evalRecoveryTimer = setInterval(() => {
+      if (!hasAdminCredentials()) {
+        if (evalRecoveryTimer) clearInterval(evalRecoveryTimer);
+        return;
+      }
+      void runEvalRecovery();
     }, 30_000);
     evalRecoveryTimer.unref?.();
   } else {

@@ -39,6 +39,14 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
   const isAvailable = model.status === 'AVAILABLE' || (providerInfo && providerInfo.configured);
 
   const getStatusBadge = () => {
+    if (model.tier === 'Free' || model.id === 'float-basic') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
+          <CheckCircle2 size={13} className="text-emerald-400" />
+          Free Tier · Available in FLOAT
+        </span>
+      );
+    }
     if (isAvailable) {
       return (
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
@@ -82,7 +90,7 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
                 ID: {verified?.exactModelId || model.id}
               </span>
               <span>•</span>
-              <span className="capitalize text-slate-300">Provider: {model.providerId}</span>
+              <span className="capitalize text-slate-300">Provider: {model.provider || model.providerId}</span>
               <span>•</span>
               <span>Context: {(verified?.contextWindow || model.contextWindow).toLocaleString()} tokens</span>
               <span>•</span>

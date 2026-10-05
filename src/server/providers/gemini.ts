@@ -142,6 +142,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       model === 'gemini-3.1-flash-lite' ||
       model === 'composer-2.5' ||
       model === 'muse-spark-1.3' ||
+      model === 'float-basic' ||
       model === 'auto'
     ) {
       return 'gemini-3.8-flash';
@@ -167,6 +168,10 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       const config: Record<string, any> = {};
       if (request.systemInstruction) {
         config.systemInstruction = request.systemInstruction;
+      }
+      if (request.model === 'float-basic') {
+        const basicGuidance = 'You are FLOAT Basic, FLOAT AI\'s free-tier developer model providing everyday assistance for small code changes, simple functions, code reviews, step-by-step plans, straightforward debugging, file exploration, and basic UI components. Keep answers concise, direct, and practical.';
+        config.systemInstruction = config.systemInstruction ? `${basicGuidance}\n\n${config.systemInstruction}` : basicGuidance;
       }
       if (request.reasoningEffort && apiModel.includes('2.0-flash')) {
         const budgetMap = { low: 1024, medium: 4096, high: 8192 };
@@ -219,6 +224,10 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       const config: Record<string, any> = {};
       if (request.systemInstruction) {
         config.systemInstruction = request.systemInstruction;
+      }
+      if (request.model === 'float-basic') {
+        const basicGuidance = 'You are FLOAT Basic, FLOAT AI\'s free-tier developer model providing everyday assistance for small code changes, simple functions, code reviews, step-by-step plans, straightforward debugging, file exploration, and basic UI components. Keep answers concise, direct, and practical.';
+        config.systemInstruction = config.systemInstruction ? `${basicGuidance}\n\n${config.systemInstruction}` : basicGuidance;
       }
       if (request.reasoningEffort && (apiModel.includes('2.0-flash') || apiModel.includes('3.8-flash'))) {
         const budgetMap = { low: 1024, medium: 4096, high: 8192 };

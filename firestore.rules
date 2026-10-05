@@ -247,5 +247,14 @@ service cloud.firestore {
                     incoming().updatedAt == request.time;
       allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
     }
+
+    match /userSubscriptions/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow write: if false; // Only server-side via verified Stripe webhooks
+    }
+
+    match /processedWebhookEvents/{eventId} {
+      allow read, write: if false; // Strictly server-side
+    }
   }
 }
