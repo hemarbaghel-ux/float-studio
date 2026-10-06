@@ -6,8 +6,10 @@ import { Breadcrumbs } from './Breadcrumbs';
 import { Columns, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
+import { DiffReviewModal } from '../agent/DiffReviewModal';
+
 export function EditorArea() {
-  const { openTabs, activeFileId, files } = useIDEStore();
+  const { openTabs, activeFileId, files, reviewChangeSet, setReviewChangeSet } = useIDEStore();
   const [splitFileId, setSplitFileId] = useState<string | null>(null);
 
   const getFileContent = (id: string | null) => {
@@ -120,6 +122,13 @@ export function EditorArea() {
             </div>
           </div>
         </div>
+      )}
+
+      {reviewChangeSet && (
+        <DiffReviewModal
+          changeSet={reviewChangeSet}
+          onClose={() => setReviewChangeSet(null)}
+        />
       )}
     </div>
   );

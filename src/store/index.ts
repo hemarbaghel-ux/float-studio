@@ -143,6 +143,8 @@ interface IDEState {
   aiContext: AIContextItem[];
   activeSelection: EditorSelection | null;
   setActiveSelection: (selection: EditorSelection | null) => void;
+  reviewChangeSet: ChangeSet | null;
+  setReviewChangeSet: (changeSet: ChangeSet | null) => void;
   aiModel: string;
   setAiModel: (model: string) => void;
   addAiMessage: (message: Partial<Pick<AIMessage, 'id'>> & Omit<AIMessage, 'id' | 'timestamp'>) => void;
@@ -706,6 +708,8 @@ export const useIDEStore = create<IDEState>((set, get) => ({
   aiContext: [],
   activeSelection: null,
   setActiveSelection: (selection) => set({ activeSelection: selection }),
+  reviewChangeSet: null,
+  setReviewChangeSet: (changeSet) => set({ reviewChangeSet: changeSet }),
   aiModel: 'gemini-3.8-flash',
   setAiModel: (model) => set({ aiModel: model }),
   
