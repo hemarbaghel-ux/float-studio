@@ -52,6 +52,7 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
   },
   business: {
     id: 'business',
+    name: 'FLOAT Business',
     badge: 'Teams',
     monthlyPrice: 40,
     currency: 'USD',
@@ -67,6 +68,7 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
   },
   ultimate: {
     id: 'ultimate',
+    name: 'FLOAT Ultimate',
     badge: 'Maximum Power',
     monthlyPrice: 100,
     currency: 'USD',

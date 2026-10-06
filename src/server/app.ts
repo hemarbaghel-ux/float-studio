@@ -271,9 +271,26 @@ export async function startServer() {
         userPromptText = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
       }
 
+      let gitRepoInfo: { gitRepository?: string; gitBranch?: string } = {};
+      if (projectId) {
+        try {
+          const linkSnap = await adminDb.collection('projectGitLinks').doc(projectId).get();
+          if (linkSnap.exists) {
+            const linkData = linkSnap.data();
+            if (linkData && linkData.ownerId === req.user.uid) {
+              gitRepoInfo = {
+                gitRepository: `${linkData.repositoryOwner}/${linkData.repositoryName}`,
+                gitBranch: linkData.branch || linkData.defaultBranch
+              };
+            }
+          }
+        } catch {}
+      }
+
       const { formattedPrompt } = ContextBuilder.build(userPromptText, contextItems, {
         projectName,
-        projectId
+        projectId,
+        ...gitRepoInfo
       });
 
       processedMessages = [

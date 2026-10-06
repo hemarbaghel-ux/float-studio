@@ -1,0 +1,217 @@
+import React, { useEffect, useState, useRef } from 'react';
+import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers } from 'lucide-react';
+import { useIDEStore } from '../../store';
+import { flattenFileTree, cn } from '../../lib/utils';
+import { AIContextItem } from '../../types';
+import { apiFetch } from '../../services/api';
+
+export interface ContextSuggestion {
+  id: string;
+  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal';
+  label: string;
+  sublabel: string;
+  icon: React.ReactNode;
+  item: Omit<AIContextItem, 'id'>;
+}
+
+interface ContextPickerProps {
+  query: string;
+  onSelect: (item: Omit<AIContextItem, 'id'>) => void;
+  onClose: () => void;
+}
+
+export function ContextPicker({ query, onSelect, onClose }: ContextPickerProps) {
+  const { files, terminalEntries, projectId } = useIDEStore();
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [gitStatus, setGitStatus] = useState<any | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch real Git status for @git / @diff if connected
+  useEffect(() => {
+    if (!projectId) return;
+    let isMounted = true;
+    apiFetch(`/api/projects/${encodeURIComponent(projectId)}/git`)
+      .then(res => res.json())
+      .then(data => {
+        if (isMounted && data.connected) {
+          setGitStatus(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [projectId]);
+
+  // Build real available suggestions
+  const suggestions: ContextSuggestion[] = [];
+  const cleanQuery = query.toLowerCase().trim();
+
+  // 1. Files & Folders from active virtual workspace
+  const allNodes = flattenFileTree(files);
+  for (const node of allNodes) {
+    if (node.type === 'file') {
+      suggestions.push({
+        id: `file-${node.path}`,
+        type: 'file',
+        label: `@file ${node.path}`,
+        sublabel: `${(node.content || '').length} chars`,
+        icon: <FileCode size={13} className="text-blue-500 shrink-0" />,
+        item: {
+          type: 'file',
+          name: node.path,
+          path: node.path,
+          content: node.content || '',
+          sizeBytes: (node.content || '').length
+        }
+      });
+    } else {
+      // Folder context aggregates all child files
+      const folderFiles = allNodes.filter(n => n.type === 'file' && n.path.startsWith(`${node.path}/`));
+      if (folderFiles.length > 0) {
+        const aggregated = folderFiles.map(f => `--- ${f.path} ---\n${f.content || ''}`).join('\n\n');
+        suggestions.push({
+          id: `folder-${node.path}`,
+          type: 'folder',
+          label: `@folder ${node.path}/`,
+          sublabel: `${folderFiles.length} files`,
+          icon: <Folder size={13} className="text-amber-500 shrink-0" />,
+          item: {
+            type: 'file',
+            name: `${node.path}/`,
+            path: node.path,
+            content: aggregated,
+            sizeBytes: aggregated.length
+          }
+        });
+      }
+    }
+  }
+
+  // 2. Terminal Output context from actual active session
+  if (terminalEntries.length > 0) {
+    const termLogs = terminalEntries.map(e => `[${e.type.toUpperCase()}] ${e.content}`).join('\n');
+    suggestions.push({
+      id: 'context-terminal',
+      type: 'terminal',
+      label: '@terminal',
+      sublabel: `Active output (${terminalEntries.length} lines)`,
+      icon: <Terminal size={13} className="text-emerald-500 shrink-0" />,
+      item: {
+        type: 'terminal',
+        name: 'Terminal Logs',
+        content: termLogs.slice(-8000), // budget recent output
+        sizeBytes: termLogs.length
+      }
+    });
+  }
+
+  // 3. Git Status & Diffs from real linked repository
+  if (gitStatus?.linked) {
+    const changesCount = gitStatus.changes?.length || 0;
+    suggestions.push({
+      id: 'context-git',
+      type: 'git',
+      label: '@git',
+      sublabel: `Branch: ${gitStatus.branch || 'main'} (${changesCount} changes)`,
+      icon: <GitBranch size={13} className="text-purple-500 shrink-0" />,
+      item: {
+        type: 'attachment',
+        name: 'Git Status',
+        content: `Repository: ${gitStatus.repository?.fullName || ''}\nBranch: ${gitStatus.branch || 'main'}\nModified files:\n${(gitStatus.changes || []).map((c: any) => `${c.status}: ${c.path}`).join('\n')}`,
+        sizeBytes: 500
+      }
+    });
+
+    if (changesCount > 0) {
+      suggestions.push({
+        id: 'context-diff',
+        type: 'diff',
+        label: '@diff',
+        sublabel: `Changed files summary (${changesCount})`,
+        icon: <GitCommit size={13} className="text-rose-500 shrink-0" />,
+        item: {
+          type: 'attachment',
+          name: 'Git Working Tree Diff',
+          content: `Active Changes:\n${(gitStatus.changes || []).map((c: any) => `[${c.status.toUpperCase()}] ${c.path}`).join('\n')}`,
+          sizeBytes: 1000
+        }
+      });
+    }
+  }
+
+  // Filter by query
+  const filtered = suggestions.filter(s => 
+    s.label.toLowerCase().includes(cleanQuery) || 
+    s.sublabel.toLowerCase().includes(cleanQuery)
+  );
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [cleanQuery]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex(prev => (prev + 1) % Math.max(1, filtered.length));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex(prev => (prev - 1 + filtered.length) % Math.max(1, filtered.length));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const selected = filtered[selectedIndex];
+        if (selected) {
+          onSelect(selected.item);
+        }
+      } else if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [filtered, selectedIndex, onSelect, onClose]);
+
+  if (filtered.length === 0) return null;
+
+  return (
+    <div
+      ref={containerRef}
+      className="absolute bottom-full left-3 mb-2 w-80 max-h-60 bg-white dark:bg-[#161616] border border-slate-200 dark:border-white/10 rounded-xl shadow-2xl overflow-y-auto p-1.5 z-50 text-xs flex flex-col gap-0.5 animate-in fade-in zoom-in-95 duration-100"
+    >
+      <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center justify-between border-b border-slate-100 dark:border-white/5 mb-0.5">
+        <span>Add Context ({filtered.length})</span>
+        <span className="font-mono text-[9px]">↑↓ navigate • ↵ select</span>
+      </div>
+      {filtered.map((suggestion, idx) => {
+        const isSelected = idx === selectedIndex;
+        return (
+          <button
+            key={suggestion.id}
+            type="button"
+            onClick={() => onSelect(suggestion.item)}
+            onMouseEnter={() => setSelectedIndex(idx)}
+            className={cn(
+              "w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2 text-left cursor-pointer transition-colors",
+              isSelected
+                ? "bg-blue-600 text-white font-medium"
+                : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/5"
+            )}
+          >
+            <div className="flex items-center gap-2 truncate">
+              {suggestion.icon}
+              <span className="truncate">{suggestion.label}</span>
+            </div>
+            <span className={cn(
+              "text-[10px] font-mono shrink-0",
+              isSelected ? "text-white/80" : "text-slate-400 dark:text-slate-500"
+            )}>
+              {suggestion.sublabel}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}

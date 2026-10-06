@@ -24,6 +24,7 @@ import { ConsentService } from '../../services/consentService';
 import { TelemetryService } from '../../services/telemetryService';
 import { useUsageStore } from '../../store/usageStore';
 import { ConversationService, ConversationMeta } from '../../services/conversationService';
+import { ContextPicker } from './ContextPicker';
 import { v4 as uuidv4 } from 'uuid';
 
 function CodeBlock({ node, inline, className, children, ...props }: any) {
@@ -204,6 +205,7 @@ export function AIPanel() {
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
   const [isCodebaseSearchOpen, setIsCodebaseSearchOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [atQuery, setAtQuery] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -963,9 +965,26 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
   };
 
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
+    const val = e.target.value;
+    setInput(val);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
+
+    // Detect @ symbol at cursor or trailing word
+    const cursor = e.target.selectionStart || val.length;
+    const textBeforeCursor = val.slice(0, cursor);
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    if (lastAtIndex !== -1) {
+      const charBeforeAt = lastAtIndex > 0 ? textBeforeCursor[lastAtIndex - 1] : ' ';
+      if (charBeforeAt === ' ' || charBeforeAt === '\n') {
+        const queryText = textBeforeCursor.slice(lastAtIndex + 1);
+        if (!queryText.includes(' ') && !queryText.includes('\n')) {
+          setAtQuery(queryText);
+          return;
+        }
+      }
+    }
+    setAtQuery(null);
   };
 
   const activeConversationMeta = conversationList.find(c => c.id === activeConversationId);
@@ -1496,6 +1515,27 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 Clear all
               </button>
             </div>
+          )}
+
+          {/* Rich @ Context Picker Dropdown */}
+          {atQuery !== null && (
+            <ContextPicker
+              query={atQuery}
+              onClose={() => setAtQuery(null)}
+              onSelect={(item) => {
+                addAiContext(item);
+                // Strip the trailing @query from input
+                const cursor = textareaRef.current?.selectionStart || input.length;
+                const textBeforeCursor = input.slice(0, cursor);
+                const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+                if (lastAtIndex !== -1) {
+                  const cleaned = input.slice(0, lastAtIndex) + input.slice(cursor);
+                  setInput(cleaned);
+                }
+                setAtQuery(null);
+                setTimeout(() => textareaRef.current?.focus(), 50);
+              }}
+            />
           )}
 
           {/* Multiline auto-resizing textarea */}

@@ -1,16 +1,20 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { useIDEStore } from '../../store';
 import { EditorTabs } from './EditorTabs';
 import { CodeEditor } from './CodeEditor';
+import { Breadcrumbs } from './Breadcrumbs';
+import { Columns, X } from 'lucide-react';
+import { cn } from '../../lib/utils';
 
 export function EditorArea() {
   const { openTabs, activeFileId, files } = useIDEStore();
+  const [splitFileId, setSplitFileId] = useState<string | null>(null);
 
-  const getActiveFileContent = () => {
-    if (!activeFileId) return '';
+  const getFileContent = (id: string | null) => {
+    if (!id) return '';
     const findContent = (nodes: any[]): string | null => {
       for (const node of nodes) {
-        if (node.id === activeFileId) return node.content || '';
+        if (node.id === id) return node.content || '';
         if (node.children) {
           const res = findContent(node.children);
           if (res !== null) return res;
@@ -21,11 +25,11 @@ export function EditorArea() {
     return findContent(files) || '';
   };
 
-  const activeFileName = () => {
-    if (!activeFileId) return '';
+  const getFileName = (id: string | null) => {
+    if (!id) return '';
     const findName = (nodes: any[]): string | null => {
       for (const node of nodes) {
-        if (node.id === activeFileId) return node.name;
+        if (node.id === id) return node.name;
         if (node.children) {
           const res = findName(node.children);
           if (res !== null) return res;
@@ -34,7 +38,17 @@ export function EditorArea() {
       return null;
     };
     return findName(files) || '';
-  }
+  };
+
+  const toggleSplit = () => {
+    if (splitFileId) {
+      setSplitFileId(null);
+    } else {
+      // Pick another open tab or the active file itself
+      const anotherTab = openTabs.find(t => t.fileId !== activeFileId);
+      setSplitFileId(anotherTab ? anotherTab.fileId : activeFileId);
+    }
+  };
 
   if (openTabs.length === 0) {
     return (
@@ -54,14 +68,59 @@ export function EditorArea() {
 
   return (
     <div className="h-full w-full flex flex-col bg-white dark:bg-[#0A0A0A] min-w-0">
-      <EditorTabs />
-      <div className="flex-1 relative min-h-0">
-        <CodeEditor 
-          fileId={activeFileId!} 
-          fileName={activeFileName()} 
-          content={getActiveFileContent()} 
-        />
-      </div>
+      <EditorTabs onToggleSplit={toggleSplit} isSplitActive={Boolean(splitFileId)} />
+      
+      {!splitFileId ? (
+        // Standard Single Editor with Breadcrumbs
+        <div className="flex-1 flex flex-col min-h-0">
+          <Breadcrumbs fileId={activeFileId} />
+          <div className="flex-1 relative min-h-0">
+            <CodeEditor 
+              fileId={activeFileId!} 
+              fileName={getFileName(activeFileId)} 
+              content={getFileContent(activeFileId)} 
+            />
+          </div>
+        </div>
+      ) : (
+        // Side-by-Side Split Editor View
+        <div className="flex-1 flex min-h-0 divide-x divide-slate-200 dark:divide-[#2A2A2A]">
+          {/* Left Pane (Active File) */}
+          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+            <Breadcrumbs fileId={activeFileId} />
+            <div className="flex-1 relative min-h-0">
+              <CodeEditor 
+                fileId={activeFileId!} 
+                fileName={getFileName(activeFileId)} 
+                content={getFileContent(activeFileId)} 
+              />
+            </div>
+          </div>
+
+          {/* Right Pane (Split File) */}
+          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+            <div className="flex items-center justify-between bg-slate-50 dark:bg-[#0E0E0E] border-b border-slate-200 dark:border-[#202020] pr-2">
+              <div className="flex-1 min-w-0">
+                <Breadcrumbs fileId={splitFileId} />
+              </div>
+              <button
+                onClick={() => setSplitFileId(null)}
+                title="Close Split Editor"
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded hover:bg-slate-200/50 dark:hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <div className="flex-1 relative min-h-0">
+              <CodeEditor 
+                fileId={splitFileId!} 
+                fileName={getFileName(splitFileId)} 
+                content={getFileContent(splitFileId)} 
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

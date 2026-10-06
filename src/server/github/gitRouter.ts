@@ -243,12 +243,22 @@ gitRouter.get('/diff', requireAuth, async (req: any, res: Response) => {
   try {
     const ctx = await loadContext(req.params.projectId, req.user.uid, true);
     const local = projectFiles(ctx.project.files);
-    const changes = compareWorkspace(local, ctx.link!.baseFiles);
+    let changes = compareWorkspace(local, ctx.link!.baseFiles);
+    const filterPath = typeof req.query.path === 'string' ? req.query.path.trim() : '';
+    if (filterPath) {
+      changes = changes.filter(c => c.path === filterPath);
+    }
     const patches = [];
     for (const change of changes.slice(0, 50)) {
       const before = ctx.link!.baseFiles[change.path] ? await getBlob(ctx, ctx.link!.baseFiles[change.path].sha) : '';
       const after = change.status === 'deleted' ? '' : local.get(change.path) || '';
-      patches.push({ path: change.path, status: change.status, patch: createTwoFilesPatch('a/' + change.path, 'b/' + change.path, before, after, 'base', 'workspace') });
+      patches.push({
+        path: change.path,
+        status: change.status,
+        before,
+        after,
+        patch: createTwoFilesPatch('a/' + change.path, 'b/' + change.path, before, after, 'base', 'workspace')
+      });
     }
     res.json({ patches, truncated: changes.length > patches.length, total: changes.length });
   } catch (error: any) { sendFailure(res, error); }
@@ -306,6 +316,7 @@ async function performOperation(action: string, body: any, ctx: GitContext, prog
     case 'switch-branch': return switchBranch(body, ctx, progress);
     case 'delete-branch': return deleteBranch(body, ctx, progress);
     case 'commit': return createCommit(body, ctx, progress);
+    case 'discard-changes': return discardChanges(body, ctx, progress);
     case 'push': return pushCommit(ctx, progress);
     case 'pull': return pullChanges(ctx, progress);
     case 'create-pr': return createPullRequest(body, ctx, progress);
@@ -416,6 +427,26 @@ async function createCommit(body: any, ctx: GitContext, progress: (stage: string
   const next: GitLink = { ...ctx.link!, updatedAt: Date.now(), pendingCommit: { sha: commit.sha, baseSha: ref.object.sha, message, createdAt: Date.now() } };
   await links().doc(ctx.projectId).set(next);
   return { commit: { sha: commit.sha, message, url: commit.html_url }, message: 'Commit object created and queued for push. The branch has not moved yet.' };
+}
+
+async function discardChanges(body: any, ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {
+  const paths: string[] = Array.isArray(body.paths) ? body.paths.map(String) : typeof body.path === 'string' ? [body.path] : [];
+  if (!paths.length) throw httpError(400, 'Specify the path(s) to discard.');
+  progress('discard', 'Discarding local changes for ' + paths.length + ' file(s).');
+  const local = projectFiles(ctx.project.files);
+  for (const rawPath of paths) {
+    const filePath = normalizeGitPath(rawPath);
+    if (!filePath) continue;
+    const baseEntry = ctx.link!.baseFiles[filePath];
+    if (baseEntry) {
+      const originalContent = await getBlob(ctx, baseEntry.sha);
+      local.set(filePath, originalContent);
+    } else {
+      local.delete(filePath);
+    }
+  }
+  await saveWorkspaceAndLink(ctx, local, ctx.link!);
+  return { files: Object.fromEntries(local), message: 'Discarded changes for ' + paths.length + ' file(s).' };
 }
 
 async function pushCommit(ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {

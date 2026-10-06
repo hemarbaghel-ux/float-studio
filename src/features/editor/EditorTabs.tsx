@@ -1,9 +1,14 @@
 import React from 'react';
 import { useIDEStore } from '../../store';
-import { X, Circle, Play, Loader2 } from 'lucide-react';
+import { X, Circle, Play, Loader2, Columns } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-export function EditorTabs() {
+interface EditorTabsProps {
+  onToggleSplit?: () => void;
+  isSplitActive?: boolean;
+}
+
+export function EditorTabs({ onToggleSplit, isSplitActive }: EditorTabsProps) {
   const { openTabs, activeFileId, setActiveFile, closeTab, files, runActiveCode, isRunningCode } = useIDEStore();
 
   const getFileName = (id: string) => {
@@ -56,7 +61,22 @@ export function EditorTabs() {
         })}
       </div>
 
-      <div className="flex items-center px-2 shrink-0">
+      <div className="flex items-center gap-1.5 px-2 shrink-0">
+        {onToggleSplit && (
+          <button
+            onClick={onToggleSplit}
+            title={isSplitActive ? "Close Split Editor" : "Split Editor Right"}
+            className={cn(
+              "p-1.5 rounded text-xs transition-colors cursor-pointer",
+              isSplitActive
+                ? "bg-slate-200 dark:bg-white/10 text-slate-900 dark:text-white"
+                : "text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-white/5"
+            )}
+          >
+            <Columns size={13} />
+          </button>
+        )}
+
         <button
           onClick={runActiveCode}
           disabled={isRunningCode}

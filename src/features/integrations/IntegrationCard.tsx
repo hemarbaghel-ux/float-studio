@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { IntegrationDefinition, IntegrationConnection, useIntegrationStore, RepositoryItem } from '../../store/integrationStore';
 import { Github, Slack, Trello, CheckCircle2, AlertCircle, Settings2, Trash2, GitFork, Lock, Globe, Loader2, ExternalLink } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useIDEStore } from '../../store';
+import { importGitHubRepository } from '../../services/repoImporter';
 
 interface IntegrationCardProps {
   definition: IntegrationDefinition;
@@ -38,6 +40,7 @@ export function IntegrationCard({
   const [repositories, setRepositories] = useState<RepositoryItem[]>([]);
   const [repoError, setRepoError] = useState<string | null>(null);
   const [hasFetchedRepos, setHasFetchedRepos] = useState(false);
+  const [importingRepoId, setImportingRepoId] = useState<string | number | null>(null);
 
   const { getRepositories } = useIntegrationStore();
   const isConnected = connection?.status === 'connected';
@@ -72,13 +75,25 @@ export function IntegrationCard({
           </div>
           <div>
             <h3 className="font-semibold text-slate-900 dark:text-white leading-tight">{definition.name}</h3>
-            {isConnected ? (
+            {isConnecting ? (
+              <div className="flex items-center gap-1 mt-0.5 text-[11px] text-blue-600 dark:text-blue-400 font-medium">
+                <Loader2 size={12} className="animate-spin" /> Connecting...
+              </div>
+            ) : isConnected ? (
               <div className="flex items-center gap-1 mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
                 <CheckCircle2 size={12} /> Connected
               </div>
+            ) : connection?.status === 'expired' ? (
+              <div className="flex items-center gap-1 mt-0.5 text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                <AlertCircle size={12} /> Authorization expired
+              </div>
+            ) : connection?.status === 'error' ? (
+              <div className="flex items-center gap-1 mt-0.5 text-[11px] text-rose-600 dark:text-rose-400 font-medium">
+                <AlertCircle size={12} /> Connection failed
+              </div>
             ) : !isConfigured ? (
               <div className="flex items-center gap-1 mt-0.5 text-[11px] text-amber-600 dark:text-amber-400/90 font-medium">
-                Setup required
+                <AlertCircle size={12} /> Not configured
               </div>
             ) : (
               <div className="flex items-center gap-1 mt-0.5 text-[11px] text-slate-500 dark:text-[#A1A1AA]">
@@ -139,7 +154,7 @@ export function IntegrationCard({
                 <span>Connecting...</span>
               </>
             ) : isConfigured ? (
-              'Connect'
+              connection?.status === 'expired' || connection?.status === 'error' ? 'Reconnect' : 'Connect'
             ) : (
               'Configure Integration'
             )}
@@ -194,30 +209,63 @@ export function IntegrationCard({
                   </div>
                 ) : repositories.length > 0 ? (
                   <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
-                    {repositories.map(repo => (
-                      <div 
-                        key={repo.id}
-                        className="p-2.5 rounded-lg border border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.02] text-xs flex items-center justify-between"
-                      >
-                        <div className="flex flex-col truncate">
-                          <a 
-                            href={repo.htmlUrl} 
-                            target="_blank" 
-                            rel="noreferrer"
-                            className="font-mono text-[11px] font-medium text-slate-900 dark:text-white hover:text-blue-500 dark:hover:text-blue-400 flex items-center gap-1 truncate"
-                          >
-                            <span>{repo.fullName}</span>
-                            <ExternalLink size={10} className="shrink-0" />
-                          </a>
-                          <span className="text-[10px] text-slate-500 dark:text-[#8B949E]">
-                            {repo.defaultBranch} • {repo.language || 'Code'} • Updated {new Date(repo.updatedAt).toLocaleDateString()}
-                          </span>
+                    {repositories.map(repo => {
+                      const isLinked = useIDEStore.getState().projectName === repo.name;
+                      return (
+                        <div 
+                          key={repo.id}
+                          className="p-2.5 rounded-lg border border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.02] text-xs flex items-center justify-between gap-2"
+                        >
+                          <div className="flex flex-col truncate min-w-0">
+                            <a 
+                              href={repo.htmlUrl} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="font-mono text-[11px] font-medium text-slate-900 dark:text-white hover:text-blue-500 dark:hover:text-blue-400 flex items-center gap-1 truncate"
+                            >
+                              <span className="truncate">{repo.fullName}</span>
+                              <ExternalLink size={10} className="shrink-0" />
+                            </a>
+                            <span className="text-[10px] text-slate-500 dark:text-[#8B949E]">
+                              {repo.defaultBranch} • {repo.language || 'Code'} • Updated {new Date(repo.updatedAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[9px] text-slate-400 dark:text-[#8B949E] uppercase font-medium px-1.5 py-0.5 bg-slate-200 dark:bg-white/5 rounded">
+                              {repo.private ? 'Private' : 'Public'}
+                            </span>
+                            {definition.id === 'github' && (
+                              <button
+                                onClick={async () => {
+                                  if (importingRepoId) return;
+                                  setImportingRepoId(repo.id);
+                                  try {
+                                    const [owner, repoName] = repo.fullName.split('/');
+                                    const result = await importGitHubRepository(owner || repo.name, repoName || repo.name, repo.defaultBranch);
+                                    if (!result.success || !result.files) {
+                                      alert(result.error || 'Failed to import repository.');
+                                      return;
+                                    }
+                                    const { setProject, saveProject } = useIDEStore.getState();
+                                    setProject(result.projectName || repo.name, result.files, result.projectId);
+                                    await saveProject();
+                                    setShowManage(false);
+                                  } catch (err: any) {
+                                    alert(err.message || 'Import failed.');
+                                  } finally {
+                                    setImportingRepoId(null);
+                                  }
+                                }}
+                                disabled={importingRepoId === repo.id}
+                                className="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-medium rounded transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                {importingRepoId === repo.id ? 'Importing...' : 'Import'}
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <span className="text-[10px] text-slate-400 dark:text-[#8B949E] uppercase shrink-0 font-medium px-1.5 py-0.5 bg-slate-200 dark:bg-white/5 rounded">
-                          {repo.private ? 'Private' : 'Public'}
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="py-4 text-center text-xs text-slate-500 dark:text-[#8B949E] bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 rounded-xl">

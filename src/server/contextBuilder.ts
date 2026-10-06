@@ -3,6 +3,8 @@ import { AIContextItem } from '../types';
 export interface ContextBuilderOptions {
   projectName?: string;
   projectId?: string;
+  gitRepository?: string;
+  gitBranch?: string;
   maxTotalChars?: number;
   maxPerItemChars?: number;
 }
@@ -127,7 +129,8 @@ export class ContextBuilder {
       warningSection = `[Context Notices: ${warnings.join(' | ')}]\n\n`;
     }
 
-    const projectHeader = `[Project Context: ${projectName}]\n\n`;
+    const gitInfo = options.gitRepository ? ` (Linked: ${options.gitRepository}${options.gitBranch ? `@${options.gitBranch}` : ''})` : '';
+    const projectHeader = `[Project Context: ${projectName}${gitInfo}]\n\n`;
     const contextBody = `[Codebase & Attached Context]\n${includedBlocks.join('\n\n')}\n\n`;
     const userPromptSection = `[User Request]\n${userMessage}`;
 
