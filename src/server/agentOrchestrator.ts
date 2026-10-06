@@ -4,6 +4,8 @@ import { ProposalService } from './agent/proposalService';
 import { verifyFirebaseIdToken } from './authMiddleware';
 import { requireAuth } from './authMiddleware';
 import { asyncRoute } from './asyncRoute';
+import { PlanService } from './agent/planService';
+import { getPlanDurable, listPlansDurable, updatePlanDurable } from './agent/planPersistence';
 import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from './adminFirebase';
 import { projectProcessManager } from './execution/processManager';
 import { cleanupAgentGitWorktree, cleanupStaleAgentWorktrees, createAgentGitWorktree, getAgentWorktreeStatus, type AgentWorktreeSession } from './agent/agentGitWorktree';
@@ -1143,6 +1145,65 @@ export function setupAgentOrchestratorRoutes(app: any) {
     } catch (error: any) {
       res.status(409).json({ error: error.message || 'Task could not be cancelled.' });
     }
+  }));
+
+  // ==========================================
+  // Plan Mode Routes (Milestone 4)
+  // ==========================================
+
+  // 9. Get Plan by ID
+  app.get('/api/agents/plans/:id', asyncRoute(async (req: any, res: any) => {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const plan = await getPlanDurable(req.params.id, user.uid);
+    if (!plan) return res.status(404).json({ error: 'Plan not found or access denied.' });
+    res.json({ plan });
+  }));
+
+  // 10. List Plans for a Project
+  app.get('/api/agents/projects/:projectId/plans', asyncRoute(async (req: any, res: any) => {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const plans = await listPlansDurable(req.params.projectId, user.uid);
+    res.json({ plans });
+  }));
+
+  // 11. Approve Plan (User explicit action)
+  app.post('/api/agents/plans/:id/approve', asyncRoute(async (req: any, res: any) => {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const result = await PlanService.approvePlan(req.params.id, user.uid);
+    if (result.error || !result.plan) {
+      return res.status(400).json({ error: result.error || 'Failed to approve plan.' });
+    }
+    res.json({ plan: result.plan });
+  }));
+
+  // 12. Update / Edit Plan
+  app.put('/api/agents/plans/:id', asyncRoute(async (req: any, res: any) => {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const { title, summary, steps } = req.body || {};
+    const result = await PlanService.updatePlan(req.params.id, user.uid, {
+      ...(title !== undefined && { title }),
+      ...(summary !== undefined && { summary }),
+      ...(steps !== undefined && { steps })
+    });
+    if (result.error || !result.plan) {
+      return res.status(400).json({ error: result.error || 'Failed to update plan.' });
+    }
+    res.json({ plan: result.plan });
+  }));
+
+  // 13. Cancel Plan
+  app.post('/api/agents/plans/:id/cancel', asyncRoute(async (req: any, res: any) => {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const result = await PlanService.cancelPlan(req.params.id, user.uid);
+    if (result.error || !result.plan) {
+      return res.status(400).json({ error: result.error || 'Failed to cancel plan.' });
+    }
+    res.json({ plan: result.plan });
   }));
 }
 

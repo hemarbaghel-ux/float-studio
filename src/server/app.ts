@@ -13,6 +13,7 @@ import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredent
 import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './agent/proposalService';
+import { PlanService } from './agent/planService';
 import { ValidationService } from './validation/validationService';
 import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -650,6 +651,35 @@ ${selectedCode || fullCode}
         res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'failed', message: error.message || 'Agent error occurred.' } })}\n\n`);
         res.end();
       }
+    }
+  });
+
+  // Plan Mode Generation Route (Milestone 4)
+  app.post('/api/ai/plan', requireAuth, express.json({ limit: '8mb' }), async (req: any, res: any) => {
+    try {
+      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gemini-3.8-flash' } = req.body || {};
+
+      if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+        return res.status(400).json({ error: 'Please enter a task request before generating a plan.' });
+      }
+
+      const result = await PlanService.generatePlan({
+        ownerId: req.user.uid,
+        projectId,
+        conversationId,
+        prompt: prompt.trim(),
+        virtualFiles: Array.isArray(virtualFiles) ? virtualFiles : [],
+        model
+      }, modelRouter);
+
+      if (result.error || !result.plan) {
+        return res.status(400).json({ error: result.error || 'Failed to generate implementation plan.' });
+      }
+
+      res.status(201).json({ plan: result.plan });
+    } catch (error: any) {
+      console.error('Plan Generation Error:', error);
+      res.status(500).json({ error: error.message || 'Failed to generate implementation plan.' });
     }
   });
 

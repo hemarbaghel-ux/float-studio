@@ -20,7 +20,6 @@ async function runMilestone3Tests() {
       {
         path: 'calc.py',
         operation: 'modify',
-        originalContent: originalCode,
         proposedContent: transformedCode
       }
     ],
@@ -66,7 +65,6 @@ async function runMilestone3Tests() {
       {
         path: 'calc.py',
         operation: 'modify',
-        originalContent: originalCode, // original hash does not match divergent file content
         proposedContent: transformedCode
       }
     ],

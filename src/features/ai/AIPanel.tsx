@@ -11,8 +11,9 @@ import {
 } from 'lucide-react';
 import { cn, flattenFileTree } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
-import { AgentMode, ChangeSet, AIMessage, AIContextItem } from '../../types';
+import { AgentMode, ChangeSet, AIMessage, AIContextItem, Plan } from '../../types';
 import { DiffReviewModal } from '../agent/DiffReviewModal';
+import { PlanCard } from './PlanCard';
 import { ModelSelector } from './ModelSelector';
 import { AgentSelector } from './AgentSelector';
 import { AgentManagerModal } from './AgentManagerModal';
@@ -199,6 +200,7 @@ export function AIPanel() {
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const [editingTitleConvId, setEditingTitleConvId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
+  const [activeWorkflowMode, setActiveWorkflowMode] = useState<'chat' | 'plan' | 'agent'>('chat');
 
   // Phase 3 Context Modals & Menu State
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
@@ -531,7 +533,13 @@ export function AIPanel() {
       return;
     }
 
-    if (mode === 'agent') {
+    if (activeWorkflowMode === 'plan') {
+      await handlePlanSubmit(draftText, token, targetConvId, currentContext);
+      isSubmittingRef.current = false;
+      return;
+    }
+
+    if (activeWorkflowMode === 'agent' || mode === 'agent') {
       await handleAgentSubmit(draftText, token, targetConvId, currentContext);
       isSubmittingRef.current = false;
       return;
@@ -726,6 +734,225 @@ export function AIPanel() {
       isSubmittingRef.current = false;
       abortControllerRef.current = null;
     }
+  };
+
+  // Plan Mode submit handler
+  const handlePlanSubmit = async (
+    userMessage: string,
+    token: string,
+    targetConvId: string,
+    contextItems: AIContextItem[] = []
+  ) => {
+    const { files } = useIDEStore.getState();
+    const virtualFiles = flattenFileTree(files);
+
+    const planMsgId = uuidv4();
+    addAiMessage({
+      id: planMsgId,
+      role: 'model',
+      content: 'Analyzing request and project structure to synthesize an implementation plan...',
+      status: 'streaming',
+      modelId: selectedModel,
+      agentId: selectedAgent,
+      conversationId: targetConvId
+    });
+
+    try {
+      const response = await fetch('/api/ai/plan', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          prompt: userMessage,
+          virtualFiles: virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
+          conversationId: targetConvId,
+          projectId: currentProjectId,
+          model: selectedModel || 'gemini-3.8-flash'
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}: Failed to generate plan.`);
+      }
+
+      const data = await response.json();
+      const plan: Plan = data.plan;
+
+      updateAiMessage(planMsgId, {
+        content: `### Implementation Plan: ${plan.title}\n\n${plan.summary}\n\nReview the proposed steps below. Click **Approve & Execute** when ready to proceed with controlled agent execution.`,
+        plan,
+        status: 'completed'
+      });
+
+      // Sync conversation to cloud with plan included
+      const latestMessages = useIDEStore.getState().aiMessages;
+      await ConversationService.syncToCloud({
+        id: targetConvId,
+        projectId: currentProjectId,
+        title: plan.title.slice(0, 36) || 'Plan Task',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: latestMessages
+      });
+      refreshConversations();
+    } catch (error: any) {
+      updateAiMessage(planMsgId, {
+        content: `**Planning Failed**: ${error.message || 'Could not generate plan.'}`,
+        status: 'error',
+        error: error.message
+      });
+    } finally {
+      setIsLoading(false);
+      isSubmittingRef.current = false;
+    }
+  };
+
+  // Plan approval handler - Starts controlled multi-step execution
+  const handleApprovePlan = async (planId: string, messageId: string) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+
+    setIsLoading(true);
+    try {
+      // 1. Mark plan approved on server
+      const approveRes = await fetch(`/api/agents/plans/${planId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!approveRes.ok) {
+        const err = await approveRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to approve plan on server.');
+      }
+
+      const approveData = await approveRes.json();
+      const approvedPlan: Plan = approveData.plan;
+
+      // Update local message with approved plan state
+      updateAiMessage(messageId, {
+        plan: approvedPlan
+      });
+
+      // 2. Sequential Step-by-Step Controlled Agent Execution
+      for (let i = 0; i < approvedPlan.steps.length; i++) {
+        const step = approvedPlan.steps[i];
+
+        // Update step status to executing
+        const executingPlan: Plan = {
+          ...approvedPlan,
+          status: 'executing',
+          currentStepIndex: i,
+          steps: approvedPlan.steps.map((s, idx) => idx === i ? { ...s, status: 'executing' } : s)
+        };
+        updateAiMessage(messageId, { plan: executingPlan });
+
+        // Execute step through agent runner
+        const stepPrompt = `[Executing Approved Plan Step ${step.order} of ${approvedPlan.steps.length}]\nObjective: ${step.objective}\nTarget files: ${step.files.join(', ') || 'All appropriate project files'}\nExpected Validation: ${step.validation}`;
+
+        await handleAgentSubmit(stepPrompt, token, activeConversationId || 'default-conv', []);
+
+        // Mark step completed
+        const completedPlan: Plan = {
+          ...executingPlan,
+          steps: executingPlan.steps.map((s, idx) => idx === i ? { ...s, status: 'completed', result: 'Step completed.' } : s)
+        };
+        updateAiMessage(messageId, { plan: completedPlan });
+      }
+
+      // Final plan marked completed
+      const finalCompletedPlan: Plan = {
+        ...approvedPlan,
+        status: 'completed',
+        completedAt: Date.now()
+      };
+      updateAiMessage(messageId, { plan: finalCompletedPlan });
+
+      const latestMessages = useIDEStore.getState().aiMessages;
+      await ConversationService.syncToCloud({
+        id: activeConversationId || 'default-conv',
+        projectId: currentProjectId,
+        title: finalCompletedPlan.title.slice(0, 36),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: latestMessages
+      });
+    } catch (err: any) {
+      console.error('Plan execution error:', err);
+      const targetMsg = useIDEStore.getState().aiMessages.find(m => m.id === messageId);
+      if (targetMsg?.plan) {
+        updateAiMessage(messageId, {
+          plan: { ...targetMsg.plan, status: 'failed', error: err.message }
+        });
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Plan cancellation handler
+  const handleCancelPlan = async (planId: string, messageId: string) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+
+    try {
+      await fetch(`/api/agents/plans/${planId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      const targetMsg = useIDEStore.getState().aiMessages.find(m => m.id === messageId);
+      if (targetMsg?.plan) {
+        updateAiMessage(messageId, {
+          plan: {
+            ...targetMsg.plan,
+            status: 'cancelled',
+            steps: targetMsg.plan.steps.map(s => s.status === 'executing' ? { ...s, status: 'cancelled' } : s)
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Could not cancel plan:', e);
+    }
+  };
+
+  // Plan update / edit handler
+  const handleUpdatePlan = async (planId: string, messageId: string, updates: Partial<Plan>) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`/api/agents/plans/${planId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(updates)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        updateAiMessage(messageId, { plan: data.plan });
+      }
+    } catch (e) {
+      console.warn('Could not update plan:', e);
+    }
+  };
+
+  // Plan regenerate handler
+  const handleRegeneratePlan = async (plan: Plan) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+    await handlePlanSubmit(plan.summary || plan.title, token, activeConversationId || 'default-conv', []);
   };
 
   // Agent submit handler
@@ -1178,6 +1405,47 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </div>
         </div>
 
+        {/* Workflow Mode Switcher: Chat / Plan / Agent */}
+        <div className="flex items-center bg-slate-100 dark:bg-[#141414] p-0.5 rounded-lg border border-slate-200/80 dark:border-[#222]">
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('chat')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-xs font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'chat'
+                ? "bg-white dark:bg-[#202020] text-slate-900 dark:text-white shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('plan')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-xs font-medium transition-all text-center cursor-pointer flex items-center justify-center gap-1",
+              activeWorkflowMode === 'plan'
+                ? "bg-white dark:bg-[#202020] text-purple-600 dark:text-purple-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+          >
+            <Sparkles size={11} />
+            <span>Plan</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('agent')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-xs font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'agent'
+                ? "bg-white dark:bg-[#202020] text-blue-600 dark:text-blue-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+          >
+            Agent
+          </button>
+        </div>
+
         {/* Agent & Model Selectors */}
         <div className="flex gap-2">
           <div className="flex-1">
@@ -1419,6 +1687,20 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                     </div>
                   </div>
                 )}
+
+                {/* Structured Plan Card (Milestone 4 Plan Mode) */}
+                {msg.plan && (
+                  <div className="mt-2 w-full max-w-[95%]">
+                    <PlanCard
+                      plan={msg.plan}
+                      onApprove={(planId) => handleApprovePlan(planId, msg.id)}
+                      onCancel={(planId) => handleCancelPlan(planId, msg.id)}
+                      onRegenerate={(plan) => handleRegeneratePlan(plan)}
+                      onUpdatePlan={(planId, updates) => handleUpdatePlan(planId, msg.id, updates)}
+                      isExecuting={isLoading}
+                    />
+                  </div>
+                )}
               </div>
             );
           })
@@ -1551,9 +1833,11 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               }
             }}
             placeholder={
-              mode === 'ask'
-                ? "Ask about your code (Enter to send, Shift+Enter for newline)..."
-                : "Describe changes to make..."
+              activeWorkflowMode === 'plan'
+                ? "Describe what you want to build or refactor to generate a structured implementation plan (Enter to plan)..."
+                : activeWorkflowMode === 'agent' || mode === 'agent'
+                ? "Describe changes for the autonomous coding agent..."
+                : "Ask about your code (Enter to send, Shift+Enter for newline)..."
             }
             className="w-full bg-transparent p-3 text-xs leading-relaxed text-slate-900 dark:text-[#E6EDF3] placeholder:text-slate-400 dark:placeholder:text-[#6E7681] outline-none resize-none min-h-[44px] max-h-[180px]"
           />
