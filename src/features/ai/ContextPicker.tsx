@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers } from 'lucide-react';
+import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers, Code2 } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { flattenFileTree, cn } from '../../lib/utils';
 import { AIContextItem } from '../../types';
 import { apiFetch } from '../../services/api';
+import { workspaceIndexManager } from '../../services/indexing/workspaceIndexManager';
 
 export interface ContextSuggestion {
   id: string;
-  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal';
+  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal' | 'symbol';
   label: string;
   sublabel: string;
   icon: React.ReactNode;
@@ -139,6 +140,37 @@ export function ContextPicker({ query, onSelect, onClose }: ContextPickerProps) 
       });
     }
   }
+
+  // 4. Symbols from workspace index
+  try {
+    const index = workspaceIndexManager.getIndex(projectId || 'active-workspace');
+    const symbolQuery = cleanQuery.replace(/^@(?:symbol\s*)?/, '').trim();
+    const symbols = index.getAllSymbols(symbolQuery).slice(0, 15);
+    for (const item of symbols) {
+      const fileNode = allNodes.find(n => n.type === 'file' && n.path === item.path);
+      const lines = (fileNode?.content || '').split(/\r?\n/);
+      const start = Math.max(1, item.symbol.line - 1);
+      const end = Math.min(lines.length, item.symbol.line + 4);
+      const excerpt = lines.slice(start - 1, end).map((l, idx) => `${start + idx}: ${l}`).join('\n');
+
+      suggestions.push({
+        id: `symbol-${item.path}-${item.symbol.name}-${item.symbol.line}`,
+        type: 'symbol',
+        label: `@symbol ${item.symbol.name}`,
+        sublabel: `${item.symbol.kind} in ${item.path}:${item.symbol.line}`,
+        icon: <Code2 size={13} className="text-purple-500 shrink-0" />,
+        item: {
+          type: 'search_match',
+          name: `${item.path} [${item.symbol.kind} ${item.symbol.name}]`,
+          path: item.path,
+          content: excerpt,
+          startLine: start,
+          endLine: end,
+          sizeBytes: excerpt.length
+        }
+      });
+    }
+  } catch {}
 
   // Filter by query
   const filtered = suggestions.filter(s => 

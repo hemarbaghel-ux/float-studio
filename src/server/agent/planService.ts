@@ -3,13 +3,14 @@ import { Plan, PlanStep, PlanStatus, PlanStepStatus } from '../../types/plan';
 import { savePlanDurable, getPlanDurable, listPlansDurable, updatePlanDurable } from './planPersistence';
 import { sanitizeProposalPath } from './proposalService';
 import { ModelRouter } from '../providers/router';
+import { workspaceIndexManager } from '../../services/indexing/workspaceIndexManager';
 
 export interface GeneratePlanInput {
   ownerId: string;
   projectId: string;
   conversationId: string;
   prompt: string;
-  virtualFiles?: Array<{ path: string; name?: string; content?: string }>;
+  virtualFiles?: Array<{ path: string; name?: string; content?: string; type?: string }>;
   model?: string;
 }
 
@@ -24,7 +25,16 @@ export class PlanService {
       return { error: 'A task request is required to generate a plan.' };
     }
 
-    // Keep context bounded
+    // Keep context bounded with language-aware indexing
+    let relevantContextBlock = '';
+    try {
+      const index = workspaceIndexManager.syncProject(projectId, virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content, type: f.type || 'file' })));
+      const bounded = index.retrieveBoundedContext(prompt, { maxTotalChars: 3500 });
+      if (bounded.formattedContext) {
+        relevantContextBlock = `\n${bounded.formattedContext}\n`;
+      }
+    } catch {}
+
     const fileList = virtualFiles
       .filter(f => f && f.path && !f.path.includes('node_modules') && !f.path.startsWith('.'))
       .slice(0, 100)
@@ -51,7 +61,7 @@ Rules:
     }
   ]
 }
-
+${relevantContextBlock}
 Available files:
 ${fileList.length > 0 ? fileList.slice(0, 50).join('\n') : 'No files listed yet'}
 

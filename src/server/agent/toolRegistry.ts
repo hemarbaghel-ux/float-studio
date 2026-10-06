@@ -199,14 +199,20 @@ const searchProjectTool: ToolDefinition = {
       });
     }
 
-    const matches = searchCodebase(fileNodes, rawQuery, { maxResults, contextLines: 2 });
+    const matches = searchCodebase(fileNodes, rawQuery, {
+      maxResults,
+      contextLines: 2,
+      projectId: context.projectId
+    });
 
     const formatted = matches.map(m => ({
       filePath: m.filePath,
       startLine: m.startLine,
       endLine: m.endLine,
       matchType: m.matchType,
-      excerpt: m.contentExcerpt
+      excerpt: m.contentExcerpt,
+      symbol: m.symbol ? { name: m.symbol.name, kind: m.symbol.kind, line: m.symbol.line } : undefined,
+      signals: m.signals
     }));
 
     return {

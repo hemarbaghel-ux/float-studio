@@ -39,6 +39,11 @@ export function SearchPanel() {
             <div className="flex items-center text-slate-800 dark:text-[#C9D1D9] mb-0.5">
               <File size={12} className="mr-1.5 text-slate-400 dark:text-[#8B949E] group-hover:text-slate-900 dark:group-hover:text-white" />
               <span className="font-medium text-xs group-hover:text-slate-900 dark:group-hover:text-white transition-colors">{result.fileName}</span>
+              {result.symbol && (
+                <span className="ml-1.5 px-1 py-0.2 text-[9px] bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded font-mono uppercase">
+                  {result.symbol.kind}
+                </span>
+              )}
               <span className="text-slate-400 dark:text-[#8B949E] ml-2 text-[10px]">line {result.line}</span>
             </div>
             <div className="text-[11px] text-slate-500 dark:text-[#8B949E] truncate pl-4 font-mono">

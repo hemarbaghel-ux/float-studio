@@ -1,4 +1,5 @@
 import { AIContextItem } from '../types';
+import { workspaceIndexManager } from '../services/indexing/workspaceIndexManager';
 
 export interface ContextBuilderOptions {
   projectName?: string;
@@ -143,5 +144,46 @@ export class ContextBuilder {
       warnings,
       totalContextChars: currentContextChars
     };
+  }
+
+  /**
+   * Retrieves relevant symbols and code slices from the workspace index and
+   * builds a strictly budgeted context prompt.
+   */
+  static retrieveAndBuildBoundedContext(
+    userMessage: string,
+    projectId: string,
+    files: Array<{ path?: string; name?: string; content?: string }> = [],
+    explicitItems: AIContextItem[] = [],
+    options: ContextBuilderOptions & { activeFilePath?: string; gitDiffPaths?: string[] } = {}
+  ): AssembledContext {
+    const combinedItems = [...(explicitItems || [])];
+
+    if (files.length > 0 && userMessage.trim()) {
+      const index = workspaceIndexManager.syncProject(projectId, files);
+      const bounded = index.retrieveBoundedContext(userMessage, {
+        activeFilePath: options.activeFilePath,
+        gitDiffPaths: options.gitDiffPaths,
+        maxTotalChars: 8000
+      });
+
+      const explicitPaths = new Set(explicitItems.map(item => (item.path || item.name || '').replace(/^\/+/, '')));
+      for (const item of bounded.items) {
+        if (!explicitPaths.has(item.filePath)) {
+          combinedItems.push({
+            id: `retrieval-${item.filePath}-${item.startLine}`,
+            type: 'search_match',
+            name: `${item.filePath}${item.symbol ? ` [${item.symbol.kind} ${item.symbol.name}]` : ''}`,
+            path: item.filePath,
+            content: item.excerpt,
+            startLine: item.startLine,
+            endLine: item.endLine,
+            sizeBytes: item.excerpt.length
+          });
+        }
+      }
+    }
+
+    return ContextBuilder.build(userMessage, combinedItems, options);
   }
 }

@@ -7,6 +7,7 @@ import { OperationType, handleFirestoreError } from '../lib/firestoreErrors';
 import { executeProjectCommand } from '../services/projectExecution';
 import { flattenFileTree } from '../lib/utils';
 import { projectStorageKey } from './projectStorage';
+import { workspaceIndexManager } from '../services/indexing/workspaceIndexManager';
 
 export const DEFAULT_PYTHON_FILES: FileNode[] = [
   {
@@ -263,6 +264,16 @@ export const useIDEStore = create<IDEState>((set, get) => ({
 
   setProject: (name, files, projectId) => {
     const id = projectId || uuidv4();
+    try {
+      workspaceIndexManager.syncProject(id, flattenFileTree(files).map(f => ({
+        path: f.path || f.name,
+        name: f.name,
+        content: f.content || '',
+        type: f.type
+      })));
+    } catch (e) {
+      console.warn('Failed to sync workspace index on setProject:', e);
+    }
     const firstFile = files.find(f => f.type === 'file') || files[0];
     const initialTabs = firstFile && firstFile.type === 'file' 
       ? [{ id: uuidv4(), fileId: firstFile.id, isModified: false }] 
@@ -411,6 +422,12 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     const file = findFile(newFiles, id);
     if (file) {
       file.content = content;
+      if (state.projectId) {
+        try {
+          const filePath = flattenFileTree(state.files).find(f => f.id === id)?.path || file.name;
+          workspaceIndexManager.getIndex(state.projectId).updateFile(filePath, content);
+        } catch {}
+      }
     }
     
     // Save locally
@@ -445,6 +462,14 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     if (file.type === 'file') {
       newTabs = [...state.openTabs, { id: uuidv4(), fileId: file.id, isModified: false }];
       newActiveId = file.id;
+
+      if (state.projectId) {
+        try {
+          const parentPath = parentId ? flattenFileTree(state.files).find(f => f.id === parentId)?.path : '';
+          const filePath = parentPath ? `${parentPath}/${file.name}` : file.name;
+          workspaceIndexManager.getIndex(state.projectId).updateFile(filePath, file.content || '');
+        } catch {}
+      }
     }
 
     if (state.projectId && state.projectName) {
@@ -461,6 +486,14 @@ export const useIDEStore = create<IDEState>((set, get) => ({
   }),
 
   deleteFile: (id) => set((state) => {
+    const target = findFile(state.files, id);
+    if (target && state.projectId) {
+      try {
+        const targetPath = flattenFileTree(state.files).find(f => f.id === id)?.path || target.name;
+        workspaceIndexManager.getIndex(state.projectId).removeFile(targetPath);
+      } catch {}
+    }
+
     const filterFiles = (nodes: FileNode[]): FileNode[] => {
       return nodes.filter(n => n.id !== id).map(n => ({
         ...n,
@@ -535,6 +568,13 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     }
     const sort = (nodes: FileNode[]) => { nodes.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1); nodes.forEach(node => node.children && sort(node.children)); };
     sort(nextFiles);
+    if (state.projectId) {
+      try {
+        const idx = workspaceIndexManager.getIndex(state.projectId);
+        for (const d of deletedFiles) idx.removeFile(d);
+        for (const c of changedFiles) idx.updateFile(c.path, c.content || '');
+      } catch {}
+    }
     if (state.projectId && state.projectName) saveStoredProject({ projectId: state.projectId, projectName: state.projectName, files: nextFiles, openTabs, activeFileId });
     return { files: nextFiles, openTabs, activeFileId };
   }),
