@@ -4,6 +4,8 @@ export interface AgentTask {
   id: string;
   name: string;
   description: string;
+  prompt?: string;
+  conversationId?: string;
   assignedAgentId: string;
   modelId: string;
   status: AgentLifecycleState;
@@ -14,6 +16,11 @@ export interface AgentTask {
   parentTaskId?: string;
   projectId?: string;
   ownerId?: string;
+  workerId?: string;
+  heartbeatAt?: number;
+  retryCount?: number;
+  maxRetries?: number;
+  isRetryable?: boolean;
   result?: any;
   github?: {
     repository?: string;

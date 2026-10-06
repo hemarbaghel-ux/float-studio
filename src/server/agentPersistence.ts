@@ -177,7 +177,8 @@ export async function failInterruptedAgentTask(task: any): Promise<boolean> {
     if (heartbeatAt && Date.now() - heartbeatAt < 60_000) return false;
     transaction.update(reference, {
       status: 'FAILED',
-      error: 'This task was interrupted when its worker stopped. Resume or submit it again.',
+      error: 'This task was interrupted when its worker stopped. You can safely retry it with the saved snapshot.',
+      isRetryable: true,
       updatedAt: Date.now(),
       workerId: FieldValue.delete(),
       heartbeatAt: FieldValue.delete(),

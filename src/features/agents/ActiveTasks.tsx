@@ -28,6 +28,10 @@ export function ActiveTasks() {
   const streamTaskIds = tasks.filter(task => ['QUEUED', 'PLANNING', 'INSPECTING', 'WAITING_FOR_TOOL', 'EXECUTING', 'VALIDATING'].includes(task.status) || Date.now() - task.updatedAt < 30_000).slice(0, 6).map(task => task.id).join(',');
 
   useEffect(() => {
+    void fetchTasks();
+  }, [fetchTasks]);
+
+  useEffect(() => {
     const controller = new AbortController();
     for (const taskId of streamTaskIds.split(',').filter(Boolean)) {
       void streamAgentTaskEvents(taskId, event => receiveTaskEvent(taskId, event), controller.signal);
@@ -219,7 +223,16 @@ export function ActiveTasks() {
               
               <div>
                 <div className="flex items-center justify-between text-xs text-[#8B949E] mb-1.5">
-                  <span className="font-medium px-2 py-0.5 rounded-sm bg-[#161B22] border border-[#30363D]">{task.status}</span>
+                  <span className={`font-medium px-2 py-0.5 rounded-sm border ${
+                    task.status === 'COMPLETED' ? 'bg-green-950/50 border-green-700 text-green-300' :
+                    task.status === 'FAILED' ? 'bg-red-950/50 border-red-700 text-red-300' :
+                    task.status === 'PAUSED' ? 'bg-yellow-950/50 border-yellow-700 text-yellow-300' :
+                    task.status === 'CANCELLED' ? 'bg-zinc-800 border-zinc-700 text-zinc-400' :
+                    task.status === 'WAITING_FOR_APPROVAL' ? 'bg-purple-950/50 border-purple-700 text-purple-300' :
+                    'bg-[#161B22] border-[#30363D] text-[#58A6FF]'
+                  }`}>
+                    {task.status.replace(/_/g, ' ')}
+                  </span>
                   <span>{task.progress}%</span>
                 </div>
                 <div className="w-full h-2 bg-[#010409] rounded-full overflow-hidden border border-[#30363D]">

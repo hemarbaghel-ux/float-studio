@@ -405,10 +405,22 @@ export class AgentOrchestrator {
       throw new Error('Background agents currently use the Gemini agent loop. Select a Gemini model or FLOAT Basic for this task.');
     }
 
-    const taskId = uuidv4();
+    const taskId = (typeof taskData.id === 'string' && /^[a-zA-Z0-9_\-]{8,64}$/.test(taskData.id.trim()))
+      ? taskData.id.trim()
+      : uuidv4();
+
+    // Idempotency check: if client sent an ID and task already exists, return existing task
+    const existingTask = await this.getTaskDurable(taskId, userId);
+    if (existingTask) {
+      return existingTask;
+    }
+
+    const promptText = String(taskData.prompt || taskData.description || '').slice(0, 5000);
     const task = {
       name: String(taskData.name || 'Agent Task').slice(0, 200),
-      description: String(taskData.description || '').slice(0, 5000),
+      description: promptText,
+      prompt: promptText,
+      ...(taskData.conversationId ? { conversationId: String(taskData.conversationId).slice(0, 128) } : {}),
       id: taskId,
       projectId,
       ownerId: userId,
@@ -417,6 +429,8 @@ export class AgentOrchestrator {
       requestedChecks: Array.isArray(taskData.requestedChecks) ? [...new Set(taskData.requestedChecks.filter((check: unknown) => ['test', 'lint', 'typecheck', 'build'].includes(String(check))))].slice(0, 4) : [],
       status: 'QUEUED',
       progress: 0,
+      retryCount: typeof taskData.retryCount === 'number' ? taskData.retryCount : 0,
+      maxRetries: 3,
       context: {
         objectives: Array.isArray(taskData.context?.objectives) ? taskData.context.objectives.slice(0, 20) : [],
         workspaceSnapshotId: taskId,
@@ -579,8 +593,16 @@ export class AgentOrchestrator {
         await ProposalService.rejectAgentTaskProposals(taskId, task.projectId, task.ownerId).catch(error => console.warn(`[AgentOrchestrator] Could not reject proposals from interrupted task ${taskId}:`, error));
         return;
       }
-      task.error = timedOut ? 'Agent task exceeded the 15 minute deadline.' : error?.message || 'Agent execution failed.';
-      this.logEvent(taskId, timedOut ? 'task_timeout' : 'agent_error', task.error);
+      const rawMsg = error?.message || 'Agent execution failed.';
+      const isPermanent = /access denied|permission denied|unauthorized|not configured|strictly forbidden|invalid control characters/i.test(rawMsg);
+      const isRetryable = !isPermanent && ((task.retryCount || 0) < (task.maxRetries || 3));
+      task.isRetryable = isRetryable;
+      task.error = timedOut
+        ? 'Agent task exceeded the 15 minute deadline. You can retry it with the saved snapshot.'
+        : isRetryable
+          ? `${rawMsg} (Recoverable: retry with saved snapshot)`
+          : rawMsg;
+      this.logEvent(taskId, timedOut ? 'task_timeout' : 'agent_error', task.error, { isRetryable, retryCount: task.retryCount || 0 });
       await this.updateTaskStatus(taskId, 'FAILED');
       await ProposalService.rejectAgentTaskProposals(taskId, task.projectId, task.ownerId).catch(cleanupError => console.warn(`[AgentOrchestrator] Could not reject incomplete task proposals for ${taskId}:`, cleanupError));
     } finally {
@@ -664,13 +686,18 @@ export class AgentOrchestrator {
       const patch: Record<string, unknown> = { status, workerId: this.workerId };
       if (progress !== undefined) patch.progress = task.progress;
       if (task.error) patch.error = task.error;
-      const persisted = await updateAgentTask(taskId, patch).catch((error) => {
-        console.error(`[AgentOrchestrator] Could not persist task ${taskId} status:`, error);
-        return false;
-      });
-      if (!persisted) {
-        const latest = await readAgentTask(taskId).catch(() => null);
-        if (latest) this.tasks.set(taskId, latest);
+      if (task.isRetryable !== undefined) patch.isRetryable = task.isRetryable;
+      if (task.retryCount !== undefined) patch.retryCount = task.retryCount;
+      if (task.maxRetries !== undefined) patch.maxRetries = task.maxRetries;
+      if (hasAdminCredentials()) {
+        const persisted = await updateAgentTask(taskId, patch).catch((error) => {
+          console.error(`[AgentOrchestrator] Could not persist task ${taskId} status:`, error);
+          return false;
+        });
+        if (!persisted) {
+          const latest = await readAgentTask(taskId).catch(() => null);
+          if (latest) this.tasks.set(taskId, latest);
+        }
       }
       if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(status)) {
         this.stopWorkerHeartbeat(taskId);
@@ -694,9 +721,11 @@ export class AgentOrchestrator {
       this.events.set(taskId, []);
     }
     this.events.get(taskId)?.push(event);
-    void appendAgentEvent(event).catch((error) => {
-      console.error(`[AgentOrchestrator] Could not persist task event ${event.id}:`, error);
-    });
+    if (hasAdminCredentials()) {
+      void appendAgentEvent(event).catch((error) => {
+        console.error(`[AgentOrchestrator] Could not persist task event ${event.id}:`, error);
+      });
+    }
   }
 
   private startWorkerHeartbeat(taskId: string) {
@@ -751,11 +780,13 @@ export class AgentOrchestrator {
     task.status = status;
     task.updatedAt = Date.now();
     this.tasks.set(taskId, task);
-    const persisted = await updateAgentTask(taskId, { status, progress: task.progress });
-    if (!persisted) {
-      const latest = await readAgentTask(taskId);
-      if (latest) this.tasks.set(taskId, latest);
-      throw new Error('Task state changed in another worker. Refresh and retry.');
+    if (hasAdminCredentials()) {
+      const persisted = await updateAgentTask(taskId, { status, progress: task.progress });
+      if (!persisted) {
+        const latest = await readAgentTask(taskId);
+        if (latest) this.tasks.set(taskId, latest);
+        throw new Error('Task state changed in another worker. Refresh and retry.');
+      }
     }
     if (status === 'PAUSED' || status === 'CANCELLED') this.activeControllers.get(taskId)?.abort();
     if (['COMPLETED', 'FAILED', 'CANCELLED', 'PAUSED'].includes(status)) this.stopWorkerHeartbeat(taskId);
@@ -850,12 +881,24 @@ export class AgentOrchestrator {
     const task = await this.getTaskDurable(taskId, userId);
     if (!task) throw new Error('Task not found or access denied.');
     if (!['FAILED', 'CANCELLED'].includes(task.status)) throw new Error('Only failed or cancelled tasks can be retried.');
+    const currentRetries = Number(task.retryCount || 0);
+    const maxRetries = Number(task.maxRetries || 3);
+    if (currentRetries >= maxRetries) {
+      throw new Error(`Maximum retry limit (${maxRetries}) reached for this task. Submit a new task or adjust requirements.`);
+    }
     const files = await getAgentTaskWorkspace(taskId, userId);
     if (!files) throw new Error('The original task workspace snapshot is no longer available.');
     return this.createTask({
-      name: `${String(task.name).slice(0, 180)} (retry)`, description: task.description,
-      assignedAgentId: task.assignedAgentId, modelId: task.modelId, projectId: task.projectId,
-      requestedChecks: task.requestedChecks, context: task.context,
+      name: `${String(task.name).slice(0, 180)} (retry ${currentRetries + 1})`,
+      description: task.description,
+      prompt: task.prompt || task.description,
+      conversationId: task.conversationId,
+      assignedAgentId: task.assignedAgentId,
+      modelId: task.modelId,
+      projectId: task.projectId,
+      requestedChecks: task.requestedChecks,
+      context: task.context,
+      retryCount: currentRetries + 1,
     }, { uid: userId }, files);
   }
 
@@ -1131,16 +1174,29 @@ export function setupAgentOrchestratorRoutes(app: any) {
   app.post('/api/agents/tasks/:id/github/refresh', runAgentGitHubAction((task, ownerId) => refreshAgentTaskPullRequest(task, ownerId)));
   app.post('/api/agents/tasks/:id/github/merge', runAgentGitHubAction((task, ownerId, body) => mergeAgentTaskPullRequest(task, ownerId, body.confirmed === true)));
 
-  // 8. Cancel task
+  // 8. Cancel task (idempotent, cleans up pending proposals and task resources)
   app.post('/api/agents/tasks/:id/cancel', asyncRoute(async (req: any, res: any) => {
     const user = await resolveUser(req);
     const task = user ? await orchestrator.getTaskDurable(req.params.id, user.uid) : null;
     if (!task) {
       return res.status(404).json({ error: 'Task not found or access denied.' });
     }
+    // Idempotent cancellation: if already cancelled, succeed immediately
+    if (task.status === 'CANCELLED') {
+      return res.json({ success: true, message: 'Task is already cancelled.' });
+    }
     try {
       await orchestrator.setTaskStatusDurable(req.params.id, 'CANCELLED');
       orchestrator.logEvent(req.params.id, 'task_cancelled', 'Task cancelled by user.');
+      // Clean up any pending proposals and worktrees safely
+      if (task.projectId && user) {
+        await ProposalService.rejectAgentTaskProposals(req.params.id, task.projectId, user.uid).catch(err => {
+          console.warn(`[AgentOrchestrator] Proposal cleanup during cancellation failed for ${req.params.id}:`, err);
+        });
+        await cleanupAgentGitWorktree(req.params.id, user.uid).catch(err => {
+          console.warn(`[AgentOrchestrator] Worktree cleanup during cancellation failed for ${req.params.id}:`, err);
+        });
+      }
       res.json({ success: true });
     } catch (error: any) {
       res.status(409).json({ error: error.message || 'Task could not be cancelled.' });
