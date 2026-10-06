@@ -530,7 +530,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             {/* 1. Top Capsule Banner Tab */}
             <button
               type="button"
-              onClick={() => setShowSettings(true)}
+              onClick={() => {
+                window.history.pushState({}, '', '/checkout?plan=pro');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              }}
               className="w-full max-w-2xl py-2.5 px-4 bg-white dark:bg-[#141414] border border-b-0 border-slate-200/90 dark:border-[#2C2C2C] rounded-t-2xl text-xs text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
             >
               <span>Cloud Agents require a Start account</span>

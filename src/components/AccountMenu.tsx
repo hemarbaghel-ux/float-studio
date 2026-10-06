@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useIDEStore, applyThemeToDocument } from '../store';
+import { useSubscriptionStore } from '../store/subscriptionStore';
 import { ContactModal } from './ContactModal';
 
 export interface AccountMenuProps {
@@ -25,6 +26,7 @@ export function AccountMenu({
 }: AccountMenuProps) {
   const { user, logout } = useAuthStore();
   const { settings, updateSettings } = useIDEStore();
+  const { subscription } = useSubscriptionStore();
 
   const [isOpen, setIsOpen] = useState(false);
   const [activeSubmenu, setActiveSubmenu] = useState<'appearance' | 'help' | null>(null);
@@ -281,6 +283,10 @@ export function AccountMenu({
   const displayName = user?.displayName || user?.email?.split('@')[0] || 'Developer';
   const initial = (user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'F').toUpperCase();
   const themeLabel = settings.theme === 'dark' ? 'Dark' : settings.theme === 'light' ? 'Light' : 'System';
+  const planLabel = subscription?.planId && subscription.planId !== 'free'
+    ? `${subscription.planId.charAt(0).toUpperCase() + subscription.planId.slice(1)} Plan`
+    : 'Free Plan';
+  const isPaidUser = subscription?.planId && subscription.planId !== 'free' && subscription.status === 'active';
 
   return (
     <div
@@ -324,7 +330,7 @@ export function AccountMenu({
                 {displayName}
               </span>
               <span className="text-[10px] text-slate-400 dark:text-[#8B949E] flex items-center gap-1.5">
-                <span>Free Plan</span>
+                <span>{planLabel}</span>
                 <span>•</span>
                 <span className="capitalize">{themeLabel}</span>
               </span>
@@ -358,10 +364,10 @@ export function AccountMenu({
             </div>
           </div>
 
-          {/* Section 1: Upgrade to Start */}
+          {/* Section 1: Upgrade to Start or Manage Plan */}
           <div className="p-1 border-b border-slate-100 dark:border-white/5">
             <button
-              onClick={() => navigate('/pricing')}
+              onClick={() => navigate(isPaidUser ? '/pricing' : '/checkout?plan=pro')}
               role="menuitem"
               tabIndex={focusedIndex === 0 ? 0 : -1}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer text-left ${
@@ -371,7 +377,9 @@ export function AccountMenu({
               }`}
             >
               <Sparkles size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />
-              <span className="flex-1 font-medium">Upgrade to Start</span>
+              <span className="flex-1 font-medium">
+                {isPaidUser ? `Manage ${planLabel}` : 'Upgrade to Pro'}
+              </span>
             </button>
           </div>
 

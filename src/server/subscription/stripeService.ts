@@ -9,6 +9,8 @@ import {
   recordProcessedWebhookEvent
 } from './subscriptionPersistence';
 
+export type { SubscriptionPlanId };
+
 export interface PlanConfig {
   id: SubscriptionPlanId;
   name: string;
@@ -52,6 +54,7 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
   },
   business: {
     id: 'business',
+    name: 'FLOAT Business',
     badge: 'Teams',
     monthlyPrice: 40,
     currency: 'USD',
@@ -67,6 +70,7 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
   },
   ultimate: {
     id: 'ultimate',
+    name: 'FLOAT Ultimate',
     badge: 'Maximum Power',
     monthlyPrice: 100,
     currency: 'USD',
@@ -142,6 +146,10 @@ export function validateStripeEnv(): {
 export function getServerPriceId(planId: SubscriptionPlanId): string {
   if (planId === 'free') {
     throw new Error('Free plan does not require a Stripe checkout session.');
+  }
+
+  if (!['pro', 'business', 'ultimate'].includes(planId)) {
+    throw new Error(`Invalid plan identifier "${planId}". Valid subscription plans are pro, business, and ultimate.`);
   }
 
   let priceId = '';
