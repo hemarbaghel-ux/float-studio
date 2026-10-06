@@ -7,6 +7,7 @@ import {
   Upload,
   Download,
   Link2,
+  Unlink2,
   Plus,
   Trash2,
   ExternalLink,
@@ -72,6 +73,7 @@ export function GitPanel() {
   const [showPRModal, setShowPRModal] = useState(false);
   const [diffPatches, setDiffPatches] = useState<GitDiffItem[] | null>(null);
   const [diffInitialPath, setDiffInitialPath] = useState<string | undefined>(undefined);
+  const [diffTitle, setDiffTitle] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string[]>([]);
   const [error, setError] = useState('');
@@ -180,8 +182,38 @@ export function GitPanel() {
       if (!response.ok) throw new Error(data.error || `Diff failed (HTTP ${response.status}).`);
       setDiffPatches(data.patches || []);
       setDiffInitialPath(filePath);
+      setDiffTitle(undefined);
     } catch (err: any) {
       setError(err.message || 'Could not load diff.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openDiffForPR = async (prNumber: number, prTitle: string) => {
+    if (!projectId) return;
+    setBusy(true);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/git/pull-requests/${prNumber}/files`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Could not load PR files (HTTP ${response.status}).`);
+      const files: any[] = data.files || [];
+      const patches: GitDiffItem[] = files.map(f => ({
+        path: f.filename,
+        status: f.status === 'added' ? 'added' : f.status === 'removed' ? 'deleted' : 'modified',
+        patch: f.patch,
+        before: '',
+        after: f.patch || ''
+      }));
+      if (patches.length === 0) {
+        throw new Error(`No changed files reported for PR #${prNumber}.`);
+      }
+      setDiffPatches(patches);
+      setDiffInitialPath(patches[0].path);
+      setDiffTitle(`PR #${prNumber}: ${prTitle}`);
+    } catch (err: any) {
+      setError(err.message || 'Could not inspect pull request files.');
     } finally {
       setBusy(false);
     }
@@ -217,7 +249,12 @@ export function GitPanel() {
 
   const handleCommit = async () => {
     if (!message.trim() || !status?.changes?.length) return;
-    await run('commit', { message: message.trim(), confirmed: true });
+    const toCommit = stagedPaths.size > 0 ? Array.from(stagedPaths) : undefined;
+    await run('commit', {
+      message: message.trim(),
+      confirmed: true,
+      ...(toCommit ? { stagedPaths: toCommit } : {})
+    });
     setMessage('');
     setStagedPaths(new Set());
   };
@@ -383,9 +420,23 @@ export function GitPanel() {
                   <span className="truncate">{status.repository?.fullName}</span>
                   <ExternalLink size={11} className="shrink-0" />
                 </a>
-                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-white/10 text-slate-600 dark:text-slate-300">
-                  {status.repository?.private ? 'Private' : 'Public'}
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-white/10 text-slate-600 dark:text-slate-300">
+                    {status.repository?.private ? 'Private' : 'Public'}
+                  </span>
+                  <button
+                    title="Unlink repository from this project"
+                    disabled={busy}
+                    onClick={() => {
+                      if (window.confirm(`Unlink ${status.repository?.fullName} from this project? The project files and GitHub repository will not be deleted.`)) {
+                        void run('unlink');
+                      }
+                    }}
+                    className="p-1 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors cursor-pointer"
+                  >
+                    <Unlink2 size={12} />
+                  </button>
+                </div>
               </div>
 
               {/* Branch Selector & Switcher */}
@@ -683,30 +734,46 @@ export function GitPanel() {
               {status.pullRequests && status.pullRequests.length > 0 ? (
                 <div className="space-y-1.5 pt-1">
                   {status.pullRequests.map(pr => (
-                    <a
+                    <div
                       key={pr.number}
-                      href={pr.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="p-2 rounded-lg border border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.02] block text-xs hover:border-blue-500/50 transition-colors"
+                      className="p-2 rounded-lg border border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.02] text-xs hover:border-blue-500/50 transition-colors"
                     >
                       <div className="flex items-center justify-between gap-1">
                         <span className="font-medium text-slate-900 dark:text-white truncate">
                           #{pr.number} {pr.title}
                         </span>
-                        <span className={cn(
-                          "text-[9px] font-mono uppercase font-bold px-1 py-0.5 rounded shrink-0",
-                          pr.merged ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' :
-                          pr.state === 'open' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' :
-                          'bg-slate-200 dark:bg-white/10 text-slate-600 dark:text-slate-400'
-                        )}>
-                          {pr.merged ? 'merged' : pr.state}
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openDiffForPR(pr.number, pr.title)}
+                            title="Inspect changed files"
+                            className="p-1 hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                          >
+                            <Eye size={12} />
+                          </button>
+                          <a
+                            href={pr.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Open in GitHub"
+                            className="p-1 hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                          >
+                            <ExternalLink size={12} />
+                          </a>
+                          <span className={cn(
+                            "text-[9px] font-mono uppercase font-bold px-1 py-0.5 rounded shrink-0",
+                            pr.merged ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' :
+                            pr.state === 'open' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' :
+                            'bg-slate-200 dark:bg-white/10 text-slate-600 dark:text-slate-400'
+                          )}>
+                            {pr.merged ? 'merged' : pr.state}
+                          </span>
+                        </div>
                       </div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                         {pr.head} → {pr.base}
                       </div>
-                    </a>
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -739,7 +806,11 @@ export function GitPanel() {
         <GitDiffModal
           patches={diffPatches}
           initialPath={diffInitialPath}
-          onClose={() => setDiffPatches(null)}
+          title={diffTitle}
+          onClose={() => {
+            setDiffPatches(null);
+            setDiffTitle(undefined);
+          }}
         />
       )}
 

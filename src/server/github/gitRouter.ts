@@ -271,6 +271,28 @@ gitRouter.get('/pull-requests', requireAuth, async (req: any, res: Response) => 
   } catch (error: any) { sendFailure(res, error); }
 });
 
+gitRouter.get('/pull-requests/:number/files', requireAuth, async (req: any, res: Response) => {
+  try {
+    const ctx = await loadContext(req.params.projectId, req.user.uid, true);
+    const prNumber = parseInt(req.params.number, 10);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) throw httpError(400, 'Invalid pull request number.');
+    const files = await github(ctx, `/pulls/${encodeURIComponent(String(prNumber))}/files?per_page=100`);
+    if (!Array.isArray(files)) throw httpError(502, 'GitHub returned an invalid pull request files response.');
+    const formatted = files.map((file: any) => ({
+      sha: file.sha,
+      filename: file.filename,
+      status: file.status,
+      additions: file.additions || 0,
+      deletions: file.deletions || 0,
+      changes: file.changes || 0,
+      patch: file.patch || '',
+      blobUrl: file.blob_url || '',
+      rawUrl: file.raw_url || ''
+    }));
+    res.json({ files: formatted });
+  } catch (error: any) { sendFailure(res, error); }
+});
+
 gitRouter.post('/operations', requireAuth, async (req: any, res: Response) => {
   const write = (event: Record<string, unknown>) => {
     if (!res.destroyed && !res.writableEnded) res.write('data: ' + JSON.stringify(event) + '\n\n');
@@ -312,6 +334,7 @@ async function loadContext(projectId: string, ownerId: string, requireLink: bool
 async function performOperation(action: string, body: any, ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {
   switch (action) {
     case 'link': return linkRepository(body, ctx, progress);
+    case 'unlink': return unlinkRepository(ctx, progress);
     case 'create-branch': return createBranch(body, ctx, progress);
     case 'switch-branch': return switchBranch(body, ctx, progress);
     case 'delete-branch': return deleteBranch(body, ctx, progress);
@@ -322,6 +345,12 @@ async function performOperation(action: string, body: any, ctx: GitContext, prog
     case 'create-pr': return createPullRequest(body, ctx, progress);
     default: throw httpError(400, 'Unknown GitHub operation.');
   }
+}
+
+async function unlinkRepository(ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {
+  progress('unlink', 'Disconnecting project from GitHub repository.');
+  await links().doc(ctx.projectId).delete();
+  return { message: 'Repository unlinked from project successfully.' };
 }
 
 async function linkRepository(body: any, ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {
@@ -402,8 +431,15 @@ async function createCommit(body: any, ctx: GitContext, progress: (stage: string
   if (ref.object.sha !== ctx.link!.baseSha) throw httpError(409, 'The GitHub branch advanced since the last sync. Pull and resolve changes before committing.');
   const parent = await github(ctx, '/git/commits/' + encodeURIComponent(ref.object.sha));
   const local = projectFiles(ctx.project.files);
-  const changes = compareWorkspace(local, ctx.link!.baseFiles);
-  if (!changes.length) throw httpError(409, 'There are no workspace changes to commit.');
+  let changes = compareWorkspace(local, ctx.link!.baseFiles);
+
+  // If client specified stagedPaths, filter changes to only those staged paths
+  const stagedFilter = Array.isArray(body.stagedPaths) ? new Set(body.stagedPaths.map(String)) : null;
+  if (stagedFilter && stagedFilter.size > 0) {
+    changes = changes.filter(c => stagedFilter.has(c.path));
+  }
+
+  if (!changes.length) throw httpError(409, 'There are no staged workspace changes to commit.');
   progress('review', 'Preparing ' + changes.length + ' changed file(s) for the commit.');
   const entries: any[] = [];
   for (const change of changes) {

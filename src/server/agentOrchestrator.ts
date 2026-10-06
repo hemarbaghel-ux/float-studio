@@ -525,15 +525,27 @@ export class AgentOrchestrator {
       this.logEvent(taskId, 'git_worktree_created', `Created isolated Git branch ${worktree.branch} at ${worktree.baseCommit.slice(0, 12)}. Agent changes are confined to this task worktree.`, { branch: worktree.branch, baseCommit: worktree.baseCommit });
       const roleConfig = AGENT_ROLES[task.assignedAgentId] || AGENT_ROLES['main-agent'];
       this.logEvent(taskId, 'tool_permissions_verified', `Agent "${task.assignedAgentId}" has tools: ${roleConfig.allowedTools.join(', ')}.`);
-      if (!task.description?.trim()) throw new Error('Add a task description before starting an agent task.');
-      if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured on this deployment.');
+      let gitRepoContext = '';
+      if (hasAdminCredentials()) {
+        try {
+          const gitLinkSnap = await adminDb.collection('projectGitLinks').doc(task.projectId).get();
+          if (gitLinkSnap.exists) {
+            const gitData = gitLinkSnap.data();
+            if (gitData?.owner && gitData?.repo) {
+              gitRepoContext = `\nLinked Git repository: ${gitData.owner}/${gitData.repo} (branch: ${gitData.branch || 'main'}, default branch: ${gitData.defaultBranch || 'main'}).`;
+            }
+          }
+        } catch {
+          // Non-blocking lookup
+        }
+      }
 
       await this.updateTaskStatus(taskId, 'EXECUTING', 20);
       const run = AgentRunner.run({
         model: task.modelId || 'gemini-3.1-flash-lite', prompt: task.description,
         virtualFiles: safeFiles, projectName: task.context?.sourceProjectName || task.name,
         projectId: task.projectId, userId: task.ownerId, agentTaskId: task.id, signal: controller.signal,
-        systemInstruction: `${roleConfig.name}. Return a reviewable FLOAT code proposal for requested code changes.`,
+        systemInstruction: `${roleConfig.name}.${gitRepoContext} Return a reviewable FLOAT code proposal for requested code changes.`,
         onEvent: event => {
           if (event.type === 'tool_started' && event.tool) {
             const permission = validateToolPermission(task.assignedAgentId, event.tool);

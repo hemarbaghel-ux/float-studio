@@ -1,6 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import JSZip from 'jszip';
+import { FieldValue } from 'firebase-admin/firestore';
+import { adminDb } from './adminFirebase';
 import { requireAuth } from './authMiddleware';
 import {
   consumeOAuthState,
@@ -586,6 +589,234 @@ integrationsRouter.get('/github/repositories/:owner/:repo/archive', requireAuth,
   } catch (error: any) {
     console.error('[Integrations][github] Archive import failed:', error?.message || error);
     res.status(502).json({ error: 'Could not download this GitHub repository archive.' });
+  }
+});
+
+// 5b. Dedicated Repository Import into FLOAT Project
+// Atomically downloads repository archive, builds file hierarchy, creates/updates Firestore project,
+// and initializes projectGitLinks baseline tracking.
+integrationsRouter.post('/github/import', requireAuth, async (req: any, res: Response) => {
+  const owner = String(req.body?.owner || '').trim();
+  const repo = String(req.body?.repo || '').trim();
+  const requestedBranch = String(req.body?.branch || '').trim();
+  const customProjectName = typeof req.body?.projectName === 'string' ? req.body.projectName.trim() : '';
+
+  if (!/^[\w.-]{1,100}$/.test(owner) || !/^[\w.-]{1,100}$/.test(repo)) {
+    return res.status(400).json({ error: 'Invalid repository owner or name.' });
+  }
+
+  let connection: StoredIntegrationConnection | null;
+  try {
+    connection = await getIntegrationConnection(req.user.uid, 'github');
+  } catch (error: any) {
+    console.error('[Integration Store] Could not load GitHub connection:', error?.message || error);
+    return res.status(503).json({ error: 'GitHub connection storage is unavailable.' });
+  }
+
+  if (!connection || connection.status !== 'connected' || !connection.accessToken) {
+    return res.status(404).json({ error: 'Connect GitHub in Integrations before importing repositories.' });
+  }
+
+  try {
+    // 1. Fetch repository metadata to determine default branch and permissions
+    const repoRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
+      headers: {
+        Authorization: `Bearer ${connection.accessToken}`,
+        Accept: 'application/vnd.github.v3+json',
+        'User-Agent': 'FLOAT-AI'
+      },
+      signal: AbortSignal.timeout(15_000)
+    });
+
+    if (repoRes.status === 401) {
+      connection.status = 'expired';
+      await saveIntegrationConnection(connection);
+      return res.status(401).json({ error: 'GitHub authorization expired. Reconnect GitHub and try again.' });
+    }
+    if (repoRes.status === 404) {
+      return res.status(404).json({ error: 'Repository was not found or your GitHub account cannot access it.' });
+    }
+    if (!repoRes.ok) {
+      return res.status(repoRes.status >= 500 ? 502 : repoRes.status).json({ error: 'Failed to fetch repository metadata from GitHub.' });
+    }
+
+    const repoData = await repoRes.json();
+    const branch = requestedBranch || repoData.default_branch || 'main';
+
+    // 2. Prevent duplicate import: Check if user already has a project linked to this exact repo & branch
+    const existingLinksSnap = await adminDb.collection('projectGitLinks')
+      .where('ownerId', '==', req.user.uid)
+      .where('repositoryOwner', '==', owner)
+      .where('repositoryName', '==', repo)
+      .limit(1)
+      .get();
+
+    if (!existingLinksSnap.empty) {
+      const existingDoc = existingLinksSnap.docs[0];
+      const existingProjectId = existingDoc.id;
+      // Check that project still exists
+      const existingProjectSnap = await adminDb.collection('projects').doc(existingProjectId).get();
+      if (existingProjectSnap.exists && existingProjectSnap.data()?.ownerId === req.user.uid) {
+        return res.json({
+          success: true,
+          projectId: existingProjectId,
+          projectName: existingProjectSnap.data()?.name || repo,
+          isExisting: true,
+          message: `Repository ${owner}/${repo} is already imported in project "${existingProjectSnap.data()?.name || repo}".`
+        });
+      }
+    }
+
+    // 3. Resolve commit SHA for the branch
+    const refPath = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`;
+    const refRes = await fetch(refPath, {
+      headers: {
+        Authorization: `Bearer ${connection.accessToken}`,
+        Accept: 'application/vnd.github.v3+json',
+        'User-Agent': 'FLOAT-AI'
+      },
+      signal: AbortSignal.timeout(15_000)
+    });
+
+    if (!refRes.ok) {
+      return res.status(refRes.status >= 500 ? 502 : refRes.status).json({ error: `Could not resolve branch "${branch}" on GitHub.` });
+    }
+    const refData = await refRes.json();
+    const baseSha = String(refData.object?.sha || '');
+
+    // 4. Download repository zipball
+    const zipUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zipball/${encodeURIComponent(baseSha)}`;
+    const zipRes = await fetch(zipUrl, {
+      headers: {
+        Authorization: `Bearer ${connection.accessToken}`,
+        Accept: 'application/vnd.github.v3+json',
+        'User-Agent': 'FLOAT-AI'
+      },
+      signal: AbortSignal.timeout(30_000)
+    });
+
+    if (!zipRes.ok) {
+      return res.status(zipRes.status >= 500 ? 502 : zipRes.status).json({ error: `Failed to download repository archive (HTTP ${zipRes.status}).` });
+    }
+
+    const archiveBuffer = Buffer.from(await zipRes.arrayBuffer());
+    if (archiveBuffer.byteLength > 20 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Repository archive exceeds the 20 MB import limit.' });
+    }
+
+    const zip = await JSZip.loadAsync(archiveBuffer);
+    const entries = Object.values(zip.files).filter(entry => !entry.dir);
+    const stripTop = entries.length > 0 && entries.every(entry => entry.name.includes('/')) && new Set(entries.map(entry => entry.name.split('/')[0])).size === 1;
+
+    const PRIVATE_PATH = /(^|\/)(\.env(?:$|[./])|\.git(?:$|\/)|id_rsa(?:$|\.)|id_ed25519(?:$|\.))|\.(pem|key|p12|pfx|keystore)$/i;
+    const OMIT_DIR = /(^|\/)(node_modules|vendor|dist|build|coverage|\.next|\.cache|\.venv|venv)(\/|$)/i;
+    const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|woff2?|ttf|eot|mp[34]|mov|wasm|exe|dll|so|dylib|bin|lockb)$/i;
+    const MAX_FILES = 500;
+    const MAX_WORKSPACE_BYTES = 10 * 1024 * 1024;
+
+    const fileMap = new Map<string, string>();
+    const baseFilesMap: Record<string, { sha: string; mode: string }> = {};
+    let totalBytes = 0;
+
+    for (const entry of entries) {
+      const raw = stripTop ? entry.name.split('/').slice(1).join('/') : entry.name;
+      const normalized = raw.replace(/\\/g, '/');
+      if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized) || normalized.includes('\0')) continue;
+      if (normalized.split('/').some(p => !p || p === '.' || p === '..')) continue;
+      if (PRIVATE_PATH.test(normalized) || OMIT_DIR.test(normalized) || BINARY_EXTENSION.test(normalized)) continue;
+
+      if (fileMap.size >= MAX_FILES) break;
+      const content = await entry.async('string');
+      if (content.includes('\0')) continue;
+
+      const size = Buffer.byteLength(content, 'utf8');
+      if (totalBytes + size > MAX_WORKSPACE_BYTES) break;
+
+      totalBytes += size;
+      fileMap.set(normalized, content);
+
+      // Compute Git blob sha for baseline change tracking
+      const blobBytes = Buffer.from(content, 'utf8');
+      const blobSha = crypto.createHash('sha1').update('blob ' + blobBytes.length + '\0').update(blobBytes).digest('hex');
+      baseFilesMap[normalized] = { sha: blobSha, mode: '100644' };
+    }
+
+    if (fileMap.size === 0) {
+      return res.status(400).json({ error: 'No importable text files found in this repository.' });
+    }
+
+    // Build hierarchical FileNode tree
+    const rootNodes: any[] = [];
+    const sortedPaths = [...fileMap.keys()].sort((a, b) => a.localeCompare(b));
+    for (const filePath of sortedPaths) {
+      const content = fileMap.get(filePath) || '';
+      const segments = filePath.split('/');
+      let currentLevel = rootNodes;
+      for (let i = 0; i < segments.length; i++) {
+        const name = segments[i];
+        const isFile = i === segments.length - 1;
+        let existing = currentLevel.find(n => n.name === name && n.type === (isFile ? 'file' : 'folder'));
+        if (!existing) {
+          existing = isFile
+            ? { id: `file-${uuidv4()}`, name, type: 'file', content }
+            : { id: `folder-${uuidv4()}`, name, type: 'folder', children: [], isOpen: true };
+          currentLevel.push(existing);
+        } else if (isFile) {
+          existing.content = content;
+        }
+        if (!isFile) {
+          existing.children = existing.children || [];
+          currentLevel = existing.children;
+        }
+      }
+    }
+
+    const newProjectId = uuidv4();
+    const projectName = customProjectName || repo;
+    const now = Date.now();
+
+    // Persist project & Git baseline in Firestore transaction
+    const projectRef = adminDb.collection('projects').doc(newProjectId);
+    const linkRef = adminDb.collection('projectGitLinks').doc(newProjectId);
+
+    await adminDb.runTransaction(async (transaction) => {
+      transaction.set(projectRef, {
+        ownerId: req.user.uid,
+        name: projectName,
+        files: JSON.stringify(rootNodes),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      transaction.set(linkRef, {
+        ownerId: req.user.uid,
+        repositoryOwner: owner,
+        repositoryName: repo,
+        defaultBranch: repoData.default_branch || 'main',
+        branch,
+        baseSha,
+        baseFiles: baseFilesMap,
+        updatedAt: now
+      });
+    });
+
+    connection.lastVerifiedAt = now;
+    await saveIntegrationConnection(connection);
+
+    return res.json({
+      success: true,
+      projectId: newProjectId,
+      projectName,
+      repository: {
+        fullName: `${owner}/${repo}`,
+        branch,
+        defaultBranch: repoData.default_branch || 'main',
+        fileCount: fileMap.size
+      },
+      message: `Successfully imported ${owner}/${repo} into project "${projectName}".`
+    });
+  } catch (err: any) {
+    console.error('[Integrations][github] Import error:', err?.message || err);
+    return res.status(500).json({ error: err?.message || 'Failed to import repository.' });
   }
 });
 

@@ -15,10 +15,11 @@ export interface GitDiffItem {
 interface GitDiffModalProps {
   patches: GitDiffItem[];
   initialPath?: string;
+  title?: string;
   onClose: () => void;
 }
 
-export function GitDiffModal({ patches, initialPath, onClose }: GitDiffModalProps) {
+export function GitDiffModal({ patches, initialPath, title, onClose }: GitDiffModalProps) {
   const { settings } = useIDEStore();
   const initialIndex = Math.max(0, patches.findIndex(p => p.path === initialPath));
   const [selectedIdx, setSelectedIdx] = useState(initialIndex);
@@ -50,6 +51,11 @@ export function GitDiffModal({ patches, initialPath, onClose }: GitDiffModalProp
         <div className="px-5 py-3 border-b border-slate-200 dark:border-white/10 flex items-center justify-between shrink-0 bg-slate-50 dark:bg-[#161616]">
           <div className="flex items-center gap-2 min-w-0">
             <FileCode size={18} className="text-blue-500 shrink-0" />
+            {title && (
+              <span className="font-semibold text-xs text-slate-500 dark:text-slate-400 shrink-0 border-r border-slate-200 dark:border-white/10 pr-2 mr-0.5">
+                {title}
+              </span>
+            )}
             <span className="font-semibold text-sm truncate">{current.path}</span>
             <span className={cn(
               "text-[10px] font-mono px-1.5 py-0.5 rounded uppercase font-semibold shrink-0",
