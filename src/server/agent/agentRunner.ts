@@ -210,6 +210,16 @@ CRITICAL WORKFLOW CONSTRAINTS:
     let failureReported = false;
     const startTime = Date.now();
     const callCounts = new Map<string, number>();
+    const toolCallHistory: string[] = [];
+    const checkToolLoop = (toolName: string, args: Record<string, any>): string | undefined => {
+      const sig = `${toolName}:${JSON.stringify(args || {})}`;
+      const priorCount = toolCallHistory.filter(s => s === sig).length;
+      toolCallHistory.push(sig);
+      if (priorCount >= 2) {
+        return `[System Loop Reminder]: Tool "${toolName}" has been called with identical arguments ${priorCount + 1} times. To ensure progress, synthesize existing findings, inspect different files, or formulate concrete proposed edits rather than repeating the same call.`;
+      }
+      return undefined;
+    };
 
     onEvent({
       type: 'thinking',
@@ -403,7 +413,11 @@ CRITICAL WORKFLOW CONSTRAINTS:
             message: startMessage
           });
 
+          const loopReminder = checkToolLoop(name, toolArgs);
           const result = await ToolRegistry.execute(name, toolArgs, context);
+          if (loopReminder && result.output && typeof result.output === 'object') {
+            result.output._system_loop_reminder = loopReminder;
+          }
 
           if (result.success) {
             let completionMsg = `Completed "${name}" successfully.`;
@@ -645,7 +659,11 @@ CRITICAL WORKFLOW CONSTRAINTS:
             message: startMessage
           });
 
+          const loopReminder = checkToolLoop(name, toolArgs);
           const result = await ToolRegistry.execute(name, toolArgs, context);
+          if (loopReminder && result.output && typeof result.output === 'object') {
+            result.output._system_loop_reminder = loopReminder;
+          }
 
           if (result.success) {
             let completionMsg = `Completed "${name}" successfully.`;
@@ -854,7 +872,11 @@ CRITICAL WORKFLOW CONSTRAINTS:
             message: startMessage
           });
 
+          const loopReminder = checkToolLoop(name, toolArgs);
           const result = await ToolRegistry.execute(name, toolArgs, context);
+          if (loopReminder && result.output && typeof result.output === 'object') {
+            result.output._system_loop_reminder = loopReminder;
+          }
 
           if (result.success) {
             let completionMsg = `Completed "${name}" successfully.`;

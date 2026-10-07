@@ -71,6 +71,48 @@ function CodeBlock({ node, inline, className, children, ...props }: any) {
   );
 }
 
+function MarkdownTable({ children, ...props }: any) {
+  const [copied, setCopied] = useState(false);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  const handleCopyTable = () => {
+    if (tableRef.current && navigator?.clipboard?.writeText) {
+      const rows = Array.from(tableRef.current.querySelectorAll('tr'));
+      const mdRows = rows.map((r, i) => {
+        const cells = Array.from(r.querySelectorAll('th, td')).map(c => c.textContent?.trim() || '');
+        const line = `| ${cells.join(' | ')} |`;
+        if (i === 0) {
+          const sep = `| ${cells.map(() => '---').join(' | ')} |`;
+          return `${line}\n${sep}`;
+        }
+        return line;
+      });
+      navigator.clipboard.writeText(mdRows.join('\n'));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="relative group/table my-2 overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10 shadow-2xs">
+      <div className="absolute right-1.5 top-1.5 opacity-0 group-hover/table:opacity-100 transition-opacity z-10">
+        <button
+          type="button"
+          onClick={handleCopyTable}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-900/90 text-white dark:bg-white/20 hover:bg-purple-600 transition-colors shadow-xs cursor-pointer"
+          title="Copy table as Markdown"
+        >
+          {copied ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
+          <span>{copied ? 'Copied' : 'Copy Table'}</span>
+        </button>
+      </div>
+      <table ref={tableRef} className="min-w-full divide-y divide-slate-200 dark:divide-white/10 text-xs" {...props}>
+        {children}
+      </table>
+    </div>
+  );
+}
+
 function AgentEventsTimeline({ events, isLoading }: { events: any[]; isLoading: boolean }) {
   const [isExpanded, setIsExpanded] = useState(true);
   if (!events || events.length === 0) return null;
@@ -208,8 +250,16 @@ export function AIPanel() {
   const [isCodebaseSearchOpen, setIsCodebaseSearchOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [atQuery, setAtQuery] = useState<string | null>(null);
+  const [pickerTrigger, setPickerTrigger] = useState<'@' | '#' | null>(null);
+  const [isSearchingChat, setIsSearchingChat] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [activeSearchMatchIdx, setActiveSearchMatchIdx] = useState(0);
+  const [minimizedPlanIds, setMinimizedPlanIds] = useState<Set<string>>(new Set());
+  const [removedPlanIds, setRemovedPlanIds] = useState<Set<string>>(new Set());
+  const [navigatedMsgId, setNavigatedMsgId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isSubmittingRef = useRef<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -222,6 +272,32 @@ export function AIPanel() {
   useEffect(() => {
     activeConvIdRef.current = activeConversationId;
   }, [activeConversationId]);
+
+  // Cmd+F / Ctrl+F Transcript Find
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        const activeEl = document.activeElement;
+        const isEditor = activeEl?.closest('.monaco-editor') || activeEl?.closest('.terminal-container');
+        if (!isEditor) {
+          e.preventDefault();
+          setIsSearchingChat(true);
+          setTimeout(() => searchInputRef.current?.focus(), 50);
+        }
+      } else if (e.key === 'Escape' && isSearchingChat) {
+        setIsSearchingChat(false);
+        setChatSearchQuery('');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSearchingChat]);
+
+  const matchingMessages = useMemo(() => {
+    if (!chatSearchQuery.trim()) return [];
+    const q = chatSearchQuery.toLowerCase();
+    return aiMessages.filter(m => (m.content || '').toLowerCase().includes(q));
+  }, [aiMessages, chatSearchQuery]);
 
   useEffect(() => {
     if (models.length === 0) setModels(INITIAL_MODELS);
@@ -1219,21 +1295,26 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
 
-    // Detect @ symbol at cursor or trailing word
+    // Detect @ or # symbol at cursor or trailing word
     const cursor = e.target.selectionStart || val.length;
     const textBeforeCursor = val.slice(0, cursor);
     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-    if (lastAtIndex !== -1) {
-      const charBeforeAt = lastAtIndex > 0 ? textBeforeCursor[lastAtIndex - 1] : ' ';
-      if (charBeforeAt === ' ' || charBeforeAt === '\n') {
-        const queryText = textBeforeCursor.slice(lastAtIndex + 1);
+    const lastHashIndex = textBeforeCursor.lastIndexOf('#');
+    const triggerIndex = Math.max(lastAtIndex, lastHashIndex);
+
+    if (triggerIndex !== -1) {
+      const charBefore = triggerIndex > 0 ? textBeforeCursor[triggerIndex - 1] : ' ';
+      if (charBefore === ' ' || charBefore === '\n') {
+        const queryText = textBeforeCursor.slice(triggerIndex + 1);
         if (!queryText.includes(' ') && !queryText.includes('\n')) {
           setAtQuery(queryText);
+          setPickerTrigger(textBeforeCursor[triggerIndex] as '@' | '#');
           return;
         }
       }
     }
     setAtQuery(null);
+    setPickerTrigger(null);
   };
 
   const activeConversationMeta = conversationList.find(c => c.id === activeConversationId);
@@ -1519,6 +1600,93 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
         </div>
       </div>
 
+      {/* Cmd+F In-Transcript Search Bar */}
+      {isSearchingChat && (
+        <div className="px-3 py-2 bg-white dark:bg-[#121212] border-b border-slate-200 dark:border-white/10 flex items-center justify-between gap-2 shadow-xs shrink-0 z-10 animate-in slide-in-from-top-1 duration-150">
+          <div className="flex items-center gap-1.5 flex-1 bg-slate-100 dark:bg-white/5 rounded-lg px-2.5 py-1">
+            <Search size={13} className="text-slate-400 shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={chatSearchQuery}
+              onChange={(e) => {
+                setChatSearchQuery(e.target.value);
+                setActiveSearchMatchIdx(0);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (matchingMessages.length > 0) {
+                    const nextIdx = (activeSearchMatchIdx + (e.shiftKey ? -1 : 1) + matchingMessages.length) % matchingMessages.length;
+                    setActiveSearchMatchIdx(nextIdx);
+                    const targetMsg = matchingMessages[nextIdx];
+                    const el = messagesContainerRef.current?.querySelector(`[data-msg-id="${targetMsg.id}"]`);
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                } else if (e.key === 'Escape') {
+                  setIsSearchingChat(false);
+                  setChatSearchQuery('');
+                }
+              }}
+              placeholder="Find in chat transcript (Enter for next)..."
+              className="w-full bg-transparent text-xs text-slate-800 dark:text-slate-100 outline-none placeholder:text-slate-400"
+            />
+            {chatSearchQuery && (
+              <span className="text-[10px] text-slate-400 font-mono shrink-0 select-none">
+                {matchingMessages.length > 0 ? `${activeSearchMatchIdx + 1} of ${matchingMessages.length}` : '0 of 0'}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              disabled={matchingMessages.length === 0}
+              onClick={() => {
+                if (matchingMessages.length > 0) {
+                  const prevIdx = (activeSearchMatchIdx - 1 + matchingMessages.length) % matchingMessages.length;
+                  setActiveSearchMatchIdx(prevIdx);
+                  const targetMsg = matchingMessages[prevIdx];
+                  const el = messagesContainerRef.current?.querySelector(`[data-msg-id="${targetMsg.id}"]`);
+                  el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }}
+              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded disabled:opacity-30 cursor-pointer"
+              title="Previous match (Shift+Enter)"
+            >
+              <ChevronUp size={14} />
+            </button>
+            <button
+              type="button"
+              disabled={matchingMessages.length === 0}
+              onClick={() => {
+                if (matchingMessages.length > 0) {
+                  const nextIdx = (activeSearchMatchIdx + 1) % matchingMessages.length;
+                  setActiveSearchMatchIdx(nextIdx);
+                  const targetMsg = matchingMessages[nextIdx];
+                  const el = messagesContainerRef.current?.querySelector(`[data-msg-id="${targetMsg.id}"]`);
+                  el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }}
+              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded disabled:opacity-30 cursor-pointer"
+              title="Next match (Enter)"
+            >
+              <ChevronDown size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchingChat(false);
+                setChatSearchQuery('');
+              }}
+              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded cursor-pointer"
+              title="Close search (Escape)"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* MESSAGE STREAMING & HISTORY AREA */}
       <div
         ref={messagesContainerRef}
@@ -1578,6 +1746,8 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             return (
               <div
                 key={msg.id}
+                id={`ai-msg-${msg.id}`}
+                data-role={msg.role}
                 className={cn("text-sm flex flex-col group", isUser ? "items-end" : "items-start")}
               >
                 {!isUser && (msgModel || msgAgent || msg.latency) && (
@@ -1651,7 +1821,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                     </div>
                   ) : (
                     <div className="markdown-body prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed">
-                      <ReactMarkdown components={{ code: CodeBlock }}>{msg.content}</ReactMarkdown>
+                      <ReactMarkdown components={{ code: CodeBlock, table: MarkdownTable }}>{msg.content}</ReactMarkdown>
                       {isStreaming && (
                         <span className="inline-block w-1.5 h-3.5 bg-purple-600 dark:bg-purple-400 ml-1 translate-y-0.5 animate-pulse" />
                       )}
@@ -1786,16 +1956,58 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 )}
 
                 {/* Structured Plan Card (Milestone 4 Plan Mode) */}
-                {msg.plan && (
+                {msg.plan && !removedPlanIds.has(msg.plan.id) && (
                   <div className="mt-2 w-full max-w-[95%]">
-                    <PlanCard
-                      plan={msg.plan}
-                      onApprove={(planId) => handleApprovePlan(planId, msg.id)}
-                      onCancel={(planId) => handleCancelPlan(planId, msg.id)}
-                      onRegenerate={(plan) => handleRegeneratePlan(plan)}
-                      onUpdatePlan={(planId, updates) => handleUpdatePlan(planId, msg.id, updates)}
-                      isExecuting={isLoading}
-                    />
+                    {minimizedPlanIds.has(msg.plan.id) ? (
+                      <div className="flex items-center justify-between px-3 py-1.5 rounded-lg border border-purple-200 dark:border-purple-500/20 bg-purple-50/70 dark:bg-purple-950/20 text-xs shadow-2xs">
+                        <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300 font-medium truncate">
+                          <span className="text-sm">📋</span>
+                          <span className="truncate">Plan: {msg.plan.title || 'Implementation Plan'}</span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 dark:bg-purple-500/30 font-normal">
+                            {msg.plan.steps?.length || 0} steps
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = new Set(minimizedPlanIds);
+                              next.delete(msg.plan.id);
+                              setMinimizedPlanIds(next);
+                            }}
+                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-white/10 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-purple-700 dark:text-purple-300 transition-colors cursor-pointer border border-purple-200 dark:border-purple-500/30"
+                          >
+                            Expand
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = new Set(removedPlanIds);
+                              next.add(msg.plan.id);
+                              setRemovedPlanIds(next);
+                            }}
+                            className="p-1 hover:text-red-500 rounded text-slate-400 dark:text-slate-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                            title="Dismiss plan"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <PlanCard
+                        plan={msg.plan}
+                        onApprove={(planId) => handleApprovePlan(planId, msg.id)}
+                        onCancel={(planId) => handleCancelPlan(planId, msg.id)}
+                        onRegenerate={(plan) => handleRegeneratePlan(plan)}
+                        onUpdatePlan={(planId, updates) => handleUpdatePlan(planId, msg.id, updates)}
+                        onMinimize={() => {
+                          const next = new Set(minimizedPlanIds);
+                          next.add(msg.plan.id);
+                          setMinimizedPlanIds(next);
+                        }}
+                        isExecuting={isLoading}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -1896,22 +2108,28 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             </div>
           )}
 
-          {/* Rich @ Context Picker Dropdown */}
+          {/* Rich @ and # Context Picker Dropdown */}
           {atQuery !== null && (
             <ContextPicker
               query={atQuery}
-              onClose={() => setAtQuery(null)}
+              trigger={pickerTrigger || '@'}
+              onClose={() => {
+                setAtQuery(null);
+                setPickerTrigger(null);
+              }}
               onSelect={(item) => {
                 addAiContext(item);
-                // Strip the trailing @query from input
+                // Strip the trailing @query or #query from input
                 const cursor = textareaRef.current?.selectionStart || input.length;
                 const textBeforeCursor = input.slice(0, cursor);
-                const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-                if (lastAtIndex !== -1) {
-                  const cleaned = input.slice(0, lastAtIndex) + input.slice(cursor);
+                const triggerChar = pickerTrigger || '@';
+                const lastTriggerIndex = textBeforeCursor.lastIndexOf(triggerChar);
+                if (lastTriggerIndex !== -1) {
+                  const cleaned = input.slice(0, lastTriggerIndex) + input.slice(cursor);
                   setInput(cleaned);
                 }
                 setAtQuery(null);
+                setPickerTrigger(null);
                 setTimeout(() => textareaRef.current?.focus(), 50);
               }}
             />
@@ -1927,6 +2145,25 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleSubmit();
+              } else if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                e.preventDefault();
+                const isJumpUser = !e.shiftKey;
+                const filtered = aiMessages.filter(m => isJumpUser ? m.role === 'user' : m.role !== 'user');
+                if (filtered.length > 0) {
+                  const currentIdx = filtered.findIndex(m => m.id === navigatedMsgId);
+                  let nextIdx = currentIdx;
+                  if (e.key === 'ArrowUp') {
+                    nextIdx = currentIdx === -1 ? filtered.length - 1 : Math.max(0, currentIdx - 1);
+                  } else {
+                    nextIdx = currentIdx === -1 ? 0 : Math.min(filtered.length - 1, currentIdx + 1);
+                  }
+                  const targetMsg = filtered[nextIdx];
+                  if (targetMsg) {
+                    setNavigatedMsgId(targetMsg.id);
+                    const el = document.getElementById(`ai-msg-${targetMsg.id}`);
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }
               }
             }}
             placeholder={

@@ -38,6 +38,51 @@ export interface SubagentTaskResult {
 export class MultiAgentCoordinator {
   private static MAX_CONCURRENT_SUBAGENTS = 3;
   private static DEFAULT_TIMEOUT_MS = 10000;
+  private static activeSubagents = new Map<string, { abortController: AbortController; parentId?: string; children: string[] }>();
+
+  /**
+   * Registers a subagent with parent-child hierarchy for tracking and cancellation.
+   */
+  static registerSubagent(id: string, parentId?: string): AbortController {
+    const ac = new AbortController();
+    this.activeSubagents.set(id, { abortController: ac, parentId, children: [] });
+    if (parentId && this.activeSubagents.has(parentId)) {
+      this.activeSubagents.get(parentId)!.children.push(id);
+    }
+    return ac;
+  }
+
+  /**
+   * Stops a subagent and recursively halts all its nested subagents.
+   */
+  static stopSubagent(id: string): { stoppedCount: number; stoppedIds: string[] } {
+    const stopped: string[] = [];
+    const stopRecursive = (targetId: string) => {
+      const entry = this.activeSubagents.get(targetId);
+      if (!entry) return;
+      for (const childId of entry.children) {
+        stopRecursive(childId);
+      }
+      entry.abortController.abort();
+      stopped.push(targetId);
+      this.activeSubagents.delete(targetId);
+    };
+    stopRecursive(id);
+    return { stoppedCount: stopped.length, stoppedIds: stopped };
+  }
+
+  /**
+   * Halts all active subagents across the coordinator.
+   */
+  static stopAll(): number {
+    let count = 0;
+    for (const [, entry] of this.activeSubagents.entries()) {
+      entry.abortController.abort();
+      count++;
+    }
+    this.activeSubagents.clear();
+    return count;
+  }
 
   /**
    * Dispatches and coordinates multiple specialized subagents with concurrency bounding.

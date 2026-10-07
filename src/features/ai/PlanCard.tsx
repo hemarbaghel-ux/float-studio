@@ -3,7 +3,7 @@ import { Plan, PlanStep } from '../../types/plan';
 import {
   CheckCircle2, Circle, Clock, AlertCircle, Play, X,
   Edit2, Check, RotateCcw, ChevronDown, ChevronRight,
-  Shield, FileCode, Wrench, Sparkles, Loader2
+  Shield, FileCode, Wrench, Sparkles, Loader2, Minimize2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -13,6 +13,7 @@ interface PlanCardProps {
   onCancel: (planId: string) => void;
   onRegenerate: (plan: Plan) => void;
   onUpdatePlan: (planId: string, updates: Partial<Plan>) => void;
+  onMinimize?: () => void;
   isExecuting?: boolean;
 }
 
@@ -22,6 +23,7 @@ export function PlanCard({
   onCancel,
   onRegenerate,
   onUpdatePlan,
+  onMinimize,
   isExecuting = false
 }: PlanCardProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -128,6 +130,16 @@ export function PlanCard({
               title="Edit Plan"
             >
               <Edit2 size={12} />
+            </button>
+          )}
+          {onMinimize && (
+            <button
+              type="button"
+              onClick={onMinimize}
+              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded transition-colors cursor-pointer"
+              title="Minimize Plan"
+            >
+              <Minimize2 size={12} />
             </button>
           )}
         </div>

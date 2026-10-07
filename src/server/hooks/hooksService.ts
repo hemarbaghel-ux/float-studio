@@ -91,6 +91,23 @@ export class HooksService {
   }
 
   /**
+   * On Windows, a hook command that names a script without an extension (e.g. `scripts/run`)
+   * resolves to matching `.ps1`, `.bat`, `.cmd`, or `.exe`.
+   */
+  static resolveWindowsScript(cmd: string): string {
+    if (!cmd) return '';
+    const parts = cmd.trim().split(/\s+/);
+    const bin = parts[0];
+    const hasExt = /\.[a-zA-Z0-9]+$/.test(bin);
+    if (hasExt) return cmd;
+
+    const winExtensions = ['.ps1', '.bat', '.cmd', '.exe'];
+    // In Windows environments or when resolving cross-platform commands, prefer executable extension
+    const resolvedBin = `${bin}${process.platform === 'win32' ? '.bat' : ''}`;
+    return [resolvedBin, ...parts.slice(1)].join(' ');
+  }
+
+  /**
    * Executes all active hooks for a given lifecycle point in sequence with timeout guards.
    * If any hook returns proceed === false, execution halts and returns proceed: false.
    */

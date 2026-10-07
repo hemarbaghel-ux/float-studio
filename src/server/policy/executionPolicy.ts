@@ -77,6 +77,29 @@ export class ExecutionPolicyManager {
       };
     }
 
+    const targetPath = String(request.args?.path || request.args?.filePath || '').trim();
+    if (targetPath) {
+      const normPath = targetPath.replace(/\\/g, '/');
+      const isOutside = normPath.includes('../') || normPath.startsWith('/etc/') || normPath.startsWith('/var/');
+      if (isOutside) {
+        return {
+          permitted: false,
+          requiresHumanApproval: true,
+          reason: `This ${request.category === 'read' ? 'reads' : 'edits'} a file outside your workspace.`
+        };
+      }
+
+      const baseName = normPath.split('/').pop() || '';
+      const isProtected = /^\.env($|\..*)|\.gitconfig|firebase\.json|credentials\.json|\.pem$|\.key$/i.test(baseName);
+      if (isProtected && (request.category === 'write' || request.toolName === 'propose_changes')) {
+        return {
+          permitted: false,
+          requiresHumanApproval: true,
+          reason: 'This edits a protected configuration file.'
+        };
+      }
+    }
+
     switch (mode) {
       case 'safe':
         if (request.category === 'read') {

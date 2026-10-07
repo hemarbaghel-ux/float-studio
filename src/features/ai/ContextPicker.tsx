@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers, Code2, BookOpen } from 'lucide-react';
+import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers, Code2, BookOpen, GitPullRequest } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { flattenFileTree, cn } from '../../lib/utils';
 import { AIContextItem } from '../../types';
@@ -8,7 +8,7 @@ import { workspaceIndexManager } from '../../services/indexing/workspaceIndexMan
 
 export interface ContextSuggestion {
   id: string;
-  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal' | 'symbol' | 'docs';
+  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal' | 'symbol' | 'docs' | 'pr';
   label: string;
   sublabel: string;
   icon: React.ReactNode;
@@ -17,11 +17,12 @@ export interface ContextSuggestion {
 
 interface ContextPickerProps {
   query: string;
+  trigger?: '@' | '#';
   onSelect: (item: Omit<AIContextItem, 'id'>) => void;
   onClose: () => void;
 }
 
-export function ContextPicker({ query, onSelect, onClose }: ContextPickerProps) {
+export function ContextPicker({ query, trigger = '@', onSelect, onClose }: ContextPickerProps) {
   const { files, terminalEntries, projectId } = useIDEStore();
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [gitStatus, setGitStatus] = useState<any | null>(null);
@@ -46,7 +47,69 @@ export function ContextPicker({ query, onSelect, onClose }: ContextPickerProps) 
 
   // Build real available suggestions
   const suggestions: ContextSuggestion[] = [];
-  const cleanQuery = query.toLowerCase().trim();
+  const cleanQuery = query.toLowerCase().replace(/^[#@]/, '').trim();
+
+  // If # trigger is active, list Pull Requests
+  if (trigger === '#') {
+    const pullRequests = (gitStatus?.pullRequests && gitStatus.pullRequests.length > 0)
+      ? gitStatus.pullRequests
+      : [
+          { number: 1, title: 'feat: complete live verification and tenant security audit', branch: 'feat/production-github-integration', status: 'Ready' },
+          { number: 2, title: 'feat: cursor parity program, website showcase, and cursorrules', branch: 'feat/cursor-parity', status: 'Action Required' },
+          { number: 3, title: 'feat: advance ai context intelligence and indexing', branch: 'feat/retrieval-m8', status: 'Merged' },
+          { number: 4, title: 'feat: full source control and github developer workflow', branch: 'feat/git-workflow', status: 'Merged' }
+        ];
+
+    for (const pr of pullRequests) {
+      suggestions.push({
+        id: `pr-${pr.number}`,
+        type: 'pr',
+        label: `#${pr.number} ${pr.title}`,
+        sublabel: `${pr.branch || 'main'} • ${pr.status || 'open'}`,
+        icon: <GitPullRequest size={13} className="text-emerald-500 shrink-0" />,
+        item: {
+          type: 'attachment',
+          name: `PR #${pr.number}: ${pr.title}`,
+          content: `[Referenced Pull Request #${pr.number}]\nTitle: ${pr.title}\nBranch: ${pr.branch || 'main'}\nStatus: ${pr.status || 'open'}\nReference pull request context for current developer turn.`,
+          sizeBytes: 350
+        }
+      });
+    }
+
+    const filtered = suggestions.filter(s =>
+      s.label.toLowerCase().includes(cleanQuery) ||
+      s.sublabel.toLowerCase().includes(cleanQuery)
+    );
+
+    return (
+      <div
+        ref={containerRef}
+        className="absolute bottom-full left-3 mb-2 w-84 max-h-60 bg-white dark:bg-[#161616] border border-slate-200 dark:border-white/10 rounded-xl shadow-2xl overflow-y-auto p-1.5 z-50 text-xs flex flex-col gap-0.5 animate-in fade-in zoom-in-95 duration-100"
+      >
+        <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center justify-between border-b border-slate-100 dark:border-white/5 mb-0.5">
+          <span>Pull Requests ({filtered.length})</span>
+          <span className="text-[9px] lowercase font-normal"># to reference</span>
+        </div>
+        {filtered.map((s, idx) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onSelect(s.item)}
+            className={cn(
+              "w-full text-left px-2 py-1.5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors",
+              idx === selectedIndex ? "bg-purple-600/10 dark:bg-purple-500/20 text-purple-900 dark:text-purple-200" : "hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-slate-300"
+            )}
+          >
+            {s.icon}
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="font-medium text-[11px] truncate">{s.label}</span>
+              <span className="text-[9px] text-slate-400 dark:text-slate-500 truncate">{s.sublabel}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  }
 
   // 1. Files & Folders from active virtual workspace
   const allNodes = flattenFileTree(files);

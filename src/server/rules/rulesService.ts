@@ -229,11 +229,40 @@ export class RulesService {
     // Sort by priority ascending (1 = highest), then scope
     allRules.sort((a, b) => a.priority - b.priority);
 
+    // Filter rules by file patterns (globs) if defined
+    const applicableRules = allRules.filter(rule => {
+      if (!rule.globs || rule.globs.length === 0) return true;
+      if (options.targetFilePath) {
+        const target = options.targetFilePath.toLowerCase().replace(/\\/g, '/');
+        const matches = rule.globs.some(g => {
+          const pat = g.toLowerCase().replace(/\\/g, '/');
+          if (pat === '*' || pat === '**/*') return true;
+          if (pat.startsWith('*.')) return target.endsWith(pat.slice(1));
+          if (pat.endsWith('/*')) return target.startsWith(pat.slice(0, -2) + '/');
+          return target.includes(pat);
+        });
+        if (matches) return true;
+      }
+      // If no targetFilePath provided, check if any workspace files match the pattern
+      if (!options.targetFilePath && options.files && options.files.length > 0) {
+        return options.files.some(f => {
+          const p = (f.path || f.name || '').toLowerCase().replace(/\\/g, '/');
+          return rule.globs!.some(g => {
+            const pat = g.toLowerCase().replace(/\\/g, '/');
+            if (pat === '*' || pat === '**/*') return true;
+            if (pat.startsWith('*.')) return p.endsWith(pat.slice(1));
+            return p.includes(pat);
+          });
+        });
+      }
+      return !options.targetFilePath;
+    });
+
     // Apply strict budget limit
     const boundedRules: FloatRule[] = [];
     let currentLength = 0;
 
-    for (const rule of allRules) {
+    for (const rule of applicableRules) {
       if (currentLength + rule.content.length > MAX_TOTAL_RULES_LENGTH) {
         break;
       }
