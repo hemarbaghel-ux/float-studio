@@ -19,6 +19,7 @@ import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
+import { milestone9Router } from './milestone9Router';
 
 export async function startServer() {
   const app = express();
@@ -65,6 +66,7 @@ export async function startServer() {
   // Integrations Routes
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/projects/:projectId/git', gitRouter);
+  app.use('/api', milestone9Router);
 
   // Project commands run only in the constrained Docker sandbox. Requiring a
   // persisted owned project prevents callers from using the runner as a generic
@@ -218,7 +220,8 @@ export async function startServer() {
       activeEditor,
       gitContext: clientGitContext,
       projectName,
-      projectId
+      projectId,
+      workflowMode
     } = req.body;
     const resolvedEffort = reasoningEffort || effort;
 
@@ -299,7 +302,9 @@ export async function startServer() {
       const assembled = ContextBuilder.build(userPromptText, contextItems || [], {
         projectName,
         projectId,
+        userId: req.user.uid,
         modelId: model,
+        workflowMode,
         activeEditor,
         gitContext: {
           ...gitRepoInfo,

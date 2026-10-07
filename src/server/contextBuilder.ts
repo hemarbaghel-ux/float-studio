@@ -33,9 +33,16 @@ export interface ConversationTurnSummary {
   content: string;
 }
 
+import { FloatAgentWorkflowMode, getWorkflowModeInstructions } from './agent/agentModes';
+import { RulesService } from './rules/rulesService';
+import { SkillsService } from './skills/skillsService';
+import { MemoryService } from './memory/memoryService';
+import { DiagnosticsService } from './diagnostics/diagnosticsService';
+
 export interface ContextBuilderOptions {
   projectName?: string;
   projectId?: string;
+  userId?: string;
   modelId?: string;
   maxTotalChars?: number;
   maxPerItemChars?: number;
@@ -46,6 +53,11 @@ export interface ContextBuilderOptions {
   gitDiffPaths?: string[];// backwards compatibility
   activeFilePath?: string;// backwards compatibility
   conversationHistory?: ConversationTurnSummary[];
+  workflowMode?: FloatAgentWorkflowMode;
+  rules?: string[];
+  skills?: string[];
+  memories?: string[];
+  diagnostics?: string;
 }
 
 export interface ContextExplanationItem {
@@ -112,7 +124,7 @@ export function classifyTaskIntent(prompt: string): TaskIntent {
   }
 
   // 4. Refactoring intent
-  if (/\b(refactor|rename|extract|move|cleanup|restructure|organize|deprecate|decouple)\b/.test(norm)) {
+  if (/\b(refactor|refactoring|refactored|rename|extract|move|cleanup|restructure|organize|deprecate|decouple)\b/.test(norm)) {
     return 'refactor';
   }
 
@@ -448,11 +460,16 @@ export class ContextBuilder {
     const gitInfo = gitRepoName ? ` (Linked: ${gitRepoName}${gitBranchName ? `@${gitBranchName}` : ''})` : '';
     const intentTag = ` [Intent: ${intent.toUpperCase()}]`;
 
+    const modeSection = options.workflowMode ? `${getWorkflowModeInstructions(options.workflowMode)}\n\n` : '';
+    const rulesSection = options.rules && options.rules.length > 0 ? `[Workspace & Coding Rules]\n${options.rules.join('\n')}\n\n` : '';
+    const skillsSection = options.skills && options.skills.length > 0 ? `[Active Domain Skills]\n${options.skills.join('\n')}\n\n` : '';
+    const memorySection = options.memories && options.memories.length > 0 ? `[Project Architectural Memory]\n${options.memories.join('\n')}\n\n` : '';
+    const diagSection = options.diagnostics ? `${options.diagnostics}\n\n` : '';
     const projectHeader = `[Project Context: ${projectName}${gitInfo}${intentTag}]\n\n`;
     const contextBody = `[Codebase & Attached Context]\n${includedBlocks.join('\n\n')}\n\n`;
     const userPromptSection = `[User Request]\n${userMessage}`;
 
-    const formattedPrompt = `${warningSection}${projectHeader}${contextBody}${userPromptSection}`;
+    const formattedPrompt = `${modeSection}${warningSection}${rulesSection}${skillsSection}${memorySection}${diagSection}${projectHeader}${contextBody}${userPromptSection}`;
 
     return {
       formattedPrompt,
@@ -562,6 +579,40 @@ export class ContextBuilder {
       }
     }
 
-    return ContextBuilder.build(userMessage, combinedItems, options);
+    const mergedOptions: ContextBuilderOptions = { ...options };
+
+    // Auto-attach effective rules if not specified
+    if (!mergedOptions.rules && files.length > 0) {
+      const effRules = RulesService.getEffectiveRules({ userId: options.userId, projectId, files });
+      if (effRules.length > 0) {
+        mergedOptions.rules = effRules.map(r => `• [${r.scope.toUpperCase()}: ${r.name}] ${r.content}`);
+      }
+    }
+
+    // Auto-attach relevant skills if not specified
+    if (!mergedOptions.skills) {
+      const matchedSkills = SkillsService.selectRelevantSkills(userMessage, 2);
+      if (matchedSkills.length > 0) {
+        mergedOptions.skills = matchedSkills.map(s => `• Skill: ${s.name}\n${s.instructions}`);
+      }
+    }
+
+    // Auto-attach project memories if not specified and userId is provided
+    if (!mergedOptions.memories && options.userId) {
+      const mems = MemoryService.getProjectMemories(projectId, options.userId);
+      if (mems.length > 0) {
+        mergedOptions.memories = mems.map(m => `• [${m.category.toUpperCase()}]: ${m.key} => ${m.value}`);
+      }
+    }
+
+    // Auto-attach diagnostics if not specified
+    if (!mergedOptions.diagnostics && projectId) {
+      const diagPrompt = DiagnosticsService.formatDiagnosticsPrompt(projectId);
+      if (diagPrompt) {
+        mergedOptions.diagnostics = diagPrompt;
+      }
+    }
+
+    return ContextBuilder.build(userMessage, combinedItems, mergedOptions);
   }
 }

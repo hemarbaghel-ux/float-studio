@@ -200,7 +200,7 @@ export function AIPanel() {
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const [editingTitleConvId, setEditingTitleConvId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
-  const [activeWorkflowMode, setActiveWorkflowMode] = useState<'chat' | 'plan' | 'agent'>('chat');
+  const [activeWorkflowMode, setActiveWorkflowMode] = useState<'chat' | 'ask' | 'plan' | 'agent' | 'debug'>('chat');
 
   // Phase 3 Context Modals & Menu State
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
@@ -606,6 +606,7 @@ export function AIPanel() {
           activeEditor: activeEd,
           projectName: projectName || 'Project Workspace',
           projectId: currentProjectId,
+          workflowMode: activeWorkflowMode,
           stream: true
         })
       });
@@ -1426,13 +1427,13 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </div>
         </div>
 
-        {/* Workflow Mode Switcher: Chat / Plan / Agent */}
+        {/* Workflow Mode Switcher: Chat / Ask / Plan / Agent / Debug */}
         <div className="flex items-center bg-slate-100 dark:bg-[#141414] p-0.5 rounded-lg border border-slate-200/80 dark:border-[#222]">
           <button
             type="button"
             onClick={() => setActiveWorkflowMode('chat')}
             className={cn(
-              "flex-1 py-1 rounded-md text-xs font-medium transition-all text-center cursor-pointer",
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
               activeWorkflowMode === 'chat'
                 ? "bg-white dark:bg-[#202020] text-slate-900 dark:text-white shadow-xs"
                 : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
@@ -1442,28 +1443,54 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </button>
           <button
             type="button"
+            onClick={() => setActiveWorkflowMode('ask')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'ask'
+                ? "bg-white dark:bg-[#202020] text-emerald-600 dark:text-emerald-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+            title="Read-only assistant for exploration and questions"
+          >
+            Ask
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveWorkflowMode('plan')}
             className={cn(
-              "flex-1 py-1 rounded-md text-xs font-medium transition-all text-center cursor-pointer flex items-center justify-center gap-1",
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer flex items-center justify-center gap-0.5",
               activeWorkflowMode === 'plan'
                 ? "bg-white dark:bg-[#202020] text-purple-600 dark:text-purple-400 font-semibold shadow-xs"
                 : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
             )}
           >
-            <Sparkles size={11} />
+            <Sparkles size={10} />
             <span>Plan</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveWorkflowMode('agent')}
             className={cn(
-              "flex-1 py-1 rounded-md text-xs font-medium transition-all text-center cursor-pointer",
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
               activeWorkflowMode === 'agent'
                 ? "bg-white dark:bg-[#202020] text-blue-600 dark:text-blue-400 font-semibold shadow-xs"
                 : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
             )}
           >
             Agent
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('debug')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'debug'
+                ? "bg-white dark:bg-[#202020] text-amber-600 dark:text-amber-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+            title="Root-cause diagnostics and test-driven fixes"
+          >
+            Debug
           </button>
         </div>
 
