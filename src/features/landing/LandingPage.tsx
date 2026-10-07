@@ -9,6 +9,8 @@ import { PricingDropdown } from '../../components/PricingDropdown';
 import { ResourcesDropdown } from '../../components/ResourcesDropdown';
 import { LanguageDropdown } from '../../components/LanguageDropdown';
 import { useTranslation } from '../../components/LanguageProvider';
+import { InteractiveCodeHeroDemo } from './InteractiveCodeHeroDemo';
+import { InteractiveTerminalShowcase } from './InteractiveTerminalShowcase';
 
 export function LandingPage() {
   const { settings, toggleTheme, updateSettings } = useIDEStore();
@@ -79,110 +81,36 @@ export function LandingPage() {
         </div>
       </nav>
 
-      {/* Hero Section */}
+      {/* Hero Section with Interactive Code / Diff Demo */}
       <main className="pt-32 pb-20 px-6 max-w-6xl mx-auto flex flex-col items-center justify-center text-center">
-        <h1 className="text-4xl md:text-5xl font-medium tracking-tight mb-8 leading-[1.1] max-w-2xl text-slate-900 dark:text-white mx-auto">
-          {t('hero.title_part1', 'FLOAT is your coding agent for')}<br className="hidden md:block" />
-          {' '}{t('hero.title_part2', 'building ambitious software.')}
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-semibold uppercase tracking-wider mb-6">
+          AI Coding Workspace
+        </div>
+        <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6 leading-[1.1] max-w-3xl text-slate-900 dark:text-white mx-auto">
+          Build with an AI coding workspace that understands your code.
         </h1>
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-24 w-full">
+        <p className="text-lg md:text-xl text-slate-600 dark:text-[#A1A1AA] max-w-2xl mb-8 leading-relaxed">
+          Ask. Plan. Edit. Review. Validate. Experience autonomous multi-file workflows with staged proposal diffs and full human control.
+        </p>
+
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-14 w-full">
           <button
-            onClick={handleStart}
-            className="group px-6 py-3 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-medium flex items-center justify-center gap-2 shadow-lg w-full sm:w-auto cursor-pointer"
+            onClick={() => handleStart('signup')}
+            className="group px-7 py-3.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-semibold flex items-center justify-center gap-2 shadow-lg w-full sm:w-auto cursor-pointer text-sm"
           >
-            {t('hero.download_windows', 'Open FLOAT')} <ArrowRight size={16} />
+            <span>Open FLOAT Free</span> <ArrowRight size={16} />
           </button>
+          <a
+            href="/resources/changelog"
+            className="px-6 py-3.5 rounded-full border border-slate-300 dark:border-white/15 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors font-medium text-sm w-full sm:w-auto"
+          >
+            View Changelog (v1.4.0)
+          </a>
         </div>
 
-        {/* Mockup */}
+        {/* Interactive Code / Diff Hero Demo */}
         <div className="w-full relative">
-          <div className="w-full aspect-[16/9] bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden shadow-2xl relative z-10">
-            {/* Header */}
-            <div className="h-10 bg-slate-100 dark:bg-[#1A1814] border-b border-slate-200 dark:border-white/5 flex items-center justify-center px-4 relative shrink-0">
-              <div className="absolute left-4 flex gap-1.5">
-                <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
-                <div className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
-                <div className="w-3 h-3 rounded-full bg-[#27C93F]" />
-              </div>
-              <div className="text-xs text-slate-500 dark:text-[#8B949E]">{t('preview.window_title', 'FLOAT Desktop')}</div>
-            </div>
-            {/* Split Pane */}
-            <div className="flex h-[calc(100%-40px)]">
-              {/* Sidebar */}
-              <div className="w-64 border-r border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#12100C] p-4 flex flex-col gap-4 text-left">
-                 <div className="text-[10px] text-slate-500 dark:text-[#A1A1AA] font-bold uppercase tracking-wider">{t('preview.in_progress', 'IN PROGRESS 1')}</div>
-                 <div className="flex items-start gap-2">
-                   <div className="text-slate-500 dark:text-[#A1A1AA] mt-0.5 animate-spin">⚙️</div>
-                   <div>
-                     <div className="text-sm font-medium text-slate-900 dark:text-white">{t('preview.plan_mission_control', 'Plan Mission Control')}</div>
-                     <div className="text-xs text-slate-500 dark:text-[#A1A1AA]">{t('preview.generating_plan', 'Generating plan')}</div>
-                   </div>
-                 </div>
-                 <div className="text-[10px] text-slate-500 dark:text-[#A1A1AA] font-bold uppercase tracking-wider mt-4">{t('preview.ready_for_review', 'READY FOR REVIEW 4')}</div>
-                 <div className="flex items-start gap-2 opacity-60">
-                   <div className="text-green-500 mt-0.5">✓</div>
-                   <div className="flex-1">
-                     <div className="flex justify-between items-center text-sm font-medium text-slate-900 dark:text-white">
-                        <span>{t('preview.build_landing_page', 'Build Landing Page')}</span>
-                        <span className="text-xs font-normal">{t('preview.now', 'now')}</span>
-                     </div>
-                     <div className="text-xs text-slate-500 dark:text-[#A1A1AA]">{t('preview.done_fonts', 'Done. Fonts preload in the head...')}</div>
-                   </div>
-                 </div>
-              </div>
-              {/* Chat / Editor */}
-              <div className="flex-1 flex bg-white dark:bg-[#161410] text-left">
-                 <div className="w-1/2 p-6 flex flex-col gap-4 border-r border-slate-200 dark:border-white/5 relative overflow-hidden">
-                    <div className="text-sm font-medium text-slate-900 dark:text-white">{t('preview.build_landing_page', 'Build Landing Page')}</div>
-                    <div className="p-3 bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 rounded-lg text-sm text-slate-600 dark:text-[#A1A1AA]">
-                      {t('preview.prompt_landing_page', 'make a landing page based on attached docs explaining what we do')}
-                    </div>
-                    <div className="text-xs text-slate-500 dark:text-[#A1A1AA] flex flex-col gap-1">
-                      <div><span className="text-slate-900 dark:text-white font-medium">{t('preview.read', 'Read')}</span> about-acme.md</div>
-                      <div><span className="text-slate-900 dark:text-white font-medium">{t('preview.read', 'Read')}</span> brand-guidelines.pdf</div>
-                      <div>{t('preview.thought_time', 'Thought 6s')}</div>
-                    </div>
-                    <div className="text-sm text-slate-800 dark:text-white">
-                      {t('preview.agent_reply', "I'll create a minimal, serif-based landing page that matches your brand voice.")}
-                    </div>
-                    <div className="flex flex-col gap-2 mt-2">
-                      <div className="px-3 py-2 bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 rounded-lg text-sm flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
-                          <span className="text-slate-400 dark:text-[#A1A1AA]">📄</span> app/page.tsx
-                        </div>
-                        <span className="text-green-600 dark:text-green-500 text-xs font-mono">+52 -0</span>
-                      </div>
-                      <div className="px-3 py-2 bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 rounded-lg text-sm flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
-                          <span className="text-slate-400 dark:text-[#A1A1AA]">📄</span> app/globals.css
-                        </div>
-                        <span className="text-green-600 dark:text-green-500 text-xs font-mono">+18 -0</span>
-                      </div>
-                    </div>
-                 </div>
-                 {/* Code View */}
-                 <div className="w-1/2 bg-slate-50 dark:bg-[#161410] p-6 text-sm font-serif text-slate-700 dark:text-[#D4D4D4]">
-                    <div className="flex items-center gap-4 text-slate-500 dark:text-[#A1A1AA] mb-6 text-xs font-sans">
-                      <span>←</span><span>→</span><span>↻</span>
-                      <span className="flex-1 text-center font-mono bg-white dark:bg-[#1E1C18] border border-slate-200 dark:border-transparent py-1 rounded">http://localhost:3000</span>
-                      <span>◫</span>
-                    </div>
-                    <h2 className="text-2xl text-slate-900 dark:text-white mb-4 italic">Acme Labs</h2>
-                    <p className="mb-4 text-slate-600 dark:text-[#A1A1AA] text-base leading-relaxed font-sans">
-                      {t('preview.acme_text_1', "Software creation is changing. We are a group of researchers, engineers, and technologists inventing at the edge of what's useful and possible.")}
-                    </p>
-                    <p className="text-slate-600 dark:text-[#A1A1AA] text-base mb-6 font-sans">
-                      {t('preview.acme_text_2', 'We have much to learn, try, and build.')}
-                    </p>
-                    <button className="px-4 py-2 bg-slate-200 dark:bg-white/10 text-slate-900 dark:text-white rounded font-sans text-xs font-medium cursor-pointer">
-                      {t('preview.see_projects', 'See projects')}
-                    </button>
-                 </div>
-              </div>
-            </div>
-          </div>
-          {/* Faded Background Element */}
-          <div className="absolute -bottom-20 -left-10 -right-10 h-64 bg-gradient-to-b from-transparent to-slate-50 dark:to-[#0F0F0B] z-20 pointer-events-none" />
+          <InteractiveCodeHeroDemo onOpenWorkspace={() => handleStart('signup')} />
         </div>
       </main>
 
@@ -508,6 +436,22 @@ export function LandingPage() {
                <div className="flex justify-between text-slate-600 dark:text-[#A1A1AA]"><span>{t('features.engineering.git_mock_7', 'Ship to production')}</span><span>{t('features.engineering.git_time_now', 'Now —')}</span></div>
             </div>
           </div>
+        </div>
+
+        {/* Interactive Terminal Showcase */}
+        <div className="mt-14 pt-12 border-t border-slate-200 dark:border-white/5 text-left">
+          <div className="mb-6">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-600 dark:text-cyan-400 text-xs font-semibold uppercase tracking-wider mb-2">
+              CLI &amp; Orchestration
+            </div>
+            <h3 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white mb-2">
+              Interactive Terminal &amp; CLI Workflow Showcase
+            </h3>
+            <p className="text-sm text-slate-600 dark:text-[#A1A1AA] max-w-2xl">
+              Deterministic simulation of FLOAT's workspace indexing, rule verification, and automated test runners. Experience real-time progress without local shell access.
+            </p>
+          </div>
+          <InteractiveTerminalShowcase onOpenWorkspace={() => handleStart('signup')} />
         </div>
       </section>
 

@@ -3,6 +3,8 @@ import { ArrowLeft, Check, Sparkles, Shield, Zap, Building2, HelpCircle, AlertCi
 import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
 import { useAuthStore } from '../../store/authStore';
 import { apiFetch } from '../../services/api';
+import { PricingComparisonMatrix } from './PricingComparisonMatrix';
+import { cn } from '../../lib/utils';
 
 export function PricingPage() {
   const { user } = useAuthStore();
@@ -10,6 +12,7 @@ export function PricingPage() {
   const [currentSub, setCurrentSub] = useState<any>(null);
   const [loadingCheckout, setLoadingCheckout] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'annual'>('monthly');
 
   useEffect(() => {
     // Fetch pricing configuration & plan definitions
@@ -51,7 +54,7 @@ export function PricingPage() {
       const res = await apiFetch('/api/subscription/create-checkout-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId })
+        body: JSON.stringify({ planId, billingPeriod })
       });
       const data = await res.json();
       if (data.url) {
@@ -87,8 +90,8 @@ export function PricingPage() {
     {
       id: 'pro',
       name: 'Pro',
-      price: '$20',
-      period: 'per month',
+      price: billingPeriod === 'annual' ? '$16' : '$20',
+      period: billingPeriod === 'annual' ? 'per month (billed annually)' : 'per month',
       description: 'For engineers who rely on AI agents to plan, code, and review every day.',
       badge: 'Most Popular',
       highlight: true,
@@ -106,8 +109,8 @@ export function PricingPage() {
     {
       id: 'business',
       name: 'Business',
-      price: '$40',
-      period: 'per user / month',
+      price: billingPeriod === 'annual' ? '$32' : '$40',
+      period: billingPeriod === 'annual' ? 'per seat/mo (billed annually)' : 'per user / month',
       description: 'For engineering teams building production software with shared rules and control.',
       badge: 'For Teams',
       highlight: false,
@@ -145,7 +148,7 @@ export function PricingPage() {
 
       {/* Main Hero & Pricing Matrix */}
       <section className="flex-1 max-w-6xl w-full mx-auto px-6 py-16 sm:py-20">
-        <div className="text-center max-w-3xl mx-auto mb-16">
+        <div className="text-center max-w-3xl mx-auto mb-12">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-medium mb-4">
             <Sparkles size={13} />
             <span>Transparent, developer-first pricing</span>
@@ -156,6 +159,37 @@ export function PricingPage() {
           <p className="mt-4 text-base sm:text-lg text-slate-600 dark:text-[#8B949E] leading-relaxed">
             Choose the plan that fits your coding workflow. Upgrade, downgrade, or cancel anytime.
           </p>
+
+          {/* Monthly / Annual Billing Toggle */}
+          <div className="mt-8 inline-flex items-center rounded-full bg-slate-200/80 dark:bg-white/10 p-1 border border-slate-300 dark:border-white/10 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setBillingPeriod('monthly')}
+              className={cn(
+                "px-4 py-1.5 rounded-full transition-all cursor-pointer",
+                billingPeriod === 'monthly'
+                  ? "bg-white dark:bg-[#1C1A14] text-slate-900 dark:text-white shadow-xs font-bold"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              )}
+            >
+              Monthly billing
+            </button>
+            <button
+              type="button"
+              onClick={() => setBillingPeriod('annual')}
+              className={cn(
+                "px-4 py-1.5 rounded-full transition-all cursor-pointer flex items-center gap-1.5",
+                billingPeriod === 'annual'
+                  ? "bg-white dark:bg-[#1C1A14] text-slate-900 dark:text-white shadow-xs font-bold"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              )}
+            >
+              <span>Annual billing</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-[#7EE787]">
+                Save 20%
+              </span>
+            </button>
+          </div>
 
           {errorMsg && (
             <div className="mt-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center justify-center gap-2 text-left">
@@ -235,6 +269,11 @@ export function PricingPage() {
               </div>
             );
           })}
+        </div>
+
+        {/* Transparent Capability Matrix */}
+        <div className="mb-20">
+          <PricingComparisonMatrix onSelectPlan={handleSelectPlan} />
         </div>
 
         {/* Feature Comparison Highlights */}
