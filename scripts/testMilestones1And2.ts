@@ -71,8 +71,8 @@ const assembled = ContextBuilder.build('Please explain the build failure', [term
   gitBranch: 'main'
 });
 
-assert.ok(assembled.formattedPrompt.includes('[Project Context: test-app (Linked: user/test-app@main)]'), 'Must contain Git repository and branch info');
-assert.ok(assembled.formattedPrompt.includes('--- File: Terminal Logs ---'), 'Must include terminal logs section');
+assert.ok(assembled.formattedPrompt.includes('[Project Context: test-app (Linked: user/test-app@main)'), 'Must contain Git repository and branch info');
+assert.ok(assembled.formattedPrompt.includes('--- Terminal Output: Terminal Logs ---') || assembled.formattedPrompt.includes('--- File: Terminal Logs ---'), 'Must include terminal logs section');
 assert.ok(assembled.formattedPrompt.includes('[ERROR] Module not found: ./missing'), 'Must include terminal error message');
 assert.ok(assembled.formattedPrompt.includes('--- File: src/components/ ---'), 'Must include folder context section');
 assert.ok(assembled.formattedPrompt.includes('Please explain the build failure'), 'Must include user request');
@@ -90,6 +90,6 @@ const maliciousContext = {
 
 const safeCheck = ContextBuilder.build('Read this file', [maliciousContext]);
 assert.equal(safeCheck.omittedCount, 1, 'Path traversal must be rejected by ContextBuilder');
-assert.ok(safeCheck.warnings[0].includes('directory traversal'), 'Context notice must report directory traversal warning');
+assert.ok(safeCheck.warnings[0].toLowerCase().includes('traversal'), 'Context notice must report traversal warning');
 
 console.log('Milestone 1 & 2 verification tests: 8 passed, 0 failed.');

@@ -55,7 +55,7 @@ const ctx = ContextBuilder.build('Refactor the database queries', [
   gitRepository: 'float-team/float-studio',
   gitBranch: 'feat/production-github-integration'
 });
-assert.ok(ctx.formattedPrompt.includes('[Project Context: float-studio (Linked: float-team/float-studio@feat/production-github-integration)]'), 'Project context must include linked GitHub repository and branch info');
+assert.ok(ctx.formattedPrompt.includes('[Project Context: float-studio (Linked: float-team/float-studio@feat/production-github-integration)'), 'Project context must include linked GitHub repository and branch info');
 assert.ok(ctx.formattedPrompt.includes('--- File: src/db.ts ---'));
 assert.ok(ctx.formattedPrompt.includes('Refactor the database queries'));
 

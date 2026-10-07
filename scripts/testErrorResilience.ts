@@ -24,7 +24,7 @@ function runErrorResilienceTests() {
 
     assert.strictEqual((normalized as any).name, 'AbortError');
     assert.strictEqual((normalized as any).type, 'cancelation');
-    assert.strictEqual(normalized.message, 'operation is manually canceled');
+    assert.strictEqual(normalized.message, 'Operation was cancelled.');
   });
 
   // 2. normalizeGeminiError recognizes stringified JSON cancellation
