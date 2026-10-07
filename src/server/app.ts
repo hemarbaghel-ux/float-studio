@@ -215,6 +215,8 @@ export async function startServer() {
       effort,
       speed,
       contextItems,
+      activeEditor,
+      gitContext: clientGitContext,
       projectName,
       projectId
     } = req.body;
@@ -260,7 +262,8 @@ export async function startServer() {
 
     // Process and assemble codebase context items if provided
     let processedMessages = messages;
-    if (contextItems && Array.isArray(contextItems) && contextItems.length > 0 && Array.isArray(messages) && messages.length > 0) {
+    let contextExplanation: any = null;
+    if (Array.isArray(messages) && messages.length > 0) {
       const lastMsgIdx = messages.length - 1;
       const lastMsg = messages[lastMsgIdx];
       let userPromptText = '';
@@ -288,15 +291,35 @@ export async function startServer() {
         } catch {}
       }
 
-      const { formattedPrompt } = ContextBuilder.build(userPromptText, contextItems, {
+      const priorTurns = messages.slice(0, lastMsgIdx).map((m: any) => ({
+        role: (m.role === 'user' ? 'user' : 'model') as 'user' | 'model',
+        content: typeof m.content === 'string' ? m.content : m.parts?.[0]?.text || ''
+      }));
+
+      const assembled = ContextBuilder.build(userPromptText, contextItems || [], {
         projectName,
         projectId,
-        ...gitRepoInfo
+        modelId: model,
+        activeEditor,
+        gitContext: {
+          ...gitRepoInfo,
+          ...clientGitContext
+        },
+        conversationHistory: priorTurns
       });
+
+      contextExplanation = {
+        intent: assembled.intent,
+        includedCount: assembled.includedCount,
+        omittedCount: assembled.omittedCount,
+        totalContextChars: assembled.totalContextChars,
+        includedItems: assembled.includedItems,
+        excludedItems: assembled.excludedItems
+      };
 
       processedMessages = [
         ...messages.slice(0, lastMsgIdx),
-        { role: 'user', parts: [{ text: formattedPrompt }] }
+        { role: 'user', parts: [{ text: assembled.formattedPrompt }] }
       ];
     }
 
@@ -316,6 +339,10 @@ export async function startServer() {
       });
 
       try {
+        if (contextExplanation) {
+          res.write(`data: ${JSON.stringify({ type: 'context_info', contextExplanation })}\n\n`);
+        }
+
         const result = await modelRouter.generateContentStream(
           {
             model,
@@ -334,7 +361,7 @@ export async function startServer() {
           abortController.signal
         );
 
-        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage, contextExplanation })}\n\n`);
         res.end();
       } catch (error: any) {
         const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));

@@ -38,6 +38,14 @@ export interface AIMessage {
   changes?: Record<string, { status: 'pending' | 'accepted' | 'rejected'; before?: string | null }>;
   agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   cancelled?: boolean;
+  contextExplanation?: {
+    intent?: string;
+    includedCount?: number;
+    omittedCount?: number;
+    totalContextChars?: number;
+    includedItems?: Array<{ id: string; name: string; type: string; source: string; chars: number; priority: number }>;
+    excludedItems?: Array<{ name: string; reason: string }>;
+  };
 }
 
 export interface EditorSelection {

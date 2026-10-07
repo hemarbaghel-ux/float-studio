@@ -7,6 +7,7 @@ import { asyncRoute } from './asyncRoute';
 import { PlanService } from './agent/planService';
 import { getPlanDurable, listPlansDurable, updatePlanDurable } from './agent/planPersistence';
 import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from './adminFirebase';
+import { ContextBuilder } from './contextBuilder';
 import { projectProcessManager } from './execution/processManager';
 import { cleanupAgentGitWorktree, cleanupStaleAgentWorktrees, createAgentGitWorktree, getAgentWorktreeStatus, type AgentWorktreeSession } from './agent/agentGitWorktree';
 import {
@@ -540,9 +541,30 @@ export class AgentOrchestrator {
         }
       }
 
+      // Reconstruct bounded codebase context using unified ContextBuilder
+      let boundedTaskPrompt = task.description;
+      try {
+        const assembled = ContextBuilder.retrieveAndBuildBoundedContext(
+          task.description,
+          task.projectId,
+          safeFiles,
+          [],
+          {
+            projectId: task.projectId,
+            projectName: task.context?.sourceProjectName || task.name,
+            maxTotalChars: 8000
+          }
+        );
+        if (assembled.formattedPrompt) {
+          boundedTaskPrompt = assembled.formattedPrompt;
+        }
+      } catch {
+        // Fallback to raw task prompt
+      }
+
       await this.updateTaskStatus(taskId, 'EXECUTING', 20);
       const run = AgentRunner.run({
-        model: task.modelId || 'gemini-3.1-flash-lite', prompt: task.description,
+        model: task.modelId || 'gemini-3.1-flash-lite', prompt: boundedTaskPrompt,
         virtualFiles: safeFiles, projectName: task.context?.sourceProjectName || task.name,
         projectId: task.projectId, userId: task.ownerId, agentTaskId: task.id, signal: controller.signal,
         systemInstruction: `${roleConfig.name}.${gitRepoContext} Return a reviewable FLOAT code proposal for requested code changes.`,

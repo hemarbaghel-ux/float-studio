@@ -340,6 +340,10 @@ export class WorkspaceIndex {
     const minScore = options.minScore ?? 5;
     const normQuery = query.toLowerCase();
     const queryTokens = tokenize(query);
+    const queryWords = query
+      .split(/[^\p{L}\p{N}_$]+/u)
+      .map(w => w.trim().toLowerCase())
+      .filter(w => w.length > 1 && !/^[\d_]+$/.test(w));
 
     const activeFilePath = options.activeFilePath ? normalizeWorkspacePath(options.activeFilePath) : undefined;
     const gitDiffSet = new Set((options.gitDiffPaths || []).map(normalizeWorkspacePath));
@@ -368,15 +372,19 @@ export class WorkspaceIndex {
       if (docPath.toLowerCase() === normQuery) {
         totalDocScore += 150;
         signals.push('exact-path');
-      } else if (docPath.toLowerCase().includes(normQuery)) {
+      } else if (docPath.toLowerCase().includes(normQuery) || queryWords.includes(docPath.toLowerCase())) {
         totalDocScore += 60;
         signals.push('path-substring');
       }
 
-      // 2. Filename match (+100 exact, +60 partial)
+      // 2. Filename match (+100 exact, +90 word match, +60 partial)
+      const docBaseName = doc.name.toLowerCase().replace(/\.[^.]+$/, '');
       if (doc.name.toLowerCase() === normQuery) {
         totalDocScore += 100;
         signals.push('exact-filename');
+      } else if (queryWords.includes(doc.name.toLowerCase()) || queryWords.includes(docBaseName)) {
+        totalDocScore += 90;
+        signals.push('filename-match');
       } else if (doc.name.toLowerCase().includes(normQuery)) {
         totalDocScore += 60;
         signals.push('filename-substring');
@@ -415,6 +423,13 @@ export class WorkspaceIndex {
           else if (sym.kind === 'function' || sym.kind === 'method') currentSymBoost += 20;
           else if (sym.kind === 'type') currentSymBoost += 15;
           signals.push(`symbol:${sym.kind}:${sym.name}`);
+        } else if (queryWords.includes(symNameLower)) {
+          currentSymBoost = 110;
+          if (sym.kind === 'class') currentSymBoost += 25;
+          else if (sym.kind === 'interface') currentSymBoost += 20;
+          else if (sym.kind === 'function' || sym.kind === 'method') currentSymBoost += 20;
+          else if (sym.kind === 'type') currentSymBoost += 15;
+          signals.push(`symbol-match:${sym.kind}:${sym.name}`);
         } else if (symNameLower.includes(normQuery) || (queryTokens.length === 1 && symNameLower.startsWith(normQuery))) {
           currentSymBoost = 60;
           signals.push(`symbol-partial:${sym.kind}:${sym.name}`);
@@ -461,12 +476,12 @@ export class WorkspaceIndex {
       }
 
       // If path or filename matched, create path match
-      if (signals.includes('exact-path') || signals.includes('exact-filename') || signals.includes('path-substring') || signals.includes('filename-substring')) {
+      if (signals.includes('exact-path') || signals.includes('exact-filename') || signals.includes('filename-match') || signals.includes('path-substring') || signals.includes('filename-substring')) {
         const line = matchingLines[0]?.line ?? 1;
         const start = Math.max(1, line - contextLines);
         const end = Math.min(doc.lines.length, line + contextLines);
         const excerpt = doc.lines.slice(start - 1, end).map((t, idx) => `${start + idx}: ${t}`).join('\n');
-        const pathScore = signals.includes('exact-path') ? 160 : signals.includes('exact-filename') ? 140 : 80;
+        const pathScore = signals.includes('exact-path') ? 260 : signals.includes('exact-filename') ? 240 : signals.includes('filename-match') ? 110 : 80;
 
         candidateMatches.push({
           fileId: doc.id,
@@ -651,6 +666,55 @@ export class WorkspaceIndex {
     const imports = Array.from(this.importGraph.get(path) || []);
     const importedBy = Array.from(this.reverseImportGraph.get(path) || []);
     return { imports, importedBy };
+  }
+
+  /**
+   * Retrieves an indexed document by path if present.
+   */
+  public getFileDocument(rawPath: string): IndexedDocument | undefined {
+    const path = normalizeWorkspacePath(rawPath);
+    return this.documents.get(path);
+  }
+
+  /**
+   * Finds occurrences and probable references for a symbol across indexed files.
+   * Scans definitions, imports, and usages with bounding.
+   */
+  public findSymbolReferences(
+    symbolName: string,
+    options: { maxResults?: number; excludeDefinitionPath?: string } = {}
+  ): Array<{ path: string; line: number; text: string; isDefinition: boolean }> {
+    const norm = symbolName.trim();
+    if (!norm) return [];
+
+    const maxResults = options.maxResults ?? 12;
+    const results: Array<{ path: string; line: number; text: string; isDefinition: boolean }> = [];
+    const normLower = norm.toLowerCase();
+    const tokenRegex = new RegExp(`\\b${norm.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+
+    for (const [path, doc] of this.documents.entries()) {
+      // Check if file mentions token or trigram
+      if (!doc.tokenFrequencies.has(normLower)) continue;
+
+      for (let i = 0; i < doc.lines.length; i++) {
+        const lineText = doc.lines[i];
+        if (tokenRegex.test(lineText)) {
+          const isDef = doc.symbols.some(s => s.name === norm && s.line === i + 1);
+          if (isDef && options.excludeDefinitionPath === path) continue;
+
+          results.push({
+            path,
+            line: i + 1,
+            text: lineText.trim().slice(0, 140),
+            isDefinition: isDef
+          });
+
+          if (results.length >= maxResults) return results;
+        }
+      }
+    }
+
+    return results;
   }
 
   /**

@@ -578,6 +578,16 @@ export function AIPanel() {
             { role: 'user', parts: [{ text: draftText }] }
           ];
 
+      const flatFiles = flattenFileTree(files);
+      const currentFileNode = flatFiles.find(f => f.id === activeFileId);
+      const activeEd = currentFileNode ? {
+        filePath: currentFileNode.path || currentFileNode.name,
+        selectedText: activeSelection?.text || undefined,
+        selectionStartLine: activeSelection?.startLine || undefined,
+        selectionEndLine: activeSelection?.endLine || undefined,
+        surroundingCode: currentFileNode.content ? currentFileNode.content.split('\n').slice(0, 60).join('\n') : undefined
+      } : undefined;
+
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: {
@@ -593,6 +603,7 @@ export function AIPanel() {
           agentId: selectedAgent,
           systemInstruction: activeAgent?.systemInstructions || "You are an AI coding assistant. Answer questions concisely.",
           contextItems: currentContext,
+          activeEditor: activeEd,
           projectName: projectName || 'Project Workspace',
           projectId: currentProjectId,
           stream: true
@@ -612,6 +623,7 @@ export function AIPanel() {
       const decoder = new TextDecoder();
       accumulatedText = '';
       let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
+      let finalExplanation: any = undefined;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -629,7 +641,12 @@ export function AIPanel() {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.type === 'delta') {
+              if (data.type === 'context_info') {
+                finalExplanation = data.contextExplanation;
+                updateAiMessage(modelMsgId, {
+                  contextExplanation: data.contextExplanation
+                });
+              } else if (data.type === 'delta') {
                 accumulatedText += data.text;
                 updateAiMessage(modelMsgId, {
                   content: accumulatedText,
@@ -638,10 +655,14 @@ export function AIPanel() {
               } else if (data.type === 'done') {
                 accumulatedText = data.text || accumulatedText;
                 finalUsage = data.usage;
+                if (data.contextExplanation) {
+                  finalExplanation = data.contextExplanation;
+                }
                 updateAiMessage(modelMsgId, {
                   content: accumulatedText,
                   status: 'completed',
-                  latency: Date.now() - startTime
+                  latency: Date.now() - startTime,
+                  contextExplanation: finalExplanation
                 });
               } else if (data.type === 'error') {
                 throw new Error(data.error);
@@ -1610,6 +1631,55 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                     </div>
                   )}
                 </div>
+
+                {/* Explainable Context Metadata Badge */}
+                {!isUser && msg.contextExplanation && (
+                  <div className="mt-1 px-1">
+                    <details className="group/ctx text-[10px] text-slate-500 dark:text-[#7D8590]">
+                      <summary className="flex items-center gap-1.5 cursor-pointer hover:text-slate-800 dark:hover:text-[#C9D1D9] transition-colors select-none">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block" />
+                        <span className="font-medium">Context Used:</span>
+                        <span>{msg.contextExplanation.includedCount || 0} items</span>
+                        {msg.contextExplanation.intent && (
+                          <span className="px-1 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-white/5 uppercase font-mono font-semibold text-slate-600 dark:text-slate-400">
+                            {msg.contextExplanation.intent}
+                          </span>
+                        )}
+                        <ChevronDown size={10} className="transition-transform group-open/ctx:rotate-180" />
+                      </summary>
+                      <div className="mt-1.5 p-2 bg-slate-50 dark:bg-[#161616] border border-slate-200/80 dark:border-white/5 rounded-lg space-y-1.5 max-w-[92%]">
+                        <div className="font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                          <span>Included Sources ({msg.contextExplanation.totalContextChars || 0} chars)</span>
+                          {msg.contextExplanation.omittedCount ? (
+                            <span className="text-amber-600 dark:text-amber-400 font-normal">{msg.contextExplanation.omittedCount} excluded</span>
+                          ) : null}
+                        </div>
+                        {msg.contextExplanation.includedItems && msg.contextExplanation.includedItems.length > 0 ? (
+                          <div className="space-y-1 max-h-36 overflow-y-auto">
+                            {msg.contextExplanation.includedItems.map((item, i) => (
+                              <div key={i} className="flex items-center justify-between text-[9px] font-mono text-slate-600 dark:text-slate-400">
+                                <span className="truncate max-w-[200px]" title={item.name}>✓ {item.name}</span>
+                                <span className="shrink-0 text-slate-400 dark:text-slate-500">{item.source} · {item.chars}c</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[9px] text-slate-400">No external files included.</div>
+                        )}
+                        {msg.contextExplanation.excludedItems && msg.contextExplanation.excludedItems.length > 0 && (
+                          <div className="pt-1 border-t border-slate-200/60 dark:border-white/5 space-y-0.5">
+                            <span className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">Exclusions:</span>
+                            {msg.contextExplanation.excludedItems.map((ex, i) => (
+                              <div key={i} className="text-[9px] text-slate-400 dark:text-slate-500 truncate">
+                                • {ex.name} ({ex.reason})
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  </div>
+                )}
 
                 {/* Message action buttons on hover */}
                 {!isError && (

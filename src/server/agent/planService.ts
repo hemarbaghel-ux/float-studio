@@ -4,6 +4,7 @@ import { savePlanDurable, getPlanDurable, listPlansDurable, updatePlanDurable } 
 import { sanitizeProposalPath } from './proposalService';
 import { ModelRouter } from '../providers/router';
 import { workspaceIndexManager } from '../../services/indexing/workspaceIndexManager';
+import { ContextBuilder } from '../contextBuilder';
 
 export interface GeneratePlanInput {
   ownerId: string;
@@ -25,13 +26,17 @@ export class PlanService {
       return { error: 'A task request is required to generate a plan.' };
     }
 
-    // Keep context bounded with language-aware indexing
+    // Keep context bounded with language-aware indexing via unified ContextBuilder
     let relevantContextBlock = '';
     try {
-      const index = workspaceIndexManager.syncProject(projectId, virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content, type: f.type || 'file' })));
-      const bounded = index.retrieveBoundedContext(prompt, { maxTotalChars: 3500 });
-      if (bounded.formattedContext) {
-        relevantContextBlock = `\n${bounded.formattedContext}\n`;
+      const filesForContext = virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content, type: f.type || 'file' }));
+      const assembled = ContextBuilder.retrieveAndBuildBoundedContext(prompt, projectId, filesForContext, [], {
+        projectId,
+        modelId: model,
+        maxTotalChars: 6000
+      });
+      if (assembled.formattedPrompt) {
+        relevantContextBlock = `\n${assembled.formattedPrompt}\n`;
       }
     } catch {}
 
