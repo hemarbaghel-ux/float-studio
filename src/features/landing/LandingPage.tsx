@@ -186,8 +186,95 @@ export function LandingPage() {
         </div>
       </main>
 
+      {/* Cursor Parity Feature 1: Tab Autocomplete & Inline AI (Cmd+K) */}
+      <section className="py-20 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5">
+        <div className="text-center max-w-3xl mx-auto mb-16">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-semibold uppercase tracking-wider mb-4">
+            Next-Generation Autocomplete
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
+            Tab that predicts your next edit
+          </h2>
+          <p className="mt-4 text-base text-slate-600 dark:text-[#A1A1AA] leading-relaxed">
+            Multi-line ghost text autocomplete, cursor prediction, and instant inline edits with <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-white/10 font-mono text-xs">Ctrl+K</kbd> / <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-white/10 font-mono text-xs">Cmd+K</kbd>. Review proposed changes as diffs before accepting.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-8 items-stretch">
+          {/* Tab Autocomplete Card */}
+          <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#14120E] p-6 flex flex-col justify-between shadow-sm">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-semibold uppercase tracking-wider text-purple-600 dark:text-purple-400 font-mono">
+                  Tab Completion
+                </span>
+                <span className="text-[11px] font-mono text-slate-400 dark:text-[#8B949E] px-2 py-0.5 rounded bg-slate-100 dark:bg-white/5">
+                  Press Tab ⇥ to accept
+                </span>
+              </div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
+                Multi-line Copilot on steroids
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-[#A1A1AA] mb-4">
+                FLOAT analyzes surrounding files, imports, and symbols to suggest entire blocks and predict where you want to edit next.
+              </p>
+              <div className="p-4 rounded-xl bg-slate-900 dark:bg-[#0A0A0A] font-mono text-xs text-slate-300 leading-relaxed border border-slate-800 dark:border-white/5 overflow-hidden">
+                <div className="text-slate-500">// TypeScript with symbol context</div>
+                <div><span className="text-purple-400">export async function</span> <span className="text-blue-400">fetchWorkspaceRules</span>(projectId: string) {'{'}</div>
+                <div className="pl-4 text-slate-400">const rules = await rulesService.getEffectiveRules({'{'} projectId {'}'});</div>
+                <div className="pl-4 text-emerald-400 bg-emerald-500/10 -mx-4 px-4 py-0.5 border-l-2 border-emerald-400">
+                  <span className="text-slate-500">// [Ghost Text Suggestion]</span><br/>
+                  return rules.filter(r =&gt; r.enabled).sort((a, b) =&gt; a.priority - b.priority);
+                </div>
+                <div>{'}'}</div>
+              </div>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-white/5 flex items-center justify-between text-xs text-slate-500 dark:text-[#8B949E]">
+              <span>✓ Debounced server completions</span>
+              <span className="text-purple-600 dark:text-purple-400 font-medium">Active in Monaco</span>
+            </div>
+          </div>
+
+          {/* Inline Edit (Cmd+K) Card */}
+          <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#14120E] p-6 flex flex-col justify-between shadow-sm">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400 font-mono">
+                  Inline Assistant (Cmd+K)
+                </span>
+                <span className="text-[11px] font-mono text-slate-400 dark:text-[#8B949E] px-2 py-0.5 rounded bg-slate-100 dark:bg-white/5">
+                  Ctrl+K / Cmd+K
+                </span>
+              </div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
+                In-place refactor &amp; diff review
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-[#A1A1AA] mb-4">
+                Highlight any selection in your editor, prompt in natural language, and preview the side-by-side diff before approving.
+              </p>
+              <div className="p-4 rounded-xl bg-slate-900 dark:bg-[#0A0A0A] font-mono text-xs text-slate-300 leading-relaxed border border-slate-800 dark:border-white/5 overflow-hidden">
+                <div className="bg-blue-500/20 text-blue-300 p-2 rounded mb-2 flex items-center justify-between text-[11px]">
+                  <span>✨ <strong>Cmd+K:</strong> "Refactor to use TanStack React Query with error boundary"</span>
+                  <span className="text-blue-400 text-[10px]">Enter ↵</span>
+                </div>
+                <div className="text-red-400 bg-red-500/10 -mx-4 px-4 py-0.5">
+                  - const [data, setData] = useState(null);
+                </div>
+                <div className="text-emerald-400 bg-emerald-500/10 -mx-4 px-4 py-0.5">
+                  + const {'{ data, error, isLoading }'} = useQuery({'{'} queryKey: ['workspace'], queryFn: fetchWorkspace {'}'});
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-white/5 flex items-center justify-between text-xs text-slate-500 dark:text-[#8B949E]">
+              <span>✓ Safe proposal review gate</span>
+              <span className="text-blue-600 dark:text-blue-400 font-medium">Reject / Accept Diffs</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Feature: Agents turn ideas into code */}
-      <section className="py-32 max-w-6xl mx-auto px-6 grid md:grid-cols-2 gap-16 items-center">
+      <section className="py-24 max-w-6xl mx-auto px-6 grid md:grid-cols-2 gap-16 items-center border-t border-slate-200 dark:border-white/5">
         <div>
           <h2 className="text-3xl font-medium tracking-tight mb-4 text-slate-900 dark:text-white">
             {t('features.agents.title', 'Agents turn ideas into code')}

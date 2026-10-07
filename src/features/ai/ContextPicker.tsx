@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers, Code2 } from 'lucide-react';
+import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers, Code2, BookOpen } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { flattenFileTree, cn } from '../../lib/utils';
 import { AIContextItem } from '../../types';
@@ -8,7 +8,7 @@ import { workspaceIndexManager } from '../../services/indexing/workspaceIndexMan
 
 export interface ContextSuggestion {
   id: string;
-  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal' | 'symbol';
+  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal' | 'symbol' | 'docs';
   label: string;
   sublabel: string;
   icon: React.ReactNode;
@@ -139,6 +139,31 @@ export function ContextPicker({ query, onSelect, onClose }: ContextPickerProps) 
         }
       });
     }
+  }
+
+  // 4. Docs context (@docs) for popular libraries & custom frameworks
+  const docsCatalogs = [
+    { name: 'React', url: 'https://react.dev', desc: 'React 19, hooks, and server components' },
+    { name: 'Next.js', url: 'https://nextjs.org/docs', desc: 'App Router, layouts, routing, SSR' },
+    { name: 'Tailwind CSS', url: 'https://tailwindcss.com/docs', desc: 'Utility classes, theme config, responsive' },
+    { name: 'TypeScript', url: 'https://www.typescriptlang.org/docs', desc: 'Type definitions, generics, tsconfig' },
+    { name: 'Node.js', url: 'https://nodejs.org/docs', desc: 'Runtime APIs, buffers, streams, fs' }
+  ];
+
+  for (const doc of docsCatalogs) {
+    suggestions.push({
+      id: `docs-${doc.name.toLowerCase()}`,
+      type: 'docs',
+      label: `@docs ${doc.name}`,
+      sublabel: doc.desc,
+      icon: <BookOpen size={13} className="text-cyan-500 shrink-0" />,
+      item: {
+        type: 'attachment',
+        name: `@docs ${doc.name} (${doc.url})`,
+        content: `Documentation Reference: ${doc.name}\nOfficial Reference URL: ${doc.url}\nSummary: ${doc.desc}\nEnsure code recommendations follow official ${doc.name} best practices.`,
+        sizeBytes: 400
+      }
+    });
   }
 
   // 4. Symbols from workspace index
