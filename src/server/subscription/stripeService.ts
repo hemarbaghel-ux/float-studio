@@ -9,6 +9,8 @@ import {
   recordProcessedWebhookEvent
 } from './subscriptionPersistence';
 
+export type { SubscriptionPlanId };
+
 export interface PlanConfig {
   id: SubscriptionPlanId;
   name: string;
@@ -144,6 +146,10 @@ export function validateStripeEnv(): {
 export function getServerPriceId(planId: SubscriptionPlanId): string {
   if (planId === 'free') {
     throw new Error('Free plan does not require a Stripe checkout session.');
+  }
+
+  if (!['pro', 'business', 'ultimate'].includes(planId)) {
+    throw new Error(`Invalid plan identifier "${planId}". Valid subscription plans are pro, business, and ultimate.`);
   }
 
   let priceId = '';

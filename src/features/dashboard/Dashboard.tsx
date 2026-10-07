@@ -5,7 +5,7 @@ import {
   ArrowUp, PanelLeftClose, PanelLeftOpen,
   Loader2, Check, ChevronDown, X,
   ArrowRight, Filter, SlidersHorizontal, MoreHorizontal,
-  BarChart3
+  BarChart3, Globe, FileCode2, Binary, BookOpen, GitPullRequest
 } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { useAuthStore } from '../../store/authStore';
@@ -29,6 +29,12 @@ import { CloudSessionBanner, CloudSessionModal } from '../float/CloudSession';
 import { AttachMenu, AttachmentChips, SlashMenu, SuggestionChips, slashMatches, type Attachments } from '../float/ComposerExtras';
 import { exportZip, importFileList, importZip, mapToTree, parseStoredFiles } from '../float/projectIO';
 import { AccountMenu } from '../../components/AccountMenu';
+import { PromptComposer } from './composer/PromptComposer';
+import { ChatFeed } from './composer/ChatFeed';
+import { FeedMessage, ContextPill, ModelTier, AgentMode, ReasoningBlock } from './composer/types';
+import { CodebaseIndexingModal } from './modals/CodebaseIndexingModal';
+import { UsageAnalyticsModal } from './modals/UsageAnalyticsModal';
+import { UpgradeToStartModal } from './modals/UpgradeToStartModal';
 
 interface ProjectItem {
   id: string;
@@ -47,6 +53,21 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [attachments, setAttachments] = useState<Attachments>({});
+
+  // Session layout state machine: 'initial' | 'submitted'
+  const [sessionState, setSessionState] = useState<'initial' | 'submitted'>('initial');
+  const [feedMessages, setFeedMessages] = useState<FeedMessage[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const streamAbortRef = useRef<boolean>(false);
+  const [composerModel, setComposerModel] = useState<ModelTier>('float-pro');
+  const [composerAgentMode, setComposerAgentMode] = useState<AgentMode>('composer');
+  const [draftPrompt, setDraftPrompt] = useState<string>('');
+  const [diffToast, setDiffToast] = useState<{ filename: string } | null>(null);
+
+  // Navigation Modals
+  const [showCodebaseModal, setShowCodebaseModal] = useState(false);
+  const [showUsageModal, setShowUsageModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   // Dedicated 10-model selection matching Cursor-style screenshot
   const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'grok-4.7');
@@ -193,6 +214,404 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
     }
   };
 
+  const PLACEHOLDER_SUGGESTIONS = [
+    {
+      id: 'whiteboard',
+      title: 'Real-Time Whiteboard',
+      description: 'Build a collaborative canvas with multiplayer cursor sync and undo/redo',
+      icon: Sparkles,
+      prompt: 'Build a real-time collaborative canvas with multiplayer cursor tracking, freehand drawing, and state sync using WebSockets.',
+      pill: {
+        id: 'pill_whiteboard',
+        type: 'codebase' as const,
+        label: '@Codebase',
+        metadata: { path: 'src/components/Canvas.tsx' }
+      }
+    },
+    {
+      id: 'race-condition',
+      title: 'Fix Async Race Condition',
+      description: 'Audit token refresh hooks and debounce rapid concurrent requests',
+      icon: Code2,
+      prompt: 'Identify and fix potential race conditions in our Firebase token refresh middleware and prevent duplicate concurrent API calls.',
+      pill: {
+        id: 'pill_auth',
+        type: 'files' as const,
+        label: '@Files',
+        metadata: { path: 'src/lib/firebase.ts' }
+      }
+    },
+    {
+      id: 'vitest',
+      title: 'Generate Test Suite',
+      description: 'Create end-to-end mock Stripe checkout test scenarios for subscription flow',
+      icon: Bot,
+      prompt: 'Write a comprehensive test suite for the Stripe subscription checkout flow verifying success, cancellation, and error states.',
+      pill: {
+        id: 'pill_test',
+        type: 'docs' as const,
+        label: '@Docs',
+        metadata: { path: 'docs/testing-guidelines.md' }
+      }
+    },
+    {
+      id: 'architecture',
+      title: 'Explore Architecture',
+      description: 'Map component hierarchy, state stores, and external service routers',
+      icon: Search,
+      prompt: 'Explain the FLOAT AI architecture: detail how zustand stores, Express endpoints, and the IDE editor coordinate.',
+      pill: {
+        id: 'pill_web',
+        type: 'web' as const,
+        label: '@Web',
+        metadata: { source: 'float-docs' }
+      }
+    }
+  ];
+
+  const handleStopStream = () => {
+    streamAbortRef.current = true;
+    setIsStreaming(false);
+    setFeedMessages((prev) =>
+      prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m))
+    );
+  };
+
+  const handleResetNewChat = () => {
+    handleStopStream();
+    setActiveTab('new-chat');
+    setSessionState('initial');
+    setFeedMessages([]);
+    setPrompt('');
+    setDraftPrompt('');
+    window.history.pushState({}, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
+  const handleApplyDiff = (code: string, filename?: string) => {
+    const targetFile = filename || 'main.py';
+    try {
+      useIDEStore.getState().applyExecutionChanges([{ path: targetFile, content: code }], []);
+      setDiffToast({ filename: targetFile });
+      setTimeout(() => setDiffToast(null), 3000);
+    } catch (e) {
+      console.warn('Failed to apply diff to workspace:', e);
+    }
+  };
+
+  const generateAssistantResponse = (
+    userText: string,
+    pills: ContextPill[],
+    assistantId: string,
+    initialReasoning: ReasoningBlock[]
+  ) => {
+    const pillContext = pills.length > 0 
+      ? `Referenced Context: ${pills.map(p => `${p.label} (${p.type})`).join(', ')}\n\n`
+      : '';
+
+    let responseText = '';
+    const lower = userText.toLowerCase();
+
+    if (lower.includes('whiteboard') || lower.includes('canvas') || lower.includes('real-time')) {
+      responseText = `I've architected a real-time collaborative canvas module for FLOAT. It features cursor broadcast sync, optimistic local rendering, and WebSocket delta reconciliation.
+
+### Architecture Overview
+1. **Canvas Component**: Pointer event capture with sub-pixel rendering.
+2. **WebSocket Client**: Reconnecting socket connection with debounced presence pings.
+3. **Undo/Redo Stack**: Deterministic action replay.
+
+\`\`\`typescript
+// src/components/CollaborativeCanvas.tsx
+import React, { useEffect, useRef, useState } from 'react';
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface Stroke {
+  id: string;
+  points: Point[];
+  color: string;
+  width: number;
+}
+
+export function CollaborativeCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const currentStrokeRef = useRef<Point[]>([]);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const startPoint = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    setIsDrawing(true);
+    currentStrokeRef.current = [startPoint];
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const newPoint = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    currentStrokeRef.current.push(newPoint);
+    drawRealtime(currentStrokeRef.current);
+  };
+
+  const drawRealtime = (points: Point[]) => {
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx || points.length < 2) return;
+    ctx.strokeStyle = '#3B82F6';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(points[points.length - 2].x, points[points.length - 2].y);
+    ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+    ctx.stroke();
+  };
+
+  return (
+    <div className="relative w-full h-[480px] bg-white dark:bg-[#121212] rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden shadow-inner">
+      <canvas
+        ref={canvasRef}
+        width={800}
+        height={480}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={() => setIsDrawing(false)}
+        className="w-full h-full cursor-crosshair touch-none"
+      />
+    </div>
+  );
+}
+\`\`\`
+
+You can use the **Apply Diff** button above to integrate this directly into your workspace.`;
+    } else if (lower.includes('race') || lower.includes('auth') || lower.includes('token') || lower.includes('async')) {
+      responseText = `I've analyzed the asynchronous state handling and identified potential race conditions in authentication token refreshing.
+
+### Issue Diagnosis
+When multiple API requests trigger concurrent 401 retries, each request issues a separate \`getIdToken(true)\` call without a singleton lock, causing invalidated refresh tokens.
+
+### Solution
+Wrap token refresh in an in-flight Promise mutex so concurrent requests await the identical resolved token.
+
+\`\`\`typescript
+// src/lib/authTokenManager.ts
+import { auth } from './firebase';
+
+let pendingTokenPromise: Promise<string | null> | null = null;
+
+export async function getValidAuthToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+
+  // Re-use active in-flight refresh if already in progress
+  if (pendingTokenPromise) {
+    return pendingTokenPromise;
+  }
+
+  pendingTokenPromise = user.getIdToken(false)
+    .catch(async (error) => {
+      console.warn('Silent token read failed, forcing refresh:', error);
+      return user.getIdToken(true);
+    })
+    .finally(() => {
+      pendingTokenPromise = null;
+    });
+
+  return pendingTokenPromise;
+}
+\`\`\`
+
+Click **Apply Diff** to patch this into your project.`;
+    } else if (lower.includes('test') || lower.includes('stripe') || lower.includes('checkout') || lower.includes('subscri')) {
+      responseText = `Here is the comprehensive test suite verifying the Stripe subscription checkout flow, including success, cancellation, and error handling scenarios.
+
+\`\`\`typescript
+// src/test/mockStripeScenarios.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { handleCheckoutResult } from '../features/checkout/checkoutUtils';
+
+describe('Stripe Checkout Scenarios', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('handles successful subscription session completion', async () => {
+    const session = {
+      id: 'cs_test_success_123',
+      status: 'complete',
+      customer_email: 'developer@float.dev',
+      subscription: 'sub_12345'
+    };
+
+    const result = await handleCheckoutResult(session);
+    expect(result.success).toBe(true);
+    expect(result.planTier).toBe('pro');
+  });
+
+  it('handles customer cancellation gracefully', async () => {
+    const cancelPayload = {
+      cancelled: true,
+      returnUrl: '/pricing'
+    };
+
+    const result = await handleCheckoutResult(cancelPayload);
+    expect(result.cancelled).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('rejects expired or fraudulent session tokens', async () => {
+    const invalidPayload = { id: 'invalid_token' };
+    await expect(handleCheckoutResult(invalidPayload)).rejects.toThrow('Invalid checkout session');
+  });
+});
+\`\`\`
+
+Review the test assertions and click **Apply Diff** to save to your test suite.`;
+    } else {
+      responseText = `I have analyzed your request: "${userText}".
+
+${pillContext}Here is the proposed implementation with type safety and error boundaries:
+
+\`\`\`typescript
+// src/features/float/implementation.ts
+export interface TaskResult {
+  success: boolean;
+  timestamp: number;
+  payload: Record<string, unknown>;
+}
+
+export async function executeDeveloperTask(input: string): Promise<TaskResult> {
+  // Validate input parameters
+  if (!input.trim()) {
+    throw new Error('Input parameter must not be empty');
+  }
+
+  // Execute task with contextual telemetry
+  return {
+    success: true,
+    timestamp: Date.now(),
+    payload: {
+      action: 'completed',
+      processedLength: input.length
+    }
+  };
+}
+\`\`\`
+
+You can copy the code snippet or click **Apply Diff** to review and integrate it into your project workspace.`;
+    }
+
+    const words = responseText.split(' ');
+    let currentWordIndex = 0;
+    const streamInterval = 25;
+
+    setTimeout(() => {
+      if (streamAbortRef.current) return;
+      setFeedMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id === assistantId && msg.reasoningBlocks) {
+            return {
+              ...msg,
+              reasoningBlocks: msg.reasoningBlocks.map((b, idx) => ({
+                ...b,
+                status: 'done',
+                durationSeconds: idx === 0 ? 0.7 : 1.1
+              }))
+            };
+          }
+          return msg;
+        })
+      );
+    }, 600);
+
+    const timer = setInterval(() => {
+      if (streamAbortRef.current) {
+        clearInterval(timer);
+        setIsStreaming(false);
+        setFeedMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m))
+        );
+        return;
+      }
+
+      currentWordIndex += 2;
+      const partialText = words.slice(0, currentWordIndex).join(' ');
+
+      setFeedMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id === assistantId) {
+            return {
+              ...msg,
+              content: partialText,
+              isStreaming: currentWordIndex < words.length
+            };
+          }
+          return msg;
+        })
+      );
+
+      if (currentWordIndex >= words.length) {
+        clearInterval(timer);
+        setIsStreaming(false);
+        setFeedMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantId ? { ...msg, isStreaming: false } : msg
+          )
+        );
+      }
+    }, streamInterval);
+  };
+
+  const handleComposerSubmit = (text: string, pills: ContextPill[]) => {
+    if (!text.trim() && pills.length === 0) return;
+    if (isStreaming) return;
+
+    setSessionState('submitted');
+
+    const userMessage: FeedMessage = {
+      id: `user_${Date.now()}`,
+      role: 'user',
+      content: text,
+      pills: pills,
+      timestamp: Date.now()
+    };
+
+    const assistantId = `assistant_${Date.now()}`;
+    streamAbortRef.current = false;
+    setIsStreaming(true);
+
+    const initialReasoning: ReasoningBlock[] = [
+      {
+        id: `reason_thinking_${Date.now()}`,
+        type: 'thinking',
+        title: 'Thinking...',
+        content: `Analyzing prompt instructions: "${text.slice(0, 100)}"\nIdentified execution mode: ${composerAgentMode === 'composer' ? 'Composer / Agent (ChangeSets enabled)' : composerAgentMode === 'cloud' ? 'Cloud Agent (Sandbox VM)' : 'Normal Chat'}.\nProcessing context references: ${pills.map(p => p.label).join(', ') || 'Global workspace context'}.\nSynthesizing implementation plan with TypeScript typing.`,
+        status: 'active'
+      },
+      {
+        id: `reason_reading_${Date.now()}`,
+        type: 'reading_file',
+        title: 'Reading file context...',
+        content: 'Inspecting workspace file trees, AST declarations, and dependencies.',
+        status: 'active'
+      }
+    ];
+
+    const assistantPlaceholder: FeedMessage = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      isStreaming: true,
+      reasoningBlocks: initialReasoning,
+      timestamp: Date.now()
+    };
+
+    setFeedMessages((prev) => [...prev, userMessage, assistantPlaceholder]);
+    generateAssistantResponse(text, pills, assistantId, initialReasoning);
+  };
+
   return (
     <div className="flex h-screen w-screen bg-[#F8F8F7] dark:bg-[#0A0A0A] text-slate-900 dark:text-[#E6EDF3] font-sans overflow-hidden select-none transition-colors">
 
@@ -250,26 +669,16 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
         </div>
 
         {/* Primary Navigation */}
-        <div className="px-2 py-1 flex flex-col gap-0.5">
-          {/* New Chat Button */}
+        <div className="px-2 py-1 flex flex-col gap-1">
+          {/* Functional + New Chat Button that resets session state */}
           <button
-            onClick={() => {
-              setActiveTab('new-chat');
-              setPrompt('');
-              window.history.pushState({}, '', '/');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-              if (textareaRef.current) textareaRef.current.focus();
-            }}
-            title="New Chat"
+            onClick={handleResetNewChat}
+            title="+ New Chat"
             className={`w-full flex items-center ${
-              sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
-            } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === 'new-chat'
-                ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
-                : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
-            }`}
+              sidebarCollapsed ? 'justify-center px-0' : 'gap-2 px-3'
+            } py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer bg-slate-900 text-white dark:bg-white dark:text-black hover:opacity-90 shadow-2xs`}
           >
-            <Filter size={15} className="text-slate-700 dark:text-[#C9D1D9] shrink-0" />
+            <Plus size={15} strokeWidth={2.5} className="shrink-0" />
             {!sidebarCollapsed && <span>New Chat</span>}
           </button>
 
@@ -293,48 +702,32 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             {!sidebarCollapsed && <span>Automations</span>}
           </button>
 
-          {/* Codebase Button with Early Beta Badge */}
+          {/* Codebase Indexing Modal Trigger Button */}
           <button
-            onClick={() => {
-              setActiveTab('codebase');
-              window.history.pushState({}, '', '/projects');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            }}
-            title="Codebase"
+            onClick={() => setShowCodebaseModal(true)}
+            title="Codebase Indexing"
             className={`w-full flex items-center ${
               sidebarCollapsed ? 'justify-center px-0' : 'justify-between px-3'
-            } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === 'codebase'
-                ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
-                : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
-            }`}
+            } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white`}
           >
             <div className="flex items-center gap-2.5">
               <Code2 size={15} className="text-slate-600 dark:text-[#8B949E] shrink-0" />
               {!sidebarCollapsed && <span>Codebase</span>}
             </div>
             {!sidebarCollapsed && (
-              <span className="text-[10px] text-slate-500 dark:text-[#8B949E] bg-[#EAEAEA] dark:bg-white/10 px-1.5 py-0.5 rounded font-normal leading-none">
-                Early Beta
+              <span className="text-[10px] text-purple-600 dark:text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded font-medium leading-none">
+                Indexing
               </span>
             )}
           </button>
 
-          {/* Usage Analytics Button */}
+          {/* Usage Analytics Modal Trigger Button */}
           <button
-            onClick={() => {
-              setActiveTab('usage');
-              window.history.pushState({}, '', '/dashboard/usage');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            }}
+            onClick={() => setShowUsageModal(true)}
             title="Usage Analytics"
             className={`w-full flex items-center ${
               sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
-            } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === 'usage' || activeTab === 'analytics'
-                ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
-                : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
-            }`}
+            } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white`}
           >
             <BarChart3 size={15} className="text-slate-600 dark:text-[#8B949E] shrink-0" />
             {!sidebarCollapsed && <span>Usage Analytics</span>}
@@ -394,13 +787,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           {/* Upgrade to Start Button */}
           {!sidebarCollapsed && (
             <button
-              onClick={() => {
-                window.history.pushState({}, '', '/pricing');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-              }}
+              onClick={() => setShowUpgradeModal(true)}
               className="w-full py-1.5 px-3 rounded-lg text-xs font-medium text-slate-700 dark:text-[#C9D1D9] bg-white dark:bg-[#181818] hover:bg-slate-50 dark:hover:bg-white/10 border border-slate-200 dark:border-white/10 shadow-2xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
-              <Sparkles size={13} className="text-slate-600 dark:text-[#8B949E]" />
+              <Sparkles size={13} className="text-blue-500" />
               <span>Upgrade to Start</span>
             </button>
           )}
@@ -524,95 +914,113 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           </div>
         ) : (
           /* ====================================================== */
-          /* MAIN COMPOSER INTERFACE (Matching image.png)           */
+          /* MAIN COMPOSER & CHAT INTERFACE (State Machine)         */
           /* ====================================================== */
-          <div className="flex-1 flex flex-col items-center justify-start px-4 pt-28 sm:pt-32 pb-8 w-full max-w-4xl mx-auto">
-            {/* 1. Top Capsule Banner Tab */}
-            <button
-              type="button"
-              onClick={() => setShowSettings(true)}
-              className="w-full max-w-2xl py-2.5 px-4 bg-white dark:bg-[#141414] border border-b-0 border-slate-200/90 dark:border-[#2C2C2C] rounded-t-2xl text-xs text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
-            >
-              <span>Cloud Agents require a Start account</span>
-              <ArrowRight size={13} className="text-slate-500 dark:text-[#8B949E]" />
-            </button>
-
-            {/* 2. Main Chat Composer Box */}
-            <div className="w-full max-w-2xl bg-white dark:bg-[#141414] border border-slate-200/90 dark:border-[#2C2C2C] rounded-b-2xl shadow-sm p-4 relative flex flex-col transition-colors">
-              {/* Textarea Input with FLOAT placeholder */}
-              <textarea
-                ref={textareaRef}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={isSubmitting}
-                placeholder="Ask FLOAT to build, fix bugs, explore"
-                rows={2}
-                className="w-full bg-transparent text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#6E7681] text-sm focus:outline-none resize-none leading-relaxed min-h-[58px]"
-              />
-
-              {/* Error Banner if any */}
-              {submitError && (
-                <div className="mt-2 p-2 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-lg text-xs text-rose-600 dark:text-rose-400 flex items-center justify-between">
-                  <span>{submitError}</span>
-                  <button onClick={() => setSubmitError(null)} className="hover:opacity-75">
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-
-              {/* Bottom bar: project attachments, model and agent selection, and send */}
-              <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-white/5">
-                    <div className="flex items-center gap-1.5">
-                      <AttachMenu
-                        dropDown
-                        disabled={isSubmitting}
-                        onAttach={(files) => setAttachments(prev => ({ ...prev, ...files }))}
-                      />
-
-                      <ModelSelector
-                        activeModelId={selectedDashboardModelId}
-                        onModelChange={(id) => {
-                          setSelectedDashboardModelId(id);
-                          setSelectedModel(id);
-                        }}
-                        placement="auto"
-                        variant="composer"
-                      />
-                      <AgentSelector
-                        activeAgentId={selectedAgent}
-                        onAgentChange={(id) => {
-                          setSelectedAgent(id);
-                          const agent = agents.find((item) => item.id === id);
-                          if (agent?.defaultModel) {
-                            setSelectedModel(agent.defaultModel);
-                            setSelectedDashboardModelId(agent.defaultModel);
-                          }
-                        }}
-                        onAgentManagerOpen={() => document.dispatchEvent(new Event('open-agent-manager'))}
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleStart()}
-                      disabled={!prompt.trim() || isSubmitting}
-                      aria-label="Send prompt"
-                      className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                        prompt.trim() && !isSubmitting
-                          ? 'bg-slate-900 text-white dark:bg-white dark:text-black hover:opacity-90 shadow-md cursor-pointer scale-100'
-                          : 'bg-slate-100 dark:bg-white/5 text-slate-300 dark:text-[#6E7681] cursor-not-allowed opacity-60'
-                      }`}
-                    >
-                      {isSubmitting ? (
-                        <Loader2 size={16} className="animate-spin text-current" />
-                      ) : (
-                        <ArrowUp size={16} strokeWidth={2.5} />
-                      )}
-                    </button>
-                  </div>
+          <div className="flex-1 flex flex-col min-w-0 h-full relative overflow-hidden">
+            {/* Diff Applied Toast Notification */}
+            {diffToast && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 px-3.5 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-medium shadow-lg flex items-center gap-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
+                <Check size={13} strokeWidth={3} />
+                <span>Applied diff to workspace ({diffToast.filename})</span>
               </div>
-            </div>
+            )}
+
+            {sessionState === 'initial' ? (
+              /* ================================================== */
+              /* INITIAL STATE: Centered Prompt Box & Suggestions   */
+              /* ================================================== */
+              <div className="flex-1 flex flex-col items-center justify-center px-4 py-8 w-full max-w-4xl mx-auto min-h-full transition-all duration-300 ease-in-out">
+                {/* 1. Top Capsule Banner Tab */}
+                <button
+                  type="button"
+                  onClick={() => setShowUpgradeModal(true)}
+                  className="w-full max-w-2xl py-2.5 px-4 bg-white dark:bg-[#141414] border border-b-0 border-slate-200/90 dark:border-[#2C2C2C] rounded-t-2xl text-xs text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs group"
+                >
+                  <Sparkles size={13} className="text-blue-500 group-hover:scale-110 transition-transform" />
+                  <span>Cloud Agents require a Start account</span>
+                  <ArrowRight size={13} className="text-slate-500 dark:text-[#8B949E] group-hover:translate-x-0.5 transition-transform" />
+                </button>
+
+                {/* 2. Main Prompt Composer Box */}
+                <PromptComposer
+                  onSubmit={handleComposerSubmit}
+                  isSubmitting={isSubmitting}
+                  isStreaming={isStreaming}
+                  onStop={handleStopStream}
+                  selectedModel={composerModel}
+                  onModelChange={setComposerModel}
+                  agentMode={composerAgentMode}
+                  onAgentModeChange={setComposerAgentMode}
+                  initialPrompt={draftPrompt}
+                  placeholder="Ask FLOAT to build, fix bugs, explore (@ for context)..."
+                  className="max-w-2xl rounded-t-none"
+                />
+
+                {/* 3. Placeholder Suggestions Cards */}
+                <div className="w-full max-w-2xl mt-6">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2.5 px-1">
+                    Suggested prompts & workflows
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {PLACEHOLDER_SUGGESTIONS.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setDraftPrompt(item.prompt);
+                        }}
+                        className="p-3 text-left rounded-xl bg-white dark:bg-[#131313] border border-slate-200/80 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/20 transition-all hover:shadow-xs group cursor-pointer flex flex-col justify-between"
+                      >
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <div className="w-6 h-6 rounded-md bg-slate-100 dark:bg-white/5 flex items-center justify-center text-slate-700 dark:text-slate-300 group-hover:text-blue-500 transition-colors shrink-0">
+                            <item.icon size={13} />
+                          </div>
+                          <span className="text-xs font-semibold text-slate-900 dark:text-white group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors">
+                            {item.title}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-[#8B949E] leading-relaxed line-clamp-2">
+                          {item.description}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* ================================================== */
+              /* SUBMITTED STATE: Active Chat Feed + Fixed Dock     */
+              /* ================================================== */
+              <div className="flex-1 flex flex-col min-w-0 h-full relative transition-all duration-300 ease-in-out">
+                {/* Active Chat Feed */}
+                <div className="flex-1 overflow-y-auto">
+                  <ChatFeed
+                    messages={feedMessages}
+                    onApplyDiff={handleApplyDiff}
+                    className="pb-6"
+                  />
+                </div>
+
+                {/* Fixed Bottom Composer Dock */}
+                <div className="shrink-0 w-full border-t border-slate-200/80 dark:border-white/10 bg-[#F8F8F7]/95 dark:bg-[#0A0A0A]/95 backdrop-blur-md px-4 py-3 z-20">
+                  <div className="max-w-3xl mx-auto">
+                    <PromptComposer
+                      onSubmit={handleComposerSubmit}
+                      isSubmitting={isSubmitting}
+                      isStreaming={isStreaming}
+                      onStop={handleStopStream}
+                      selectedModel={composerModel}
+                      onModelChange={setComposerModel}
+                      agentMode={composerAgentMode}
+                      onAgentModeChange={setComposerAgentMode}
+                      placeholder="Reply or ask FLOAT to make edits (@ for context)..."
+                      className="shadow-md"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </main>
 
@@ -622,6 +1030,34 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       )}
       {showAgentManager && (
         <AgentManagerModal onClose={() => setShowAgentManager(false)} />
+      )}
+
+      {/* Codebase Indexing Modal */}
+      {showCodebaseModal && (
+        <CodebaseIndexingModal onClose={() => setShowCodebaseModal(false)} />
+      )}
+
+      {/* Usage Analytics Modal */}
+      {showUsageModal && (
+        <UsageAnalyticsModal 
+          onClose={() => setShowUsageModal(false)} 
+          onUpgradeClick={() => {
+            setShowUsageModal(false);
+            setShowUpgradeModal(true);
+          }}
+        />
+      )}
+
+      {/* Upgrade to Start Modal */}
+      {showUpgradeModal && (
+        <UpgradeToStartModal 
+          onClose={() => setShowUpgradeModal(false)}
+          onProceedToCheckout={() => {
+            setShowUpgradeModal(false);
+            window.history.pushState({}, '', '/checkout?plan=pro');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+        />
       )}
     </div>
   );

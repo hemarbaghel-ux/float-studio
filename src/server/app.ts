@@ -21,9 +21,32 @@ import { projectProcessManager, ExecutionFile, ExecutionEvent } from './executio
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
 
+function resolvePort(): number {
+  // 1. Explicit CLI arguments: --port <number> or --port=<number>
+  for (let i = 0; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg === '--port' && process.argv[i + 1]) {
+      const p = parseInt(process.argv[i + 1], 10);
+      if (!Number.isNaN(p) && p > 0) return p;
+    }
+    if (arg.startsWith('--port=')) {
+      const p = parseInt(arg.split('=')[1], 10);
+      if (!Number.isNaN(p) && p > 0) return p;
+    }
+  }
+
+  // 2. In development mode, dev server must run on port 3000 as required by environment
+  if (process.env.NODE_ENV !== 'production') {
+    return 3000;
+  }
+
+  // 3. In production, use Cloud Run PORT env var (e.g. 8080) or default to 3000
+  return Number(process.env.PORT) || 3000;
+}
+
 export async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = resolvePort();
 
   // Keep ordinary JSON endpoints small. Authenticated AI routes install a larger
   // parser after authentication because repository context can be several MB.
@@ -1087,7 +1110,10 @@ ${selectedCode || fullCode}
     // Development mode: always use Vite middleware for live HMR and seamless reload
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false, // Prevents independent WebSocket collisions on port 24678
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -1107,9 +1133,25 @@ ${selectedCode || fullCode}
     }
   });
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`);
   });
+
+  server.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.warn(`Port ${PORT} in use; attempting recovery in 1s...`);
+      setTimeout(() => {
+        try {
+          server.close();
+        } catch {}
+        server.listen(PORT, '0.0.0.0');
+      }, 1000);
+    } else {
+      console.error('Server listen error:', err);
+    }
+  });
+
+  return server;
 }
 
 // Auto start for direct TypeScript development execution or the compiled Cloud Run entry.
