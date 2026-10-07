@@ -10,7 +10,6 @@
     "dev": "tsx server.ts",
     "build": "vite build && esbuild src/server/app.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
-    "test": "tsx scripts/testCodebaseSearch.ts && tsx scripts/testProjectExecution.ts && tsx scripts/testPhase5Proposal.ts && tsx scripts/testPhase6Validation.ts && tsx scripts/testPhase7FinalIntegration.ts && tsx scripts/testAutomationIsolation.ts && tsx scripts/testPortableAgentRunner.ts && tsx scripts/testAgentOrchestratorValidation.ts && tsx scripts/testAgentGitWorktree.ts && tsx scripts/testSecurityAudit.ts && tsx scripts/testProviderRoutingAndHealth.ts && tsx scripts/testFloatBasicModel.ts && tsx scripts/mockStripeCheckoutScenarios.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },

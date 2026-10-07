@@ -77,7 +77,7 @@ export interface Agent {
   allowedModels: string[]; // array of model ids or '*'
   tools: string[]; // array of tool names
   permissions: AgentPermission;
-  mode: 'ask' | 'edit' | 'agent';
+  mode: 'ask' | 'edit' | 'agent' | 'plan';
   status?: 'AVAILABLE' | 'COMING_SOON' | 'BETA';
 }
 

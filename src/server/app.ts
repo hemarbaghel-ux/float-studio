@@ -12,12 +12,14 @@ import { asyncRoute } from './asyncRoute';
 import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from './adminFirebase';
 import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
-import { ProposalService } from './agent/proposalService';
+import { ProposalService, computeDiffStats } from './agent/proposalService';
+import { PlanService } from './agent/planService';
 import { ValidationService } from './validation/validationService';
 import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
+import { milestone9Router } from './milestone9Router';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -87,6 +89,7 @@ export async function startServer() {
   // Integrations Routes
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/projects/:projectId/git', gitRouter);
+  app.use('/api', milestone9Router);
 
   // Project commands run only in the constrained Docker sandbox. Requiring a
   // persisted owned project prevents callers from using the runner as a generic
@@ -237,8 +240,11 @@ export async function startServer() {
       effort,
       speed,
       contextItems,
+      activeEditor,
+      gitContext: clientGitContext,
       projectName,
-      projectId
+      projectId,
+      workflowMode
     } = req.body;
     const resolvedEffort = reasoningEffort || effort;
 
@@ -282,7 +288,8 @@ export async function startServer() {
 
     // Process and assemble codebase context items if provided
     let processedMessages = messages;
-    if (contextItems && Array.isArray(contextItems) && contextItems.length > 0 && Array.isArray(messages) && messages.length > 0) {
+    let contextExplanation: any = null;
+    if (Array.isArray(messages) && messages.length > 0) {
       const lastMsgIdx = messages.length - 1;
       const lastMsg = messages[lastMsgIdx];
       let userPromptText = '';
@@ -294,14 +301,53 @@ export async function startServer() {
         userPromptText = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
       }
 
-      const { formattedPrompt } = ContextBuilder.build(userPromptText, contextItems, {
+      let gitRepoInfo: { gitRepository?: string; gitBranch?: string } = {};
+      if (projectId) {
+        try {
+          const linkSnap = await adminDb.collection('projectGitLinks').doc(projectId).get();
+          if (linkSnap.exists) {
+            const linkData = linkSnap.data();
+            if (linkData && linkData.ownerId === req.user.uid) {
+              gitRepoInfo = {
+                gitRepository: `${linkData.repositoryOwner}/${linkData.repositoryName}`,
+                gitBranch: linkData.branch || linkData.defaultBranch
+              };
+            }
+          }
+        } catch {}
+      }
+
+      const priorTurns = messages.slice(0, lastMsgIdx).map((m: any) => ({
+        role: (m.role === 'user' ? 'user' : 'model') as 'user' | 'model',
+        content: typeof m.content === 'string' ? m.content : m.parts?.[0]?.text || ''
+      }));
+
+      const assembled = ContextBuilder.build(userPromptText, contextItems || [], {
         projectName,
-        projectId
+        projectId,
+        userId: req.user.uid,
+        modelId: model,
+        workflowMode,
+        activeEditor,
+        gitContext: {
+          ...gitRepoInfo,
+          ...clientGitContext
+        },
+        conversationHistory: priorTurns
       });
+
+      contextExplanation = {
+        intent: assembled.intent,
+        includedCount: assembled.includedCount,
+        omittedCount: assembled.omittedCount,
+        totalContextChars: assembled.totalContextChars,
+        includedItems: assembled.includedItems,
+        excludedItems: assembled.excludedItems
+      };
 
       processedMessages = [
         ...messages.slice(0, lastMsgIdx),
-        { role: 'user', parts: [{ text: formattedPrompt }] }
+        { role: 'user', parts: [{ text: assembled.formattedPrompt }] }
       ];
     }
 
@@ -321,6 +367,10 @@ export async function startServer() {
       });
 
       try {
+        if (contextExplanation) {
+          res.write(`data: ${JSON.stringify({ type: 'context_info', contextExplanation })}\n\n`);
+        }
+
         const result = await modelRouter.generateContentStream(
           {
             model,
@@ -339,7 +389,7 @@ export async function startServer() {
           abortController.signal
         );
 
-        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage, contextExplanation })}\n\n`);
         res.end();
       } catch (error: any) {
         const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
@@ -411,6 +461,128 @@ export async function startServer() {
         code: errorCode,
         provider: errorProvider
       });
+    }
+  });
+
+  // Fast inline ghost-text completion endpoint
+  app.post('/api/ai/complete', requireAuth, express.json({ limit: '2mb' }), async (req: any, res: any) => {
+    try {
+      const {
+        prefix = '',
+        suffix = '',
+        language = 'plaintext',
+        fileName = 'file',
+        model = 'gemini-3.8-flash'
+      } = req.body || {};
+
+      if (!prefix && !suffix) {
+        return res.json({ completion: '' });
+      }
+
+      // Bound context to fast local window
+      const boundedPrefix = String(prefix).slice(-2000);
+      const boundedSuffix = String(suffix).slice(0, 1000);
+
+      const prompt = `You are a high-speed code completion engine. Continue the code exactly where the cursor is located between <PREFIX> and <SUFFIX>.
+Output ONLY the code continuation to be inserted directly at the cursor. Do not output markdown, do not output backticks, and do not repeat the prefix or suffix.
+
+File: ${fileName} (${language})
+<PREFIX>
+${boundedPrefix}
+</PREFIX>
+<SUFFIX>
+${boundedSuffix}
+</SUFFIX>`;
+
+      const result = await modelRouter.generateContent({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        speed: 'fast',
+        systemInstruction: "You are an inline code autocompletion engine. Output only the immediate completion code."
+      });
+
+      let completionText = result.text || '';
+      // Clean up markdown fences if the model emitted them accidentally
+      completionText = completionText.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '');
+
+      res.json({ completion: completionText });
+    } catch (error: any) {
+      const isCancelled = error?.name === 'AbortError' || /cancel/i.test(error?.message || '');
+      if (isCancelled) {
+        return res.json({ completion: '', cancelled: true });
+      }
+      const statusCode = error?.statusCode || 500;
+      res.status(statusCode).json({ error: error.message || 'Completion failed', code: error?.code || 'PROVIDER_ERROR' });
+    }
+  });
+
+  // Dedicated Inline AI Transformation endpoint (Ctrl+K / Cmd+K)
+  app.post('/api/ai/transform', requireAuth, express.json({ limit: '4mb' }), async (req: any, res: any) => {
+    try {
+      const {
+        instruction = '',
+        selectedCode = '',
+        fullCode = '',
+        startLine,
+        endLine,
+        fileName = 'file',
+        language = 'plaintext',
+        model = 'gemini-3.1-flash-lite'
+      } = req.body || {};
+
+      if (!instruction.trim()) {
+        return res.status(400).json({ error: 'Transformation instruction is required.' });
+      }
+
+      const prompt = `You are an expert AI code transformer. The user wants you to edit code according to their instruction.
+Return ONLY the transformed code that directly replaces the provided input. Do not explain, do not wrap in conversational text.
+If provided a selection, return ONLY the replacement for the selection.
+If markdown code blocks are used, wrap only the raw code in a single code fence.
+
+Instruction: ${instruction}
+File: ${fileName} (${language})
+Line range: ${startLine !== undefined && endLine !== undefined ? `Lines ${startLine} to ${endLine}` : 'Full file'}
+
+Code to transform:
+\`\`\`${language}
+${selectedCode || fullCode}
+\`\`\``;
+
+      const result = await modelRouter.generateContent({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        systemInstruction: "You are an inline code modification assistant. Return only the replacement code for the target selection without conversational remarks."
+      });
+
+      let transformedCode = result.text || '';
+      // Strip outer markdown fence if present
+      const fenceMatch = transformedCode.match(/^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/);
+      if (fenceMatch) {
+        transformedCode = fenceMatch[1];
+      }
+
+      // Compute full proposed file content if a selection was replaced
+      let fullProposedContent = transformedCode;
+      if (selectedCode && fullCode && startLine !== undefined && endLine !== undefined) {
+        const lines = fullCode.replace(/\r\n/g, '\n').split('\n');
+        const beforeLines = lines.slice(0, Math.max(0, startLine - 1));
+        const afterLines = lines.slice(endLine);
+        const replacementLines = transformedCode.replace(/\r\n/g, '\n').split('\n');
+        fullProposedContent = [...beforeLines, ...replacementLines, ...afterLines].join('\n');
+      }
+
+      res.json({
+        transformedSelection: transformedCode,
+        proposedContent: fullProposedContent,
+        diffStats: computeDiffStats(fullCode, fullProposedContent)
+      });
+    } catch (error: any) {
+      const isCancelled = error?.name === 'AbortError' || /cancel/i.test(error?.message || '');
+      if (isCancelled) {
+        return res.json({ cancelled: true, message: 'Inline assistant cancelled by user.' });
+      }
+      const statusCode = error?.statusCode || 500;
+      res.status(statusCode).json({ error: error.message || 'Transformation failed', code: error?.code || 'PROVIDER_ERROR' });
     }
   });
 
@@ -534,6 +706,35 @@ export async function startServer() {
         res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'failed', message: error.message || 'Agent error occurred.' } })}\n\n`);
         res.end();
       }
+    }
+  });
+
+  // Plan Mode Generation Route (Milestone 4)
+  app.post('/api/ai/plan', requireAuth, express.json({ limit: '8mb' }), async (req: any, res: any) => {
+    try {
+      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gemini-3.8-flash' } = req.body || {};
+
+      if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+        return res.status(400).json({ error: 'Please enter a task request before generating a plan.' });
+      }
+
+      const result = await PlanService.generatePlan({
+        ownerId: req.user.uid,
+        projectId,
+        conversationId,
+        prompt: prompt.trim(),
+        virtualFiles: Array.isArray(virtualFiles) ? virtualFiles : [],
+        model
+      }, modelRouter);
+
+      if (result.error || !result.plan) {
+        return res.status(400).json({ error: result.error || 'Failed to generate implementation plan.' });
+      }
+
+      res.status(201).json({ plan: result.plan });
+    } catch (error: any) {
+      console.error('Plan Generation Error:', error);
+      res.status(500).json({ error: error.message || 'Failed to generate implementation plan.' });
     }
   });
 

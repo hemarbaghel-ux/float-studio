@@ -26,6 +26,7 @@ export interface AIMessage {
   content: string;
   timestamp: number;
   changeSet?: ChangeSet;
+  plan?: import('./plan').Plan;
   events?: AgentEvent[];
   modelId?: string;
   agentId?: string;
@@ -37,6 +38,14 @@ export interface AIMessage {
   changes?: Record<string, { status: 'pending' | 'accepted' | 'rejected'; before?: string | null }>;
   agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   cancelled?: boolean;
+  contextExplanation?: {
+    intent?: string;
+    includedCount?: number;
+    omittedCount?: number;
+    totalContextChars?: number;
+    includedItems?: Array<{ id: string; name: string; type: string; source: string; chars: number; priority: number }>;
+    excludedItems?: Array<{ name: string; reason: string }>;
+  };
 }
 
 export interface EditorSelection {
@@ -75,7 +84,7 @@ export interface TerminalEntry {
   timestamp: number;
 }
 
-export type AgentMode = 'ask' | 'edit' | 'agent';
+export type AgentMode = 'ask' | 'edit' | 'agent' | 'plan';
 
 export interface ChangeSet {
   id: string;
@@ -107,5 +116,6 @@ export interface AgentEvent {
 }
 export * from './ai';
 export * from './evals';
+export * from './plan';
 export * from './proposal';
 export * from './validation';

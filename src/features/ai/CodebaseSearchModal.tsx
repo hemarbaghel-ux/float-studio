@@ -102,6 +102,11 @@ export function CodebaseSearchModal({
                     <div className="flex items-center gap-2 font-mono text-[11px] text-slate-800 dark:text-[#C9D1D9]">
                       <FileText size={13} className="text-purple-600 dark:text-purple-400" />
                       <span className="font-semibold">{match.filePath}</span>
+                      {match.symbol && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/15 text-purple-600 dark:text-purple-400 font-mono font-medium">
+                          {match.symbol.kind} {match.symbol.name}
+                        </span>
+                      )}
                       <span className="text-slate-400 dark:text-[#7D8590]">
                         (lines {match.startLine}-{match.endLine})
                       </span>

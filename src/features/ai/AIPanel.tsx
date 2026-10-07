@@ -11,8 +11,9 @@ import {
 } from 'lucide-react';
 import { cn, flattenFileTree } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
-import { AgentMode, ChangeSet, AIMessage, AIContextItem } from '../../types';
+import { AgentMode, ChangeSet, AIMessage, AIContextItem, Plan } from '../../types';
 import { DiffReviewModal } from '../agent/DiffReviewModal';
+import { PlanCard } from './PlanCard';
 import { ModelSelector } from './ModelSelector';
 import { AgentSelector } from './AgentSelector';
 import { AgentManagerModal } from './AgentManagerModal';
@@ -24,6 +25,7 @@ import { ConsentService } from '../../services/consentService';
 import { TelemetryService } from '../../services/telemetryService';
 import { useUsageStore } from '../../store/usageStore';
 import { ConversationService, ConversationMeta } from '../../services/conversationService';
+import { ContextPicker } from './ContextPicker';
 import { v4 as uuidv4 } from 'uuid';
 
 function CodeBlock({ node, inline, className, children, ...props }: any) {
@@ -66,6 +68,48 @@ function CodeBlock({ node, inline, className, children, ...props }: any) {
     <code className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/10 text-slate-800 dark:text-[#E6EDF3] font-mono text-[11px]" {...props}>
       {children}
     </code>
+  );
+}
+
+function MarkdownTable({ children, ...props }: any) {
+  const [copied, setCopied] = useState(false);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  const handleCopyTable = () => {
+    if (tableRef.current && navigator?.clipboard?.writeText) {
+      const rows = Array.from(tableRef.current.querySelectorAll('tr'));
+      const mdRows = rows.map((r, i) => {
+        const cells = Array.from(r.querySelectorAll('th, td')).map(c => c.textContent?.trim() || '');
+        const line = `| ${cells.join(' | ')} |`;
+        if (i === 0) {
+          const sep = `| ${cells.map(() => '---').join(' | ')} |`;
+          return `${line}\n${sep}`;
+        }
+        return line;
+      });
+      navigator.clipboard.writeText(mdRows.join('\n'));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="relative group/table my-2 overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10 shadow-2xs">
+      <div className="absolute right-1.5 top-1.5 opacity-0 group-hover/table:opacity-100 transition-opacity z-10">
+        <button
+          type="button"
+          onClick={handleCopyTable}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-900/90 text-white dark:bg-white/20 hover:bg-purple-600 transition-colors shadow-xs cursor-pointer"
+          title="Copy table as Markdown"
+        >
+          {copied ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
+          <span>{copied ? 'Copied' : 'Copy Table'}</span>
+        </button>
+      </div>
+      <table ref={tableRef} className="min-w-full divide-y divide-slate-200 dark:divide-white/10 text-xs" {...props}>
+        {children}
+      </table>
+    </div>
   );
 }
 
@@ -198,14 +242,24 @@ export function AIPanel() {
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const [editingTitleConvId, setEditingTitleConvId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
+  const [activeWorkflowMode, setActiveWorkflowMode] = useState<'chat' | 'ask' | 'plan' | 'agent' | 'debug'>('chat');
 
   // Phase 3 Context Modals & Menu State
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
   const [isCodebaseSearchOpen, setIsCodebaseSearchOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [atQuery, setAtQuery] = useState<string | null>(null);
+  const [pickerTrigger, setPickerTrigger] = useState<'@' | '#' | null>(null);
+  const [isSearchingChat, setIsSearchingChat] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [activeSearchMatchIdx, setActiveSearchMatchIdx] = useState(0);
+  const [minimizedPlanIds, setMinimizedPlanIds] = useState<Set<string>>(new Set());
+  const [removedPlanIds, setRemovedPlanIds] = useState<Set<string>>(new Set());
+  const [navigatedMsgId, setNavigatedMsgId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isSubmittingRef = useRef<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -218,6 +272,32 @@ export function AIPanel() {
   useEffect(() => {
     activeConvIdRef.current = activeConversationId;
   }, [activeConversationId]);
+
+  // Cmd+F / Ctrl+F Transcript Find
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        const activeEl = document.activeElement;
+        const isEditor = activeEl?.closest('.monaco-editor') || activeEl?.closest('.terminal-container');
+        if (!isEditor) {
+          e.preventDefault();
+          setIsSearchingChat(true);
+          setTimeout(() => searchInputRef.current?.focus(), 50);
+        }
+      } else if (e.key === 'Escape' && isSearchingChat) {
+        setIsSearchingChat(false);
+        setChatSearchQuery('');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSearchingChat]);
+
+  const matchingMessages = useMemo(() => {
+    if (!chatSearchQuery.trim()) return [];
+    const q = chatSearchQuery.toLowerCase();
+    return aiMessages.filter(m => (m.content || '').toLowerCase().includes(q));
+  }, [aiMessages, chatSearchQuery]);
 
   useEffect(() => {
     if (models.length === 0) setModels(INITIAL_MODELS);
@@ -529,7 +609,13 @@ export function AIPanel() {
       return;
     }
 
-    if (mode === 'agent') {
+    if (activeWorkflowMode === 'plan') {
+      await handlePlanSubmit(draftText, token, targetConvId, currentContext);
+      isSubmittingRef.current = false;
+      return;
+    }
+
+    if (activeWorkflowMode === 'agent' || mode === 'agent') {
       await handleAgentSubmit(draftText, token, targetConvId, currentContext);
       isSubmittingRef.current = false;
       return;
@@ -568,6 +654,16 @@ export function AIPanel() {
             { role: 'user', parts: [{ text: draftText }] }
           ];
 
+      const flatFiles = flattenFileTree(files);
+      const currentFileNode = flatFiles.find(f => f.id === activeFileId);
+      const activeEd = currentFileNode ? {
+        filePath: currentFileNode.path || currentFileNode.name,
+        selectedText: activeSelection?.text || undefined,
+        selectionStartLine: activeSelection?.startLine || undefined,
+        selectionEndLine: activeSelection?.endLine || undefined,
+        surroundingCode: currentFileNode.content ? currentFileNode.content.split('\n').slice(0, 60).join('\n') : undefined
+      } : undefined;
+
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: {
@@ -583,8 +679,10 @@ export function AIPanel() {
           agentId: selectedAgent,
           systemInstruction: activeAgent?.systemInstructions || "You are an AI coding assistant. Answer questions concisely.",
           contextItems: currentContext,
+          activeEditor: activeEd,
           projectName: projectName || 'Project Workspace',
           projectId: currentProjectId,
+          workflowMode: activeWorkflowMode,
           stream: true
         })
       });
@@ -602,6 +700,7 @@ export function AIPanel() {
       const decoder = new TextDecoder();
       accumulatedText = '';
       let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
+      let finalExplanation: any = undefined;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -619,7 +718,12 @@ export function AIPanel() {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.type === 'delta') {
+              if (data.type === 'context_info') {
+                finalExplanation = data.contextExplanation;
+                updateAiMessage(modelMsgId, {
+                  contextExplanation: data.contextExplanation
+                });
+              } else if (data.type === 'delta') {
                 accumulatedText += data.text;
                 updateAiMessage(modelMsgId, {
                   content: accumulatedText,
@@ -628,10 +732,14 @@ export function AIPanel() {
               } else if (data.type === 'done') {
                 accumulatedText = data.text || accumulatedText;
                 finalUsage = data.usage;
+                if (data.contextExplanation) {
+                  finalExplanation = data.contextExplanation;
+                }
                 updateAiMessage(modelMsgId, {
                   content: accumulatedText,
                   status: 'completed',
-                  latency: Date.now() - startTime
+                  latency: Date.now() - startTime,
+                  contextExplanation: finalExplanation
                 });
               } else if (data.type === 'error') {
                 throw new Error(data.error);
@@ -724,6 +832,225 @@ export function AIPanel() {
       isSubmittingRef.current = false;
       abortControllerRef.current = null;
     }
+  };
+
+  // Plan Mode submit handler
+  const handlePlanSubmit = async (
+    userMessage: string,
+    token: string,
+    targetConvId: string,
+    contextItems: AIContextItem[] = []
+  ) => {
+    const { files } = useIDEStore.getState();
+    const virtualFiles = flattenFileTree(files);
+
+    const planMsgId = uuidv4();
+    addAiMessage({
+      id: planMsgId,
+      role: 'model',
+      content: 'Analyzing request and project structure to synthesize an implementation plan...',
+      status: 'streaming',
+      modelId: selectedModel,
+      agentId: selectedAgent,
+      conversationId: targetConvId
+    });
+
+    try {
+      const response = await fetch('/api/ai/plan', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          prompt: userMessage,
+          virtualFiles: virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
+          conversationId: targetConvId,
+          projectId: currentProjectId,
+          model: selectedModel || 'gemini-3.8-flash'
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}: Failed to generate plan.`);
+      }
+
+      const data = await response.json();
+      const plan: Plan = data.plan;
+
+      updateAiMessage(planMsgId, {
+        content: `### Implementation Plan: ${plan.title}\n\n${plan.summary}\n\nReview the proposed steps below. Click **Approve & Execute** when ready to proceed with controlled agent execution.`,
+        plan,
+        status: 'completed'
+      });
+
+      // Sync conversation to cloud with plan included
+      const latestMessages = useIDEStore.getState().aiMessages;
+      await ConversationService.syncToCloud({
+        id: targetConvId,
+        projectId: currentProjectId,
+        title: plan.title.slice(0, 36) || 'Plan Task',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: latestMessages
+      });
+      refreshConversations();
+    } catch (error: any) {
+      updateAiMessage(planMsgId, {
+        content: `**Planning Failed**: ${error.message || 'Could not generate plan.'}`,
+        status: 'error',
+        error: error.message
+      });
+    } finally {
+      setIsLoading(false);
+      isSubmittingRef.current = false;
+    }
+  };
+
+  // Plan approval handler - Starts controlled multi-step execution
+  const handleApprovePlan = async (planId: string, messageId: string) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+
+    setIsLoading(true);
+    try {
+      // 1. Mark plan approved on server
+      const approveRes = await fetch(`/api/agents/plans/${planId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!approveRes.ok) {
+        const err = await approveRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to approve plan on server.');
+      }
+
+      const approveData = await approveRes.json();
+      const approvedPlan: Plan = approveData.plan;
+
+      // Update local message with approved plan state
+      updateAiMessage(messageId, {
+        plan: approvedPlan
+      });
+
+      // 2. Sequential Step-by-Step Controlled Agent Execution
+      for (let i = 0; i < approvedPlan.steps.length; i++) {
+        const step = approvedPlan.steps[i];
+
+        // Update step status to executing
+        const executingPlan: Plan = {
+          ...approvedPlan,
+          status: 'executing',
+          currentStepIndex: i,
+          steps: approvedPlan.steps.map((s, idx) => idx === i ? { ...s, status: 'executing' } : s)
+        };
+        updateAiMessage(messageId, { plan: executingPlan });
+
+        // Execute step through agent runner
+        const stepPrompt = `[Executing Approved Plan Step ${step.order} of ${approvedPlan.steps.length}]\nObjective: ${step.objective}\nTarget files: ${step.files.join(', ') || 'All appropriate project files'}\nExpected Validation: ${step.validation}`;
+
+        await handleAgentSubmit(stepPrompt, token, activeConversationId || 'default-conv', []);
+
+        // Mark step completed
+        const completedPlan: Plan = {
+          ...executingPlan,
+          steps: executingPlan.steps.map((s, idx) => idx === i ? { ...s, status: 'completed', result: 'Step completed.' } : s)
+        };
+        updateAiMessage(messageId, { plan: completedPlan });
+      }
+
+      // Final plan marked completed
+      const finalCompletedPlan: Plan = {
+        ...approvedPlan,
+        status: 'completed',
+        completedAt: Date.now()
+      };
+      updateAiMessage(messageId, { plan: finalCompletedPlan });
+
+      const latestMessages = useIDEStore.getState().aiMessages;
+      await ConversationService.syncToCloud({
+        id: activeConversationId || 'default-conv',
+        projectId: currentProjectId,
+        title: finalCompletedPlan.title.slice(0, 36),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: latestMessages
+      });
+    } catch (err: any) {
+      console.error('Plan execution error:', err);
+      const targetMsg = useIDEStore.getState().aiMessages.find(m => m.id === messageId);
+      if (targetMsg?.plan) {
+        updateAiMessage(messageId, {
+          plan: { ...targetMsg.plan, status: 'failed', error: err.message }
+        });
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Plan cancellation handler
+  const handleCancelPlan = async (planId: string, messageId: string) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+
+    try {
+      await fetch(`/api/agents/plans/${planId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      const targetMsg = useIDEStore.getState().aiMessages.find(m => m.id === messageId);
+      if (targetMsg?.plan) {
+        updateAiMessage(messageId, {
+          plan: {
+            ...targetMsg.plan,
+            status: 'cancelled',
+            steps: targetMsg.plan.steps.map(s => s.status === 'executing' ? { ...s, status: 'cancelled' } : s)
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Could not cancel plan:', e);
+    }
+  };
+
+  // Plan update / edit handler
+  const handleUpdatePlan = async (planId: string, messageId: string, updates: Partial<Plan>) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`/api/agents/plans/${planId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(updates)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        updateAiMessage(messageId, { plan: data.plan });
+      }
+    } catch (e) {
+      console.warn('Could not update plan:', e);
+    }
+  };
+
+  // Plan regenerate handler
+  const handleRegeneratePlan = async (plan: Plan) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+    await handlePlanSubmit(plan.summary || plan.title, token, activeConversationId || 'default-conv', []);
   };
 
   // Agent submit handler
@@ -963,9 +1290,31 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
   };
 
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
+    const val = e.target.value;
+    setInput(val);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
+
+    // Detect @ or # symbol at cursor or trailing word
+    const cursor = e.target.selectionStart || val.length;
+    const textBeforeCursor = val.slice(0, cursor);
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    const lastHashIndex = textBeforeCursor.lastIndexOf('#');
+    const triggerIndex = Math.max(lastAtIndex, lastHashIndex);
+
+    if (triggerIndex !== -1) {
+      const charBefore = triggerIndex > 0 ? textBeforeCursor[triggerIndex - 1] : ' ';
+      if (charBefore === ' ' || charBefore === '\n') {
+        const queryText = textBeforeCursor.slice(triggerIndex + 1);
+        if (!queryText.includes(' ') && !queryText.includes('\n')) {
+          setAtQuery(queryText);
+          setPickerTrigger(textBeforeCursor[triggerIndex] as '@' | '#');
+          return;
+        }
+      }
+    }
+    setAtQuery(null);
+    setPickerTrigger(null);
   };
 
   const activeConversationMeta = conversationList.find(c => c.id === activeConversationId);
@@ -1159,6 +1508,73 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </div>
         </div>
 
+        {/* Workflow Mode Switcher: Chat / Ask / Plan / Agent / Debug */}
+        <div className="flex items-center bg-slate-100 dark:bg-[#141414] p-0.5 rounded-lg border border-slate-200/80 dark:border-[#222]">
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('chat')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'chat'
+                ? "bg-white dark:bg-[#202020] text-slate-900 dark:text-white shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('ask')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'ask'
+                ? "bg-white dark:bg-[#202020] text-emerald-600 dark:text-emerald-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+            title="Read-only assistant for exploration and questions"
+          >
+            Ask
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('plan')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer flex items-center justify-center gap-0.5",
+              activeWorkflowMode === 'plan'
+                ? "bg-white dark:bg-[#202020] text-purple-600 dark:text-purple-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+          >
+            <Sparkles size={10} />
+            <span>Plan</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('agent')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'agent'
+                ? "bg-white dark:bg-[#202020] text-blue-600 dark:text-blue-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+          >
+            Agent
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('debug')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'debug'
+                ? "bg-white dark:bg-[#202020] text-amber-600 dark:text-amber-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+            title="Root-cause diagnostics and test-driven fixes"
+          >
+            Debug
+          </button>
+        </div>
+
         {/* Agent & Model Selectors */}
         <div className="flex gap-2">
           <div className="flex-1">
@@ -1183,6 +1599,93 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </div>
         </div>
       </div>
+
+      {/* Cmd+F In-Transcript Search Bar */}
+      {isSearchingChat && (
+        <div className="px-3 py-2 bg-white dark:bg-[#121212] border-b border-slate-200 dark:border-white/10 flex items-center justify-between gap-2 shadow-xs shrink-0 z-10 animate-in slide-in-from-top-1 duration-150">
+          <div className="flex items-center gap-1.5 flex-1 bg-slate-100 dark:bg-white/5 rounded-lg px-2.5 py-1">
+            <Search size={13} className="text-slate-400 shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={chatSearchQuery}
+              onChange={(e) => {
+                setChatSearchQuery(e.target.value);
+                setActiveSearchMatchIdx(0);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (matchingMessages.length > 0) {
+                    const nextIdx = (activeSearchMatchIdx + (e.shiftKey ? -1 : 1) + matchingMessages.length) % matchingMessages.length;
+                    setActiveSearchMatchIdx(nextIdx);
+                    const targetMsg = matchingMessages[nextIdx];
+                    const el = messagesContainerRef.current?.querySelector(`[data-msg-id="${targetMsg.id}"]`);
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                } else if (e.key === 'Escape') {
+                  setIsSearchingChat(false);
+                  setChatSearchQuery('');
+                }
+              }}
+              placeholder="Find in chat transcript (Enter for next)..."
+              className="w-full bg-transparent text-xs text-slate-800 dark:text-slate-100 outline-none placeholder:text-slate-400"
+            />
+            {chatSearchQuery && (
+              <span className="text-[10px] text-slate-400 font-mono shrink-0 select-none">
+                {matchingMessages.length > 0 ? `${activeSearchMatchIdx + 1} of ${matchingMessages.length}` : '0 of 0'}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              disabled={matchingMessages.length === 0}
+              onClick={() => {
+                if (matchingMessages.length > 0) {
+                  const prevIdx = (activeSearchMatchIdx - 1 + matchingMessages.length) % matchingMessages.length;
+                  setActiveSearchMatchIdx(prevIdx);
+                  const targetMsg = matchingMessages[prevIdx];
+                  const el = messagesContainerRef.current?.querySelector(`[data-msg-id="${targetMsg.id}"]`);
+                  el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }}
+              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded disabled:opacity-30 cursor-pointer"
+              title="Previous match (Shift+Enter)"
+            >
+              <ChevronUp size={14} />
+            </button>
+            <button
+              type="button"
+              disabled={matchingMessages.length === 0}
+              onClick={() => {
+                if (matchingMessages.length > 0) {
+                  const nextIdx = (activeSearchMatchIdx + 1) % matchingMessages.length;
+                  setActiveSearchMatchIdx(nextIdx);
+                  const targetMsg = matchingMessages[nextIdx];
+                  const el = messagesContainerRef.current?.querySelector(`[data-msg-id="${targetMsg.id}"]`);
+                  el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }}
+              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded disabled:opacity-30 cursor-pointer"
+              title="Next match (Enter)"
+            >
+              <ChevronDown size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchingChat(false);
+                setChatSearchQuery('');
+              }}
+              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded cursor-pointer"
+              title="Close search (Escape)"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* MESSAGE STREAMING & HISTORY AREA */}
       <div
@@ -1243,6 +1746,8 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             return (
               <div
                 key={msg.id}
+                id={`ai-msg-${msg.id}`}
+                data-role={msg.role}
                 className={cn("text-sm flex flex-col group", isUser ? "items-end" : "items-start")}
               >
                 {!isUser && (msgModel || msgAgent || msg.latency) && (
@@ -1316,13 +1821,62 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                     </div>
                   ) : (
                     <div className="markdown-body prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed">
-                      <ReactMarkdown components={{ code: CodeBlock }}>{msg.content}</ReactMarkdown>
+                      <ReactMarkdown components={{ code: CodeBlock, table: MarkdownTable }}>{msg.content}</ReactMarkdown>
                       {isStreaming && (
                         <span className="inline-block w-1.5 h-3.5 bg-purple-600 dark:bg-purple-400 ml-1 translate-y-0.5 animate-pulse" />
                       )}
                     </div>
                   )}
                 </div>
+
+                {/* Explainable Context Metadata Badge */}
+                {!isUser && msg.contextExplanation && (
+                  <div className="mt-1 px-1">
+                    <details className="group/ctx text-[10px] text-slate-500 dark:text-[#7D8590]">
+                      <summary className="flex items-center gap-1.5 cursor-pointer hover:text-slate-800 dark:hover:text-[#C9D1D9] transition-colors select-none">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block" />
+                        <span className="font-medium">Context Used:</span>
+                        <span>{msg.contextExplanation.includedCount || 0} items</span>
+                        {msg.contextExplanation.intent && (
+                          <span className="px-1 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-white/5 uppercase font-mono font-semibold text-slate-600 dark:text-slate-400">
+                            {msg.contextExplanation.intent}
+                          </span>
+                        )}
+                        <ChevronDown size={10} className="transition-transform group-open/ctx:rotate-180" />
+                      </summary>
+                      <div className="mt-1.5 p-2 bg-slate-50 dark:bg-[#161616] border border-slate-200/80 dark:border-white/5 rounded-lg space-y-1.5 max-w-[92%]">
+                        <div className="font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                          <span>Included Sources ({msg.contextExplanation.totalContextChars || 0} chars)</span>
+                          {msg.contextExplanation.omittedCount ? (
+                            <span className="text-amber-600 dark:text-amber-400 font-normal">{msg.contextExplanation.omittedCount} excluded</span>
+                          ) : null}
+                        </div>
+                        {msg.contextExplanation.includedItems && msg.contextExplanation.includedItems.length > 0 ? (
+                          <div className="space-y-1 max-h-36 overflow-y-auto">
+                            {msg.contextExplanation.includedItems.map((item, i) => (
+                              <div key={i} className="flex items-center justify-between text-[9px] font-mono text-slate-600 dark:text-slate-400">
+                                <span className="truncate max-w-[200px]" title={item.name}>✓ {item.name}</span>
+                                <span className="shrink-0 text-slate-400 dark:text-slate-500">{item.source} · {item.chars}c</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[9px] text-slate-400">No external files included.</div>
+                        )}
+                        {msg.contextExplanation.excludedItems && msg.contextExplanation.excludedItems.length > 0 && (
+                          <div className="pt-1 border-t border-slate-200/60 dark:border-white/5 space-y-0.5">
+                            <span className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">Exclusions:</span>
+                            {msg.contextExplanation.excludedItems.map((ex, i) => (
+                              <div key={i} className="text-[9px] text-slate-400 dark:text-slate-500 truncate">
+                                • {ex.name} ({ex.reason})
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  </div>
+                )}
 
                 {/* Message action buttons on hover */}
                 {!isError && (
@@ -1398,6 +1952,62 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                         </div>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* Structured Plan Card (Milestone 4 Plan Mode) */}
+                {msg.plan && !removedPlanIds.has(msg.plan.id) && (
+                  <div className="mt-2 w-full max-w-[95%]">
+                    {minimizedPlanIds.has(msg.plan.id) ? (
+                      <div className="flex items-center justify-between px-3 py-1.5 rounded-lg border border-purple-200 dark:border-purple-500/20 bg-purple-50/70 dark:bg-purple-950/20 text-xs shadow-2xs">
+                        <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300 font-medium truncate">
+                          <span className="text-sm">📋</span>
+                          <span className="truncate">Plan: {msg.plan.title || 'Implementation Plan'}</span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 dark:bg-purple-500/30 font-normal">
+                            {msg.plan.steps?.length || 0} steps
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = new Set(minimizedPlanIds);
+                              next.delete(msg.plan.id);
+                              setMinimizedPlanIds(next);
+                            }}
+                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-white/10 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-purple-700 dark:text-purple-300 transition-colors cursor-pointer border border-purple-200 dark:border-purple-500/30"
+                          >
+                            Expand
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = new Set(removedPlanIds);
+                              next.add(msg.plan.id);
+                              setRemovedPlanIds(next);
+                            }}
+                            className="p-1 hover:text-red-500 rounded text-slate-400 dark:text-slate-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                            title="Dismiss plan"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <PlanCard
+                        plan={msg.plan}
+                        onApprove={(planId) => handleApprovePlan(planId, msg.id)}
+                        onCancel={(planId) => handleCancelPlan(planId, msg.id)}
+                        onRegenerate={(plan) => handleRegeneratePlan(plan)}
+                        onUpdatePlan={(planId, updates) => handleUpdatePlan(planId, msg.id, updates)}
+                        onMinimize={() => {
+                          const next = new Set(minimizedPlanIds);
+                          next.add(msg.plan.id);
+                          setMinimizedPlanIds(next);
+                        }}
+                        isExecuting={isLoading}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -1498,6 +2108,33 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             </div>
           )}
 
+          {/* Rich @ and # Context Picker Dropdown */}
+          {atQuery !== null && (
+            <ContextPicker
+              query={atQuery}
+              trigger={pickerTrigger || '@'}
+              onClose={() => {
+                setAtQuery(null);
+                setPickerTrigger(null);
+              }}
+              onSelect={(item) => {
+                addAiContext(item);
+                // Strip the trailing @query or #query from input
+                const cursor = textareaRef.current?.selectionStart || input.length;
+                const textBeforeCursor = input.slice(0, cursor);
+                const triggerChar = pickerTrigger || '@';
+                const lastTriggerIndex = textBeforeCursor.lastIndexOf(triggerChar);
+                if (lastTriggerIndex !== -1) {
+                  const cleaned = input.slice(0, lastTriggerIndex) + input.slice(cursor);
+                  setInput(cleaned);
+                }
+                setAtQuery(null);
+                setPickerTrigger(null);
+                setTimeout(() => textareaRef.current?.focus(), 50);
+              }}
+            />
+          )}
+
           {/* Multiline auto-resizing textarea */}
           <textarea
             ref={textareaRef}
@@ -1508,12 +2145,33 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleSubmit();
+              } else if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                e.preventDefault();
+                const isJumpUser = !e.shiftKey;
+                const filtered = aiMessages.filter(m => isJumpUser ? m.role === 'user' : m.role !== 'user');
+                if (filtered.length > 0) {
+                  const currentIdx = filtered.findIndex(m => m.id === navigatedMsgId);
+                  let nextIdx = currentIdx;
+                  if (e.key === 'ArrowUp') {
+                    nextIdx = currentIdx === -1 ? filtered.length - 1 : Math.max(0, currentIdx - 1);
+                  } else {
+                    nextIdx = currentIdx === -1 ? 0 : Math.min(filtered.length - 1, currentIdx + 1);
+                  }
+                  const targetMsg = filtered[nextIdx];
+                  if (targetMsg) {
+                    setNavigatedMsgId(targetMsg.id);
+                    const el = document.getElementById(`ai-msg-${targetMsg.id}`);
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }
               }
             }}
             placeholder={
-              mode === 'ask'
-                ? "Ask about your code (Enter to send, Shift+Enter for newline)..."
-                : "Describe changes to make..."
+              activeWorkflowMode === 'plan'
+                ? "Describe what you want to build or refactor to generate a structured implementation plan (Enter to plan)..."
+                : activeWorkflowMode === 'agent' || mode === 'agent'
+                ? "Describe changes for the autonomous coding agent..."
+                : "Ask about your code (Enter to send, Shift+Enter for newline)..."
             }
             className="w-full bg-transparent p-3 text-xs leading-relaxed text-slate-900 dark:text-[#E6EDF3] placeholder:text-slate-400 dark:placeholder:text-[#6E7681] outline-none resize-none min-h-[44px] max-h-[180px]"
           />

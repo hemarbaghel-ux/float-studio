@@ -211,7 +211,21 @@ export function IntegrationsPage() {
                       isConnecting={connectingProvider === def.id}
                       onConnect={() => handleConnect(def.id)}
                       onConfigure={() => setSetupProvider(def.id)}
-                      onDisconnect={() => connection && disconnect(connection.id)}
+                      onDisconnect={async () => {
+                        if (!connection) return;
+                        const ok = await disconnect(connection.id);
+                        if (ok) {
+                          setStatusMessage({
+                            type: 'success',
+                            message: `Disconnected ${def.name} account successfully.`
+                          });
+                        } else {
+                          setStatusMessage({
+                            type: 'error',
+                            message: `Failed to disconnect ${def.name}. Please retry.`
+                          });
+                        }
+                      }}
                     />
                   );
                 })}
