@@ -133,13 +133,9 @@ export function DownloadPage() {
                   </div>
                 </div>
 
-                <a
-                  href="/"
-                  className="w-full mt-2 py-2 px-4 rounded-xl border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-white/5 text-xs font-semibold text-slate-800 dark:text-white transition-all text-center flex items-center justify-center gap-2"
-                >
-                  <Download size={13} />
-                  <span>Download Standalone Installer</span>
-                </a>
+                <div className="w-full mt-2 py-2 px-4 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/[0.02] text-xs font-medium text-slate-500 dark:text-[#8B949E] text-center flex items-center justify-center gap-2">
+                  <span>Signed {p.name} binary pending release · Use Web Workspace</span>
+                </div>
               </div>
             );
           })}

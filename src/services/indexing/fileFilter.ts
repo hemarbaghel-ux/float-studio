@@ -1,5 +1,5 @@
 // Patterns to exclude from indexing and retrieval
-const SENSITIVE_SEGMENTS = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.)|__pycache__$)/i;
+const SENSITIVE_SEGMENTS = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.)|credentials\.json$|__pycache__$)/i;
 
 const SENSITIVE_EXTENSIONS = /\.(?:pem|key|p12|pfx|keystore|crt|cer)$/i;
 
