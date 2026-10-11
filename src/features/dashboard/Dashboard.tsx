@@ -49,7 +49,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const [attachments, setAttachments] = useState<Attachments>({});
 
   // Dedicated 10-model selection matching Cursor-style screenshot
-  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'grok-4.7');
+  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'gpt-4o');
 
   // Chats list & search
   const [projects, setProjects] = useState<ProjectItem[]>([]);

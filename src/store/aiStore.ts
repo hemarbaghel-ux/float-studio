@@ -50,7 +50,7 @@ const getInitialSelectedModel = () => {
       }
     } catch {}
   }
-  return 'auto';
+  return 'gpt-4o';
 };
 
 const getInitialEffort = (): ReasoningEffortLevel => {
@@ -75,7 +75,7 @@ const getInitialFavorites = (): string[] => {
       }
     } catch {}
   }
-  return ['gemini-3.1-flash-lite', 'claude-3-7-sonnet-20250219', 'o3-mini', 'gemini-3.8-flash'];
+  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1'];
 };
 
 const getInitialRecents = (): string[] => {
@@ -88,7 +88,7 @@ const getInitialRecents = (): string[] => {
       }
     } catch {}
   }
-  return ['auto', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini'];
 };
 
 export const useAIStore = create<AIStore>((set) => ({

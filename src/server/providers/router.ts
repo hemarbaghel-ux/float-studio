@@ -22,33 +22,29 @@ export class ModelRouter {
   // Strict, verified model mapping to provider + verified apiModelId
   // The UI display name or alias must never be treated as the actual API model ID
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Auto / Default
-    'auto': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
+    // Auto / Default (Deterministic routing to OpenAI flagship)
+    'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
 
     // Free Tier Model
     'float-basic': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-
-    // Google Gemini Models
-    'gemini-3.8-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-2.0-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-2.5-flash': { provider: 'google', apiModelId: 'gemini-2.5-flash' },
-    'gemini-2.5-pro': { provider: 'google', apiModelId: 'gemini-2.5-pro' },
-    'gemini-1.5-pro': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-1.5-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-3.1-flash-lite': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-flash-latest': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'composer-2.5': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'muse-spark-1.3': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
 
     // OpenAI Models
     'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
     'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
     'o1': { provider: 'openai', apiModelId: 'o1' },
+    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
     'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
+    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview' },
+    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo' },
+    'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest' },
     'gpt-4o-2024-11-20': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
     'gpt-4': { provider: 'openai', apiModelId: 'gpt-4' },
     'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' },
     'gpt-5.6-sol': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
+
+    // Google Gemini Models
+    'gemini-3.8-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
+    'gemini-3.1-flash-lite': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
 
     // Anthropic Models
     'claude-3-7-sonnet-20250219': { provider: 'anthropic', apiModelId: 'claude-3-7-sonnet-20250219' },

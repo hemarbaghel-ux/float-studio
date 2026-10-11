@@ -146,8 +146,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
 
   private resolveApiModel(model: string): string {
     const mapping: Record<string, string> = {
-      'gpt-5.6-sol': 'gpt-4o-2024-11-20',
-      'auto': 'gpt-4o'
+      'auto': 'gpt-4o',
+      'float-basic': 'gpt-4o-mini'
     };
     return mapping[model] || model;
   }
@@ -273,6 +273,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         model: effectiveModel,
         messages,
         stream: true,
+        stream_options: { include_usage: true },
         ...(tools ? { tools } : {})
       };
 

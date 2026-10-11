@@ -211,7 +211,7 @@ export async function startServer() {
     const isStream = req.body.stream === true || req.headers.accept?.includes('text/event-stream');
     const {
       messages,
-      model = 'gemini-3.1-flash-lite',
+      model = 'gpt-4o',
       systemInstruction,
       reasoningEffort,
       effort,
@@ -449,7 +449,7 @@ export async function startServer() {
         suffix = '',
         language = 'plaintext',
         fileName = 'file',
-        model = 'gemini-3.8-flash'
+        model = 'gpt-4o-mini'
       } = req.body || {};
 
       if (!prefix && !suffix) {
@@ -504,7 +504,7 @@ ${boundedSuffix}
         endLine,
         fileName = 'file',
         language = 'plaintext',
-        model = 'gemini-3.1-flash-lite'
+        model = 'gpt-4o'
       } = req.body || {};
 
       if (!instruction.trim()) {
