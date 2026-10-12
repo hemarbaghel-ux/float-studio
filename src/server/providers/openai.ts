@@ -8,6 +8,7 @@ import {
 } from './base';
 import { AgentRunner } from '../agent/agentRunner';
 import { PortableAgentRunner } from '../agent/portableAgentRunner';
+import { GPT6_ASTRA_CLOUD_CONFIG } from './cloudAgentConfig';
 
 export function normalizeOpenAIError(error: any): AIProviderError {
   const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
@@ -90,11 +91,11 @@ export class OpenAIAdapter implements AIProviderAdapter {
   name = 'OpenAI';
 
   isConfigured(): boolean {
-    const key = process.env.OPENAI_API_KEY;
+    const key = process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY || process.env.OPENAI_API_KEY;
     return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
   }
 
-  private getClient(): OpenAI {
+  private getClient(forModel?: string): OpenAI {
     if (!this.isConfigured()) {
       throw new AIProviderError(
         "OpenAI is not configured on the FLOAT server. To use OpenAI models, configure OPENAI_API_KEY in the server environment.",
@@ -103,8 +104,12 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
+    const key = (forModel === 'gpt-6-astra' && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
+      ? (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!
+      : (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!;
+
     return new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
+      apiKey: key
     });
   }
 
@@ -121,15 +126,17 @@ export class OpenAIAdapter implements AIProviderAdapter {
 
     try {
       const client = this.getClient();
-      // Lightweight verification using models.list or small limit
+      // Lightweight verification using models.list
       const models = await client.models.list();
-      const hasGpt4 = models.data.some(m => m.id.includes('gpt-4') || m.id.includes('o1') || m.id.includes('o3'));
+      const accessibleModelIds = models.data.map(m => m.id);
+      const hasOperationalModel = accessibleModelIds.some(m => m.includes('gpt-4') || m.includes('o1') || m.includes('o3'));
       return {
         provider: 'OpenAI',
         configured: true,
         authenticated: true,
-        modelAvailable: hasGpt4 || models.data.length > 0,
-        defaultModel: 'gpt-4o'
+        modelAvailable: hasOperationalModel || models.data.length > 0,
+        defaultModel: 'gpt-4o',
+        accessibleModelIds
       };
     } catch (err: any) {
       const normalized = normalizeOpenAIError(err);
@@ -145,11 +152,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
   }
 
   private resolveApiModel(model: string): string {
-    const mapping: Record<string, string> = {
-      'gpt-5.6-sol': 'gpt-4o-2024-11-20',
-      'auto': 'gpt-4o'
-    };
-    return mapping[model] || model;
+    if (model === 'auto' || !model) return 'gpt-4o';
+    return model;
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
@@ -202,8 +206,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
   }
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
-    const client = this.getClient();
-    const effectiveModel = request.apiModelId || request.model;
+    const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
+    const client = this.getClient(effectiveModel);
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -216,11 +220,23 @@ export class OpenAIAdapter implements AIProviderAdapter {
         ...(tools ? { tools } : {})
       };
 
-      if (isReasoning && request.reasoningEffort) {
+      if ((effectiveModel === 'o1' || effectiveModel === 'o3-mini') && request.reasoningEffort) {
         (params as any).reasoning_effort = request.reasoningEffort;
       }
 
-      const response = await client.chat.completions.create(params);
+      let response: OpenAI.Chat.Completions.ChatCompletion;
+      try {
+        response = await client.chat.completions.create(params);
+      } catch (callErr: any) {
+        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || /not found|does not exist/i.test(callErr?.message || ''))) {
+          // Preview Cloud Agent: Upstream fallback to gpt-4o
+          params.model = 'gpt-4o';
+          response = await client.chat.completions.create(params);
+        } else {
+          throw callErr;
+        }
+      }
+
       const choice = response.choices[0];
       const text = choice?.message?.content || '';
 
@@ -261,8 +277,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
-    const client = this.getClient();
-    const effectiveModel = request.apiModelId || request.model;
+    const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
+    const client = this.getClient(effectiveModel);
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -273,17 +289,30 @@ export class OpenAIAdapter implements AIProviderAdapter {
         model: effectiveModel,
         messages,
         stream: true,
+        stream_options: { include_usage: true },
         ...(tools ? { tools } : {})
       };
 
-      if (isReasoning && request.reasoningEffort) {
+      if ((effectiveModel === 'o1' || effectiveModel === 'o3-mini') && request.reasoningEffort) {
         (params as any).reasoning_effort = request.reasoningEffort;
       }
 
-      const stream = await client.chat.completions.create(params, { signal });
+      let stream: any;
+      try {
+        stream = await client.chat.completions.create(params, { signal });
+      } catch (callErr: any) {
+        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || /not found|does not exist/i.test(callErr?.message || ''))) {
+          // Preview Cloud Agent: Upstream fallback to gpt-4o
+          params.model = 'gpt-4o';
+          stream = await client.chat.completions.create(params, { signal });
+        } else {
+          throw callErr;
+        }
+      }
+
       let fullText = '';
-      let inputTokens = 0;
-      let outputTokens = 0;
+      let inputTokens: number | undefined = undefined;
+      let outputTokens: number | undefined = undefined;
 
       for await (const chunk of stream) {
         if (signal?.aborted) break;
@@ -293,14 +322,18 @@ export class OpenAIAdapter implements AIProviderAdapter {
           onChunk(delta);
         }
         if (chunk.usage) {
-          inputTokens = chunk.usage.prompt_tokens || inputTokens;
-          outputTokens = chunk.usage.completion_tokens || outputTokens;
+          inputTokens = chunk.usage.prompt_tokens ?? inputTokens;
+          outputTokens = chunk.usage.completion_tokens ?? outputTokens;
         }
       }
 
+      const usage = (inputTokens !== undefined || outputTokens !== undefined)
+        ? { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 }
+        : undefined;
+
       return {
         text: fullText,
-        usage: (inputTokens || outputTokens) ? { inputTokens, outputTokens } : undefined
+        usage
       };
     } catch (err: any) {
       throw normalizeOpenAIError(err);

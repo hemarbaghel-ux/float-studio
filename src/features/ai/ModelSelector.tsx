@@ -69,31 +69,32 @@ export function ModelSelector({
     }
   }, [models, setModels]);
 
-  const activeModels = models.length > 0 ? models : INITIAL_MODELS;
+  const activeModels = useMemo(() => {
+    const list = models.length > 0 ? models : INITIAL_MODELS;
+    const seen = new Set<string>();
+    return list.filter(m => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+  }, [models]);
   const currentSelectedId = activeModelId || useAIStore.getState().selectedModel;
   const currentModel = activeModels.find(m => m.id === currentSelectedId) || activeModels[0];
 
   // Helper to map model to display speed/effort label
   const getSpeedLabel = (model: AIModel): string => {
-    if (model.id === 'float-basic') return 'Free · Basic coding assistance';
     if (model.reasoningLevel) {
       return model.reasoningLevel;
     }
-    if (model.id === 'auto') return 'High Fast';
-    if (model.id === 'gemini-2.0-flash') return 'High Fast';
-    if (model.id === 'gemini-1.5-flash') return 'Fast';
-    if (model.id === 'gemini-1.5-pro') return 'Medium';
-    if (model.id === 'claude-3-7-sonnet-20250219') return 'High';
-    if (model.id === 'claude-3-5-sonnet-20241022') return 'High';
-    if (model.id === 'claude-3-5-haiku-20241022') return 'Fast';
-    if (model.id === 'gpt-4o') return 'Medium';
+    if (model.id === 'auto') return 'Balanced';
+    if (model.id === 'gpt-4o') return 'Balanced';
     if (model.id === 'gpt-4o-mini') return 'Fast';
     if (model.id === 'o1') return 'High';
     if (model.id === 'o3-mini') return 'High Fast';
-    if (model.id === 'grok-2-1212') return 'High Fast';
-    if (model.id === 'grok-4.7') return 'High Fast';
-    if (model.id === 'grok-2-vision-1212') return 'Vision';
-    if (model.id === 'grok-beta') return 'Fast';
+    if (model.id === 'o1-mini') return 'Fast Reasoning';
+    if (model.id === 'gpt-4.5-preview') return 'Flagship';
+    if (model.id === 'gpt-4-turbo') return 'Balanced';
+    if (model.id === 'gpt-3.5-turbo') return 'Fast';
 
     switch (model.speed) {
       case 'fast': return 'Fast';

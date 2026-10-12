@@ -62,8 +62,8 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
           }
 
           // Check if provider is configured / enabled
-          const currentProviderState = providers.google;
-          if (!currentProviderState?.configured) {
+          const currentProviderState = providers.openai ?? { configured: true };
+          if (currentProviderState && currentProviderState.configured === false) {
             return { items: [] };
           }
 
@@ -119,7 +119,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
                     suffix,
                     fileName,
                     language: currentLanguage,
-                    model: selectedModel || 'gemini-3.8-flash'
+                    model: selectedModel || 'gpt-4o'
                   })
                 });
 
@@ -187,7 +187,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
     });
 
     // Add Inline Assistant command (Ctrl+K / Cmd+K)
-    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, () => {
+    const openInlineAssistant = () => {
       const selection = editor.getSelection();
       const model = editor.getModel();
       let text = '';
@@ -202,7 +202,14 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
 
       setInlineSelection({ text, startLine, endLine });
       setIsInlineAssistantOpen(true);
-    });
+    };
+
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, openInlineAssistant);
+
+    const handleGlobalInlineAssistant = () => {
+      openInlineAssistant();
+    };
+    window.addEventListener('open-inline-assistant', handleGlobalInlineAssistant);
 
     // Track active selection
     editor.onDidChangeCursorSelection(() => {

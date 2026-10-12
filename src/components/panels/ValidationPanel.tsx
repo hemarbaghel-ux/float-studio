@@ -525,7 +525,7 @@ export function ValidationPanel({ className, onClose }: ValidationPanelProps) {
               {isExplaining ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center text-slate-500 dark:text-[#8B949E] space-y-3">
                   <Loader2 size={24} className="animate-spin text-purple-600 dark:text-purple-400" />
-                  <p className="font-medium text-xs">Analyzing diagnostic with Gemini...</p>
+                  <p className="font-medium text-xs">Analyzing diagnostic with FLOAT AI...</p>
                 </div>
               ) : explanationError ? (
                 <div className="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-lg text-rose-600 dark:text-rose-400">

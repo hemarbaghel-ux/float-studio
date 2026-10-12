@@ -40,6 +40,8 @@ export interface ToolDefinition {
 export type AgentProgressAction = 
   | 'Searching'
   | 'Reading'
+  | 'Editing'
+  | 'Running command'
   | 'Exploring'
   | 'Inspecting'
   | 'Generating proposal'

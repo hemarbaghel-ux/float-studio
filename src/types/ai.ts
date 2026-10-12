@@ -1,4 +1,4 @@
-export type ProviderId = 'google' | 'openai' | 'anthropic' | 'xai' | 'cursor' | 'auto';
+export type ProviderId = 'openai' | 'auto';
 export type ModelStatus =
   | 'AVAILABLE'
   | 'CONFIG_REQUIRED'
@@ -19,10 +19,20 @@ export interface ModelCapability {
   longContext?: boolean;
 }
 
+export interface CloudAgentConfig {
+  remoteUrl?: string;
+  environmentId?: string;
+  execServerCommand?: string;
+  fallbackModel?: string;
+  mode?: 'preview' | 'cloud_agent';
+}
+
 export interface AIModel {
   id: string;
   exactModelId?: string;
   apiModelId?: string;
+  cloudAgentConfig?: CloudAgentConfig;
+  fallbackModel?: string;
   providerId: ProviderId;
   provider?: string;
   tier?: 'Free' | 'Pro' | 'Enterprise' | string;

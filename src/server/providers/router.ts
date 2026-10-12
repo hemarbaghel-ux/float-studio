@@ -5,14 +5,11 @@ import {
   AIProviderError,
   ProviderHealthCheckResult
 } from './base';
-import { GoogleGeminiAdapter } from './gemini';
 import { OpenAIAdapter } from './openai';
-import { AnthropicAdapter } from './anthropic';
-import { XAIAdapter } from './xai';
 import { ServerPrivacyGuard } from '../privacyGuard';
 
 export interface ModelRouteDefinition {
-  provider: 'google' | 'openai' | 'anthropic' | 'xai';
+  provider: 'openai';
   apiModelId: string;
 }
 
@@ -23,64 +20,35 @@ export class ModelRouter {
   // The UI display name or alias must never be treated as the actual API model ID
   private modelRoutes: Record<string, ModelRouteDefinition> = {
     // Auto / Default
-    'auto': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
+    'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
 
-    // Free Tier Model
-    'float-basic': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
+    // Free Tier Model (powered by server-side OpenAI)
+    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
 
-    // Google Gemini Models
-    'gemini-3.8-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-2.0-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-2.5-flash': { provider: 'google', apiModelId: 'gemini-2.5-flash' },
-    'gemini-2.5-pro': { provider: 'google', apiModelId: 'gemini-2.5-pro' },
-    'gemini-1.5-pro': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-1.5-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-3.1-flash-lite': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-flash-latest': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'composer-2.5': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'muse-spark-1.3': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-
-    // OpenAI Models
+    // OpenAI Verified Models
     'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
     'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
     'o1': { provider: 'openai', apiModelId: 'o1' },
+    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
     'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
+    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview' },
+    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo' },
+    'gpt-4-turbo-2024-04-09': { provider: 'openai', apiModelId: 'gpt-4-turbo-2024-04-09' },
     'gpt-4o-2024-11-20': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
+    'gpt-4o-mini-2024-07-18': { provider: 'openai', apiModelId: 'gpt-4o-mini-2024-07-18' },
+    'o1-2024-12-17': { provider: 'openai', apiModelId: 'o1-2024-12-17' },
+    'o3-mini-2025-01-31': { provider: 'openai', apiModelId: 'o3-mini-2025-01-31' },
+    'o1-mini-2024-09-12': { provider: 'openai', apiModelId: 'o1-mini-2024-09-12' },
     'gpt-4': { provider: 'openai', apiModelId: 'gpt-4' },
     'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' },
-    'gpt-5.6-sol': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
+    'gpt-3.5-turbo-0125': { provider: 'openai', apiModelId: 'gpt-3.5-turbo-0125' },
 
-    // Anthropic Models
-    'claude-3-7-sonnet-20250219': { provider: 'anthropic', apiModelId: 'claude-3-7-sonnet-20250219' },
-    'claude-3-5-sonnet-20241022': { provider: 'anthropic', apiModelId: 'claude-3-5-sonnet-20241022' },
-    'claude-3-5-haiku-20241022': { provider: 'anthropic', apiModelId: 'claude-3-5-haiku-20241022' },
-    'claude-3-opus-20240229': { provider: 'anthropic', apiModelId: 'claude-3-opus-20240229' },
-    'claude-opus-5.5': { provider: 'anthropic', apiModelId: 'claude-3-opus-20240229' },
-    'claude-opus-5': { provider: 'anthropic', apiModelId: 'claude-3-opus-20240229' },
-    'claude-fable-5.1': { provider: 'anthropic', apiModelId: 'claude-3-7-sonnet-20250219' },
-    'claude-sonnet-5.5': { provider: 'anthropic', apiModelId: 'claude-3-5-sonnet-20241022' },
-
-    // xAI
-    'grok-4.7': { provider: 'xai', apiModelId: 'grok-2-1212' },
-    'grok-2-1212': { provider: 'xai', apiModelId: 'grok-2-1212' },
-    'grok-2': { provider: 'xai', apiModelId: 'grok-2' },
-    'grok-2-vision-1212': { provider: 'xai', apiModelId: 'grok-2-vision-1212' },
-    'grok-beta': { provider: 'xai', apiModelId: 'grok-beta' }
-  };
-
-  private retiredModels: Record<string, string> = {
-    'gemini-2.0-flash': 'gemini-3.1-flash-lite',
-    'gemini-1.5-flash': 'gemini-3.1-flash-lite',
-    'gemini-1.5-pro': 'gemini-3.1-pro-preview',
-    'gemini-2.5-flash': 'gemini-3.1-flash-lite',
-    'gemini-2.5-pro': 'gemini-3.1-pro-preview'
+    // GPT-6 Astra Preview / Cloud Agent with upstream gpt-4o fallback
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' }
   };
 
   constructor() {
-    this.registerAdapter(new GoogleGeminiAdapter());
     this.registerAdapter(new OpenAIAdapter());
-    this.registerAdapter(new AnthropicAdapter());
-    this.registerAdapter(new XAIAdapter());
   }
 
   registerAdapter(adapter: AIProviderAdapter) {
@@ -131,26 +99,30 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gemini-3.1-flash-lite';
+      return 'gpt-4o';
     }
     return modelId;
   }
 
   validateModelAvailability(modelId: string): void {
-    if (modelId === 'gemini-2.0-flash') {
+    const lower = (modelId || '').toLowerCase();
+    if (
+      lower.startsWith('gemini') ||
+      lower.startsWith('claude') ||
+      lower.startsWith('grok') ||
+      lower.startsWith('deepseek') ||
+      lower.startsWith('composer') ||
+      lower.startsWith('muse') ||
+      lower.startsWith('llama') ||
+      lower.startsWith('mistral') ||
+      lower.startsWith('qwen') ||
+      lower.startsWith('cohere')
+    ) {
       throw new AIProviderError(
-        'The model gemini-2.0-flash has been retired by Google. Please update your code to use gemini-3.8-flash.',
-        'MODEL_NOT_FOUND',
-        'Google Gemini',
-        404
-      );
-    }
-    if (modelId.toLowerCase().startsWith('deepseek')) {
-      throw new AIProviderError(
-        `DeepSeek models (${modelId}) have been removed and are no longer supported by FLOAT AI. Please choose a supported model from Google Gemini, Anthropic Claude, OpenAI, or xAI.`,
-        'MODEL_NOT_FOUND',
+        `Model "${modelId}" belongs to an unsupported provider. FLOAT AI supports OpenAI models exclusively.`,
+        'UNSUPPORTED_PROVIDER',
         'FLOAT',
-        404
+        400
       );
     }
   }
@@ -164,6 +136,7 @@ export class ModelRouter {
 
   resolveRoute(modelId: string): { route: ModelRouteDefinition; adapter: AIProviderAdapter } {
     const key = (modelId || 'auto').trim();
+    this.validateModelAvailability(key);
     const route = this.modelRoutes[key];
 
     if (!route) {
@@ -338,7 +311,7 @@ export class ModelRouter {
 
     if (!adapter.runAgentLoop) {
       throw new AIProviderError(
-        `Autonomous agent loop is not supported for provider ${adapter.name}. Use Gemini for full tool execution.`,
+        `Autonomous agent loop is not supported for provider ${adapter.name}.`,
         'INVALID_REQUEST',
         adapter.name,
         400

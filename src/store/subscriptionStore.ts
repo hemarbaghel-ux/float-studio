@@ -2,12 +2,16 @@ import { create } from 'zustand';
 import { auth } from '../lib/firebase';
 
 export type SubscriptionPlanId = 'free' | 'pro' | 'business' | 'ultimate';
+export type BillingCycle = 'monthly' | 'yearly';
 
 export interface PlanDetails {
   id: SubscriptionPlanId;
   name: string;
   badge?: string;
   monthlyPrice: number;
+  yearlyPrice: number; // monthly equivalent when billed annually
+  yearlyAnnualTotal: number; // total billed annually
+  yearlyDiscountPercent: number; // e.g. 20%
   currency: 'USD';
   description: string;
   features: string[];
@@ -18,6 +22,9 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanDetails> = {
     id: 'free',
     name: 'FLOAT Free',
     monthlyPrice: 0,
+    yearlyPrice: 0,
+    yearlyAnnualTotal: 0,
+    yearlyDiscountPercent: 0,
     currency: 'USD',
     description: 'Essential developer tools for building and exploring code.',
     features: [
@@ -33,6 +40,9 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanDetails> = {
     name: 'FLOAT Pro',
     badge: 'Most Popular',
     monthlyPrice: 20,
+    yearlyPrice: 16, // $16/mo billed annually ($192/yr) -> save 20%
+    yearlyAnnualTotal: 192,
+    yearlyDiscountPercent: 20,
     currency: 'USD',
     description: 'For individual developers building seriously with AI agents.',
     features: [
@@ -49,6 +59,9 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanDetails> = {
     name: 'FLOAT Business',
     badge: 'Teams',
     monthlyPrice: 40,
+    yearlyPrice: 32, // $32/user/mo billed annually ($384/yr) -> save 20%
+    yearlyAnnualTotal: 384,
+    yearlyDiscountPercent: 20,
     currency: 'USD',
     description: 'For teams building, reviewing, and shipping software together.',
     features: [
@@ -65,6 +78,9 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanDetails> = {
     name: 'FLOAT Ultimate',
     badge: 'Maximum Power',
     monthlyPrice: 100,
+    yearlyPrice: 80, // $80/user/mo billed annually ($960/yr) -> save 20%
+    yearlyAnnualTotal: 960,
+    yearlyDiscountPercent: 20,
     currency: 'USD',
     description: 'For power users and teams running heavy agentic workflows.',
     features: [

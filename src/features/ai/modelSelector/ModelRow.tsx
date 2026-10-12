@@ -58,7 +58,7 @@ export const ModelRow: React.FC<ModelRowProps> = ({
       {/* Right controls: Optional FREE badge, Optional NEW badge, Setup badge, Touch/Info trigger, Checkmark */}
       <div className="flex items-center gap-1.5 shrink-0 ml-auto">
         {/* Free tier badge */}
-        {(model.tier === 'Free' || model.id === 'float-basic') && (
+        {model.tier === 'Free' && (
           <span className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded leading-none">
             FREE
           </span>

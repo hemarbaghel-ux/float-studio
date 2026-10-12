@@ -11,6 +11,7 @@ import { UsageDashboard } from './features/models/UsageDashboard';
 import { ModelDetailsPage } from './features/models/ModelDetailsPage';
 import { OnboardingFlow } from './features/onboarding/OnboardingFlow';
 import { Dashboard } from './features/dashboard/Dashboard';
+import { IDEWorkspace } from './features/shell/IDEWorkspace';
 import { PricingPage } from './features/pricing/PricingPage';
 import { CheckoutPage } from './features/checkout/CheckoutPage';
 import { CheckoutReturnPage } from './features/checkout/CheckoutReturnPage';
@@ -69,6 +70,8 @@ export default function App() {
           url.pathname === '/projects' ||
           url.pathname === '/automations' ||
           url.pathname === '/integrations' ||
+          url.pathname === '/git-sync' ||
+          url.pathname === '/dashboard/git-sync' ||
           url.pathname === '/usage' ||
           url.pathname === '/analytics' ||
           url.pathname === '/dashboard/usage' ||
@@ -129,39 +132,21 @@ export default function App() {
   if (currentPath.startsWith('/models/gpt/') && currentPath.length > '/models/gpt/'.length) {
     return <ModelDetailsPage providerId="openai" modelId={currentPath.replace('/models/gpt/', '')} />;
   }
-  if (currentPath.startsWith('/models/gemini/') && currentPath.length > '/models/gemini/'.length) {
-    return <ModelDetailsPage providerId="google" modelId={currentPath.replace('/models/gemini/', '')} />;
-  }
-  if (currentPath.startsWith('/models/anthropic/') && currentPath.length > '/models/anthropic/'.length) {
-    return <ModelDetailsPage providerId="anthropic" modelId={currentPath.replace('/models/anthropic/', '')} />;
-  }
   if (currentPath === '/models/usage') {
     return <UsageDashboard />;
   }
   if (currentPath === '/models/gpt') {
-    return <ModelsFilteredPage providerId="openai" title="GPT models" description="Compare GPT models across coding, reasoning, and agentic tasks." />;
-  }
-
-  if (currentPath === '/models/gemini') {
-    return <ModelsFilteredPage providerId="google" title="Gemini models" description="Compare Gemini models across coding, reasoning, and agentic tasks." />;
-  }
-
-  if (currentPath === '/models/anthropic' || currentPath === '/models/claude') {
-    return <ModelsFilteredPage providerId="anthropic" title="Claude models" description="Compare Claude models across coding, reasoning, and agentic tasks." />;
-  }
-
-  if (currentPath === '/models/xai' || currentPath === '/models/grok') {
-    return <ModelsFilteredPage providerId="xai" title="xAI models" description="Compare xAI Grok models across coding, reasoning, and agentic tasks." />;
+    return <ModelsFilteredPage providerId="openai" title="OpenAI Models" description="Explore verified OpenAI models across coding, reasoning, and agentic workflows." />;
   }
 
   // Deep-link direct model details: /models/:modelId
-  if (currentPath.startsWith('/models/') && !['/models/usage', '/models/evals', '/models/gpt', '/models/gemini', '/models/claude', '/models/anthropic', '/models/xai', '/models/grok'].includes(currentPath)) {
+  if (currentPath.startsWith('/models/') && !['/models/usage', '/models/evals', '/models/gpt'].includes(currentPath)) {
     const rawId = currentPath.replace('/models/', '');
     const parts = rawId.split('/');
     if (parts.length === 2 && parts[0] && parts[1]) {
-      return <ModelDetailsPage providerId={parts[0]} modelId={parts[1]} />;
+      return <ModelDetailsPage providerId="openai" modelId={parts[1]} />;
     } else if (parts.length === 1 && parts[0]) {
-      return <ModelDetailsPage providerId="auto" modelId={parts[0]} />;
+      return <ModelDetailsPage providerId="openai" modelId={parts[0]} />;
     }
   }
 
@@ -269,8 +254,18 @@ export default function App() {
     return <Dashboard initialTab="new-chat" />;
   }
 
-  // Route workspace or active chat to Dashboard
-  if (currentPath === '/workspace' || currentPath === '/ide' || currentPath.startsWith('/chat/')) {
+  // Git Sync route in Dashboard
+  if (currentPath === '/git-sync' || currentPath === '/dashboard/git-sync') {
+    return <Dashboard initialTab="git-sync" />;
+  }
+
+  // Route IDE workspace
+  if (currentPath === '/workspace' || currentPath === '/ide') {
+    return <IDEWorkspace />;
+  }
+
+  // Route active chat to Dashboard
+  if (currentPath.startsWith('/chat/')) {
     return <Dashboard initialTab="new-chat" />;
   }
 

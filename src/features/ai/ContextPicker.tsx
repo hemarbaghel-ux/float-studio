@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers, Code2, BookOpen, GitPullRequest } from 'lucide-react';
+import { FileCode, Folder, GitBranch, GitCommit, Terminal, Layers, Code2, BookOpen, GitPullRequest, ShieldCheck, Sparkles } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { flattenFileTree, cn } from '../../lib/utils';
 import { AIContextItem } from '../../types';
@@ -8,7 +8,7 @@ import { workspaceIndexManager } from '../../services/indexing/workspaceIndexMan
 
 export interface ContextSuggestion {
   id: string;
-  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal' | 'symbol' | 'docs' | 'pr';
+  type: 'file' | 'folder' | 'diff' | 'git' | 'terminal' | 'symbol' | 'docs' | 'pr' | 'rules' | 'context';
   label: string;
   sublabel: string;
   icon: React.ReactNode;
@@ -23,7 +23,7 @@ interface ContextPickerProps {
 }
 
 export function ContextPicker({ query, trigger = '@', onSelect, onClose }: ContextPickerProps) {
-  const { files, terminalEntries, projectId } = useIDEStore();
+  const { files, terminalEntries, projectId, activeFileId, activeSelection } = useIDEStore();
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [gitStatus, setGitStatus] = useState<any | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -229,7 +229,44 @@ export function ContextPicker({ query, trigger = '@', onSelect, onClose }: Conte
     });
   }
 
-  // 4. Symbols from workspace index
+  // 5. Active Editor Context (@context)
+  const activeFileNode = allNodes.find(n => n.type === 'file' && n.id === activeFileId);
+  if (activeFileNode) {
+    const selectionText = activeSelection?.text || '';
+    suggestions.push({
+      id: 'context-active-editor',
+      type: 'context',
+      label: '@context',
+      sublabel: `Active editor: ${activeFileNode.name}${selectionText ? ' (with selection)' : ''}`,
+      icon: <Sparkles size={13} className="text-purple-500 shrink-0" />,
+      item: {
+        type: 'file',
+        name: `Active: ${activeFileNode.path}`,
+        path: activeFileNode.path,
+        content: selectionText
+          ? `[Active File: ${activeFileNode.path}]\nSelected Code:\n${selectionText}\n\nFull File Content:\n${activeFileNode.content || ''}`
+          : activeFileNode.content || '',
+        sizeBytes: (activeFileNode.content || '').length
+      }
+    });
+  }
+
+  // 6. Project & User Rules (@rules)
+  suggestions.push({
+    id: 'context-rules',
+    type: 'rules',
+    label: '@rules',
+    sublabel: 'Project standards, guidelines, and rules',
+    icon: <ShieldCheck size={13} className="text-emerald-500 shrink-0" />,
+    item: {
+      type: 'attachment',
+      name: 'Project & Workspace Rules',
+      content: `[Project & Architectural Rules]\n1. Reliability before complexity.\n2. TypeScript strict mode and modular components.\n3. Human review before destructive file modifications or git operations.\n4. Secure defaults and clean tenant isolation.`,
+      sizeBytes: 300
+    }
+  });
+
+  // 7. Symbols from workspace index
   try {
     const index = workspaceIndexManager.getIndex(projectId || 'active-workspace');
     const symbolQuery = cleanQuery.replace(/^@(?:symbol\s*)?/, '').trim();

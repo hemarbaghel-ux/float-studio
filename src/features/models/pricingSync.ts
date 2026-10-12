@@ -154,22 +154,8 @@ export async function syncPricingFromMultipleAdapters(
 
 /**
  * Built-in verified client ProviderAdapters with genuine, non-fabricated pricing specifications.
+ * In accordance with Phase 28 (OpenAI-only configuration), OpenAI is the active provider.
  */
-export class ClientGoogleAdapter implements ProviderAdapter {
-  id = 'google';
-  name = 'Google Gemini';
-
-  async listModels(): Promise<AIModel[]> {
-    return INITIAL_MODELS.filter(m => m.providerId === 'google');
-  }
-
-  supportsTools(): boolean { return true; }
-  supportsStructuredOutput(): boolean { return true; }
-
-  async generate(): Promise<any> { throw new Error('Client adapter is used for metadata and pricing inspection'); }
-  async stream(): Promise<void> { throw new Error('Client adapter is used for metadata and pricing inspection'); }
-}
-
 export class ClientOpenAIAdapter implements ProviderAdapter {
   id = 'openai';
   name = 'OpenAI';
@@ -185,25 +171,8 @@ export class ClientOpenAIAdapter implements ProviderAdapter {
   async stream(): Promise<void> { throw new Error('Client adapter is used for metadata and pricing inspection'); }
 }
 
-export class ClientAnthropicAdapter implements ProviderAdapter {
-  id = 'anthropic';
-  name = 'Anthropic';
-
-  async listModels(): Promise<AIModel[]> {
-    return INITIAL_MODELS.filter(m => m.providerId === 'anthropic');
-  }
-
-  supportsTools(): boolean { return true; }
-  supportsStructuredOutput(): boolean { return true; }
-
-  async generate(): Promise<any> { throw new Error('Client adapter is used for metadata and pricing inspection'); }
-  async stream(): Promise<void> { throw new Error('Client adapter is used for metadata and pricing inspection'); }
-}
-
 export const DEFAULT_PROVIDER_ADAPTERS: ProviderAdapter[] = [
-  new ClientGoogleAdapter(),
-  new ClientOpenAIAdapter(),
-  new ClientAnthropicAdapter()
+  new ClientOpenAIAdapter()
 ];
 
 /**

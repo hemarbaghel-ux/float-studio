@@ -398,12 +398,9 @@ export class AgentOrchestrator {
       ? taskData.assignedAgentId 
       : 'main-agent';
 
-    let modelId = taskData.modelId || 'gemini-3.1-flash-lite';
-    if (modelId === 'gemini-2.0-flash' || modelId === 'gemini-1.5-flash') {
-      modelId = 'gemini-3.1-flash-lite';
-    }
-    if (typeof modelId !== 'string' || (!/^gemini-/.test(modelId) && modelId !== 'float-basic' && modelId !== 'auto')) {
-      throw new Error('Background agents currently use the Gemini agent loop. Select a Gemini model or FLOAT Basic for this task.');
+    let modelId = taskData.modelId || 'gpt-4o-mini';
+    if (typeof modelId !== 'string' || (!modelId.startsWith('gpt-') && !modelId.startsWith('o1') && !modelId.startsWith('o3') && modelId !== 'auto')) {
+      throw new Error('Background agents use the OpenAI agent loop. Select a verified OpenAI model for this task.');
     }
 
     const taskId = (typeof taskData.id === 'string' && /^[a-zA-Z0-9_\-]{8,64}$/.test(taskData.id.trim()))
@@ -564,7 +561,9 @@ export class AgentOrchestrator {
 
       await this.updateTaskStatus(taskId, 'EXECUTING', 20);
       const run = AgentRunner.run({
-        model: task.modelId || 'gemini-3.1-flash-lite', prompt: boundedTaskPrompt,
+        model: task.modelId || 'gpt-4o-mini',
+        provider: 'openai',
+        prompt: boundedTaskPrompt,
         virtualFiles: safeFiles, projectName: task.context?.sourceProjectName || task.name,
         projectId: task.projectId, userId: task.ownerId, agentTaskId: task.id, signal: controller.signal,
         systemInstruction: `${roleConfig.name}.${gitRepoContext} Return a reviewable FLOAT code proposal for requested code changes.`,

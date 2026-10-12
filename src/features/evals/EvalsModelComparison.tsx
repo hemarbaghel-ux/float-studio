@@ -5,7 +5,7 @@ import { Check, Plus, X, BarChart2, ShieldAlert, Cpu } from 'lucide-react';
 
 export function EvalsModelComparison() {
   const { runs } = useEvalStore();
-  const [selectedModels, setSelectedModels] = useState<string[]>(['gpt-4o', 'gemini-3.1-flash-lite']);
+  const [selectedModels, setSelectedModels] = useState<string[]>(['gpt-4o', 'o3-mini']);
 
   const completedRuns = useMemo(() => {
     return runs.filter(r => (r.status === 'completed' || r.status === 'Completed') && typeof (r.finalScore ?? r.score) === 'number');

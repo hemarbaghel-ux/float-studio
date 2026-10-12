@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useIDEStore } from '../../store';
 import { useValidationStore } from '../../store/validationStore';
-import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loader2, CheckCircle2, Square } from 'lucide-react';
+import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loader2, CheckCircle2, Square, Shield } from 'lucide-react';
 import { cn, flattenFileTree } from '../../lib/utils';
 import { executeProjectCommand } from '../../services/projectExecution';
 import { ValidationPanel } from '../../components/panels/ValidationPanel';
 import { useCloudSession } from '../float/cloudSessionStore';
 import { isShellCommand, runShell } from '../float/sandbox';
 import { sandboxFs } from '../float/workspaceFs';
+import { auth } from '../../lib/firebase';
 
 export function BottomPanel() {
   const {
@@ -30,8 +31,39 @@ export function BottomPanel() {
 
   const [inputVal, setInputVal] = useState('');
   const [isExecutingInput, setIsExecutingInput] = useState(false);
+  const [policyMode, setPolicyMode] = useState<'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed'>('sandboxed');
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const executionController = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    // Fetch execution policy from server
+    auth.currentUser?.getIdToken().then(token => {
+      if (!token) return;
+      fetch('/api/policy', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data?.mode) setPolicyMode(data.mode);
+        })
+        .catch(() => {});
+    });
+  }, []);
+
+  const handlePolicyChange = async (newMode: 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed') => {
+    setPolicyMode(newMode);
+    const token = await auth.currentUser?.getIdToken();
+    if (token) {
+      fetch('/api/policy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ mode: newMode })
+      }).catch(() => {});
+    }
+  };
 
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -166,6 +198,24 @@ Browser worker (type: session start):
         </div>
 
         <div className="flex items-center gap-1">
+          {/* Execution Policy Mode Selector (Phase 8) */}
+          <div className="flex items-center gap-1 mr-2 px-1.5 py-0.5 rounded text-[10px] bg-slate-200/60 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-slate-600 dark:text-[#8B949E]">
+            <Shield size={11} className={policyMode === 'sandboxed' ? "text-emerald-500" : "text-blue-500"} />
+            <span className="font-semibold uppercase tracking-wider text-[9px]">Policy:</span>
+            <select
+              value={policyMode}
+              onChange={(e) => handlePolicyChange(e.target.value as any)}
+              className="bg-transparent outline-none cursor-pointer font-medium text-slate-800 dark:text-[#C9D1D9] text-[10px]"
+              title="Execution policy mode for commands and terminals"
+            >
+              <option value="sandboxed" className="dark:bg-[#141414]">Sandboxed (Default)</option>
+              <option value="safe" className="dark:bg-[#141414]">Safe (Auto-run harmless)</option>
+              <option value="review" className="dark:bg-[#141414]">Review (Prompt user)</option>
+              <option value="allowlist" className="dark:bg-[#141414]">Allowlist (Approved dev)</option>
+              <option value="manual" className="dark:bg-[#141414]">Manual (Interactive only)</option>
+            </select>
+          </div>
+
           {bottomPanelTab === 'output' && (
             <button
               onClick={runActiveCode}

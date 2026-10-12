@@ -39,7 +39,7 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
   const isAvailable = model.status === 'AVAILABLE' || (providerInfo && providerInfo.configured);
 
   const getStatusBadge = () => {
-    if (model.tier === 'Free' || model.id === 'float-basic') {
+    if (model.tier === 'Free') {
       return (
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
           <CheckCircle2 size={13} className="text-emerald-400" />
@@ -350,6 +350,45 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
           </div>
         )}
       </div>
+
+      {/* Cloud Agent & Remote Codex Execution Configuration */}
+      {(verified?.cloudAgentConfig || model.cloudAgentConfig) && (
+        <div className="bg-[#12161F] border border-purple-800/40 rounded-2xl p-6 shadow-md mb-8">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles size={16} className="text-purple-400" />
+            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Cloud Agent & Remote Execution Configuration</h2>
+          </div>
+          <div className="space-y-3 text-xs">
+            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
+              <span className="text-[#8B949E] block mb-1">Remote Agent Connect Endpoint</span>
+              <code className="text-purple-300 font-mono text-[11px] break-all">
+                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.remoteUrl}
+              </code>
+            </div>
+            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
+              <span className="text-[#8B949E] block mb-1">Codex Environment Identifier</span>
+              <code className="text-slate-200 font-mono text-[11px] break-all">
+                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.environmentId}
+              </code>
+            </div>
+            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
+              <span className="text-[#8B949E] block mb-1">Execution Server Command</span>
+              <code className="text-emerald-300 font-mono text-[11px] block break-all bg-black/40 p-2 rounded">
+                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.execServerCommand}
+              </code>
+            </div>
+            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D] flex items-center justify-between">
+              <div>
+                <span className="text-[#8B949E] block">Upstream Fallback Model</span>
+                <span className="text-white font-medium">GPT-4o (Frontier Upstream)</span>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-900/40 border border-purple-700/50 text-purple-300">
+                Automatic Upstream Fallback
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Limitations & Caveats */}
       {verified?.limitations && verified.limitations.length > 0 && (

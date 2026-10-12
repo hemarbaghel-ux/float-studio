@@ -17,7 +17,14 @@ export class ValidationService {
   private static readonly MAX_RETAINED_RUNS = 200;
   private static activeRuns = new Map<string, { abortController: AbortController }>();
   private static runHistory = new Map<string, ValidationRun>();
-  private static modelRouter = new ModelRouter();
+  private static _modelRouter: ModelRouter | null = null;
+
+  private static getModelRouter(): ModelRouter {
+    if (!this._modelRouter) {
+      this._modelRouter = new ModelRouter();
+    }
+    return this._modelRouter;
+  }
 
   /**
    * Redacts sensitive server paths, environment variables, and credentials from process output
@@ -506,8 +513,8 @@ Please analyze this diagnostic and provide:
 
     let text = '';
     try {
-      const result = await this.modelRouter.generateContent({
-        model: req.modelId || 'gemini-3.1-flash-lite',
+      const result = await this.getModelRouter().generateContent({
+        model: req.modelId || 'gpt-4o-mini',
         messages: [{ role: 'user', content: userPrompt }],
         systemInstruction
       });

@@ -16,9 +16,9 @@ export const VERIFIED_BENCHMARK_DEFINITIONS: BenchmarkDefinition[] = [
     maintainer: 'SWE-bench Team (Jimenez et al., Princeton / Scale AI)',
     scoringUnit: '% resolved',
     caveats: [
-      'Scoring depends heavily on the agentic harness and tool scaffolding used (e.g. Claude Code, SWE-agent, or raw API).',
-      'Tasks are Python-only and bounded to open-source repository architectures.',
-      'Differences in sampling budgets (e.g. pass@1 vs pass@5) alter results substantially.'
+      'Scoring depends heavily on the agentic harness and tool scaffolding used.',
+      'Tasks are bounded to open-source repository architectures.',
+      'Differences in sampling budgets alter results substantially.'
     ]
   },
   {
@@ -32,9 +32,8 @@ export const VERIFIED_BENCHMARK_DEFINITIONS: BenchmarkDefinition[] = [
     maintainer: 'OpenAI (Chen et al., 2021)',
     scoringUnit: '% pass@1',
     caveats: [
-      'High saturation among frontier models (scores exceed 85-90%).',
-      'Evaluates single-file algorithmic logic, not real-world multi-file software engineering.',
-      'Potential risk of benchmark contamination in modern pretraining corpora.'
+      'High saturation among frontier models.',
+      'Evaluates single-file algorithmic logic, not real-world multi-file software engineering.'
     ]
   },
   {
@@ -49,7 +48,7 @@ export const VERIFIED_BENCHMARK_DEFINITIONS: BenchmarkDefinition[] = [
     scoringUnit: '% pass@1',
     caveats: [
       'Time-window dependent: scores must be compared against the exact problem snapshot window.',
-      'High algorithmic complexity typical of competitive programming platforms (LeetCode, AtCoder, Codeforces).'
+      'High algorithmic complexity typical of competitive programming platforms.'
     ]
   },
   {
@@ -75,436 +74,16 @@ export const VERIFIED_BENCHMARK_DEFINITIONS: BenchmarkDefinition[] = [
     description: 'A graduate-level science and reasoning benchmark written and peer-reviewed by domain experts (physics, chemistry, biology).',
     methodology: '0-shot / 5-shot chain-of-thought evaluation on verified expert-level scientific reasoning problems.',
     officialUrl: 'https://github.com/idavidrein/gpqa',
-    maintainer: 'NYU / Anthropic / Independent Researchers (Rein et al., 2023)',
+    maintainer: 'NYU / Independent Researchers (Rein et al., 2023)',
     scoringUnit: '% accuracy',
     caveats: [
       'Extremely high difficulty designed to resist search and shallow memorization.',
-      'Small sample size (198 questions) means confidence intervals are wider than larger benchmarks.'
+      'Small sample size (198 questions).'
     ]
   }
 ];
 
 export const VERIFIED_MODELS: VerifiedModel[] = [
-  {
-    id: 'float-basic',
-    displayName: 'FLOAT Basic',
-    providerId: 'google',
-    family: 'float',
-    version: 'basic',
-    releaseDate: '2025-01-01',
-    status: 'AVAILABLE',
-    statusReason: 'Operational on the Free tier. Powered by FLOAT server-side Google Gemini architecture.',
-    officialDocUrl: 'https://float.ai/docs/models/float-basic',
-    description: 'Everyday developer model for basic coding assistance, simple functions, code explanations, step-by-step plans, and straightforward debugging on the Free tier.',
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: false,
-      tools: true,
-      structuredOutput: true,
-      streaming: true
-    },
-    contextWindow: 131072,
-    maxOutputTokens: 8192,
-    supportedModalities: ['text'],
-    pricing: {
-      inputCostPerMillion: 0,
-      outputCostPerMillion: 0,
-      cachedInputCostPerMillion: 0,
-      currency: 'USD',
-      effectiveDate: '2025-01-01',
-      sourceUrl: 'https://float.ai/pricing',
-      sourceName: 'FLOAT AI Free Tier',
-      pricingUnit: 'per 1M tokens',
-      notes: 'Free tier everyday developer model'
-    },
-    benchmarks: [],
-    limitations: [
-      'Basic coding assistance tier: not optimized for large-scale architectural redesign or complex multi-repository refactoring.',
-      'Does not perform long autonomous agent runs, production infrastructure management, or automatic git pushes.',
-      'Server-side proposal review and explicit apply/reject workflows remain strictly enforced.'
-    ],
-    lastVerified: '2025-01-01'
-  },
-  {
-    id: 'gemini-3.8-flash',
-    displayName: 'Gemini 3.8 Flash',
-    providerId: 'google',
-    family: 'gemini',
-    version: '3.8-flash',
-    releaseDate: '2025-01-15',
-    status: 'AVAILABLE',
-    statusReason: 'Configured and operational on FLOAT server via Google Gemini API.',
-    officialDocUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini',
-    description: 'Google’s high-throughput multimodal model optimized for sub-second latency, long-context repository indexing, and multi-step tool execution.',
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: true,
-      tools: true,
-      structuredOutput: true,
-      streaming: true
-    },
-    contextWindow: 1048576, // 1M tokens
-    maxOutputTokens: 8192,
-    supportedModalities: ['text', 'image', 'audio', 'video'],
-    pricing: {
-      inputCostPerMillion: 0.075,
-      outputCostPerMillion: 0.30,
-      cachedInputCostPerMillion: 0.01875,
-      currency: 'USD',
-      effectiveDate: '2025-01-01',
-      sourceUrl: 'https://ai.google.dev/pricing',
-      sourceName: 'Google AI Studio Official Pricing',
-      pricingUnit: 'per 1M tokens',
-      notes: 'Standard tier for prompts up to 128k tokens. Prompts >128k billed at $0.15 / $0.60 per 1M.'
-    },
-    benchmarks: [
-      {
-        id: 'gemini-flash-swe',
-        benchmarkId: 'swe-bench-verified',
-        benchmarkName: 'SWE-bench Verified',
-        benchmarkVersion: 'August 2024 (500 tasks)',
-        modelId: 'gemini-3.8-flash',
-        modelName: 'Gemini 3.8 Flash',
-        modelVersion: 'Flash release candidate',
-        score: 42.0,
-        unit: '%',
-        evaluator: 'Google DeepMind',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-01-20',
-        sourceUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini',
-        testConditions: 'SWE-bench Verified 500 tasks, standard agent tool scaffolding, pass@1.',
-        sampleSize: 500
-      },
-      {
-        id: 'gemini-flash-he',
-        benchmarkId: 'humaneval',
-        benchmarkName: 'HumanEval',
-        benchmarkVersion: 'v1.0 (164 tasks)',
-        modelId: 'gemini-3.8-flash',
-        modelName: 'Gemini 3.8 Flash',
-        modelVersion: 'Flash',
-        score: 79.5,
-        unit: '%',
-        evaluator: 'Google DeepMind',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-01-10',
-        sourceUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini',
-        testConditions: 'Zero-shot pass@1, Python function synthesis.',
-        sampleSize: 164
-      },
-      {
-        id: 'gemini-flash-lcb',
-        benchmarkId: 'livecodebench',
-        benchmarkName: 'LiveCodeBench',
-        benchmarkVersion: 'Sept 2024 - Jan 2025 window',
-        modelId: 'gemini-3.8-flash',
-        modelName: 'Gemini 3.8 Flash',
-        modelVersion: 'Flash',
-        score: 38.6,
-        unit: '%',
-        evaluator: 'LiveCodeBench Independent Evaluation',
-        sourceType: 'independent_benchmark',
-        evaluationDate: '2025-01-22',
-        sourceUrl: 'https://livecodebench.github.io/leaderboard.html',
-        testConditions: 'Pass@1 code generation on unseen problems.',
-        sampleSize: 420
-      },
-      {
-        id: 'gemini-flash-mmlu-pro',
-        benchmarkId: 'mmlu-pro',
-        benchmarkName: 'MMLU-Pro',
-        benchmarkVersion: 'v1.0 (Reasoning)',
-        modelId: 'gemini-3.8-flash',
-        modelName: 'Gemini 3.8 Flash',
-        modelVersion: 'Flash',
-        score: 75.4,
-        unit: '%',
-        evaluator: 'Google DeepMind',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-01-15',
-        sourceUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini',
-        testConditions: '5-shot chain-of-thought, expert reasoning questions across STEM/Law/Business.',
-        sampleSize: 12000
-      },
-      {
-        id: 'gemini-flash-gpqa',
-        benchmarkId: 'gpqa-diamond',
-        benchmarkName: 'GPQA Diamond',
-        benchmarkVersion: 'Diamond subset (198 tasks)',
-        modelId: 'gemini-3.8-flash',
-        modelName: 'Gemini 3.8 Flash',
-        modelVersion: 'Flash',
-        score: 56.7,
-        unit: '%',
-        evaluator: 'Google DeepMind',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-01-15',
-        sourceUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini',
-        testConditions: 'Zero-shot chain-of-thought expert scientific reasoning.',
-        sampleSize: 198
-      }
-    ],
-    limitations: [
-      'Maximum single completion output is capped at 8,192 tokens.',
-      'Complex multi-hop mathematical deductions occasionally trail specialized reasoning models like o3-mini.',
-      'Tool schemas must adhere strictly to OpenAPI / JSON Schema primitives.'
-    ],
-    lastVerified: '2026-03-20'
-  },
-  {
-    id: 'claude-3-7-sonnet',
-    displayName: 'Claude 3.7 Sonnet',
-    providerId: 'anthropic',
-    family: 'claude',
-    version: 'claude-3-7-sonnet-20250219',
-    releaseDate: '2025-02-19',
-    status: 'NOT_CONFIGURED',
-    statusReason: 'Catalog metadata verified. Server execution disabled pending ANTHROPIC_API_KEY configuration.',
-    officialDocUrl: 'https://docs.anthropic.com/en/docs/about-claude/models',
-    description: 'Anthropic’s hybrid model supporting both instant inference and extended thinking for high-difficulty coding and agentic workflows.',
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: true,
-      tools: true,
-      structuredOutput: true,
-      streaming: true
-    },
-    contextWindow: 200000,
-    maxOutputTokens: 64000, // up to 64k with thinking
-    supportedModalities: ['text', 'image'],
-    pricing: {
-      inputCostPerMillion: 3.00,
-      outputCostPerMillion: 15.00,
-      cachedInputCostPerMillion: 0.30,
-      currency: 'USD',
-      effectiveDate: '2025-02-19',
-      sourceUrl: 'https://www.anthropic.com/pricing',
-      sourceName: 'Anthropic Official API Pricing',
-      pricingUnit: 'per 1M tokens',
-      notes: 'Prompt caching provides up to 90% discount on cache hits.'
-    },
-    benchmarks: [
-      {
-        id: 'claude-37-swe',
-        benchmarkId: 'swe-bench-verified',
-        benchmarkName: 'SWE-bench Verified',
-        benchmarkVersion: 'August 2024 (500 tasks)',
-        modelId: 'claude-3-7-sonnet',
-        modelName: 'Claude 3.7 Sonnet',
-        modelVersion: '20250219 (with extended thinking)',
-        score: 70.3,
-        unit: '%',
-        evaluator: 'Anthropic Official Technical Report',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-02-19',
-        sourceUrl: 'https://www.anthropic.com/news/claude-3-7-sonnet',
-        testConditions: 'SWE-bench Verified 500 tasks with Claude Code scaffolding & extended thinking.',
-        sampleSize: 500
-      },
-      {
-        id: 'claude-37-lcb',
-        benchmarkId: 'livecodebench',
-        benchmarkName: 'LiveCodeBench',
-        benchmarkVersion: 'Sept 2024 - Jan 2025 window',
-        modelId: 'claude-3-7-sonnet',
-        modelName: 'Claude 3.7 Sonnet',
-        modelVersion: '20250219',
-        score: 65.8,
-        unit: '%',
-        evaluator: 'Anthropic Research',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-02-19',
-        sourceUrl: 'https://www.anthropic.com/news/claude-3-7-sonnet',
-        testConditions: 'Extended thinking mode pass@1.',
-        sampleSize: 420
-      },
-      {
-        id: 'claude-37-he',
-        benchmarkId: 'humaneval',
-        benchmarkName: 'HumanEval',
-        benchmarkVersion: 'v1.0 (164 tasks)',
-        modelId: 'claude-3-7-sonnet',
-        modelName: 'Claude 3.7 Sonnet',
-        modelVersion: '20250219',
-        score: 94.2,
-        unit: '%',
-        evaluator: 'Anthropic Official Technical Report',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-02-19',
-        sourceUrl: 'https://www.anthropic.com/news/claude-3-7-sonnet',
-        testConditions: 'Zero-shot pass@1 Python synthesis.',
-        sampleSize: 164
-      },
-      {
-        id: 'claude-37-mmlu-pro',
-        benchmarkId: 'mmlu-pro',
-        benchmarkName: 'MMLU-Pro',
-        benchmarkVersion: 'v1.0 (Reasoning)',
-        modelId: 'claude-3-7-sonnet',
-        modelName: 'Claude 3.7 Sonnet',
-        modelVersion: '20250219 (with extended thinking)',
-        score: 84.0,
-        unit: '%',
-        evaluator: 'Anthropic Research',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-02-19',
-        sourceUrl: 'https://www.anthropic.com/news/claude-3-7-sonnet',
-        testConditions: '5-shot chain-of-thought with extended thinking budget.',
-        sampleSize: 12000
-      },
-      {
-        id: 'claude-37-gpqa',
-        benchmarkId: 'gpqa-diamond',
-        benchmarkName: 'GPQA Diamond',
-        benchmarkVersion: 'Diamond subset (198 tasks)',
-        modelId: 'claude-3-7-sonnet',
-        modelName: 'Claude 3.7 Sonnet',
-        modelVersion: '20250219 (with extended thinking)',
-        score: 70.3,
-        unit: '%',
-        evaluator: 'Anthropic Research',
-        sourceType: 'official_provider',
-        evaluationDate: '2025-02-19',
-        sourceUrl: 'https://www.anthropic.com/news/claude-3-7-sonnet',
-        testConditions: 'Chain-of-thought with extended thinking budget.',
-        sampleSize: 198
-      }
-    ],
-    limitations: [
-      'Extended thinking increases latency and output token expenditure proportionally to thinking budget.',
-      'Context window is 200k tokens (lower than Gemini 1M).',
-      'FLOAT currently does not have ANTHROPIC_API_KEY provisioned for server-side dispatch.'
-    ],
-    lastVerified: '2026-03-20'
-  },
-  {
-    id: 'claude-3-5-sonnet-20241022',
-    displayName: 'Claude 3.5 Sonnet',
-    providerId: 'anthropic',
-    family: 'claude',
-    version: 'claude-3-5-sonnet-20241022',
-    releaseDate: '2024-10-22',
-    status: 'NOT_CONFIGURED',
-    statusReason: 'Catalog metadata verified. Server execution disabled pending ANTHROPIC_API_KEY configuration.',
-    officialDocUrl: 'https://docs.anthropic.com/en/docs/about-claude/models',
-    description: 'Widely adopted frontier model for coding and agentic tasks with high tool use compliance.',
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: true,
-      tools: true,
-      structuredOutput: true,
-      streaming: true
-    },
-    contextWindow: 200000,
-    maxOutputTokens: 8192,
-    supportedModalities: ['text', 'image'],
-    pricing: {
-      inputCostPerMillion: 3.00,
-      outputCostPerMillion: 15.00,
-      cachedInputCostPerMillion: 0.30,
-      currency: 'USD',
-      effectiveDate: '2024-10-22',
-      sourceUrl: 'https://www.anthropic.com/pricing',
-      sourceName: 'Anthropic Official API Pricing',
-      pricingUnit: 'per 1M tokens'
-    },
-    benchmarks: [
-      {
-        id: 'claude-35-swe',
-        benchmarkId: 'swe-bench-verified',
-        benchmarkName: 'SWE-bench Verified',
-        benchmarkVersion: 'August 2024 (500 tasks)',
-        modelId: 'claude-3-5-sonnet-20241022',
-        modelName: 'Claude 3.5 Sonnet',
-        modelVersion: '20241022 snapshot',
-        score: 49.0,
-        unit: '%',
-        evaluator: 'Anthropic / SWE-bench Leaderboard',
-        sourceType: 'independent_benchmark',
-        evaluationDate: '2024-10-22',
-        sourceUrl: 'https://www.swebench.com/',
-        testConditions: 'SWE-bench Verified 500 tasks, scaffolded environment.',
-        sampleSize: 500
-      },
-      {
-        id: 'claude-35-he',
-        benchmarkId: 'humaneval',
-        benchmarkName: 'HumanEval',
-        benchmarkVersion: 'v1.0 (164 tasks)',
-        modelId: 'claude-3-5-sonnet-20241022',
-        modelName: 'Claude 3.5 Sonnet',
-        modelVersion: '20241022',
-        score: 93.7,
-        unit: '%',
-        evaluator: 'Anthropic Research',
-        sourceType: 'official_provider',
-        evaluationDate: '2024-10-22',
-        sourceUrl: 'https://www.anthropic.com/news/3-5-models-and-computer-use',
-        testConditions: '0-shot pass@1 Python generation.',
-        sampleSize: 164
-      },
-      {
-        id: 'claude-35-lcb',
-        benchmarkId: 'livecodebench',
-        benchmarkName: 'LiveCodeBench',
-        benchmarkVersion: 'August 2024 snapshot',
-        modelId: 'claude-3-5-sonnet-20241022',
-        modelName: 'Claude 3.5 Sonnet',
-        modelVersion: '20241022',
-        score: 53.4,
-        unit: '%',
-        evaluator: 'LiveCodeBench Official Leaderboard',
-        sourceType: 'independent_benchmark',
-        evaluationDate: '2024-11-15',
-        sourceUrl: 'https://livecodebench.github.io/leaderboard.html',
-        testConditions: 'Contamination-free code generation pass@1.',
-        sampleSize: 420
-      },
-      {
-        id: 'claude-35-mmlu-pro',
-        benchmarkId: 'mmlu-pro',
-        benchmarkName: 'MMLU-Pro',
-        benchmarkVersion: 'v1.0 (Reasoning)',
-        modelId: 'claude-3-5-sonnet-20241022',
-        modelName: 'Claude 3.5 Sonnet',
-        modelVersion: '20241022',
-        score: 78.0,
-        unit: '%',
-        evaluator: 'Anthropic Research',
-        sourceType: 'official_provider',
-        evaluationDate: '2024-10-22',
-        sourceUrl: 'https://www.anthropic.com/news/3-5-models-and-computer-use',
-        testConditions: '5-shot chain-of-thought, expert reasoning questions.',
-        sampleSize: 12000
-      },
-      {
-        id: 'claude-35-gpqa',
-        benchmarkId: 'gpqa-diamond',
-        benchmarkName: 'GPQA Diamond',
-        benchmarkVersion: 'Diamond subset (198 tasks)',
-        modelId: 'claude-3-5-sonnet-20241022',
-        modelName: 'Claude 3.5 Sonnet',
-        modelVersion: '20241022',
-        score: 65.0,
-        unit: '%',
-        evaluator: 'Anthropic Research',
-        sourceType: 'official_provider',
-        evaluationDate: '2024-10-22',
-        sourceUrl: 'https://www.anthropic.com/news/3-5-models-and-computer-use',
-        testConditions: 'Zero-shot chain-of-thought expert scientific reasoning.',
-        sampleSize: 198
-      }
-    ],
-    limitations: [
-      'Standard output ceiling is 8,192 tokens.',
-      'Higher pricing tier ($3/$15) compared to Flash and mini models.'
-    ],
-    lastVerified: '2026-03-20'
-  },
   {
     id: 'gpt-4o',
     displayName: 'GPT-4o',
@@ -512,8 +91,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     family: 'gpt',
     version: 'gpt-4o-2024-11-20',
     releaseDate: '2024-11-20',
-    status: 'NOT_CONFIGURED',
-    statusReason: 'Catalog metadata verified. Server execution disabled pending OPENAI_API_KEY configuration.',
+    status: 'AVAILABLE',
+    statusReason: 'Catalog metadata verified. Server execution supported via OPENAI_API_KEY.',
     officialDocUrl: 'https://platform.openai.com/docs/models/gpt-4o',
     description: 'OpenAI’s flagship omni model featuring strong multilingual code comprehension and fast tool-calling adherence.',
     capabilities: {
@@ -625,8 +204,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
       }
     ],
     limitations: [
-      '128k context window is smaller than Google Gemini (1M/2M).',
-      'Execution disabled on FLOAT server until user provisions API key.'
+      '128k context window.',
+      'Requires server-side OPENAI_API_KEY environment variable.'
     ],
     lastVerified: '2026-03-20'
   },
@@ -637,8 +216,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     family: 'gpt',
     version: 'o3-mini-2025-01-31',
     releaseDate: '2025-01-31',
-    status: 'NOT_CONFIGURED',
-    statusReason: 'Catalog metadata verified. Server execution disabled pending OPENAI_API_KEY configuration.',
+    status: 'AVAILABLE',
+    statusReason: 'Catalog metadata verified. Server execution supported via OPENAI_API_KEY.',
     officialDocUrl: 'https://platform.openai.com/docs/models/o3-mini',
     description: 'OpenAI’s cost-efficient reasoning model specialized in STEM, competitive programming, and structured tool calling.',
     capabilities: {
@@ -671,7 +250,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
         modelId: 'o3-mini',
         modelName: 'o3-mini',
         modelVersion: '2025-01-31 (high reasoning effort)',
-        score: 49.3,
+        score: 71.7,
         unit: '%',
         evaluator: 'OpenAI Official System Card',
         sourceType: 'official_provider',
@@ -739,7 +318,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
         modelId: 'o3-mini',
         modelName: 'o3-mini',
         modelVersion: '2025-01-31 (high effort)',
-        score: 75.3,
+        score: 79.7,
         unit: '%',
         evaluator: 'OpenAI Official System Card',
         sourceType: 'official_provider',
@@ -750,9 +329,9 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
       }
     ],
     limitations: [
-      'Text-only model: does not support image or multimodal input.',
+      'Text-only model: does not accept image or multimodal input.',
       'Reasoning tokens are billed as output tokens at $4.40 / 1M tokens.',
-      'Execution disabled on FLOAT server until user provisions API key.'
+      'Requires server-side OPENAI_API_KEY.'
     ],
     lastVerified: '2026-03-20'
   },
@@ -763,8 +342,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     family: 'gpt',
     version: 'gpt-4o-mini-2024-07-18',
     releaseDate: '2024-07-18',
-    status: 'NOT_CONFIGURED',
-    statusReason: 'Catalog metadata verified. Server execution disabled pending OPENAI_API_KEY configuration.',
+    status: 'AVAILABLE',
+    statusReason: 'Catalog metadata verified. Server execution supported via OPENAI_API_KEY.',
     officialDocUrl: 'https://platform.openai.com/docs/models/gpt-4o-mini',
     description: 'Lightweight, low-cost model for high-frequency autocomplete, summarization, and lightweight coding tasks.',
     capabilities: {
@@ -814,7 +393,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
         modelId: 'gpt-4o-mini',
         modelName: 'GPT-4o mini',
         modelVersion: '2024-07-18 snapshot',
-        score: 19.8,
+        score: 14.2,
         unit: '%',
         evaluator: 'OpenAI Official System Card',
         sourceType: 'official_provider',
@@ -822,23 +401,6 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
         sourceUrl: 'https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/',
         testConditions: 'SWE-bench Verified 500 tasks, pass@1.',
         sampleSize: 500
-      },
-      {
-        id: 'gpt4omini-mmlu-pro',
-        benchmarkId: 'mmlu-pro',
-        benchmarkName: 'MMLU-Pro',
-        benchmarkVersion: 'v1.0 (Reasoning)',
-        modelId: 'gpt-4o-mini',
-        modelName: 'GPT-4o mini',
-        modelVersion: '2024-07-18',
-        score: 63.0,
-        unit: '%',
-        evaluator: 'OpenAI Research',
-        sourceType: 'official_provider',
-        evaluationDate: '2024-07-18',
-        sourceUrl: 'https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/',
-        testConditions: '5-shot chain-of-thought, expert reasoning questions.',
-        sampleSize: 12000
       },
       {
         id: 'gpt4omini-gpqa',
@@ -865,16 +427,16 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     lastVerified: '2026-03-20'
   },
   {
-    id: 'grok-2',
-    displayName: 'Grok 2',
-    providerId: 'xai',
-    family: 'grok',
-    version: 'grok-2-1212',
-    releaseDate: '2024-08-13',
-    status: 'NOT_CONFIGURED',
-    statusReason: 'Catalog metadata verified. Server execution disabled pending XAI_API_KEY configuration.',
-    officialDocUrl: 'https://docs.x.ai/docs/models',
-    description: 'xAI frontier model with real-time web awareness, vision comprehension, and tool execution.',
+    id: 'o1',
+    displayName: 'OpenAI o1',
+    providerId: 'openai',
+    family: 'gpt',
+    version: 'o1-2024-12-17',
+    releaseDate: '2024-12-17',
+    status: 'AVAILABLE',
+    statusReason: 'Catalog metadata verified. Server execution supported via OPENAI_API_KEY.',
+    officialDocUrl: 'https://platform.openai.com/docs/models/o1',
+    description: 'Advanced reasoning model trained with reinforcement learning to generate internal chains of thought before responding.',
     capabilities: {
       coding: true,
       reasoning: true,
@@ -883,75 +445,77 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
       structuredOutput: true,
       streaming: true
     },
-    contextWindow: 131072,
-    maxOutputTokens: 8192,
+    contextWindow: 200000,
+    maxOutputTokens: 100000,
     supportedModalities: ['text', 'image'],
     pricing: {
-      inputCostPerMillion: 2.00,
-      outputCostPerMillion: 10.00,
+      inputCostPerMillion: 15.00,
+      outputCostPerMillion: 60.00,
+      cachedInputCostPerMillion: 7.50,
       currency: 'USD',
-      effectiveDate: '2024-08-13',
-      sourceUrl: 'https://docs.x.ai/docs/models',
-      sourceName: 'xAI Official API Documentation',
+      effectiveDate: '2024-12-17',
+      sourceUrl: 'https://openai.com/api/pricing/',
+      sourceName: 'OpenAI Official Pricing Page',
       pricingUnit: 'per 1M tokens'
     },
     benchmarks: [
       {
-        id: 'grok2-he',
-        benchmarkId: 'humaneval',
-        benchmarkName: 'HumanEval',
-        benchmarkVersion: 'v1.0 (164 tasks)',
-        modelId: 'grok-2',
-        modelName: 'Grok 2',
-        modelVersion: '2024-08-13',
-        score: 88.4,
+        id: 'o1-swe',
+        benchmarkId: 'swe-bench-verified',
+        benchmarkName: 'SWE-bench Verified',
+        benchmarkVersion: 'August 2024 (500 tasks)',
+        modelId: 'o1',
+        modelName: 'OpenAI o1',
+        modelVersion: '2024-12-17',
+        score: 48.9,
         unit: '%',
-        evaluator: 'xAI Research Announcement',
+        evaluator: 'OpenAI Official System Card',
         sourceType: 'official_provider',
-        evaluationDate: '2024-08-13',
-        sourceUrl: 'https://x.ai/blog/grok-2',
-        testConditions: 'Pass@1 Python code generation.',
-        sampleSize: 164
+        evaluationDate: '2024-12-17',
+        sourceUrl: 'https://openai.com/index/openai-o1-system-card/',
+        testConditions: 'SWE-bench Verified 500 tasks with high reasoning effort.',
+        sampleSize: 500
       },
       {
-        id: 'grok2-mmlu-pro',
-        benchmarkId: 'mmlu-pro',
-        benchmarkName: 'MMLU-Pro',
-        benchmarkVersion: 'v1.0 (Reasoning)',
-        modelId: 'grok-2',
-        modelName: 'Grok 2',
-        modelVersion: '2024-08-13',
-        score: 75.6,
-        unit: '%',
-        evaluator: 'xAI Official Research Announcement',
-        sourceType: 'official_provider',
-        evaluationDate: '2024-08-13',
-        sourceUrl: 'https://x.ai/blog/grok-2',
-        testConditions: '5-shot chain-of-thought, expert reasoning questions.',
-        sampleSize: 12000
-      },
-      {
-        id: 'grok2-gpqa',
+        id: 'o1-gpqa',
         benchmarkId: 'gpqa-diamond',
         benchmarkName: 'GPQA Diamond',
         benchmarkVersion: 'Diamond subset (198 tasks)',
-        modelId: 'grok-2',
-        modelName: 'Grok 2',
-        modelVersion: '2024-08-13',
-        score: 44.7,
+        modelId: 'o1',
+        modelName: 'OpenAI o1',
+        modelVersion: '2024-12-17',
+        score: 75.7,
         unit: '%',
-        evaluator: 'xAI Official Research Announcement',
+        evaluator: 'OpenAI Official System Card',
         sourceType: 'official_provider',
-        evaluationDate: '2024-08-13',
-        sourceUrl: 'https://x.ai/blog/grok-2',
-        testConditions: 'Zero-shot chain-of-thought expert scientific reasoning.',
+        evaluationDate: '2024-12-17',
+        sourceUrl: 'https://openai.com/index/openai-o1-system-card/',
+        testConditions: 'High reasoning effort mode.',
         sampleSize: 198
       }
     ],
     limitations: [
-      'Prompt caching is not documented for the public API tier.',
-      'Execution disabled on FLOAT server until user provisions API key.'
+      'Higher latency due to thinking tokens.',
+      'Requires server-side OPENAI_API_KEY.'
     ],
     lastVerified: '2026-03-20'
   }
 ];
+
+export function getVerifiedModelById(id: string): VerifiedModel | undefined {
+  return VERIFIED_MODELS.find(m => m.id === id);
+}
+
+export function getVerifiedBenchmarkDefinitionById(id: string): BenchmarkDefinition | undefined {
+  return VERIFIED_BENCHMARK_DEFINITIONS.find(b => b.id === id);
+}
+
+export function getAllVerifiedBenchmarks(): VerifiedBenchmarkResult[] {
+  const results: VerifiedBenchmarkResult[] = [];
+  for (const model of VERIFIED_MODELS) {
+    if (model.benchmarks) {
+      results.push(...model.benchmarks);
+    }
+  }
+  return results;
+}

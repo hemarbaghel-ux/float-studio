@@ -20,7 +20,7 @@ export class PlanService {
    * Generates a structured multi-step plan using the AI model without executing code or mutating files.
    */
   static async generatePlan(input: GeneratePlanInput, modelRouter: ModelRouter): Promise<{ plan?: Plan; error?: string }> {
-    const { ownerId, projectId, conversationId, prompt, virtualFiles = [], model = 'gemini-3.8-flash' } = input;
+    const { ownerId, projectId, conversationId, prompt, virtualFiles = [], model = 'gpt-4o' } = input;
 
     if (!prompt || !prompt.trim()) {
       return { error: 'A task request is required to generate a plan.' };

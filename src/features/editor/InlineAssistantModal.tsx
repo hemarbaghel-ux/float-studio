@@ -82,7 +82,7 @@ export function InlineAssistantModal({
           endLine,
           fileName,
           language,
-          model: selectedModel || 'gemini-3.1-flash-lite'
+          model: selectedModel || 'gpt-4o'
         })
       });
 
@@ -203,6 +203,30 @@ export function InlineAssistantModal({
                 </>
               )}
             </button>
+          </div>
+
+          {/* Quick Action Chips (Explain, Edit, Refactor, Fix, Optimize, Document, Test Generation) */}
+          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+            {[
+              { label: 'Fix', prompt: 'Find and fix bugs, errors, or edge cases in this code' },
+              { label: 'Refactor', prompt: 'Refactor this code for readability, clean structure, and modern standards' },
+              { label: 'Optimize', prompt: 'Optimize performance and reduce redundant computations' },
+              { label: 'Add Tests', prompt: 'Generate unit tests covering core behavior and boundary cases' },
+              { label: 'Document', prompt: 'Add clear JSDoc / documentation comments and types' },
+              { label: 'Explain', prompt: 'Add comments explaining how this logic works step by step' }
+            ].map(chip => (
+              <button
+                key={chip.label}
+                type="button"
+                onClick={() => {
+                  setInstruction(chip.prompt);
+                  inputRef.current?.focus();
+                }}
+                className="px-2 py-0.5 rounded text-[11px] bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-[#A1A1AA] transition-colors cursor-pointer"
+              >
+                {chip.label}
+              </button>
+            ))}
           </div>
 
           {/* Model selection and footer hints */}

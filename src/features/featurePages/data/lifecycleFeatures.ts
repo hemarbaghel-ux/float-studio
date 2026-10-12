@@ -139,7 +139,7 @@ export const lifecycleFeatures: FeatureDetail[] = [
       },
       {
         question: 'Which AI model powers Plan mode in FLOAT?',
-        answer: 'By default, FLOAT routes Plan mode to high-reasoning models (such as Gemini 2.5 Pro or Claude 3.7 Sonnet) which excel at complex dependency mapping and architectural synthesis.'
+        answer: 'By default, FLOAT routes Plan mode to high-reasoning OpenAI models (such as OpenAI o1 or o3-mini) which excel at complex dependency mapping and architectural synthesis.'
       },
       {
         question: 'How is this different from asking a general chatbot for a plan?',

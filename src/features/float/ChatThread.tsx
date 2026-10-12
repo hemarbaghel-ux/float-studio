@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
-  ArrowUp, Check, CheckCheck, ChevronDown, ChevronRight, Copy, FileCode2, FilePlus2, FileX2, Files, History,
+  ArrowUp, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Copy, FileCode2, FilePlus2, FileX2, Files, History,
   Loader2, Play, RotateCcw, Square, Terminal as TerminalIcon, Trash2, X, Download, Save,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
@@ -39,6 +39,8 @@ interface ThreadMessage {
   agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   error?: string;
   cancelled?: boolean;
+  latencyMs?: number;
+  modelId?: string;
 }
 
 const MAX_CHECKPOINTS = 12;
@@ -184,6 +186,8 @@ export function ChatThread({ chatId }: { chatId: string }) {
             agentEvents: message.agentEvents,
             error: message.error,
             cancelled: message.cancelled,
+            latencyMs: (message as any).latencyMs,
+            modelId: (message as any).modelId,
           })));
         }
       })
@@ -207,6 +211,8 @@ export function ChatThread({ chatId }: { chatId: string }) {
         agentEvents: message.agentEvents,
         error: message.error,
         cancelled: message.cancelled,
+        latencyMs: message.latencyMs,
+        modelId: message.modelId,
       }));
       void ConversationService.syncToCloud({
         id: chatId,
@@ -239,14 +245,23 @@ export function ChatThread({ chatId }: { chatId: string }) {
       const activeAgent = agents.find((agent) => agent.id === selectedAgent);
       const useToolAgent = activeAgent?.mode === 'agent' || activeAgent?.mode === 'edit';
       const history = opts.retryOf ? messages.slice(0, messages.findIndex((m) => m.id === opts.retryOf)) : messages;
+      const startTime = Date.now();
       const userMsg: ThreadMessage = {
         id: uid(),
         role: 'user',
         content: prompt,
-        createdAt: Date.now(),
+        createdAt: startTime,
         checkpoint: JSON.parse(JSON.stringify(useIDEStore.getState().files)),
       };
-      const modelMsg: ThreadMessage = { id: uid(), role: 'model', content: '', createdAt: Date.now(), changes: {} };
+      const modelMsg: ThreadMessage = {
+        id: uid(),
+        role: 'model',
+        content: '',
+        createdAt: startTime,
+        modelId: selectedModel,
+        latencyMs: 0,
+        changes: {}
+      };
       const base = opts.retryOf ? history.slice(0, -1) : history;
       const userTurn = opts.retryOf ? history[history.length - 1] ?? userMsg : userMsg;
       setMessages([...base, userTurn, modelMsg]);
@@ -323,26 +338,27 @@ export function ChatThread({ chatId }: { chatId: string }) {
             if (!line) continue;
             try {
               const data = JSON.parse(line.slice(5).trim());
+              const currentElapsed = Date.now() - startTime;
               if (useToolAgent && data.type === 'event') {
                 const event = data.data || {};
                 agentEvents.push(event);
-                patch({ agentEvents: [...agentEvents] });
+                patch({ agentEvents: [...agentEvents], latencyMs: currentElapsed });
                 if (event.type === 'failed') throw new Error(event.message || 'Agent execution failed.');
               } else if (useToolAgent && data.type === 'delta') {
                 full += data.data?.text || data.text || '';
-                patch({ content: full, agentEvents: [...agentEvents] });
+                patch({ content: full, agentEvents: [...agentEvents], latencyMs: currentElapsed });
               } else if (useToolAgent && data.type === 'result') {
                 finalChangeSet = data.data?.changeSet;
                 // Keep code proposals structured. Re-encoding file contents as fenced
                 // Markdown corrupts files that themselves contain triple backticks.
                 full = data.data?.text || full;
-                patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents] });
+                patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents], latencyMs: currentElapsed });
               } else if (data.type === 'delta' && data.text) {
                 full += data.text;
-                patch({ content: full });
+                patch({ content: full, latencyMs: currentElapsed });
               } else if (data.type === 'done') {
                 if (data.text && data.text.length >= full.length) full = data.text;
-                patch({ content: full, cancelled: !!data.cancelled });
+                patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
               } else if (data.type === 'error') {
                 throw new Error(data.error || 'Generation failed');
               }
@@ -352,12 +368,21 @@ export function ChatThread({ chatId }: { chatId: string }) {
             }
           }
         }
+        const totalElapsed = Date.now() - startTime;
         const pending: Record<string, { status: ChangeStatus }> = {};
         for (const seg of parseSegments(full)) if (seg.kind !== 'text') pending[seg.path] = { status: 'pending' };
-        patch({ content: full || '(No response)', changes: pending, changeSet: finalChangeSet, agentEvents: agentEvents.length ? agentEvents : undefined });
+        patch({
+          content: full || '(No response)',
+          changes: pending,
+          changeSet: finalChangeSet,
+          agentEvents: agentEvents.length ? agentEvents : undefined,
+          latencyMs: totalElapsed,
+          modelId: selectedModel,
+        });
       } catch (e: any) {
-        if (e?.name === 'AbortError') patch({ cancelled: true });
-        else patch({ error: e?.message || String(e) });
+        const errorElapsed = Date.now() - startTime;
+        if (e?.name === 'AbortError') patch({ cancelled: true, latencyMs: errorElapsed });
+        else patch({ error: e?.message || String(e), latencyMs: errorElapsed });
       } finally {
         abortRef.current = null;
         setStreaming(false);
@@ -696,11 +721,35 @@ function AssistantMessage({
       : { kind: 'file', path: change.path, lang: change.path.split('.').pop() || '', content: change.proposedContent ?? '', complete: true });
     return [...prose, ...proposed];
   }, [msg.content, msg.changeSet]);
+  const models = useAIStore((state) => state.models);
   const edits = segments.filter((s) => s.kind !== 'text') as Exclude<Segment, { kind: 'text' }>[];
   const pending = edits.filter((s) => (msg.changes?.[s.path]?.status ?? 'pending') === 'pending' && (s.kind === 'delete' || s.complete));
 
   return (
     <div className="flex flex-col gap-2.5">
+      {(msg.modelId || (msg.latencyMs !== undefined && msg.latencyMs > 0)) && (
+        <div className="flex items-center gap-2 px-0.5 text-[11px] text-slate-500 dark:text-[#8B949E]">
+          {msg.modelId && (
+            <span className="font-semibold text-slate-700 dark:text-[#C9D1D9]">
+              {models.find((m) => m.id === msg.modelId)?.displayName || msg.modelId}
+            </span>
+          )}
+          {msg.latencyMs !== undefined && msg.latencyMs > 0 && (
+            <>
+              <span>·</span>
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800/40">
+                <Clock size={10} />
+                {msg.latencyMs}ms ({((msg.latencyMs) / 1000).toFixed(2)}s)
+              </span>
+            </>
+          )}
+          {streaming && (
+            <span className="inline-flex items-center gap-1 text-purple-600 dark:text-purple-400 text-[10px] font-medium animate-pulse">
+              <Loader2 size={10} className="animate-spin" /> streaming…
+            </span>
+          )}
+        </div>
+      )}
       {!!msg.agentEvents?.length && (
         <div className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50/70 dark:bg-white/[0.02] px-3 py-2">
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 dark:text-[#8B949E]">

@@ -35,8 +35,8 @@ export function CommandPalette() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Support both Ctrl+Shift+P and Cmd+Shift+P
-      if ((e.key === 'p' || e.key === 'P') && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+      // Support Ctrl+P / Cmd+P (Quick File Open) & Ctrl+Shift+P / Cmd+Shift+P (Command Palette)
+      if ((e.key === 'p' || e.key === 'P') && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setIsOpen(true);
         setSearch('');
@@ -119,10 +119,22 @@ export function CommandPalette() {
       },
       {
         id: 'toggle-ai',
-        category: 'View',
-        label: 'Toggle AI Assistant Panel',
+        category: 'AI Assistant',
+        label: 'Open AI Assistant / Chat Panel',
+        shortcut: 'Ctrl+L',
         icon: <FloatLogo className="w-3.5 h-3.5" />,
         action: () => toggleRightSidebar()
+      },
+      {
+        id: 'inline-edit',
+        category: 'AI Assistant',
+        label: 'Inline Edit Code with AI',
+        shortcut: 'Ctrl+K',
+        icon: <FloatLogo className="w-3.5 h-3.5" />,
+        action: () => {
+          // Triggers custom event to open inline assistant on active editor
+          window.dispatchEvent(new CustomEvent('open-inline-assistant'));
+        }
       },
       // Theme & Settings
       {

@@ -2,99 +2,91 @@ import { AIModel, Agent } from '../../types/ai';
 import { VERIFIED_MODELS } from '../../data/verifiedModels';
 import { DASHBOARD_MODELS } from '../dashboard/dashboardModels';
 
-const dashboardModelIds = new Set([...DASHBOARD_MODELS.map(m => m.id), 'float-basic']);
+const existingPredefinedIds = new Set([
+  'float-basic',
+  'auto',
+  ...DASHBOARD_MODELS.map(m => m.id)
+]);
 
 export const FLOAT_BASIC_MODEL: AIModel = {
   id: 'float-basic',
-  exactModelId: 'gemini-3.8-flash',
-  apiModelId: 'gemini-3.8-flash',
-  providerId: 'google',
-  provider: 'FLOAT',
-  tier: 'Free',
+  exactModelId: 'gpt-4o-mini',
+  apiModelId: 'gpt-4o-mini',
+  providerId: 'openai',
+  provider: 'FLOAT (OpenAI)',
   displayName: 'FLOAT Basic',
   shortName: 'FLOAT Basic',
-  family: 'float',
-  description: 'Everyday developer model for basic coding assistance, simple functions, code explanations, step-by-step plans, and straightforward debugging on the Free tier.',
+  family: 'gpt',
+  tier: 'Free',
+  description: 'Free tier developer model powered by server-side OpenAI (GPT-4o mini). Optimized for rapid code editing, lint fixing, and codebase queries.',
   capabilities: {
     coding: true,
-    reasoning: true,
-    vision: false,
+    reasoning: false,
+    vision: true,
     tools: true,
     structuredOutput: true,
     streaming: true,
-    longContext: false
+    longContext: true
   },
   capabilitiesList: ['Coding', 'Reviewing', 'Planning', 'Debugging', 'Exploring', 'UI assistance'],
-  contextWindow: 131072,
+  contextWindow: 128000,
   status: 'AVAILABLE',
   speed: 'fast',
-  version: 'basic',
-  reasoningLevel: 'Free · Basic coding assistance',
-  isNew: false,
+  reasoningLevel: 'Fast',
+  supportsReasoning: false,
   supportsStreaming: true,
   supportsTools: true,
-  supportsVision: false,
-  supportsReasoning: false,
+  supportsVision: true,
+  version: 'gpt-4o-mini',
   availability: 'Available',
   pricing: {
     inputCost: 0,
     outputCost: 0,
     currency: 'USD',
-    effectiveDate: '2025-01-01'
+    effectiveDate: '2024-07-18'
   },
-  limits: { maxOutputTokens: 8192 },
-  limitations: [
-    'Basic coding assistance tier: not optimized for large-scale architectural redesign or complex multi-repository refactoring.',
-    'Does not perform long autonomous agent runs, production infrastructure management, or automatic git pushes.',
-    'Server-side proposal review and explicit apply/reject workflows remain strictly enforced.'
-  ],
-  intendedUseCases: [
-    'Small code changes, simple functions, and code snippets',
-    'Explaining obvious issues, common bugs, and code-quality feedback',
-    'Step-by-step planning and basic implementation guides',
-    'Analyzing straightforward errors and stack traces',
-    'Exploring and understanding project files and functions',
-    'Creating or modifying basic UI components and layouts'
-  ],
-  availabilityDetails: 'Operational on the Free tier. Powered by FLOAT server-side Google Gemini architecture.'
+  docUrl: 'https://platform.openai.com/docs/models/gpt-4o-mini',
+  pricingUrl: 'https://openai.com/api/pricing/'
 };
 
-export const INITIAL_MODELS: AIModel[] = [
+const rawInitialModels: AIModel[] = [
   FLOAT_BASIC_MODEL,
   ...DASHBOARD_MODELS,
   {
     id: 'auto',
-    exactModelId: 'gemini-2.0-flash',
+    exactModelId: 'gpt-4o',
+    apiModelId: 'gpt-4o',
     providerId: 'auto',
+    provider: 'OpenAI',
     displayName: 'Auto (FLOAT Dynamic Router)',
     shortName: 'Auto',
     family: 'auto',
-    description: 'Automatically routes to the highest-performance operational model in FLOAT (Gemini 2.0 Flash).',
+    description: 'Automatically routes to the highest-performance operational OpenAI model in FLOAT (GPT-4o).',
     capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true, longContext: true },
     capabilitiesList: ['Coding', 'Reasoning', 'Vision', 'Tool use'],
-    contextWindow: 1048576,
+    contextWindow: 128000,
     status: 'AVAILABLE',
     speed: 'fast',
-    reasoningLevel: 'High Fast',
+    reasoningLevel: 'Balanced',
     version: 'high effort',
     availability: 'Available',
     pricing: {
-      inputCost: 0.10,
-      outputCost: 0.40,
+      inputCost: 2.50,
+      outputCost: 10.00,
       currency: 'USD',
-      effectiveDate: '2025-01-15'
+      effectiveDate: '2024-11-20'
     },
-    docUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini#gemini-2.0-flash',
-    pricingUrl: 'https://ai.google.dev/pricing'
+    docUrl: 'https://platform.openai.com/docs/models/gpt-4o',
+    pricingUrl: 'https://openai.com/api/pricing/'
   },
-  ...VERIFIED_MODELS.filter(vm => !dashboardModelIds.has(vm.id)).map(vm => ({
+  ...VERIFIED_MODELS.filter(vm => !existingPredefinedIds.has(vm.id)).map(vm => ({
     id: vm.id,
     exactModelId: vm.exactModelId,
     apiModelId: vm.exactModelId,
     providerId: vm.providerId,
-    provider: vm.providerId === 'google' ? 'Google' : vm.providerId === 'openai' ? 'OpenAI' : vm.providerId === 'anthropic' ? 'Anthropic' : vm.providerId === 'xai' ? 'xAI' : 'FLOAT',
+    provider: vm.providerId === 'openai' ? 'OpenAI' : 'FLOAT',
     displayName: vm.displayName,
-    shortName: vm.displayName.replace('Google ', '').replace('OpenAI ', '').replace('Anthropic ', ''),
+    shortName: vm.displayName.replace('OpenAI ', ''),
     family: vm.family,
     description: vm.description,
     capabilities: {
@@ -138,13 +130,20 @@ export const INITIAL_MODELS: AIModel[] = [
   }))
 ];
 
+const seenInitialModelIds = new Set<string>();
+export const INITIAL_MODELS: AIModel[] = rawInitialModels.filter(m => {
+  if (seenInitialModelIds.has(m.id)) return false;
+  seenInitialModelIds.add(m.id);
+  return true;
+});
+
 export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'main-agent',
     name: 'Main Agent',
     description: 'General purpose AI assistant',
     icon: 'Bot',
-    systemInstructions: 'You are the main FLOAT assistant.',
+    systemInstructions: 'You are the main FLOAT assistant powered by OpenAI.',
     defaultModel: 'auto',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file', 'rename_file', 'delete_file'],
@@ -169,7 +168,7 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Reviews code for bugs and quality',
     icon: 'Eye',
     systemInstructions: 'You are a code reviewer.',
-    defaultModel: 'claude-3-5-sonnet-20241022',
+    defaultModel: 'gpt-4o',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
@@ -181,7 +180,7 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Plans complex architectural changes',
     icon: 'Map',
     systemInstructions: 'You are a software architect.',
-    defaultModel: 'o1-preview',
+    defaultModel: 'o1',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
@@ -193,7 +192,7 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Navigates and explains large codebases',
     icon: 'Compass',
     systemInstructions: 'You are a codebase explorer.',
-    defaultModel: 'gemini-3.8-flash',
+    defaultModel: 'gpt-4o-mini',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
@@ -205,7 +204,7 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Finds and fixes bugs',
     icon: 'Bug',
     systemInstructions: 'You are a debugging expert.',
-    defaultModel: 'o1-mini',
+    defaultModel: 'o3-mini',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files', 'modify_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: true, renameFiles: false, deleteFiles: false, terminal: true, webResearch: false },
@@ -217,10 +216,23 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Builds beautiful user interfaces',
     icon: 'Layout',
     systemInstructions: 'You are an expert UI/UX developer.',
-    defaultModel: 'gemini-3.8-flash',
+    defaultModel: 'gpt-4o',
     allowedModels: ['*'],
     tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
     mode: 'edit'
+  },
+  {
+    id: 'astra-agent',
+    name: 'Astra Cloud Agent',
+    description: 'Autonomous cloud execution agent powered by GPT-6 Astra Preview with upstream GPT-4o fallback',
+    icon: 'Sparkles',
+    systemInstructions: 'You are Astra, FLOAT AI\'s next-generation autonomous cloud execution agent powered by GPT-6 Astra (Preview) with upstream GPT-4o fallback.',
+    defaultModel: 'gpt-6-astra',
+    fallbackModel: 'gpt-4o',
+    allowedModels: ['*'],
+    tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file', 'rename_file', 'delete_file'],
+    permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: true, deleteFiles: true, terminal: true, webResearch: true },
+    mode: 'agent'
   }
 ];

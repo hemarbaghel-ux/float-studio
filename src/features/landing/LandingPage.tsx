@@ -11,6 +11,7 @@ import { LanguageDropdown } from '../../components/LanguageDropdown';
 import { useTranslation } from '../../components/LanguageProvider';
 import { InteractiveCodeHeroDemo } from './InteractiveCodeHeroDemo';
 import { InteractiveTerminalShowcase } from './InteractiveTerminalShowcase';
+import { TestimonialsSection } from './TestimonialsSection';
 
 export function LandingPage() {
   const { settings, toggleTheme, updateSettings } = useIDEStore();
@@ -883,12 +884,10 @@ export function LandingPage() {
                  {/* Dropdown popup */}
                  <div className="absolute bottom-16 left-24 right-8 bg-white dark:bg-[#2A2824] border border-slate-200 dark:border-white/10 rounded-lg shadow-2xl py-2 z-10 flex flex-col text-slate-800 dark:text-white">
                    <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5 flex justify-between"><span>{t('cards.auto', 'Auto')} <span className="text-slate-400 dark:text-[#A1A1AA] text-xs">{t('cards.suggested', 'Suggested')}</span></span><span>✓</span></div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">Grok 4.6</div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">GPT-5.6 Sol</div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">Fable 5.1 <span className="text-[#FF5F56] text-xs">Max</span></div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">Opus 5</div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">Gemini 3.1 Pro</div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">Composer 2.5</div>
+                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">GPT-4o</div>
+                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">o3-mini</div>
+                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">GPT-4o mini</div>
+                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">o1</div>
                  </div>
                </div>
             </div>
@@ -968,6 +967,9 @@ export function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* Developer Testimonials & Social Proof */}
+      <TestimonialsSection />
 
       {/* Resources */}
       <section className="py-20 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5 text-center">

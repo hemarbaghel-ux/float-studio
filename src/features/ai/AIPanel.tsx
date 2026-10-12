@@ -257,6 +257,14 @@ export function AIPanel() {
   const [minimizedPlanIds, setMinimizedPlanIds] = useState<Set<string>>(new Set());
   const [removedPlanIds, setRemovedPlanIds] = useState<Set<string>>(new Set());
   const [navigatedMsgId, setNavigatedMsgId] = useState<string | null>(null);
+  const [queuedMessages, setQueuedMessages] = useState<{
+    id: string;
+    text: string;
+    context: AIContextItem[];
+    mode: 'chat' | 'ask' | 'plan' | 'agent' | 'debug';
+    projectId: string;
+    timestamp: number;
+  }[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -357,6 +365,23 @@ export function AIPanel() {
       }, 60);
     }
   }, [initialPrompt]);
+
+  // Phase 25: Process queued developer message when agent reaches completion
+  useEffect(() => {
+    if (!isLoading && !isSubmittingRef.current && queuedMessages.length > 0) {
+      const nextItem = queuedMessages[0];
+      if (nextItem && nextItem.projectId === currentProjectId) {
+        setQueuedMessages(prev => prev.slice(1));
+        setActiveWorkflowMode(nextItem.mode);
+        if (nextItem.context && nextItem.context.length > 0) {
+          nextItem.context.forEach(c => addAiContext(c));
+        }
+        setTimeout(() => {
+          handleSubmit(nextItem.text);
+        }, 100);
+      }
+    }
+  }, [isLoading, queuedMessages, currentProjectId]);
 
   const handleScroll = () => {
     if (!messagesContainerRef.current) return;
@@ -551,7 +576,26 @@ export function AIPanel() {
   // Submit message and start streaming
   const handleSubmit = async (overrideInput?: string, isRetry = false) => {
     const rawText = (overrideInput !== undefined ? overrideInput : input).trim();
-    if (!rawText || isLoading || isSubmittingRef.current) return;
+    if (!rawText) return;
+
+    if (isLoading || isSubmittingRef.current) {
+      if (overrideInput === undefined) {
+        setQueuedMessages(prev => [
+          ...prev,
+          {
+            id: uuidv4(),
+            text: rawText,
+            context: [...aiContext],
+            mode: activeWorkflowMode,
+            projectId: currentProjectId,
+            timestamp: Date.now()
+          }
+        ]);
+        setInput('');
+        clearAiContext();
+      }
+      return;
+    }
 
     isSubmittingRef.current = true;
     setIsLoading(true);
@@ -664,6 +708,29 @@ export function AIPanel() {
         surroundingCode: currentFileNode.content ? currentFileNode.content.split('\n').slice(0, 60).join('\n') : undefined
       } : undefined;
 
+      // Augment context in Debug mode with recent terminal errors and runtime evidence
+      let finalContext = [...currentContext];
+      if (activeWorkflowMode === 'debug') {
+        const { terminalEntries } = useIDEStore.getState();
+        const recentErrors = terminalEntries.filter(t => t.type === 'error').slice(-3).map(t => t.content);
+        if (recentErrors.length > 0 && !finalContext.some(c => c.name === 'Terminal Diagnostics')) {
+          finalContext.push({
+            id: `term-diag-${Date.now()}`,
+            type: 'terminal',
+            name: 'Terminal Diagnostics',
+            content: `Recent Terminal Failures:\n${recentErrors.join('\n')}`,
+            sizeBytes: recentErrors.join('\n').length
+          });
+        }
+      }
+
+      let effectiveSystemInstruction = activeAgent?.systemInstructions || "You are an AI coding assistant. Answer questions concisely.";
+      if (activeWorkflowMode === 'ask') {
+        effectiveSystemInstruction = "You are operating in strictly READ-ONLY Ask mode.\n- Explain code, examine architecture, find symbols, and answer questions.\n- You must NOT propose file edits or write tool calls that modify files or commit changes.\n- Provide clear, direct answers with file references and code snippets for the user to review.";
+      } else if (activeWorkflowMode === 'debug') {
+        effectiveSystemInstruction = "You are operating in DEBUG MODE. Follow the systematic 4-step diagnostic protocol:\n1. Inspect the reported error, stack trace, and any active compiler/runtime diagnostics.\n2. Trace the relevant symbol definitions, call sites, and recent git changes.\n3. Identify the underlying root cause with concrete evidence from the files (do NOT fabricate findings).\n4. Propose a targeted, minimal fix with exact before/after code blocks and verification instructions.";
+      }
+
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: {
@@ -677,8 +744,8 @@ export function AIPanel() {
           model: selectedModel,
           reasoningEffort: useAIStore.getState().selectedEffort,
           agentId: selectedAgent,
-          systemInstruction: activeAgent?.systemInstructions || "You are an AI coding assistant. Answer questions concisely.",
-          contextItems: currentContext,
+          systemInstruction: effectiveSystemInstruction,
+          contextItems: finalContext,
           activeEditor: activeEd,
           projectName: projectName || 'Project Workspace',
           projectId: currentProjectId,
@@ -760,29 +827,31 @@ export function AIPanel() {
         latency
       });
 
-      // Record token analytics
-      try {
-        const activeModelObj = INITIAL_MODELS.find(m => m.id === selectedModel);
-        const inToks = finalUsage?.inputTokens || Math.max(1, Math.round(draftText.length / 4));
-        const outToks = finalUsage?.outputTokens || Math.max(1, Math.round(accumulatedText.length / 4));
-        const inCost = ((activeModelObj?.pricing?.inputCost || 0.1) / 1000000) * inToks;
-        const outCost = ((activeModelObj?.pricing?.outputCost || 0.4) / 1000000) * outToks;
+      // Record token analytics only when genuine usage is returned by upstream API
+      if (finalUsage && typeof finalUsage.inputTokens === 'number' && typeof finalUsage.outputTokens === 'number') {
+        try {
+          const activeModelObj = INITIAL_MODELS.find(m => m.id === selectedModel);
+          const inToks = finalUsage.inputTokens;
+          const outToks = finalUsage.outputTokens;
+          const inCost = ((activeModelObj?.pricing?.inputCost || 0) / 1000000) * inToks;
+          const outCost = ((activeModelObj?.pricing?.outputCost || 0) / 1000000) * outToks;
 
-        useUsageStore.getState().addRecord({
-          userId: auth.currentUser?.uid || 'user',
-          provider: activeModelObj?.providerId || 'google',
-          modelId: selectedModel,
-          agentId: selectedAgent,
-          inputTokens: inToks,
-          outputTokens: outToks,
-          cachedTokens: 0,
-          totalTokens: inToks + outToks,
-          latency,
-          estimatedCost: inCost + outCost,
-          status: 'success'
-        });
-      } catch (err) {
-        console.warn('Failed to record token analytics:', err);
+          useUsageStore.getState().addRecord({
+            userId: auth.currentUser?.uid || 'user',
+            provider: activeModelObj?.providerId || 'openai',
+            modelId: selectedModel,
+            agentId: selectedAgent,
+            inputTokens: inToks,
+            outputTokens: outToks,
+            cachedTokens: 0,
+            totalTokens: inToks + outToks,
+            latency,
+            estimatedCost: inCost + outCost,
+            status: 'success'
+          });
+        } catch (err) {
+          console.warn('Failed to record token analytics:', err);
+        }
       }
 
       // Persist conversation state
@@ -797,7 +866,6 @@ export function AIPanel() {
         messages: latestMessages
       });
       refreshConversations();
-
     } catch (error: any) {
       const isCancellation =
         error?.name === 'AbortError' ||
@@ -815,7 +883,6 @@ export function AIPanel() {
         let errTitle = 'Provider Error';
         if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
           errTitle = 'Rate Limit / Quota Exceeded';
-          errMsg = "Provider quota or rate limit exceeded. Please wait a moment before trying again, or select another available model in the model selector.";
         } else if (/auth|unauthorized|api_key|not configured|missing/i.test(errMsg)) {
           errTitle = 'Authentication / Configuration Error';
         } else if (/not recognized|not found/i.test(errMsg)) {
@@ -867,7 +934,7 @@ export function AIPanel() {
           virtualFiles: virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
           conversationId: targetConvId,
           projectId: currentProjectId,
-          model: selectedModel || 'gemini-3.8-flash'
+          model: selectedModel || 'gpt-4o'
         })
       });
 
@@ -1758,7 +1825,9 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                     {msg.latency && (
                       <>
                         <span>·</span>
-                        <span>{(msg.latency / 1000).toFixed(1)}s</span>
+                        <span className="font-mono text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 rounded text-[10px]">
+                          {msg.latency}ms ({(msg.latency / 1000).toFixed(2)}s)
+                        </span>
                       </>
                     )}
                     {isStreaming && (
@@ -1808,13 +1877,13 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedModel('gemini-3.1-flash-lite');
+                              setSelectedModel('gpt-4o-mini');
                               handleRetry(msg.id);
                             }}
                             className="px-2.5 py-1 text-xs font-semibold rounded-md bg-purple-600 text-white hover:bg-purple-700 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
                           >
                             <Sparkles size={12} />
-                            <span>Switch to Gemini 3.1 Flash Lite & Retry</span>
+                            <span>Switch to GPT-4o mini & Retry</span>
                           </button>
                         )}
                       </div>
@@ -2031,21 +2100,21 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           )}
 
           {/* Obsolete model warning banner */}
-          {['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'].includes(selectedModel) && (
+          {['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'].includes(selectedModel) && (
             <div className="mx-3 mt-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between gap-2 shadow-2xs">
               <div className="flex items-center gap-1.5 min-w-0">
                 <AlertCircle size={14} className="shrink-0 text-amber-500" />
                 <span className="truncate">
-                  Model <strong>{selectedModel}</strong> has been retired by Google.
+                  Model <strong>{selectedModel}</strong> is not an active OpenAI model in FLOAT.
                 </span>
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedModel('gemini-3.1-flash-lite')}
+                onClick={() => setSelectedModel('gpt-4o')}
                 className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer shrink-0 shadow-xs flex items-center gap-1"
               >
                 <Sparkles size={11} />
-                <span>Switch to 3.1 Flash Lite</span>
+                <span>Switch to GPT-4o</span>
               </button>
             </div>
           )}
@@ -2135,6 +2204,76 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             />
           )}
 
+          {/* Chat Queue Bar (Phase 25) */}
+          {queuedMessages.length > 0 && (
+            <div className="mx-2 mt-2 p-2 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/40 text-xs">
+              <div className="flex items-center justify-between font-semibold text-purple-900 dark:text-purple-200 text-[11px] mb-1">
+                <span className="flex items-center gap-1.5">
+                  <Loader2 size={11} className="animate-spin text-purple-600 dark:text-purple-400" />
+                  Message Queue ({queuedMessages.length} pending)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setQueuedMessages([])}
+                  className="text-purple-600 dark:text-purple-400 hover:underline cursor-pointer text-[10px]"
+                >
+                  Clear all
+                </button>
+              </div>
+              <div className="space-y-1 max-h-24 overflow-y-auto">
+                {queuedMessages.map((item, idx) => (
+                  <div key={item.id} className="flex items-center justify-between text-[11px] p-1.5 rounded bg-white/70 dark:bg-black/30 border border-purple-100 dark:border-purple-900/30 text-slate-700 dark:text-slate-300">
+                    <span className="truncate max-w-[200px]">#{idx + 1}: {item.text}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] uppercase px-1 py-0.2 rounded bg-purple-200/50 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 font-medium">
+                        {item.mode}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setQueuedMessages(prev => prev.filter(q => q.id !== item.id))}
+                        className="p-0.5 text-slate-400 hover:text-red-500 cursor-pointer"
+                        title="Cancel queued message"
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Active Mode Banner */}
+          {activeWorkflowMode !== 'chat' && (
+            <div className="px-3 pt-2 pb-0.5 flex items-center justify-between text-[10px]">
+              <div className="flex items-center gap-1.5 font-medium">
+                <span className={cn(
+                  "w-1.5 h-1.5 rounded-full shrink-0",
+                  activeWorkflowMode === 'ask' ? "bg-emerald-500" :
+                  activeWorkflowMode === 'plan' ? "bg-purple-500" :
+                  activeWorkflowMode === 'agent' ? "bg-blue-500" : "bg-amber-500"
+                )} />
+                <span className={cn(
+                  activeWorkflowMode === 'ask' ? "text-emerald-600 dark:text-emerald-400" :
+                  activeWorkflowMode === 'plan' ? "text-purple-600 dark:text-purple-400" :
+                  activeWorkflowMode === 'agent' ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400"
+                )}>
+                  {activeWorkflowMode === 'ask' && 'ASK MODE (Read-only • No file modifications)'}
+                  {activeWorkflowMode === 'plan' && 'PLAN MODE (Generates structured implementation plan)'}
+                  {activeWorkflowMode === 'agent' && 'AGENT MODE (Autonomous multi-step coding agent)'}
+                  {activeWorkflowMode === 'debug' && 'DEBUG MODE (Root-cause diagnostics & verified fixes)'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveWorkflowMode('chat')}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer text-[10px]"
+              >
+                Reset to Chat
+              </button>
+            </div>
+          )}
+
           {/* Multiline auto-resizing textarea */}
           <textarea
             ref={textareaRef}
@@ -2171,6 +2310,10 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 ? "Describe what you want to build or refactor to generate a structured implementation plan (Enter to plan)..."
                 : activeWorkflowMode === 'agent' || mode === 'agent'
                 ? "Describe changes for the autonomous coding agent..."
+                : activeWorkflowMode === 'debug'
+                ? "Describe the bug, error, or symptom to diagnose (Enter to debug)..."
+                : activeWorkflowMode === 'ask'
+                ? "Ask a question about the project or architecture (read-only)..."
                 : "Ask about your code (Enter to send, Shift+Enter for newline)..."
             }
             className="w-full bg-transparent p-3 text-xs leading-relaxed text-slate-900 dark:text-[#E6EDF3] placeholder:text-slate-400 dark:placeholder:text-[#6E7681] outline-none resize-none min-h-[44px] max-h-[180px]"

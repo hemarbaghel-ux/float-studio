@@ -4,7 +4,8 @@ export type AIErrorCode =
   | 'QUOTA_EXCEEDED'
   | 'RATE_LIMITED'
   | 'PROVIDER_ERROR'
-  | 'INVALID_REQUEST';
+  | 'INVALID_REQUEST'
+  | 'UNSUPPORTED_PROVIDER';
 
 export class AIProviderError extends Error {
   public code: AIErrorCode;
@@ -62,6 +63,7 @@ export interface ProviderHealthCheckResult {
   authenticated: boolean;
   modelAvailable: boolean;
   defaultModel?: string;
+  accessibleModelIds?: string[];
   error?: string;
 }
 
