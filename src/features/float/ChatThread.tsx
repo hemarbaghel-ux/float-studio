@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import {
   ArrowUp, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Copy, FileCode2, FilePlus2, FileX2, Files, History,
   Loader2, Play, RotateCcw, Square, Terminal as TerminalIcon, Trash2, X, Download, Save,
+  AlertCircle, KeyRound, ExternalLink, Code2,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../lib/firebase';
@@ -23,6 +24,7 @@ import { isShellCommand, runShell } from './sandbox';
 import { useCloudSession } from './cloudSessionStore';
 import { AttachMenu, SlashMenu, slashMatches } from './ComposerExtras';
 import { CloudSessionBanner } from './CloudSession';
+import { ChatFeedbackButtons } from './ChatFeedbackButtons';
 
 type ChangeStatus = 'pending' | 'accepted' | 'rejected';
 
@@ -38,6 +40,7 @@ interface ThreadMessage {
   changeSet?: ChangeSet;
   agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   error?: string;
+  errorCode?: string;
   cancelled?: boolean;
   latencyMs?: number;
   modelId?: string;
@@ -115,11 +118,17 @@ export function ChatThread({ chatId }: { chatId: string }) {
   const startedRef = useRef(false);
 
   const paths = useMemo(() => flattenFileTree(files).filter((f) => f.type === 'file').map((f) => f.path), [files]);
+  const activeChatIdRef = useRef(chatId);
+  useEffect(() => {
+    activeChatIdRef.current = chatId;
+  }, [chatId]);
 
   // Load the project when opening /chat/:id directly (refresh / shared link)
   useEffect(() => {
     let cancelled = false;
     abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false);
     messagesOwnerId.current = ownerId;
     setLoadError(null);
     setMessages(ownerId ? loadThread(chatId, ownerId) : []);
@@ -149,6 +158,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
     })();
     return () => {
       cancelled = true;
+      abortRef.current?.abort();
     };
   }, [chatId, ownerId, projectId]);
 
@@ -322,7 +332,11 @@ export function ChatThread({ chatId }: { chatId: string }) {
         });
         if (!res.ok || !res.body) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `HTTP ${res.status}`);
+          const errorMsg = err.error || `HTTP ${res.status}`;
+          const errCode = err.code || (res.status === 401 ? 'AUTH_ERROR' : res.status === 429 ? 'RATE_LIMITED' : 'PROVIDER_ERROR');
+          const errorObj = new Error(errorMsg);
+          (errorObj as any).code = errCode;
+          throw errorObj;
         }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -374,6 +388,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
           }
         };
 
+        let streamError: { message: string; code?: string } | null = null;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -396,23 +411,67 @@ export function ChatThread({ chatId }: { chatId: string }) {
             : 'The AI stream ended without a response. Check provider credentials, model access, and server logs.');
         }
         const totalElapsed = Date.now() - startTime;
+          const events = buffer.split(/\r?\n\r?\n/);
+          buffer = events.pop() || '';
+          for (const evt of events) {
+            const line = evt.split(/\r?\n/).find((l) => l.startsWith('data:'));
+            if (!line) continue;
+            try {
+              const data = JSON.parse(line.slice(5).trim());
+              const currentElapsed = Date.now() - startTime;
+              if (useToolAgent && data.type === 'event') {
+                const event = data.data || {};
+                agentEvents.push(event);
+                patch({ agentEvents: [...agentEvents] });
+                if (event.type === 'failed') {
+                  const agentErr = new Error(event.message || 'Agent execution failed.');
+                  (agentErr as any).code = event.code || 'AGENT_ERROR';
+                  throw agentErr;
+                }
+              } else if (useToolAgent && data.type === 'delta') {
+                full += data.data?.text || data.text || '';
+                patch({ content: full, agentEvents: [...agentEvents], latencyMs: currentElapsed });
+              } else if (useToolAgent && data.type === 'result') {
+                finalChangeSet = data.data?.changeSet;
+                full = data.data?.text || full;
+                patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents], latencyMs: currentElapsed });
+              } else if (data.type === 'delta' && data.text) {
+                full += data.text;
+                patch({ content: full, latencyMs: currentElapsed });
+              } else if (data.type === 'done') {
+                if (data.text && data.text.length >= full.length) full = data.text;
+                patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
+              } else if (data.type === 'error') {
+                streamError = { message: data.error || 'Generation failed', code: data.code || 'PROVIDER_ERROR' };
+                const sErr = new Error(streamError.message);
+                (sErr as any).code = streamError.code;
+                throw sErr;
+              }
+            } catch (e: any) {
+              if (e instanceof SyntaxError) continue;
+              throw e;
+            }
+          }
+        }
+        if (activeChatIdRef.current !== chatId) return;
+        if (!full && !finalChangeSet) {
+          throw new Error('Provider returned an empty response. Please verify provider connectivity and try again.');
+        }
         const pending: Record<string, { status: ChangeStatus }> = {};
         for (const seg of parseSegments(full)) if (seg.kind !== 'text') pending[seg.path] = { status: 'pending' };
-        patch({
-          content: full || '(No response)',
-          changes: pending,
-          changeSet: finalChangeSet,
-          agentEvents: agentEvents.length ? agentEvents : undefined,
-          latencyMs: totalElapsed,
-          modelId: selectedModel,
-        });
+        patch({ content: full, changes: pending, changeSet: finalChangeSet, agentEvents: agentEvents.length ? agentEvents : undefined });
       } catch (e: any) {
-        const errorElapsed = Date.now() - startTime;
-        if (e?.name === 'AbortError') patch({ cancelled: true, latencyMs: errorElapsed });
-        else patch({ error: e?.message || String(e), latencyMs: errorElapsed });
+        if (activeChatIdRef.current !== chatId) return;
+        if (e?.name === 'AbortError') {
+          patch({ cancelled: true });
+        } else {
+          patch({ error: e?.message || String(e), errorCode: e?.code });
+        }
       } finally {
-        abortRef.current = null;
-        setStreaming(false);
+        if (activeChatIdRef.current === chatId) {
+          abortRef.current = null;
+          setStreaming(false);
+        }
       }
     },
     [messages, streaming, historyLoading, selectedModel, selectedAgent, agents, chatId],
@@ -578,6 +637,14 @@ export function ChatThread({ chatId }: { chatId: string }) {
           </div>
           <HeaderButton icon={Files} label="Files" active={drawer === 'files'} onClick={() => setDrawer(drawer === 'files' ? null : 'files')} />
           <HeaderButton icon={TerminalIcon} label="Terminal" active={drawer === 'terminal'} onClick={() => setDrawer(drawer === 'terminal' ? null : 'terminal')} />
+          <HeaderButton
+            icon={Code2}
+            label="Open in Editor"
+            onClick={() => {
+              window.history.pushState({}, '', '/workspace');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }}
+          />
           <HeaderButton icon={Download} label="Export" onClick={() => void exportZip(projectName || 'project', useIDEStore.getState().files)} />
         </div>
 
@@ -615,6 +682,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
               ) : (
                 <AssistantMessage
                   key={m.id}
+                  chatId={chatId}
                   msg={m}
                   streaming={streaming && m.id === messages[messages.length - 1]?.id}
                   onAccept={(seg) => applySegment(m.id, seg)}
@@ -730,8 +798,9 @@ function HeaderButton({ icon: Icon, label, onClick, active }: { icon: any; label
 /* ----------------------------------------------------------------------------------------- */
 
 function AssistantMessage({
-  msg, streaming, onAccept, onReject, onUndo,
+  chatId, msg, streaming, onAccept, onReject, onUndo,
 }: {
+  chatId: string;
   msg: ThreadMessage;
   streaming: boolean;
   onAccept: (seg: Segment) => void;
@@ -824,9 +893,46 @@ function AssistantMessage({
         </div>
       )}
       {msg.error && (
-        <div className="rounded-lg border border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">{msg.error}</div>
+        <div className="rounded-xl border border-rose-200 dark:border-rose-500/20 bg-rose-50/80 dark:bg-rose-950/20 p-3.5 text-xs text-rose-800 dark:text-rose-300 flex flex-col gap-2">
+          <div className="flex items-start gap-2">
+            <AlertCircle size={15} className="shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+            <div className="flex-1 font-medium leading-relaxed">{msg.error}</div>
+          </div>
+          {msg.errorCode === 'AUTH_ERROR' && (
+            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400 flex items-center justify-between">
+              <span>Configure server-side <code className="px-1 py-0.5 rounded bg-slate-200 dark:bg-white/10 font-mono text-[10px]">OPENAI_API_KEY</code> to enable live OpenAI chat completions.</span>
+            </div>
+          )}
+          {msg.errorCode === 'QUOTA_EXCEEDED' && (
+            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400">
+              Your upstream AI account quota has been exhausted. Check your OpenAI billing or switch to another available model.
+            </div>
+          )}
+          {msg.errorCode === 'RATE_LIMITED' && (
+            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400">
+              Rate limit exceeded. Please wait a few seconds before retrying your prompt.
+            </div>
+          )}
+        </div>
       )}
       {msg.cancelled && <div className="text-[11px] text-slate-400">Stopped.</div>}
+      {!streaming && !msg.error && (
+        <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-white/5">
+          <ChatFeedbackButtons
+            chatId={chatId}
+            messageId={msg.id}
+            modelId={msg.modelId}
+            content={msg.content}
+          />
+          <button
+            onClick={() => void navigator.clipboard.writeText(msg.content)}
+            className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer transition-colors p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5"
+            title="Copy response"
+          >
+            <Copy size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

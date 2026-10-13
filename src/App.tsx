@@ -255,14 +255,6 @@ export default function App() {
     return <Dashboard initialTab="new-chat" />;
   }
 
-  // Git Sync route in Dashboard
-  if (currentPath === '/git-sync' || currentPath === '/dashboard/git-sync') {
-    return <Dashboard initialTab="git-sync" />;
-  }
-
-  // Route IDE workspace
-  if (currentPath === '/workspace' || currentPath === '/ide') {
-    return <IDEWorkspace />;
   }
 
   // Render the actual conversation thread for deep links and refreshes.

@@ -61,9 +61,9 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
             return { items: [] };
           }
 
-          // Check if provider is configured / enabled
-          const currentProviderState = providers.openai ?? { configured: true };
-          if (currentProviderState && currentProviderState.configured === false) {
+          // Check if provider is configured / enabled (support active OpenAI or Google provider)
+          const currentProviderState = providers.openai?.configured ? providers.openai : providers.google;
+          if (!currentProviderState?.configured) {
             return { items: [] };
           }
 

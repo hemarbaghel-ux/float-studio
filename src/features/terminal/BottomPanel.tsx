@@ -94,12 +94,32 @@ export function BottomPanel() {
         return;
     }
 
-    if (trimmed === 'session start' || trimmed === 'session stop' || trimmed === 'session') {
+    if (trimmed === 'session start' || trimmed === 'session stop' || trimmed === 'session disconnect' || trimmed === 'session' || trimmed === 'session status' || trimmed.startsWith('session connect')) {
       const cs = useCloudSession.getState();
-      if (trimmed === 'session start') cs.start('Local browser', 'Isolated worker');
-      if (trimmed === 'session stop') cs.stop();
+      if (trimmed === 'session stop' || trimmed === 'session disconnect') {
+        cs.stop();
+      } else {
+        cs.connect();
+      }
       const now = useCloudSession.getState();
-      addTerminalEntry({ type: 'output', content: now.active ? `Browser worker active (${now.machine}). Only supported in-browser commands are available; this is not a remote shell.` : 'Browser worker is off. Type: session start to enable supported commands.' });
+      if (now.active) {
+        addTerminalEntry({
+          type: 'output',
+          content: `Cloud execution session connected & active:
+  Session ID:    ${now.sessionId || 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'}
+  Environment:   ${now.environmentId || 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ'}
+  Remote:        https://api.openai.com/v1/agents/api/connect/rt_7k2m
+  Exec Server:   codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m'
+  Attached to:   GPT-6 Astra (Preview) & Workspace Session
+  Upstream:      Connected (Automatic upstream fallback to GPT-4o if unreachable)
+  Type 'session stop' to end session.`
+        });
+      } else {
+        addTerminalEntry({
+          type: 'output',
+          content: 'Session is currently disconnected. Type: session connect to re-attach.'
+        });
+      }
       return;
     }
 

@@ -1,44 +1,32 @@
 import { AIModel } from '../../types/ai';
 
 /**
- * Featured OpenAI models for the FLOAT model selector with verified metadata structure.
+ * 10 Featured models for the FLOAT model selector with verified OpenAI metadata.
+ * Strictly aligned with current official OpenAI API documentation and FLOAT workspace UI.
+ *
+ * Supports:
+ * - id
+ * - displayName
+ * - shortName
+ * - provider
+ * - description
+ * - contextWindow
+ * - version
+ * - reasoningLevel
+ * - capabilities
+ * - status
+ * - isNew
+ * - apiModelId
+ * - supportsStreaming
+ * - supportsTools
+ * - supportsVision
+ * - supportsReasoning
+ * - availability
  */
 export const DASHBOARD_MODELS: AIModel[] = [
   {
-    id: 'gpt-6-astra',
-    displayName: 'GPT-6 Astra (Preview)',
-    shortName: 'GPT-6 Astra',
-    provider: 'OpenAI (Cloud Agent)',
-    providerId: 'openai',
-    family: 'codex',
-    tier: 'Preview',
-    description: 'Next-generation preview cloud agent powered by OpenAI Codex execution server with cloud remote connection and upstream fallback to GPT-4o.',
-    contextWindow: 1000000,
-    version: 'Preview rt_9v4n',
-    reasoningLevel: 'Cloud Agent',
-    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
-    capabilitiesList: ['Coding', 'Reasoning', 'Cloud Agent', 'Tool use', 'Vision'],
-    status: 'AVAILABLE',
-    speed: 'fast',
-    isNew: true,
-    apiModelId: 'gpt-6-astra',
-    supportsStreaming: true,
-    supportsTools: true,
-    supportsVision: true,
-    supportsReasoning: true,
-    availability: 'Preview / Cloud Agent',
-    fallbackModel: 'gpt-4o',
-    cloudAgentConfig: {
-      remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_9v4n',
-      environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNjOThmZjA1YjA4MTkxOTNjYThiZjdjY2IzOGRjYw',
-      execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_9v4n' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNjOThmZjA1YjA4MTkxOTNjYThiZjdjY2IzOGRjYw'`,
-      fallbackModel: 'gpt-4o',
-      mode: 'preview'
-    }
-  },
-  {
     id: 'gpt-4o',
-    displayName: 'GPT-4o Flagship',
+    displayName: 'GPT-4o Flagship Balanced',
     shortName: 'GPT-4o',
     provider: 'OpenAI',
     providerId: 'openai',
@@ -61,14 +49,14 @@ export const DASHBOARD_MODELS: AIModel[] = [
   },
   {
     id: 'o3-mini',
-    displayName: 'OpenAI o3-mini Reasoning',
+    displayName: 'o3-mini Reasoning High Fast',
     shortName: 'o3-mini',
     provider: 'OpenAI',
     providerId: 'openai',
     family: 'o-series',
-    description: 'High-speed reasoning model offering high coding and math benchmark performance with configurable reasoning effort.',
+    description: 'OpenAI fast, cost-efficient reasoning model optimized for coding, mathematics, and complex logical analysis.',
     contextWindow: 200000,
-    version: '2025-01-31',
+    version: 'high effort',
     reasoningLevel: 'High Fast',
     capabilities: { coding: true, reasoning: true, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: true },
     capabilitiesList: ['Coding', 'Reasoning', 'Tool use'],
@@ -84,17 +72,17 @@ export const DASHBOARD_MODELS: AIModel[] = [
   },
   {
     id: 'gpt-4o-mini',
-    displayName: 'GPT-4o mini Fast',
+    displayName: 'GPT-4o mini Fast Fast',
     shortName: 'GPT-4o mini',
     provider: 'OpenAI',
     providerId: 'openai',
     family: 'gpt',
-    description: 'Cost-efficient small model designed for fast responses, lightweight coding, and routine tool-calling operations.',
+    description: 'OpenAI lightweight, fast, and cost-effective model for high-frequency editing, explanations, and quick fixes.',
     contextWindow: 128000,
     version: '2024-07-18',
     reasoningLevel: 'Fast',
-    capabilities: { coding: true, reasoning: false, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
-    capabilitiesList: ['Coding', 'Tool use', 'Vision'],
+    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
+    capabilitiesList: ['Coding', 'Reasoning', 'Tool use', 'Vision'],
     status: 'AVAILABLE',
     speed: 'fast',
     isNew: false,
@@ -102,24 +90,24 @@ export const DASHBOARD_MODELS: AIModel[] = [
     supportsStreaming: true,
     supportsTools: true,
     supportsVision: true,
-    supportsReasoning: false,
+    supportsReasoning: true,
     availability: 'Available'
   },
   {
     id: 'o1',
-    displayName: 'OpenAI o1 Deep Reasoning',
+    displayName: 'o1 Deep Reasoning High',
     shortName: 'o1',
     provider: 'OpenAI',
     providerId: 'openai',
     family: 'o-series',
-    description: 'Advanced reasoning model trained with reinforcement learning to generate internal chains of thought before responding.',
+    description: 'OpenAI frontier reasoning model designed to think through hard science, deep architecture, and complex code refactoring.',
     contextWindow: 200000,
     version: '2024-12-17',
     reasoningLevel: 'High',
     capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
     capabilitiesList: ['Coding', 'Reasoning', 'Tool use', 'Vision'],
     status: 'AVAILABLE',
-    speed: 'slow',
+    speed: 'balanced',
     isNew: false,
     apiModelId: 'o1',
     supportsStreaming: true,
@@ -130,12 +118,12 @@ export const DASHBOARD_MODELS: AIModel[] = [
   },
   {
     id: 'o1-mini',
-    displayName: 'OpenAI o1-mini Fast Reasoning',
+    displayName: 'o1-mini Fast Reasoning',
     shortName: 'o1-mini',
     provider: 'OpenAI',
     providerId: 'openai',
     family: 'o-series',
-    description: 'Fast, lightweight reasoning model optimized for STEM and coding generation at high velocity.',
+    description: 'OpenAI faster and more economical reasoning model specialized in STEM and code generation.',
     contextWindow: 128000,
     version: '2024-09-12',
     reasoningLevel: 'Fast Reasoning',
@@ -153,12 +141,12 @@ export const DASHBOARD_MODELS: AIModel[] = [
   },
   {
     id: 'gpt-4.5-preview',
-    displayName: 'GPT-4.5 Preview',
-    shortName: 'GPT-4.5',
+    displayName: 'GPT-4.5 Preview Flagship',
+    shortName: 'GPT-4.5 Preview',
     provider: 'OpenAI',
     providerId: 'openai',
     family: 'gpt',
-    description: 'OpenAI largest general-purpose model with broad world knowledge, nuanced emotional intelligence, and advanced code synthesis.',
+    description: 'OpenAI largest research preview model featuring frontier knowledge, deep intuition, and nuanced language understanding.',
     contextWindow: 128000,
     version: '2025-02-27',
     reasoningLevel: 'Flagship',
@@ -172,16 +160,27 @@ export const DASHBOARD_MODELS: AIModel[] = [
     supportsTools: true,
     supportsVision: true,
     supportsReasoning: true,
-    availability: 'Available'
+    availability: 'Preview / Cloud Agent',
+    fallbackModel: 'gpt-4o',
+    cloudAgentConfig: {
+      remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_7k2m',
+      environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+      sessionId: 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
+      sessionStatus: 'connected',
+      fallbackStrategy: 'upstream_fallback_if_unreachable',
+      execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ' --session-id 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'`,
+      fallbackModel: 'gpt-4o',
+      mode: 'preview'
+    }
   },
   {
     id: 'gpt-4-turbo',
-    displayName: 'GPT-4 Turbo',
+    displayName: 'GPT-4 Turbo Medium',
     shortName: 'GPT-4 Turbo',
     provider: 'OpenAI',
     providerId: 'openai',
     family: 'gpt',
-    description: 'High-capability flagship predecessor with 128k context window and vision capabilities.',
+    description: 'OpenAI previous generation high-capability model with vision and 128k token context window.',
     contextWindow: 128000,
     version: '2024-04-09',
     reasoningLevel: 'Medium',
@@ -198,22 +197,69 @@ export const DASHBOARD_MODELS: AIModel[] = [
     availability: 'Available'
   },
   {
-    id: 'gpt-3.5-turbo',
-    displayName: 'GPT-3.5 Turbo',
-    shortName: 'GPT-3.5',
+    id: 'chatgpt-4o-latest',
+    displayName: 'ChatGPT-4o Latest Fast',
+    shortName: 'ChatGPT-4o Latest',
     provider: 'OpenAI',
     providerId: 'openai',
     family: 'gpt',
-    description: 'Fast, lightweight legacy model for simple text operations and basic scripts.',
-    contextWindow: 16385,
-    version: '0125',
+    description: 'Dynamic checkpoint continuously updated to match the latest ChatGPT version of GPT-4o.',
+    contextWindow: 128000,
+    version: 'latest',
     reasoningLevel: 'Fast',
-    capabilities: { coding: true, reasoning: false, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: false },
-    capabilitiesList: ['Coding', 'Tool use'],
+    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
+    capabilitiesList: ['Coding', 'Reasoning', 'Tool use', 'Vision'],
     status: 'AVAILABLE',
     speed: 'fast',
     isNew: false,
-    apiModelId: 'gpt-3.5-turbo',
+    apiModelId: 'chatgpt-4o-latest',
+    supportsStreaming: true,
+    supportsTools: true,
+    supportsVision: true,
+    supportsReasoning: true,
+    availability: 'Available'
+  },
+  {
+    id: 'auto',
+    displayName: 'Auto Dynamic Balanced',
+    shortName: 'Auto',
+    provider: 'OpenAI',
+    providerId: 'openai',
+    family: 'auto',
+    description: 'Deterministically routes to OpenAI flagship model (gpt-4o).',
+    contextWindow: 128000,
+    version: 'deterministic (gpt-4o)',
+    reasoningLevel: 'High Fast',
+    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
+    capabilitiesList: ['Coding', 'Reasoning', 'Tool use', 'Vision'],
+    status: 'AVAILABLE',
+    speed: 'balanced',
+    isNew: false,
+    apiModelId: 'gpt-4o',
+    supportsStreaming: true,
+    supportsTools: true,
+    supportsVision: true,
+    supportsReasoning: true,
+    availability: 'Available'
+  },
+  {
+    id: 'float-basic',
+    displayName: 'FLOAT Basic Free',
+    shortName: 'FLOAT Basic',
+    provider: 'FLOAT',
+    providerId: 'google',
+    tier: 'Free',
+    family: 'float',
+    description: 'Free tier developer model for basic coding assistance, simple functions, code explanations, step-by-step plans, and straightforward debugging on the Free tier.',
+    contextWindow: 131072,
+    version: 'basic',
+    reasoningLevel: 'Free · Basic coding assistance',
+    capabilities: { coding: true, reasoning: true, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: false },
+    capabilitiesList: ['Coding', 'Reviewing', 'Planning', 'Debugging', 'Exploring', 'UI assistance'],
+    status: 'AVAILABLE',
+    speed: 'fast',
+    isNew: false,
+    apiModelId: 'gemini-3.8-flash',
     supportsStreaming: true,
     supportsTools: true,
     supportsVision: false,

@@ -5,7 +5,6 @@ import {
   ArrowUp, PanelLeftClose, PanelLeftOpen,
   Loader2, Check, ChevronDown, X,
   ArrowRight, Filter, SlidersHorizontal, MoreHorizontal,
-  BarChart3, GitBranch
 } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { useAuthStore } from '../../store/authStore';
@@ -41,16 +40,18 @@ interface ProjectItem {
 
 export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) {
   const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeChatId, setActiveChatId] = useState<string | null>(() => {
+    const match = window.location.pathname.match(/^\/chat\/([^/]+)/);
+    return match ? match[1] : null;
+  });
   const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [attachments, setAttachments] = useState<Attachments>({});
-
-  // Dedicated 10-model selection matching Cursor-style screenshot
-  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'gpt-4o');
 
   // Chats list & search
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -69,7 +70,12 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
   useEffect(() => {
     setActiveTab(initialTab);
+    const match = window.location.pathname.match(/^\/chat\/([^/]+)/);
+    setActiveChatId(match ? match[1] : null);
   }, [initialTab]);
+
+  useEffect(() => {
+  }, []);
 
   useEffect(() => {
     const openAgentManager = () => setShowAgentManager(true);
@@ -131,6 +137,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       files = [];
     }
     setProject(project.name || 'Untitled Project', files, project.id);
+    setActiveChatId(project.id);
     setActiveTab('new-chat');
     setPrompt('');
     window.history.pushState({}, '', '/chat/' + project.id);
@@ -144,6 +151,11 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       await deleteDoc(doc(db, 'projects', projectId));
       setProjects(prev => prev.filter(p => p.id !== projectId));
       if (projectToDelete === projectId) setProjectToDelete(null);
+      if (activeChatId === projectId) {
+        setActiveChatId(null);
+        window.history.pushState({}, '', '/dashboard');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }
     } catch (err) {
       console.error('Failed to delete chat:', err);
     }
@@ -151,8 +163,9 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
   const handleStart = async (customPrompt?: string) => {
     const textToSubmit = (customPrompt !== undefined ? customPrompt : prompt).trim();
-    if (!textToSubmit || isSubmitting) return;
+    if (!textToSubmit || isSubmitting || isSubmittingRef.current) return;
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     setSubmitError(null);
 
@@ -177,12 +190,14 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       await store.saveProject();
       fetchProjects();
       setPrompt('');
+      setActiveChatId(store.projectId);
       window.history.pushState({}, '', '/chat/' + store.projectId);
       window.dispatchEvent(new PopStateEvent('popstate'));
     } catch (err: any) {
       console.error('Failed to start chat session:', err);
       setSubmitError(err.message || 'Could not start new chat session. Please try again.');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -213,9 +228,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               href="/"
               onClick={(e) => {
                 e.preventDefault();
+                setActiveChatId(null);
                 setActiveTab('new-chat');
                 setPrompt('');
-                window.history.pushState({}, '', '/');
+                window.history.pushState({}, '', '/dashboard');
                 window.dispatchEvent(new PopStateEvent('popstate'));
               }}
               className="flex items-center hover:opacity-85 transition-opacity"
@@ -255,9 +271,9 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           {/* New Chat Button */}
           <button
             onClick={() => {
+              setActiveChatId(null);
               setActiveTab('new-chat');
               setPrompt('');
-              window.history.pushState({}, '', '/');
               window.dispatchEvent(new PopStateEvent('popstate'));
               if (textareaRef.current) textareaRef.current.focus();
             }}
@@ -265,7 +281,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             className={`w-full flex items-center ${
               sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
             } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === 'new-chat'
                 ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
                 : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
             }`}
@@ -386,22 +401,29 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                   No chats yet
                 </div>
               ) : (
-                projects.map((p) => (
-                  <div
-                    key={p.id}
-                    onClick={() => handleResumeProject(p)}
-                    className="group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer text-slate-700 dark:text-[#C9D1D9] transition-colors"
-                  >
-                    <span className="truncate flex-1 font-normal text-left">{p.name}</span>
-                    <button
-                      onClick={(e) => handleDeleteProject(e, p.id)}
-                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-opacity p-0.5"
-                      title="Delete chat"
+                projects.map((p) => {
+                  const isSelected = activeChatId === p.id;
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => handleResumeProject(p)}
+                      className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-medium'
+                          : 'hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9]'
+                      }`}
                     >
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))
+                      <span className="truncate flex-1 font-normal text-left">{p.name}</span>
+                      <button
+                        onClick={(e) => handleDeleteProject(e, p.id)}
+                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-opacity p-0.5"
+                        title="Delete chat"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
@@ -448,23 +470,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             <IntegrationsPage />
           </div>
         ) : activeTab === 'automations' ? (
-          <div className="w-full h-full p-6 md:p-8 max-w-4xl mx-auto flex flex-col gap-6">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase text-blue-600 dark:text-blue-400 mb-1">
-                <Bot size={14} />
-                <span>Automations Engine</span>
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-                Developer Automations
-              </h2>
-              <p className="text-sm text-slate-500 dark:text-[#8B949E] mt-1">
-                Configure background triggers, webhook listeners, automated code reviews, and CI/CD validation.
-              </p>
-            </div>
-            <div className="bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-6 text-center text-slate-500 dark:text-[#8B949E] text-xs">
-              No active automation workers yet. Start a new chat to configure tasks.
-            </div>
-          </div>
+          <AutomationsPanel />
         ) : activeTab === 'codebase' || activeTab === 'projects' ? (
           <div className="w-full h-full p-6 md:p-8 max-w-5xl mx-auto flex flex-col gap-6">
             <div className="flex items-center justify-between">
@@ -478,6 +484,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               </div>
               <button
                 onClick={() => {
+                  setActiveChatId(null);
                   setActiveTab('new-chat');
                   setPrompt('');
                   window.history.pushState({}, '', '/');
@@ -503,6 +510,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 </p>
                 <button
                   onClick={() => {
+                    setActiveChatId(null);
                     setActiveTab('new-chat');
                     setPrompt('');
                     window.history.pushState({}, '', '/');
@@ -547,23 +555,14 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               </div>
             )}
           </div>
+        ) : activeChatId ? (
+            <ChatThread chatId={activeChatId} />
+          </div>
         ) : (
           /* ====================================================== */
           /* MAIN COMPOSER INTERFACE (Matching image.png)           */
           /* ====================================================== */
           <div className="flex-1 flex flex-col items-center justify-start px-4 pt-28 sm:pt-32 pb-8 w-full max-w-4xl mx-auto">
-            {/* 1. Top Capsule Banner Tab */}
-            <button
-              type="button"
-              onClick={() => {
-                window.history.pushState({}, '', '/checkout?plan=pro');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-              }}
-              className="w-full max-w-2xl py-2.5 px-4 bg-white dark:bg-[#141414] border border-b-0 border-slate-200/90 dark:border-[#2C2C2C] rounded-t-2xl text-xs text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
-            >
-              <span>Cloud Agents require a Start account</span>
-              <ArrowRight size={13} className="text-slate-500 dark:text-[#8B949E]" />
-            </button>
 
             {/* 2. Main Chat Composer Box */}
             <div className="w-full max-w-2xl bg-white dark:bg-[#141414] border border-slate-200/90 dark:border-[#2C2C2C] rounded-b-2xl shadow-sm p-4 relative flex flex-col transition-colors">

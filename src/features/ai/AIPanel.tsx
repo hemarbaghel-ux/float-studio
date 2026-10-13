@@ -26,6 +26,8 @@ import { TelemetryService } from '../../services/telemetryService';
 import { useUsageStore } from '../../store/usageStore';
 import { ConversationService, ConversationMeta } from '../../services/conversationService';
 import { ContextPicker } from './ContextPicker';
+import { ChatFeedbackButtons } from '../float/ChatFeedbackButtons';
+import { CloudSessionBanner } from '../float/CloudSession';
 import { v4 as uuidv4 } from 'uuid';
 
 function CodeBlock({ node, inline, className, children, ...props }: any) {
@@ -987,7 +989,7 @@ export function AIPanel() {
           virtualFiles: virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
           conversationId: targetConvId,
           projectId: currentProjectId,
-          model: selectedModel || 'gpt-4o'
+          model: selectedModel || 'gpt-6-astra'
         })
       });
 
@@ -1930,13 +1932,13 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedModel('gpt-4o-mini');
+                              setSelectedModel(selectedModel === 'gpt-6-astra' ? 'gpt-6.1-sol' : 'gpt-6-astra');
                               handleRetry(msg.id);
                             }}
                             className="px-2.5 py-1 text-xs font-semibold rounded-md bg-purple-600 text-white hover:bg-purple-700 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
                           >
                             <Sparkles size={12} />
-                            <span>Switch to GPT-4o mini & Retry</span>
+                            <span>Switch to {selectedModel === 'gpt-6-astra' ? 'GPT-6.1 Sol' : 'GPT-6 Astra'} & Retry</span>
                           </button>
                         )}
                       </div>
@@ -2132,6 +2134,28 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                     )}
                   </div>
                 )}
+
+                {!isUser && !isStreaming && !isError && (
+                  <div className="flex items-center justify-between w-full mt-1.5 px-1 pt-1 border-t border-slate-100 dark:border-white/5">
+                    <ChatFeedbackButtons
+                      chatId={useIDEStore.getState().projectId || 'ide_chat'}
+                      messageId={msg.id}
+                      modelId={msg.modelId}
+                      content={msg.content}
+                    />
+                    <button
+                      onClick={() => {
+                        if (navigator?.clipboard?.writeText) {
+                          navigator.clipboard.writeText(msg.content);
+                        }
+                      }}
+                      className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer transition-colors p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5"
+                      title="Copy response"
+                    >
+                      <Copy size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })
@@ -2153,24 +2177,29 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           )}
 
           {/* Obsolete model warning banner */}
-          {['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'].includes(selectedModel) && (
+          {selectedModel !== 'gpt-6-astra' && selectedModel !== 'gpt-6.1-sol' && (
             <div className="mx-3 mt-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between gap-2 shadow-2xs">
               <div className="flex items-center gap-1.5 min-w-0">
                 <AlertCircle size={14} className="shrink-0 text-amber-500" />
                 <span className="truncate">
-                  Model <strong>{selectedModel}</strong> is not an active OpenAI model in FLOAT.
+                  Model <strong>{selectedModel}</strong> is not an active model in FLOAT.
                 </span>
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedModel('gpt-4o')}
+                onClick={() => setSelectedModel('gpt-6-astra')}
                 className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer shrink-0 shadow-xs flex items-center gap-1"
               >
                 <Sparkles size={11} />
-                <span>Switch to GPT-4o</span>
+                <span>Switch to GPT-6 Astra</span>
               </button>
             </div>
           )}
+
+          {/* Active Cloud Execution Session Banner */}
+          <div className="mx-3 mt-2">
+            <CloudSessionBanner />
+          </div>
 
           {/* Attached Context Badge Chips */}
           {aiContext.length > 0 && (

@@ -87,8 +87,8 @@ export const MATRIX_CATEGORIES: MatrixCategory[] = [
         enterprise: 'included'
       },
       {
-        name: 'Frontier Models (o3-mini, GPT-4o, o1)',
-        description: 'OpenAI o3-mini, GPT-4o, and o1 deep reasoning models',
+        name: 'Frontier Models (GPT-6 Astra, GPT-6.1 Sol)',
+        description: 'OpenAI GPT-6 Astra and GPT-6.1 Sol preview models',
         hobby: 'limited',
         hobbyNote: '50 req/mo',
         pro: 'included',

@@ -16,6 +16,7 @@ import { SettingsModal } from '../settings/SettingsModal';
 import { AgentManagerModal } from '../ai/AgentManagerModal';
 import { EvalsWorkspace } from '../evals/EvalsWorkspace';
 import { AgentsWorkspace } from '../agents/AgentsWorkspace';
+import { CloudSessionModal } from '../float/CloudSession';
 
 export function AppShell() {
   const { saveProject, files,
@@ -126,6 +127,7 @@ export function AppShell() {
       <CommandPalette />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {agentManagerOpen && <AgentManagerModal onClose={() => setAgentManagerOpen(false)} />}
+      <CloudSessionModal />
     </div>
   );
 }

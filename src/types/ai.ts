@@ -22,6 +22,9 @@ export interface ModelCapability {
 export interface CloudAgentConfig {
   remoteUrl?: string;
   environmentId?: string;
+  sessionId?: string;
+  sessionStatus?: 'connected' | 'connecting' | 'fallback' | 'disconnected';
+  fallbackStrategy?: string;
   execServerCommand?: string;
   fallbackModel?: string;
   mode?: 'preview' | 'cloud_agent';

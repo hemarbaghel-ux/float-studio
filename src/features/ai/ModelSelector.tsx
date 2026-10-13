@@ -86,15 +86,8 @@ export function ModelSelector({
     if (model.reasoningLevel) {
       return model.reasoningLevel;
     }
-    if (model.id === 'auto') return 'Balanced';
-    if (model.id === 'gpt-4o') return 'Balanced';
-    if (model.id === 'gpt-4o-mini') return 'Fast';
-    if (model.id === 'o1') return 'High';
-    if (model.id === 'o3-mini') return 'High Fast';
-    if (model.id === 'o1-mini') return 'Fast Reasoning';
-    if (model.id === 'gpt-4.5-preview') return 'Flagship';
-    if (model.id === 'gpt-4-turbo') return 'Balanced';
-    if (model.id === 'gpt-3.5-turbo') return 'Fast';
+    if (model.id === 'gpt-6.1-sol') return 'Deep Reasoning';
+    if (model.id === 'gpt-6-astra') return 'Cloud Agent';
 
     switch (model.speed) {
       case 'fast': return 'Fast';

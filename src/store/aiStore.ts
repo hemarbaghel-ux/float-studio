@@ -28,49 +28,20 @@ interface AIStore {
 
 export const defaultAgents: Agent[] = INITIAL_AGENTS;
 
-const OBSOLETE_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
-  'gemini-2.0-pro',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-pro',
-  'gemini-3.8-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-flash-latest',
-  'gemini-3.1-pro-preview',
-  'claude-3-7-sonnet-20250219',
-  'claude-3-5-sonnet-20241022',
-  'claude-3-5-haiku-20241022',
-  'claude-3-opus-20240229',
-  'claude-opus-5.5',
-  'claude-opus-5',
-  'claude-fable-5.1',
-  'claude-sonnet-5.5',
-  'grok-4.7',
-  'grok-4.6',
-  'grok-2-1212',
-  'grok-2',
-  'grok-2-vision-1212',
-  'grok-beta',
-  'composer-2.5',
-  'muse-spark-1.3'
-];
+const VALID_FLOAT_MODELS = ['gpt-6-astra', 'gpt-6.1-sol'];
 
 const getInitialSelectedModel = () => {
   if (typeof window !== 'undefined') {
     try {
       const saved = localStorage.getItem('float_selected_model');
-      if (saved && !OBSOLETE_MODELS.includes(saved)) {
+      if (saved && VALID_FLOAT_MODELS.includes(saved)) {
         return saved;
       }
-      if (saved && OBSOLETE_MODELS.includes(saved)) {
-        localStorage.setItem('float_selected_model', 'auto');
-      }
+      localStorage.setItem('float_selected_model', 'gpt-6-astra');
     } catch {}
   }
-  return 'auto';
+  return 'gpt-4o';
+  return 'gpt-6-astra';
 };
 
 const getInitialEffort = (): ReasoningEffortLevel => {
@@ -91,11 +62,15 @@ const getInitialFavorites = (): string[] => {
       const saved = localStorage.getItem('float_favorite_models');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && !parsed.some(m => OBSOLETE_MODELS.includes(m))) return parsed;
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter(m => VALID_FLOAT_MODELS.includes(m));
+          if (filtered.length > 0) return filtered;
+        }
       }
     } catch {}
   }
   return ['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1'];
+  return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
 const getInitialRecents = (): string[] => {
@@ -104,11 +79,15 @@ const getInitialRecents = (): string[] => {
       const saved = localStorage.getItem('float_recent_models');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && !parsed.some(m => OBSOLETE_MODELS.includes(m))) return parsed;
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter(m => VALID_FLOAT_MODELS.includes(m));
+          if (filtered.length > 0) return filtered;
+        }
       }
     } catch {}
   }
-  return ['auto', 'gpt-4o', 'gpt-4o-mini'];
+  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini'];
+  return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
 export const useAIStore = create<AIStore>((set) => ({
@@ -120,12 +99,12 @@ export const useAIStore = create<AIStore>((set) => ({
   favoriteModels: getInitialFavorites(),
   recentModels: getInitialRecents(),
   providers: {
-    openai: { enabled: true, configured: false, defaultModel: 'gpt-4o' },
-    auto: { enabled: true, configured: false, defaultModel: 'gpt-4o' }
+    openai: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' },
+    auto: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' }
   },
   preferences: {
-    preferredModel: 'auto',
-    fallbackModel: 'gpt-4o-mini',
+    preferredModel: 'gpt-6-astra',
+    fallbackModel: 'gpt-6.1-sol',
     speedPreference: 'fast',
     qualityPreference: 'high'
   },
