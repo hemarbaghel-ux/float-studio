@@ -768,6 +768,7 @@ export function AIPanel() {
       accumulatedText = '';
       let buffer = '';
       let receivedDone = false;
+      let streamCancelled = false;
       let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
       let finalExplanation: any = undefined;
 
@@ -800,6 +801,7 @@ export function AIPanel() {
           finalUsage = data.usage;
           if (data.contextExplanation) finalExplanation = data.contextExplanation;
           if (data.cancelled) {
+            streamCancelled = true;
             updateAiMessage(modelMsgId, {
               content: accumulatedText ? `${accumulatedText} *(cancelled)*` : '*(Generation stopped)*',
               status: 'cancelled',
@@ -850,11 +852,13 @@ export function AIPanel() {
         );
       }
       const latency = Date.now() - startTime;
-      updateAiMessage(modelMsgId, {
-        content: accumulatedText,
-        status: 'completed',
-        latency
-      });
+      if (!streamCancelled) {
+        updateAiMessage(modelMsgId, {
+          content: accumulatedText,
+          status: 'completed',
+          latency
+        });
+      }
 
       // Record token analytics only when genuine usage is returned by upstream API
       if (finalUsage && typeof finalUsage.inputTokens === 'number' && typeof finalUsage.outputTokens === 'number') {
