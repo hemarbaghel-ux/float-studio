@@ -4,6 +4,14 @@ import { subscriptionRouter, handleStripeWebhook } from './subscription/subscrip
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import dotenv from 'dotenv';
+
+// Load environment configuration (.env and .env.local) safely
+dotenv.config();
+if (fs.existsSync(path.resolve(process.cwd(), '.env.local'))) {
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false });
+}
+
 import { ModelRouter } from './providers/router';
 import { evalEngine } from './evalEngine';
 import { ServerPrivacyGuard } from './privacyGuard';
