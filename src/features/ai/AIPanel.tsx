@@ -766,60 +766,89 @@ export function AIPanel() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       accumulatedText = '';
+      let buffer = '';
+      let receivedDone = false;
       let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
       let finalExplanation: any = undefined;
+
+      const processSseEvent = (rawEvent: string) => {
+        const dataLines = rawEvent
+          .split(/\r?\n/)
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).replace(/^ /, ''));
+        if (dataLines.length === 0) return;
+
+        let data: any;
+        try {
+          data = JSON.parse(dataLines.join('\n'));
+        } catch {
+          throw new Error('The AI server returned a malformed streaming event. Please retry.');
+        }
+
+        if (data.type === 'context_info') {
+          finalExplanation = data.contextExplanation;
+          updateAiMessage(modelMsgId, { contextExplanation: data.contextExplanation });
+        } else if (data.type === 'delta') {
+          if (typeof data.text !== 'string') {
+            throw new Error('The AI server returned an invalid text chunk.');
+          }
+          accumulatedText += data.text;
+          updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
+        } else if (data.type === 'done') {
+          receivedDone = true;
+          if (typeof data.text === 'string') accumulatedText = data.text;
+          finalUsage = data.usage;
+          if (data.contextExplanation) finalExplanation = data.contextExplanation;
+          if (data.cancelled) {
+            updateAiMessage(modelMsgId, {
+              content: accumulatedText ? `${accumulatedText} *(cancelled)*` : '*(Generation stopped)*',
+              status: 'cancelled',
+              contextExplanation: finalExplanation
+            });
+          } else {
+            updateAiMessage(modelMsgId, {
+              content: accumulatedText,
+              status: 'completed',
+              latency: Date.now() - startTime,
+              contextExplanation: finalExplanation
+            });
+          }
+        } else if (data.type === 'error') {
+          throw new Error(typeof data.error === 'string' ? data.error : 'AI generation failed.');
+        } else {
+          throw new Error(`The AI server returned an unknown streaming event: ${String(data.type || 'missing type')}.`);
+        }
+      };
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
 
         if (activeConvIdRef.current !== targetConvId) {
-          reader.cancel();
+          await reader.cancel();
           break;
         }
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'context_info') {
-                finalExplanation = data.contextExplanation;
-                updateAiMessage(modelMsgId, {
-                  contextExplanation: data.contextExplanation
-                });
-              } else if (data.type === 'delta') {
-                accumulatedText += data.text;
-                updateAiMessage(modelMsgId, {
-                  content: accumulatedText,
-                  status: 'streaming'
-                });
-              } else if (data.type === 'done') {
-                accumulatedText = data.text || accumulatedText;
-                finalUsage = data.usage;
-                if (data.contextExplanation) {
-                  finalExplanation = data.contextExplanation;
-                }
-                updateAiMessage(modelMsgId, {
-                  content: accumulatedText,
-                  status: 'completed',
-                  latency: Date.now() - startTime,
-                  contextExplanation: finalExplanation
-                });
-              } else if (data.type === 'error') {
-                throw new Error(data.error);
-              }
-            } catch (e: any) {
-              if (e.message && !e.message.includes('JSON')) {
-                throw e;
-              }
-            }
-          }
+        buffer += decoder.decode(value, { stream: true });
+        let boundary: number;
+        while ((boundary = buffer.search(/\r?\n\r?\n/)) !== -1) {
+          const separator = buffer.match(/^.*?(\r?\n\r?\n)/s)?.[1];
+          if (!separator) break;
+          const event = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + separator.length);
+          processSseEvent(event);
         }
       }
 
+      buffer += decoder.decode();
+      if (buffer.trim()) processSseEvent(buffer);
+      if (!receivedDone) {
+        throw new Error(
+          accumulatedText
+            ? 'The AI stream ended before completion was confirmed. Please retry.'
+            : 'The AI stream ended without a response. Check provider credentials, model access, and server logs.'
+        );
+      }
       const latency = Date.now() - startTime;
       updateAiMessage(modelMsgId, {
         content: accumulatedText,
