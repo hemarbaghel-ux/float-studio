@@ -82,7 +82,7 @@ export function InlineAssistantModal({
           endLine,
           fileName,
           language,
-          model: selectedModel || 'gemini-3.1-flash-lite'
+          model: selectedModel || 'gpt-4o'
         })
       });
 

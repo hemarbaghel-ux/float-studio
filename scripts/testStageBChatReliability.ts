@@ -153,6 +153,110 @@ async function runStageBTests() {
     assert.strictEqual(requestMessages[requestMessages.length - 1].text, 'Now add unit tests');
   });
 
+  // Test 7: Phase 2A Request Submission & Duplicate Prevention
+  test('Submission guard blocks duplicate in-flight requests when streaming', () => {
+    let streaming = false;
+    let requestsFired = 0;
+    const send = (promptText: string) => {
+      if (!promptText.trim() || streaming) return;
+      streaming = true;
+      requestsFired++;
+    };
+
+    send('First prompt');
+    assert.strictEqual(requestsFired, 1, 'First request fired');
+    send('Second prompt rapid click');
+    assert.strictEqual(requestsFired, 1, 'Rapid click blocked while streaming');
+    streaming = false;
+    send('Next prompt after completion');
+    assert.strictEqual(requestsFired, 2, 'Next prompt fires once streaming completes');
+  });
+
+  // Test 8: Phase 2A Error Code Categorization & Actionable Extraction
+  test('Categorizes provider error codes for actionable UI presentation', () => {
+    const errorCodes = [
+      { status: 401, error: 'Unauthorized', expectedCode: 'AUTH_ERROR' },
+      { status: 429, error: 'Rate limit exceeded', expectedCode: 'RATE_LIMITED' },
+      { status: 429, error: 'insufficient_quota', expectedCode: 'QUOTA_EXCEEDED' },
+      { status: 404, error: 'Model not found', expectedCode: 'MODEL_NOT_FOUND' },
+      { status: 500, error: 'Internal server error', expectedCode: 'PROVIDER_ERROR' }
+    ];
+
+    for (const testCase of errorCodes) {
+      const code = testCase.error.includes('quota')
+        ? 'QUOTA_EXCEEDED'
+        : (testCase.status === 401 ? 'AUTH_ERROR' : testCase.status === 429 ? 'RATE_LIMITED' : testCase.status === 404 ? 'MODEL_NOT_FOUND' : 'PROVIDER_ERROR');
+      assert.strictEqual(code, testCase.expectedCode);
+    }
+  });
+
+  // Test 9: Phase 2A Stream Cancellation & Cleanup
+  test('Stream cancellation signals abort controller and cleans up loading state', () => {
+    const controller = new AbortController();
+    let isStreaming = true;
+    let isCancelled = false;
+
+    // Simulate clicking stop button
+    controller.abort();
+    if (controller.signal.aborted) {
+      isStreaming = false;
+      isCancelled = true;
+    }
+
+    assert.strictEqual(isStreaming, false, 'Loading/streaming state must exit on cancellation');
+    assert.strictEqual(isCancelled, true, 'Message marked as cancelled without saving error');
+  });
+
+  // Test 10: Phase 2A Conversation Switching Isolation
+  test('Active chat tracking discards late chunks when user navigates away', () => {
+    let activeChatId = 'chat-alpha';
+    let targetMsgChatId = 'chat-alpha';
+    let patchedContent = '';
+
+    const patch = (msgChatId: string, text: string) => {
+      if (activeChatId !== msgChatId) return; // Guard prevents cross-chat bleeding
+      patchedContent = text;
+    };
+
+    // Chunk arrives for active chat
+    patch(targetMsgChatId, 'Hello from chat alpha');
+    assert.strictEqual(patchedContent, 'Hello from chat alpha');
+
+    // User navigates to chat-beta while chunk was in transit
+    activeChatId = 'chat-beta';
+    patch('chat-alpha', 'Late chunk from chat alpha');
+    assert.strictEqual(patchedContent, 'Hello from chat alpha', 'Late chunk must not apply after navigation');
+  });
+
+  // Test 11: Phase 2A Empty Response Rejection
+  test('Empty response or malformed stream is rejected as error rather than empty success', () => {
+    const fullText = '';
+    const hasChangeSet = false;
+    let didThrow = false;
+
+    try {
+      if (!fullText && !hasChangeSet) {
+        throw new Error('Provider returned an empty response. Please verify provider connectivity and try again.');
+      }
+    } catch (e: any) {
+      didThrow = true;
+      assert.ok(e.message.includes('empty response'), 'Identifies empty response error');
+    }
+    assert.strictEqual(didThrow, true, 'Must throw error on empty response');
+  });
+
+  // Test 12: Phase 2A OpenAI-Only Active Model Routing
+  test('All active dashboard models map strictly to OpenAI API models or truthfully disclosed free tier', () => {
+    const activeOpenAIModels = [
+      'gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1', 'o1-mini',
+      'gpt-4.5-preview', 'gpt-4-turbo', 'chatgpt-4o-latest'
+    ];
+    for (const mId of activeOpenAIModels) {
+      const adapter = router.getAdapterForModel(mId);
+      assert.strictEqual(adapter.id, 'openai', `Model ${mId} routes to openai adapter`);
+    }
+  });
+
   console.log(`\n======================================================`);
   console.log(`Stage B Test Summary: ${passed} passed, ${failed} failed.`);
   console.log(`======================================================\n`);

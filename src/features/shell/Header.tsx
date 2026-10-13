@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, Sun, Moon, Settings, Sparkles } from 'lucide-react';
+import { Search, Sun, Moon, Settings, Sparkles, MessageSquare } from 'lucide-react';
 import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
 import { LanguageDropdown } from '../../components/LanguageDropdown';
 import { AccountMenu } from '../../components/AccountMenu';
@@ -39,6 +39,19 @@ export function Header() {
         <span className="truncate font-medium text-slate-800 dark:text-[#C9D1D9] max-w-[180px]" title={projectName || 'Workspace'}>
           {projectName || 'Workspace'}
         </span>
+        <button
+          onClick={() => {
+            const currentProjectId = useIDEStore.getState().projectId;
+            const targetUrl = currentProjectId ? `/chat/${currentProjectId}` : '/';
+            window.history.pushState({}, '', targetUrl);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
+          title="Open AI Chat for this Workspace"
+        >
+          <MessageSquare size={12} />
+          <span>Chat</span>
+        </button>
         <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400 text-[10px] font-medium border border-emerald-200 dark:border-emerald-500/20">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
           <span>Ready</span>
