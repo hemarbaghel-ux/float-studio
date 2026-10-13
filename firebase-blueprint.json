@@ -410,6 +410,68 @@
         }
       },
       "required": ["userId", "planId", "status", "updatedAt"]
+    },
+    "ChatFeedback": {
+      "title": "ChatFeedback",
+      "description": "User thumbs up/down rating and feedback for AI chat responses",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique feedback record ID",
+          "maxLength": 128
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user providing feedback",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "chatId": {
+          "type": "string",
+          "description": "Identifier of the chat thread or project",
+          "maxLength": 128
+        },
+        "messageId": {
+          "type": "string",
+          "description": "Identifier of the rated message",
+          "maxLength": 128
+        },
+        "rating": {
+          "type": "string",
+          "description": "Thumbs rating value",
+          "enum": ["thumbs_up", "thumbs_down"]
+        },
+        "modelId": {
+          "type": "string",
+          "description": "Model that produced the response",
+          "maxLength": 100
+        },
+        "messageSnippet": {
+          "type": "string",
+          "description": "Preview snippet of the response content",
+          "maxLength": 500
+        },
+        "reason": {
+          "type": "string",
+          "description": "Optional category or reason for the rating",
+          "maxLength": 100
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional user comment or explanation",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        }
+      },
+      "required": ["ownerId", "chatId", "messageId", "rating", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -444,6 +506,10 @@
     "/evalReviews/{reviewId}": {
       "schema": { "$ref": "#/entities/EvalReview" },
       "description": "Stores human review assessments of evaluation runs"
+    },
+    "/chatFeedback/{feedbackId}": {
+      "schema": { "$ref": "#/entities/ChatFeedback" },
+      "description": "Stores user thumbs up/down ratings and feedback on AI chat responses"
     }
   }
 }

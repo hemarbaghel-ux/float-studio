@@ -52,6 +52,14 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   // Dedicated 10-model selection matching Cursor-style screenshot
   const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'gpt-4o');
 
+  // Active chat routing
+  const getChatIdFromUrl = () => {
+    if (typeof window === 'undefined') return null;
+    const match = window.location.pathname.match(/^\/chat\/([^/?#]+)/);
+    return match ? match[1] : null;
+  };
+  const [activeChatId, setActiveChatId] = useState<string | null>(getChatIdFromUrl);
+
   // Chats list & search
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -70,6 +78,18 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const cid = getChatIdFromUrl();
+      setActiveChatId(cid);
+      if (cid) {
+        setActiveTab('new-chat');
+      }
+    };
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, []);
 
   useEffect(() => {
     const openAgentManager = () => setShowAgentManager(true);
@@ -131,6 +151,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       files = [];
     }
     setProject(project.name || 'Untitled Project', files, project.id);
+    setActiveChatId(project.id);
     setActiveTab('new-chat');
     setPrompt('');
     window.history.pushState({}, '', '/chat/' + project.id);
@@ -144,6 +165,11 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       await deleteDoc(doc(db, 'projects', projectId));
       setProjects(prev => prev.filter(p => p.id !== projectId));
       if (projectToDelete === projectId) setProjectToDelete(null);
+      if (activeChatId === projectId) {
+        setActiveChatId(null);
+        window.history.pushState({}, '', '/dashboard');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }
     } catch (err) {
       console.error('Failed to delete chat:', err);
     }
@@ -177,6 +203,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       await store.saveProject();
       fetchProjects();
       setPrompt('');
+      setActiveChatId(store.projectId);
       window.history.pushState({}, '', '/chat/' + store.projectId);
       window.dispatchEvent(new PopStateEvent('popstate'));
     } catch (err: any) {
@@ -213,9 +240,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               href="/"
               onClick={(e) => {
                 e.preventDefault();
+                setActiveChatId(null);
                 setActiveTab('new-chat');
                 setPrompt('');
-                window.history.pushState({}, '', '/');
+                window.history.pushState({}, '', '/dashboard');
                 window.dispatchEvent(new PopStateEvent('popstate'));
               }}
               className="flex items-center hover:opacity-85 transition-opacity"
@@ -255,9 +283,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           {/* New Chat Button */}
           <button
             onClick={() => {
+              setActiveChatId(null);
               setActiveTab('new-chat');
               setPrompt('');
-              window.history.pushState({}, '', '/');
+              window.history.pushState({}, '', '/dashboard');
               window.dispatchEvent(new PopStateEvent('popstate'));
               if (textareaRef.current) textareaRef.current.focus();
             }}
@@ -265,7 +294,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             className={`w-full flex items-center ${
               sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
             } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === 'new-chat'
+              activeTab === 'new-chat' && !activeChatId
                 ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
                 : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
             }`}
@@ -386,22 +415,29 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                   No chats yet
                 </div>
               ) : (
-                projects.map((p) => (
-                  <div
-                    key={p.id}
-                    onClick={() => handleResumeProject(p)}
-                    className="group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer text-slate-700 dark:text-[#C9D1D9] transition-colors"
-                  >
-                    <span className="truncate flex-1 font-normal text-left">{p.name}</span>
-                    <button
-                      onClick={(e) => handleDeleteProject(e, p.id)}
-                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-opacity p-0.5"
-                      title="Delete chat"
+                projects.map((p) => {
+                  const isSelected = activeChatId === p.id;
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => handleResumeProject(p)}
+                      className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-medium'
+                          : 'hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9]'
+                      }`}
                     >
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))
+                      <span className="truncate flex-1 font-normal text-left">{p.name}</span>
+                      <button
+                        onClick={(e) => handleDeleteProject(e, p.id)}
+                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-opacity p-0.5"
+                        title="Delete chat"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
@@ -546,6 +582,13 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 ))}
               </div>
             )}
+          </div>
+        ) : activeChatId ? (
+          /* ====================================================== */
+          /* ACTIVE CHAT WORKSPACE (ChatThread)                     */
+          /* ====================================================== */
+          <div className="flex-1 flex flex-col h-full w-full overflow-hidden">
+            <ChatThread chatId={activeChatId} />
           </div>
         ) : (
           /* ====================================================== */

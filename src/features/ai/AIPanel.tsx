@@ -26,6 +26,7 @@ import { TelemetryService } from '../../services/telemetryService';
 import { useUsageStore } from '../../store/usageStore';
 import { ConversationService, ConversationMeta } from '../../services/conversationService';
 import { ContextPicker } from './ContextPicker';
+import { ChatFeedbackButtons } from '../float/ChatFeedbackButtons';
 import { v4 as uuidv4 } from 'uuid';
 
 function CodeBlock({ node, inline, className, children, ...props }: any) {
@@ -2077,6 +2078,28 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                         isExecuting={isLoading}
                       />
                     )}
+                  </div>
+                )}
+
+                {!isUser && !isStreaming && !isError && (
+                  <div className="flex items-center justify-between w-full mt-1.5 px-1 pt-1 border-t border-slate-100 dark:border-white/5">
+                    <ChatFeedbackButtons
+                      chatId={useIDEStore.getState().projectId || 'ide_chat'}
+                      messageId={msg.id}
+                      modelId={msg.modelId}
+                      content={msg.content}
+                    />
+                    <button
+                      onClick={() => {
+                        if (navigator?.clipboard?.writeText) {
+                          navigator.clipboard.writeText(msg.content);
+                        }
+                      }}
+                      className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer transition-colors p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5"
+                      title="Copy response"
+                    >
+                      <Copy size={12} />
+                    </button>
                   </div>
                 )}
               </div>

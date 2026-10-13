@@ -1,8 +1,14 @@
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load environment variables early
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+
 import { setupAgentOrchestratorRoutes } from './agentOrchestrator';
 import { integrationsRouter } from './integrationsRouter';
 import { subscriptionRouter, handleStripeWebhook } from './subscription/subscriptionRouter';
 import express from 'express';
-import path from 'path';
 import fs from 'fs';
 import { ModelRouter } from './providers/router';
 import { evalEngine } from './evalEngine';

@@ -23,6 +23,7 @@ import { isShellCommand, runShell } from './sandbox';
 import { useCloudSession } from './cloudSessionStore';
 import { AttachMenu, SlashMenu, slashMatches } from './ComposerExtras';
 import { CloudSessionBanner } from './CloudSession';
+import { ChatFeedbackButtons } from './ChatFeedbackButtons';
 
 type ChangeStatus = 'pending' | 'accepted' | 'rejected';
 
@@ -588,6 +589,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
               ) : (
                 <AssistantMessage
                   key={m.id}
+                  chatId={chatId}
                   msg={m}
                   streaming={streaming && m.id === messages[messages.length - 1]?.id}
                   onAccept={(seg) => applySegment(m.id, seg)}
@@ -703,8 +705,9 @@ function HeaderButton({ icon: Icon, label, onClick, active }: { icon: any; label
 /* ----------------------------------------------------------------------------------------- */
 
 function AssistantMessage({
-  msg, streaming, onAccept, onReject, onUndo,
+  chatId, msg, streaming, onAccept, onReject, onUndo,
 }: {
+  chatId: string;
   msg: ThreadMessage;
   streaming: boolean;
   onAccept: (seg: Segment) => void;
@@ -800,6 +803,23 @@ function AssistantMessage({
         <div className="rounded-lg border border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">{msg.error}</div>
       )}
       {msg.cancelled && <div className="text-[11px] text-slate-400">Stopped.</div>}
+      {!streaming && !msg.error && (
+        <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-white/5">
+          <ChatFeedbackButtons
+            chatId={chatId}
+            messageId={msg.id}
+            modelId={msg.modelId}
+            content={msg.content}
+          />
+          <button
+            onClick={() => void navigator.clipboard.writeText(msg.content)}
+            className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer transition-colors p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5"
+            title="Copy response"
+          >
+            <Copy size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

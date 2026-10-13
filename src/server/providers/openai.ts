@@ -228,10 +228,11 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         response = await client.chat.completions.create(params);
       } catch (callErr: any) {
-        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || /not found|does not exist/i.test(callErr?.message || ''))) {
-          // Preview Cloud Agent: Upstream fallback to gpt-4o
+        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || callErr?.status === 429 || /not found|does not exist|quota|billing/i.test(callErr?.message || ''))) {
+          // Preview Cloud Agent: Upstream fallback to gpt-4o with primary OpenAI credentials
           params.model = 'gpt-4o';
-          response = await client.chat.completions.create(params);
+          const fallbackClient = process.env.OPENAI_API_KEY ? this.getClient('gpt-4o') : client;
+          response = await fallbackClient.chat.completions.create(params);
         } else {
           throw callErr;
         }
@@ -301,10 +302,11 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         stream = await client.chat.completions.create(params, { signal });
       } catch (callErr: any) {
-        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || /not found|does not exist/i.test(callErr?.message || ''))) {
-          // Preview Cloud Agent: Upstream fallback to gpt-4o
+        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || callErr?.status === 429 || /not found|does not exist|quota|billing/i.test(callErr?.message || ''))) {
+          // Preview Cloud Agent: Upstream fallback to gpt-4o with primary OpenAI credentials
           params.model = 'gpt-4o';
-          stream = await client.chat.completions.create(params, { signal });
+          const fallbackClient = process.env.OPENAI_API_KEY ? this.getClient('gpt-4o') : client;
+          stream = await fallbackClient.chat.completions.create(params, { signal });
         } else {
           throw callErr;
         }
@@ -355,6 +357,10 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    return PortableAgentRunner.run('openai', req, res, model, prompt, virtualFiles, process.env.OPENAI_API_KEY!);
+    const apiKey = (model === 'gpt-6-astra' && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
+      ? (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!
+      : (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!;
+
+    return PortableAgentRunner.run('openai', req, res, model, prompt, virtualFiles, apiKey);
   }
 }

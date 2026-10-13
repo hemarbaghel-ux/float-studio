@@ -86,10 +86,12 @@ async function providerTurn(provider: Provider, model: string, key: string, inst
   let response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
   let data = await response.json().catch(() => ({}));
 
-  // Preview Cloud Agent: Upstream fallback to gpt-4o if gpt-6-astra preview endpoint returns 404
-  if (!response.ok && model === 'gpt-6-astra' && (response.status === 404 || /not found|does not exist/i.test(data.error?.message || ''))) {
+  // Preview Cloud Agent: Upstream fallback to gpt-4o if gpt-6-astra preview endpoint returns 404 or quota error
+  if (!response.ok && model === 'gpt-6-astra' && (response.status === 404 || response.status === 429 || /not found|does not exist|quota|billing/i.test(data.error?.message || ''))) {
+    const fallbackKey = process.env.OPENAI_API_KEY || key;
+    const fallbackHeaders = { ...headers, Authorization: `Bearer ${fallbackKey}` };
     const fallbackBody = { ...body, model: 'gpt-4o' };
-    response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(fallbackBody), signal });
+    response = await fetch(url, { method: 'POST', headers: fallbackHeaders, body: JSON.stringify(fallbackBody), signal });
     data = await response.json().catch(() => ({}));
   }
 
