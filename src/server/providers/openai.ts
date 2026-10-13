@@ -8,7 +8,6 @@ import {
 } from './base';
 import { AgentRunner } from '../agent/agentRunner';
 import { PortableAgentRunner } from '../agent/portableAgentRunner';
-import { GPT6_ASTRA_CLOUD_CONFIG } from './cloudAgentConfig';
 
 export function normalizeOpenAIError(error: any): AIProviderError {
   const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
@@ -91,7 +90,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
   name = 'OpenAI';
 
   isConfigured(): boolean {
-    const key = process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY || process.env.OPENAI_API_KEY;
+    const key = process.env.OPENAI_API_KEY;
     return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
   }
 
@@ -104,9 +103,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    const key = (forModel === 'gpt-6-astra' && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
-      ? (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!
-      : (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!;
+    const key = process.env.OPENAI_API_KEY;
 
     return new OpenAI({
       apiKey: key
@@ -228,13 +225,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         response = await client.chat.completions.create(params);
       } catch (callErr: any) {
-        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || /not found|does not exist/i.test(callErr?.message || ''))) {
-          // Preview Cloud Agent: Upstream fallback to gpt-4o
-          params.model = 'gpt-4o';
-          response = await client.chat.completions.create(params);
-        } else {
-          throw callErr;
-        }
+        throw callErr;
       }
 
       const choice = response.choices[0];
@@ -301,13 +292,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         stream = await client.chat.completions.create(params, { signal });
       } catch (callErr: any) {
-        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || /not found|does not exist/i.test(callErr?.message || ''))) {
-          // Preview Cloud Agent: Upstream fallback to gpt-4o
-          params.model = 'gpt-4o';
-          stream = await client.chat.completions.create(params, { signal });
-        } else {
-          throw callErr;
-        }
+        throw callErr;
       }
 
       let fullText = '';
