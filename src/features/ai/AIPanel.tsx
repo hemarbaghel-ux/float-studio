@@ -633,7 +633,26 @@ export function AIPanel() {
       });
     }
 
-    const token = await auth.currentUser?.getIdToken();
+    let token: string | undefined;
+    try {
+      token = await auth.currentUser?.getIdToken();
+    } catch (authError: any) {
+      if (overrideInput === undefined) setInput(draftText);
+      addAiMessage({
+        id: uuidv4(),
+        role: 'model',
+        content: '**Authentication Error**: Could not refresh your sign-in session. Please sign in again and retry.',
+        status: 'error',
+        error: authError?.message || 'Failed to obtain authentication token',
+        modelId: selectedModel,
+        agentId: selectedAgent,
+        conversationId: targetConvId
+      });
+      setIsLoading(false);
+      isSubmittingRef.current = false;
+      return;
+    }
+
     if (!token) {
       if (overrideInput === undefined) {
         setInput(draftText); // Preserve user draft on auth failure
