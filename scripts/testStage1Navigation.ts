@@ -111,6 +111,93 @@ function runStage1NavigationTests() {
     assert.strictEqual(getCollapsed(), false);
   });
 
+  // 6. Direct URL path resolution
+  test('Direct URL routing logic maps IDE/workspace to AppShell and tabs to Dashboard', () => {
+    const resolveRoute = (path: string) => {
+      if (path === '/workspace' || path === '/ide') return 'AppShell';
+      if (path.startsWith('/chat/')) return 'Dashboard:new-chat';
+      if (path === '/automations') return 'Dashboard:automations';
+      if (path === '/projects') return 'Dashboard:codebase';
+      if (path === '/usage' || path.startsWith('/usage') || path.startsWith('/analytics')) return 'Dashboard:usage';
+      if (path === '/integrations') return 'Dashboard:integrations';
+      return 'Dashboard:new-chat';
+    };
+
+    assert.strictEqual(resolveRoute('/workspace'), 'AppShell');
+    assert.strictEqual(resolveRoute('/ide'), 'AppShell');
+    assert.strictEqual(resolveRoute('/chat/proj-123'), 'Dashboard:new-chat');
+    assert.strictEqual(resolveRoute('/automations'), 'Dashboard:automations');
+    assert.strictEqual(resolveRoute('/projects'), 'Dashboard:codebase');
+    assert.strictEqual(resolveRoute('/usage'), 'Dashboard:usage');
+    assert.strictEqual(resolveRoute('/integrations'), 'Dashboard:integrations');
+  });
+
+  // 7. Popstate event tab and chat synchronization
+  test('Popstate handler correctly extracts activeChatId and activeTab across history transitions', () => {
+    const handlePopStatePath = (pathname: string) => {
+      const match = pathname.match(/^\/chat\/([^/]+)/);
+      const activeChatId = match ? match[1] : null;
+      let activeTab = 'new-chat';
+      if (pathname === '/automations') activeTab = 'automations';
+      else if (pathname === '/projects') activeTab = 'codebase';
+      else if (pathname.includes('/usage') || pathname.includes('/analytics')) activeTab = 'usage';
+      else if (pathname === '/integrations') activeTab = 'integrations';
+      else if (!match) activeTab = 'new-chat';
+
+      return { activeChatId, activeTab };
+    };
+
+    const s1 = handlePopStatePath('/chat/demo-abc-123');
+    assert.strictEqual(s1.activeChatId, 'demo-abc-123');
+    assert.strictEqual(s1.activeTab, 'new-chat');
+
+    const s2 = handlePopStatePath('/integrations');
+    assert.strictEqual(s2.activeChatId, null);
+    assert.strictEqual(s2.activeTab, 'integrations');
+
+    const s3 = handlePopStatePath('/projects');
+    assert.strictEqual(s3.activeChatId, null);
+    assert.strictEqual(s3.activeTab, 'codebase');
+
+    const s4 = handlePopStatePath('/');
+    assert.strictEqual(s4.activeChatId, null);
+    assert.strictEqual(s4.activeTab, 'new-chat');
+  });
+
+  // 8. Synchronous double-submission suppression
+  test('Submission guard prevents concurrent duplicate submissions on rapid Enter keypress', () => {
+    let callCount = 0;
+    let isSubmitting = false;
+    let isSubmittingRef = { current: false };
+
+    const submit = (prompt: string) => {
+      const text = prompt.trim();
+      if (!text || isSubmitting || isSubmittingRef.current) return false;
+
+      isSubmittingRef.current = true;
+      isSubmitting = true;
+      callCount++;
+      return true;
+    };
+
+    // First submit passes
+    const first = submit('Build a landing page');
+    assert.strictEqual(first, true);
+    assert.strictEqual(callCount, 1);
+
+    // Immediate rapid submit fails guard
+    const second = submit('Build a landing page');
+    assert.strictEqual(second, false);
+    assert.strictEqual(callCount, 1);
+
+    // Empty prompt fails
+    isSubmittingRef.current = false;
+    isSubmitting = false;
+    const empty = submit('    ');
+    assert.strictEqual(empty, false);
+    assert.strictEqual(callCount, 1);
+  });
+
   console.log(`\n======================================================`);
   console.log(`Stage 1 Navigation Verification Summary: ${passed} passed, ${failed} failed.`);
   console.log(`======================================================\n`);

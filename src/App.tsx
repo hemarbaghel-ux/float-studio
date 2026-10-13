@@ -11,6 +11,7 @@ import { UsageDashboard } from './features/models/UsageDashboard';
 import { ModelDetailsPage } from './features/models/ModelDetailsPage';
 import { OnboardingFlow } from './features/onboarding/OnboardingFlow';
 import { Dashboard } from './features/dashboard/Dashboard';
+import { AppShell } from './features/shell/AppShell';
 import { PricingPage } from './features/pricing/PricingPage';
 import { SignUpPage } from './features/auth/SignUpPage';
 import { ResourcesPage } from './features/resources/ResourcesPage';
@@ -258,8 +259,13 @@ export default function App() {
     return <Dashboard initialTab="new-chat" />;
   }
 
-  // Route workspace or active chat to Dashboard
-  if (currentPath === '/workspace' || currentPath === '/ide' || currentPath.startsWith('/chat/')) {
+  // Route workspace or IDE to AppShell
+  if (currentPath === '/workspace' || currentPath === '/ide') {
+    return <AppShell />;
+  }
+
+  // Route active chat to Dashboard
+  if (currentPath.startsWith('/chat/')) {
     return <Dashboard initialTab="new-chat" />;
   }
 

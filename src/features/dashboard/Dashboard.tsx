@@ -40,13 +40,21 @@ interface ProjectItem {
 
 export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) {
   const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeChatId, setActiveChatId] = useState<string | null>(() => {
+    const match = window.location.pathname.match(/^\/chat\/([^/]+)/);
+    return match ? match[1] : null;
+  });
   const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [attachments, setAttachments] = useState<Attachments>({});
+
+  // Background automation runner
+  useAutomationScheduler();
 
   // Dedicated 10-model selection matching Cursor-style screenshot
   const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'gpt-4o');
@@ -68,7 +76,24 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
   useEffect(() => {
     setActiveTab(initialTab);
+    const match = window.location.pathname.match(/^\/chat\/([^/]+)/);
+    setActiveChatId(match ? match[1] : null);
   }, [initialTab]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const pathname = window.location.pathname;
+      const match = pathname.match(/^\/chat\/([^/]+)/);
+      setActiveChatId(match ? match[1] : null);
+      if (pathname === '/automations') setActiveTab('automations');
+      else if (pathname === '/projects') setActiveTab('codebase');
+      else if (pathname.includes('/usage') || pathname.includes('/analytics')) setActiveTab('usage');
+      else if (pathname === '/integrations') setActiveTab('integrations');
+      else if (!match) setActiveTab('new-chat');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     const openAgentManager = () => setShowAgentManager(true);
@@ -130,6 +155,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       files = [];
     }
     setProject(project.name || 'Untitled Project', files, project.id);
+    setActiveChatId(project.id);
     setActiveTab('new-chat');
     setPrompt('');
     window.history.pushState({}, '', '/chat/' + project.id);
@@ -150,8 +176,9 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
   const handleStart = async (customPrompt?: string) => {
     const textToSubmit = (customPrompt !== undefined ? customPrompt : prompt).trim();
-    if (!textToSubmit || isSubmitting) return;
+    if (!textToSubmit || isSubmitting || isSubmittingRef.current) return;
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     setSubmitError(null);
 
@@ -176,12 +203,14 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       await store.saveProject();
       fetchProjects();
       setPrompt('');
+      setActiveChatId(store.projectId);
       window.history.pushState({}, '', '/chat/' + store.projectId);
       window.dispatchEvent(new PopStateEvent('popstate'));
     } catch (err: any) {
       console.error('Failed to start chat session:', err);
       setSubmitError(err.message || 'Could not start new chat session. Please try again.');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -212,6 +241,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               href="/"
               onClick={(e) => {
                 e.preventDefault();
+                setActiveChatId(null);
                 setActiveTab('new-chat');
                 setPrompt('');
                 window.history.pushState({}, '', '/');
@@ -254,6 +284,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           {/* New Chat Button */}
           <button
             onClick={() => {
+              setActiveChatId(null);
               setActiveTab('new-chat');
               setPrompt('');
               window.history.pushState({}, '', '/');
@@ -423,23 +454,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             <IntegrationsPage />
           </div>
         ) : activeTab === 'automations' ? (
-          <div className="w-full h-full p-6 md:p-8 max-w-4xl mx-auto flex flex-col gap-6">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase text-blue-600 dark:text-blue-400 mb-1">
-                <Bot size={14} />
-                <span>Automations Engine</span>
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-                Developer Automations
-              </h2>
-              <p className="text-sm text-slate-500 dark:text-[#8B949E] mt-1">
-                Configure background triggers, webhook listeners, automated code reviews, and CI/CD validation.
-              </p>
-            </div>
-            <div className="bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-6 text-center text-slate-500 dark:text-[#8B949E] text-xs">
-              No active automation workers yet. Start a new chat to configure tasks.
-            </div>
-          </div>
+          <AutomationsPanel />
         ) : activeTab === 'codebase' || activeTab === 'projects' ? (
           <div className="w-full h-full p-6 md:p-8 max-w-5xl mx-auto flex flex-col gap-6">
             <div className="flex items-center justify-between">
@@ -453,6 +468,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               </div>
               <button
                 onClick={() => {
+                  setActiveChatId(null);
                   setActiveTab('new-chat');
                   setPrompt('');
                   window.history.pushState({}, '', '/');
@@ -478,6 +494,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 </p>
                 <button
                   onClick={() => {
+                    setActiveChatId(null);
                     setActiveTab('new-chat');
                     setPrompt('');
                     window.history.pushState({}, '', '/');
@@ -521,6 +538,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 ))}
               </div>
             )}
+          </div>
+        ) : activeChatId ? (
+          <div className="w-full h-full flex flex-col min-h-0 bg-white dark:bg-[#0A0A0A]">
+            <ChatThread chatId={activeChatId} />
           </div>
         ) : (
           /* ====================================================== */
