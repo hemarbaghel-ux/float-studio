@@ -22,10 +22,10 @@ export class ModelRouter {
     // Auto / Default
     'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
 
-    // Free Tier Model (powered by server-side OpenAI)
+    // Default lightweight route candidate (availability depends on server credentials)
     'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
 
-    // OpenAI Verified Models
+    // OpenAI route candidates (not a guarantee of account access)
     'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
     'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
     'o1': { provider: 'openai', apiModelId: 'o1' },
