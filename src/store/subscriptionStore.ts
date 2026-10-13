@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { auth } from '../lib/firebase';
 
+export type SubscriptionPlanId = 'free' | 'pro' | 'business' | 'ultimate';
+
 export interface PlanDetails {
-  id: string;
+  id: SubscriptionPlanId;
   name: string;
   badge?: string;
   monthlyPrice: number;
@@ -10,6 +12,71 @@ export interface PlanDetails {
   description: string;
   features: string[];
 }
+
+export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanDetails> = {
+  free: {
+    id: 'free',
+    name: 'FLOAT Free',
+    monthlyPrice: 0,
+    currency: 'USD',
+    description: 'Essential developer tools for building and exploring code.',
+    features: [
+      'FLOAT Basic AI model with standard context',
+      'Browser coding workspace & Monaco editor',
+      'Basic codebase search and file tools',
+      'Single-file review and proposals',
+      'Standard community support'
+    ]
+  },
+  pro: {
+    id: 'pro',
+    name: 'FLOAT Pro',
+    badge: 'Most Popular',
+    monthlyPrice: 20,
+    currency: 'USD',
+    description: 'For individual developers building seriously with AI agents.',
+    features: [
+      '500 Fast Frontier Model queries per month',
+      'Unlimited everyday FLOAT Basic model assistance',
+      'All 6 specialized developer agents (Coder, Reviewer, Planner, Debugger, Explorer, UI)',
+      'Multi-file ChangeSet generation and visual diff review',
+      'Advanced semantic repository context & search',
+      'Priority server processing queue'
+    ]
+  },
+  business: {
+    id: 'business',
+    name: 'FLOAT Business',
+    badge: 'Teams',
+    monthlyPrice: 40,
+    currency: 'USD',
+    description: 'For teams building, reviewing, and shipping software together.',
+    features: [
+      'Everything in Pro included',
+      '1,200 Fast Frontier Model queries per user/month',
+      'Shared team projects and synchronized workspaces',
+      'Centralized team billing & license administration',
+      'Team usage analytics & model intelligence tracking',
+      'Enhanced security & team audit logs'
+    ]
+  },
+  ultimate: {
+    id: 'ultimate',
+    name: 'FLOAT Ultimate',
+    badge: 'Maximum Power',
+    monthlyPrice: 100,
+    currency: 'USD',
+    description: 'For power users and teams running heavy agentic workflows.',
+    features: [
+      'Everything in Business included',
+      '3,500 Fast Frontier Model queries per user/month',
+      'Dedicated high-throughput inference lane',
+      'Custom model routing and temperature defaults',
+      'Early access to experimental autonomous agents',
+      '24/7 dedicated engineering support'
+    ]
+  }
+};
 
 export interface UserSubscriptionInfo {
   userId: string;

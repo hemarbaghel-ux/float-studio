@@ -13,6 +13,8 @@ import { OnboardingFlow } from './features/onboarding/OnboardingFlow';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { AppShell } from './features/shell/AppShell';
 import { PricingPage } from './features/pricing/PricingPage';
+import { CheckoutPage } from './features/checkout/CheckoutPage';
+import { CheckoutReturnPage } from './features/checkout/CheckoutReturnPage';
 import { SignUpPage } from './features/auth/SignUpPage';
 import { ResourcesPage } from './features/resources/ResourcesPage';
 import { DocsPage } from './features/resources/DocsPage';
@@ -56,6 +58,7 @@ export default function App() {
           url.pathname.startsWith('/models') || 
           url.pathname.startsWith('/evals') || 
           url.pathname.startsWith('/pricing') || 
+          url.pathname.startsWith('/checkout') || 
           url.pathname.startsWith('/resources') || 
           url.pathname.startsWith('/learn') || 
           url.pathname.startsWith('/features') || 
@@ -167,8 +170,16 @@ export default function App() {
     return <EvalsPage />;
   }
 
-  if (currentPath === '/pricing') {
+  if (currentPath === '/pricing' || currentPath.startsWith('/pricing')) {
     return <PricingPage />;
+  }
+
+  if (currentPath === '/checkout/return' || currentPath.startsWith('/checkout/return')) {
+    return <CheckoutReturnPage />;
+  }
+
+  if (currentPath === '/checkout' || currentPath.startsWith('/checkout')) {
+    return <CheckoutPage />;
   }
 
   // Resources routes

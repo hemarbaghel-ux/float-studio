@@ -55,22 +55,31 @@ process.on('uncaughtException', (err: any) => {
     return;
   }
 
+  // Allow EADDRINUSE retry logic in server.listen to recover without crashing process
+  if (err?.code === 'EADDRINUSE') {
+    console.warn('EADDRINUSE encountered, allowing retry handler to recover.');
+    return;
+  }
+
   originalConsoleError('Uncaught Exception:', err);
 });
 
 async function bootstrap() {
   const distBundle = path.join(process.cwd(), 'dist', 'server.cjs');
-  const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx'));
+  const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
 
-  if (!isRunningWithTsx && fs.existsSync(distBundle)) {
+  // Only load compiled CJS bundle in production when not run via tsx
+  if (!isRunningWithTsx && process.env.NODE_ENV === 'production' && fs.existsSync(distBundle)) {
     const mod = await import(pathToFileURL(distBundle).href);
-    if (typeof mod.startServer === 'function') {
-      await mod.startServer();
+    const start = mod.startServer || mod.default?.startServer;
+    if (typeof start === 'function') {
+      await start();
+      return;
     }
-  } else {
-    const { startServer } = await import('./src/server/app.ts');
-    await startServer();
   }
+
+  const { startServer } = await import('./src/server/app.ts');
+  await startServer();
 }
 
 bootstrap().catch((err) => {
