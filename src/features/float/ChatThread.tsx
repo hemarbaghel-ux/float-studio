@@ -325,48 +325,72 @@ export function ChatThread({ chatId }: { chatId: string }) {
         const decoder = new TextDecoder();
         let buffer = '';
         let full = '';
+        let receivedDone = false;
         const agentEvents: NonNullable<ThreadMessage['agentEvents']> = [];
         let finalChangeSet: ChangeSet | undefined;
+
+        const processEvent = (evt: string) => {
+          const dataLines = evt
+            .split(/\\r?\\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).replace(/^ /, ''));
+          if (!dataLines.length) return;
+
+          let data: any;
+          try {
+            data = JSON.parse(dataLines.join('\\n'));
+          } catch {
+            throw new Error('FLOAT returned a malformed streaming event. Please retry.');
+          }
+
+          const currentElapsed = Date.now() - startTime;
+          if (useToolAgent && data.type === 'event') {
+            const event = data.data || {};
+            agentEvents.push(event);
+            patch({ agentEvents: [...agentEvents], latencyMs: currentElapsed });
+            if (event.type === 'failed') throw new Error(event.message || 'Agent execution failed.');
+          } else if (useToolAgent && data.type === 'delta') {
+            full += data.data?.text || data.text || '';
+            patch({ content: full, agentEvents: [...agentEvents], latencyMs: currentElapsed });
+          } else if (useToolAgent && data.type === 'result') {
+            finalChangeSet = data.data?.changeSet;
+            full = data.data?.text || full;
+            patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents], latencyMs: currentElapsed });
+          } else if (data.type === 'delta') {
+            if (typeof data.text !== 'string') throw new Error('FLOAT returned an invalid text chunk.');
+            full += data.text;
+            patch({ content: full, latencyMs: currentElapsed });
+          } else if (data.type === 'done') {
+            receivedDone = true;
+            if (typeof data.text === 'string' && data.text.length >= full.length) full = data.text;
+            patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
+          } else if (data.type === 'error') {
+            throw new Error(typeof data.error === 'string' ? data.error : 'Generation failed.');
+          } else {
+            throw new Error(`FLOAT returned an unknown streaming event: ${String(data.type || 'missing type')}.`);
+          }
+        };
+
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split(/\r?\n\r?\n/);
-          buffer = events.pop() || '';
-          for (const evt of events) {
-            const line = evt.split(/\r?\n/).find((l) => l.startsWith('data:'));
-            if (!line) continue;
-            try {
-              const data = JSON.parse(line.slice(5).trim());
-              const currentElapsed = Date.now() - startTime;
-              if (useToolAgent && data.type === 'event') {
-                const event = data.data || {};
-                agentEvents.push(event);
-                patch({ agentEvents: [...agentEvents], latencyMs: currentElapsed });
-                if (event.type === 'failed') throw new Error(event.message || 'Agent execution failed.');
-              } else if (useToolAgent && data.type === 'delta') {
-                full += data.data?.text || data.text || '';
-                patch({ content: full, agentEvents: [...agentEvents], latencyMs: currentElapsed });
-              } else if (useToolAgent && data.type === 'result') {
-                finalChangeSet = data.data?.changeSet;
-                // Keep code proposals structured. Re-encoding file contents as fenced
-                // Markdown corrupts files that themselves contain triple backticks.
-                full = data.data?.text || full;
-                patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents], latencyMs: currentElapsed });
-              } else if (data.type === 'delta' && data.text) {
-                full += data.text;
-                patch({ content: full, latencyMs: currentElapsed });
-              } else if (data.type === 'done') {
-                if (data.text && data.text.length >= full.length) full = data.text;
-                patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
-              } else if (data.type === 'error') {
-                throw new Error(data.error || 'Generation failed');
-              }
-            } catch (e: any) {
-              if (e instanceof SyntaxError) continue;
-              throw e;
-            }
+          let boundary: number;
+          while ((boundary = buffer.search(/\\r?\\n\\r?\\n/)) !== -1) {
+            const separator = buffer.match(/^.*?(\\r?\\n\\r?\\n)/s)?.[1];
+            if (!separator) break;
+            const event = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + separator.length);
+            processEvent(event);
           }
+        }
+
+        buffer += decoder.decode();
+        if (buffer.trim()) processEvent(buffer);
+        if (!receivedDone) {
+          throw new Error(full
+            ? 'The AI stream ended before completion was confirmed. Please retry.'
+            : 'The AI stream ended without a response. Check provider credentials, model access, and server logs.');
         }
         const totalElapsed = Date.now() - startTime;
         const pending: Record<string, { status: ChangeStatus }> = {};
