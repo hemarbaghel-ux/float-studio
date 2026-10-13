@@ -331,14 +331,14 @@ export function ChatThread({ chatId }: { chatId: string }) {
 
         const processEvent = (evt: string) => {
           const dataLines = evt
-            .split(/\\r?\\n/)
+            .split(/\r?\n/)
             .filter((line) => line.startsWith('data:'))
             .map((line) => line.slice(5).replace(/^ /, ''));
           if (!dataLines.length) return;
 
           let data: any;
           try {
-            data = JSON.parse(dataLines.join('\\n'));
+            data = JSON.parse(dataLines.join('\n'));
           } catch {
             throw new Error('FLOAT returned a malformed streaming event. Please retry.');
           }
@@ -376,8 +376,8 @@ export function ChatThread({ chatId }: { chatId: string }) {
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
           let boundary: number;
-          while ((boundary = buffer.search(/\\r?\\n\\r?\\n/)) !== -1) {
-            const separator = buffer.match(/^.*?(\\r?\\n\\r?\\n)/s)?.[1];
+          while ((boundary = buffer.search(/\r?\n\r?\n/)) !== -1) {
+            const separator = buffer.match(/^.*?(\r?\n\r?\n)/s)?.[1];
             if (!separator) break;
             const event = buffer.slice(0, boundary);
             buffer = buffer.slice(boundary + separator.length);
