@@ -275,7 +275,10 @@ export function ChatThread({ chatId }: { chatId: string }) {
         const token = await user.getIdToken();
         const map = filesToMap(useIDEStore.getState().files);
         const mentioned = new Set(Array.from(prompt.matchAll(/@([\w./-]+)/g)).map((m) => m[1]).filter((p) => p in map));
-        const contextItems: AIContextItem[] = Object.entries(map).map(([path, content]) => ({
+        // Never send credential files, traversal paths, or private key material to a model.
+        const contextItems: AIContextItem[] = Object.entries(map)
+          .filter(([path]) => isSafeWorkspacePath(path))
+          .map(([path, content]) => ({
           id: path,
           type: mentioned.has(path) ? 'attachment' : 'file',
           name: path,
@@ -300,7 +303,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
             conversationHistory: base.filter((message) => message.content && !message.error)
               .slice(-12)
               .map((message) => ({ role: message.role, content: message.content })),
-            virtualFiles: flattenFileTree(useIDEStore.getState().files),
+            virtualFiles: flattenFileTree(useIDEStore.getState().files).filter((file) => isSafeWorkspacePath(file.path)),
             model: selectedModel,
             agentId: selectedAgent,
             systemInstruction: activeAgent?.systemInstructions,
