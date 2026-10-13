@@ -88,12 +88,8 @@ export interface AssembledContext {
 
 // Model-specific context window budgets in characters
 const MODEL_BUDGET_MAP: Record<string, number> = {
-  'gpt-4o': 48000,               // ~12,000 tokens
-  'gpt-4o-mini': 32000,
-  'o1': 64000,
-  'o3-mini': 48000,
-  'gpt-4': 32000,
-  'gpt-3.5-turbo': 16000
+  'gpt-6.1-sol': 96000,
+  'gpt-6-astra': 96000
 };
 
 const DEFAULT_MAX_TOTAL_CHARS = 28000;

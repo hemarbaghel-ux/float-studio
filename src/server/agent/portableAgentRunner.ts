@@ -73,7 +73,11 @@ async function providerTurn(provider: Provider, model: string, key: string, inst
   const definitions = tools();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${key}`
+    Authorization: `Bearer ${key}`,
+    ...((model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1') ? {
+      'X-Session-Id': 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
+      'X-Environment-Id': 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+    } : {})
   };
   const url = 'https://api.openai.com/v1/chat/completions';
   const body = {
@@ -83,11 +87,24 @@ async function providerTurn(provider: Provider, model: string, key: string, inst
     tool_choice: 'auto',
   };
 
-  let response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
-  let data = await response.json().catch(() => ({}));
+  let response: any;
+  let data: any;
+  try {
+    response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+    data = await response.json().catch(() => ({}));
+  } catch (netErr: any) {
+    if (model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1') {
+      console.warn(`[PortableAgentRunner] ${model} unreachable (${netErr?.message}). Falling back to gpt-4o.`);
+      response = { ok: false, status: 503 };
+      data = { error: { message: netErr?.message || 'Remote agent unreachable' } };
+    } else {
+      throw netErr;
+    }
+  }
 
-  // Preview Cloud Agent: Upstream fallback to gpt-4o if gpt-6-astra preview endpoint returns 404 or quota error
-  if (!response.ok && model === 'gpt-6-astra' && (response.status === 404 || response.status === 429 || /not found|does not exist|quota|billing/i.test(data.error?.message || ''))) {
+  // Preview Cloud Agent: Upstream fallback to gpt-4o if gpt-6 preview endpoint returns 404, 429, 50x or is unreachable
+  const isCloudPreview = model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1';
+  if (!response.ok && isCloudPreview && (response.status === 404 || response.status === 429 || response.status >= 500 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect/i.test(data.error?.message || ''))) {
     const fallbackKey = process.env.OPENAI_API_KEY || key;
     const fallbackHeaders = { ...headers, Authorization: `Bearer ${fallbackKey}` };
     const fallbackBody = { ...body, model: 'gpt-4o' };

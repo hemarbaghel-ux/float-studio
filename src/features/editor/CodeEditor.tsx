@@ -119,7 +119,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
                     suffix,
                     fileName,
                     language: currentLanguage,
-                    model: selectedModel || 'gpt-4o'
+                    model: selectedModel || 'gpt-6-astra'
                   })
                 });
 

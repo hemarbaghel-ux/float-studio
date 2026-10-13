@@ -11,20 +11,24 @@ const router = new ModelRouter();
 
 // Auto-register some models manually here or import from registry
 router.registerModel({
-  id: 'gpt-4o',
-  displayName: 'GPT-4o',
+  id: 'gpt-6-astra',
+  displayName: 'GPT-6 Astra (Preview)',
   providerId: 'openai',
-  family: 'openai',
-  contextWindow: 128000,
-  capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true }, status: 'AVAILABLE', speed: 'fast'
+  family: 'codex',
+  contextWindow: 1000000,
+  capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true },
+  status: 'AVAILABLE',
+  speed: 'fast'
 });
 router.registerModel({
-  id: 'gpt-4o-mini',
-  displayName: 'GPT-4o Mini',
+  id: 'gpt-6.1-sol',
+  displayName: 'GPT-6.1 Sol (Preview)',
   providerId: 'openai',
-  family: 'openai',
-  contextWindow: 128000,
-  capabilities: { coding: true, reasoning: true, vision: false, tools: true, structuredOutput: true, streaming: true }, status: 'AVAILABLE', speed: 'fast'
+  family: 'codex',
+  contextWindow: 1000000,
+  capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true },
+  status: 'AVAILABLE',
+  speed: 'fast'
 });
 
 export async function runAgentLoop(

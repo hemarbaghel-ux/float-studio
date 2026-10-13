@@ -20,7 +20,7 @@ export function CreateEvalDialog({
   const { tasks, benchmarks, runEval, runBatchEval } = useEvalStore();
 
   const [evalType, setEvalType] = useState<'single' | 'benchmark'>('single');
-  const [selectedModelId, setSelectedModelId] = useState(preselectedModelId || 'gpt-4o');
+  const [selectedModelId, setSelectedModelId] = useState(preselectedModelId || 'gpt-6-astra');
   const [selectedAgentId, setSelectedAgentId] = useState('coder-agent');
   const [selectedTaskId, setSelectedTaskId] = useState(preselectedTaskId || (tasks[0]?.id || ''));
   const [selectedBenchmarkId, setSelectedBenchmarkId] = useState(preselectedBenchmarkId || (benchmarks[0]?.id || ''));

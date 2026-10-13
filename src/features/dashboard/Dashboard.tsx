@@ -49,8 +49,8 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [attachments, setAttachments] = useState<Attachments>({});
 
-  // Dedicated 10-model selection matching Cursor-style screenshot
-  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'gpt-4o');
+  // Dedicated model selection for GPT-6 Astra and GPT-6.1 Sol
+  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'gpt-6-astra');
 
   // Active chat routing
   const getChatIdFromUrl = () => {
@@ -595,18 +595,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           /* MAIN COMPOSER INTERFACE (Matching image.png)           */
           /* ====================================================== */
           <div className="flex-1 flex flex-col items-center justify-start px-4 pt-28 sm:pt-32 pb-8 w-full max-w-4xl mx-auto">
-            {/* 1. Top Capsule Banner Tab */}
-            <button
-              type="button"
-              onClick={() => {
-                window.history.pushState({}, '', '/checkout?plan=pro');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-              }}
-              className="w-full max-w-2xl py-2.5 px-4 bg-white dark:bg-[#141414] border border-b-0 border-slate-200/90 dark:border-[#2C2C2C] rounded-t-2xl text-xs text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
-            >
-              <span>Cloud Agents require a Start account</span>
-              <ArrowRight size={13} className="text-slate-500 dark:text-[#8B949E]" />
-            </button>
+            {/* 1. Connected Cloud Session Banner */}
+            <div className="w-full max-w-2xl">
+              <CloudSessionBanner />
+            </div>
 
             {/* 2. Main Chat Composer Box */}
             <div className="w-full max-w-2xl bg-white dark:bg-[#141414] border border-slate-200/90 dark:border-[#2C2C2C] rounded-b-2xl shadow-sm p-4 relative flex flex-col transition-colors">
@@ -694,6 +686,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       {showAgentManager && (
         <AgentManagerModal onClose={() => setShowAgentManager(false)} />
       )}
+      <CloudSessionModal />
     </div>
   );
 }

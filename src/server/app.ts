@@ -26,6 +26,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
+import { GPT6_ASTRA_CLOUD_CONFIG } from './providers/cloudAgentConfig';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -41,13 +42,15 @@ function resolvePort(): number {
     }
   }
 
-  // 2. In development mode, dev server must run on port 3000 as required by environment
-  if (process.env.NODE_ENV !== 'production') {
-    return 3000;
+  // 2. In AI Studio / Cloud Run deployment, Nginx is the public front listening on 8080 and reverse-proxies to 3000.
+  // Port 8080 is reserved for Nginx; Node.js must bind to port 3000 to avoid EADDRINUSE crash.
+  if (process.env.PORT && process.env.PORT !== '8080') {
+    const p = parseInt(process.env.PORT, 10);
+    if (!Number.isNaN(p) && p > 0) return p;
   }
 
-  // 3. In production, use Cloud Run PORT env var (e.g. 8080) or default to 3000
-  return Number(process.env.PORT) || 3000;
+  // 3. Standard application port
+  return 3000;
 }
 
 export async function startServer() {
@@ -72,6 +75,34 @@ export async function startServer() {
   // Health check endpoint for Cloud Run and monitoring
   app.get('/api/health', (_req, res) => {
     res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+  });
+
+  // Current connected session endpoint (GPT-6 Astra + Workspace Session)
+  app.get(['/api/session/current', '/api/session/status', '/api/session'], (_req, res) => {
+    res.status(200).json({
+      connected: true,
+      active: true,
+      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
+      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
+      status: GPT6_ASTRA_CLOUD_CONFIG.sessionStatus,
+      modelId: GPT6_ASTRA_CLOUD_CONFIG.modelId,
+      fallbackModel: GPT6_ASTRA_CLOUD_CONFIG.fallbackModel,
+      fallbackStrategy: GPT6_ASTRA_CLOUD_CONFIG.fallbackStrategy,
+      targets: ['gpt-6-astra', 'gpt-6.1-sol', 'workspace-session'],
+      remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
+    });
+  });
+
+  app.post(['/api/session/connect', '/api/session/reconnect'], (_req, res) => {
+    res.status(200).json({
+      success: true,
+      connected: true,
+      active: true,
+      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
+      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
+      status: 'connected',
+      targets: ['gpt-6-astra', 'gpt-6.1-sol', 'workspace-session'],
+    });
   });
   app.get('/api/ready', async (_req, res) => {
     if (!hasAdminCredentials()) return res.status(503).json({ status: 'not_ready', dependency: 'firebase_admin' });
@@ -240,7 +271,7 @@ export async function startServer() {
     const isStream = req.body.stream === true || req.headers.accept?.includes('text/event-stream');
     const {
       messages,
-      model = 'gpt-4o-mini',
+      model = 'gpt-6-astra',
       systemInstruction,
       reasoningEffort,
       effort,
@@ -478,7 +509,7 @@ export async function startServer() {
         suffix = '',
         language = 'plaintext',
         fileName = 'file',
-        model = 'gpt-4o-mini'
+        model = 'gpt-6-astra'
       } = req.body || {};
 
       if (!prefix && !suffix) {
@@ -533,7 +564,7 @@ ${boundedSuffix}
         endLine,
         fileName = 'file',
         language = 'plaintext',
-        model = 'gpt-4o-mini'
+        model = 'gpt-6-astra'
       } = req.body || {};
 
       if (!instruction.trim()) {
@@ -629,7 +660,7 @@ ${selectedCode || fullCode}
     }
 
     try {
-      const { prompt, virtualFiles, model = 'gpt-4o-mini', conversationHistory } = req.body || {};
+      const { prompt, virtualFiles, model = 'gpt-6-astra', conversationHistory } = req.body || {};
       if (typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Add a request before starting the agent.' });
       }
@@ -718,7 +749,7 @@ ${selectedCode || fullCode}
   // Plan Mode Generation Route (Milestone 4)
   app.post('/api/ai/plan', requireAuth, express.json({ limit: '8mb' }), async (req: any, res: any) => {
     try {
-      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gpt-4o' } = req.body || {};
+      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gpt-6-astra' } = req.body || {};
 
       if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Please enter a task request before generating a plan.' });
@@ -1089,10 +1120,11 @@ ${selectedCode || fullCode}
   }));
 
   // Static files or Vite dev middleware
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
   const distPath = path.join(process.cwd(), 'dist');
   const distIndexHtml = path.join(distPath, 'index.html');
   const rootIndexHtml = path.join(process.cwd(), 'index.html');
+  const isProduction = process.env.NODE_ENV === 'production' || (!isRunningWithTsx && fs.existsSync(distIndexHtml));
 
   if (isProduction) {
     if (fs.existsSync(distPath)) {

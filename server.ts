@@ -73,8 +73,9 @@ async function bootstrap() {
   const distBundle = path.join(process.cwd(), 'dist', 'server.cjs');
   const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
 
-  // Only load compiled CJS bundle in production when not run via tsx
-  if (!isRunningWithTsx && process.env.NODE_ENV === 'production' && fs.existsSync(distBundle)) {
+  // Load compiled CJS bundle in production deployment (when dist bundle exists and not running under tsx)
+  if (!isRunningWithTsx && fs.existsSync(distBundle)) {
+    process.env.NODE_ENV = process.env.NODE_ENV || 'production';
     const mod = await import(pathToFileURL(distBundle).href);
     const start = mod.startServer || mod.default?.startServer;
     if (typeof start === 'function') {

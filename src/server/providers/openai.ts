@@ -104,12 +104,19 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    const key = (forModel === 'gpt-6-astra' && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
+    const isCloudAgent = forModel === 'gpt-6-astra' || forModel === 'gpt-6.1-sol' || forModel === 'gpt-6-sol' || forModel === 'gpt-6.1';
+    const key = (isCloudAgent && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
       ? (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!
       : (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!;
 
+    const defaultHeaders = isCloudAgent ? {
+      'X-Session-Id': GPT6_ASTRA_CLOUD_CONFIG.sessionId,
+      'X-Environment-Id': GPT6_ASTRA_CLOUD_CONFIG.environmentId,
+    } : undefined;
+
     return new OpenAI({
-      apiKey: key
+      apiKey: key,
+      ...(defaultHeaders ? { defaultHeaders } : {})
     });
   }
 
@@ -120,7 +127,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-4o'
+        defaultModel: 'gpt-6-astra'
       };
     }
 
@@ -129,13 +136,13 @@ export class OpenAIAdapter implements AIProviderAdapter {
       // Lightweight verification using models.list
       const models = await client.models.list();
       const accessibleModelIds = models.data.map(m => m.id);
-      const hasOperationalModel = accessibleModelIds.some(m => m.includes('gpt-4') || m.includes('o1') || m.includes('o3'));
+      const hasOperationalModel = accessibleModelIds.some(m => m.includes('gpt-4') || m.includes('o1') || m.includes('o3') || m.includes('gpt-6'));
       return {
         provider: 'OpenAI',
         configured: true,
         authenticated: true,
         modelAvailable: hasOperationalModel || models.data.length > 0,
-        defaultModel: 'gpt-4o',
+        defaultModel: 'gpt-6-astra',
         accessibleModelIds
       };
     } catch (err: any) {
@@ -145,14 +152,14 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-4o',
+        defaultModel: 'gpt-6-astra',
         error: normalized.message
       };
     }
   }
 
   private resolveApiModel(model: string): string {
-    if (model === 'auto' || !model) return 'gpt-4o';
+    if (model === 'auto' || !model) return 'gpt-6-astra';
     return model;
   }
 
@@ -228,8 +235,10 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         response = await client.chat.completions.create(params);
       } catch (callErr: any) {
-        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || callErr?.status === 429 || /not found|does not exist|quota|billing/i.test(callErr?.message || ''))) {
+        const isPreviewAgent = effectiveModel === 'gpt-6-astra' || effectiveModel === 'gpt-6.1-sol' || effectiveModel === 'gpt-6-sol' || effectiveModel === 'gpt-6.1';
+        if (isPreviewAgent && (callErr?.status === 404 || callErr?.status === 429 || callErr?.status === 502 || callErr?.status === 503 || callErr?.status === 504 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect|enotfound|econnrefused|timeout|failed to fetch/i.test(callErr?.message || ''))) {
           // Preview Cloud Agent: Upstream fallback to gpt-4o with primary OpenAI credentials
+          console.warn(`[OpenAI Provider] ${effectiveModel} session endpoint unreachable or unavailable (${callErr?.message || callErr?.status}). Triggering automatic upstream fallback to gpt-4o.`);
           params.model = 'gpt-4o';
           const fallbackClient = process.env.OPENAI_API_KEY ? this.getClient('gpt-4o') : client;
           response = await fallbackClient.chat.completions.create(params);
@@ -302,8 +311,10 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         stream = await client.chat.completions.create(params, { signal });
       } catch (callErr: any) {
-        if (effectiveModel === 'gpt-6-astra' && (callErr?.status === 404 || callErr?.status === 429 || /not found|does not exist|quota|billing/i.test(callErr?.message || ''))) {
+        const isPreviewAgent = effectiveModel === 'gpt-6-astra' || effectiveModel === 'gpt-6.1-sol' || effectiveModel === 'gpt-6-sol' || effectiveModel === 'gpt-6.1';
+        if (isPreviewAgent && (callErr?.status === 404 || callErr?.status === 429 || callErr?.status === 502 || callErr?.status === 503 || callErr?.status === 504 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect|enotfound|econnrefused|timeout|failed to fetch/i.test(callErr?.message || ''))) {
           // Preview Cloud Agent: Upstream fallback to gpt-4o with primary OpenAI credentials
+          console.warn(`[OpenAI Provider] ${effectiveModel} session streaming endpoint unreachable (${callErr?.message || callErr?.status}). Triggering automatic upstream fallback to gpt-4o.`);
           params.model = 'gpt-4o';
           const fallbackClient = process.env.OPENAI_API_KEY ? this.getClient('gpt-4o') : client;
           stream = await fallbackClient.chat.completions.create(params, { signal });
@@ -357,7 +368,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    const apiKey = (model === 'gpt-6-astra' && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
+    const isCloudAgent = model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1';
+    const apiKey = (isCloudAgent && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
       ? (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!
       : (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!;
 

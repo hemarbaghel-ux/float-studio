@@ -20,31 +20,15 @@ export class ModelRouter {
   // The UI display name or alias must never be treated as the actual API model ID
   private modelRoutes: Record<string, ModelRouteDefinition> = {
     // Auto / Default
-    'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
-
-    // Free Tier Model (powered by server-side OpenAI)
-    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
-
-    // OpenAI Verified Models
-    'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
-    'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
-    'o1': { provider: 'openai', apiModelId: 'o1' },
-    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
-    'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
-    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview' },
-    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo' },
-    'gpt-4-turbo-2024-04-09': { provider: 'openai', apiModelId: 'gpt-4-turbo-2024-04-09' },
-    'gpt-4o-2024-11-20': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
-    'gpt-4o-mini-2024-07-18': { provider: 'openai', apiModelId: 'gpt-4o-mini-2024-07-18' },
-    'o1-2024-12-17': { provider: 'openai', apiModelId: 'o1-2024-12-17' },
-    'o3-mini-2025-01-31': { provider: 'openai', apiModelId: 'o3-mini-2025-01-31' },
-    'o1-mini-2024-09-12': { provider: 'openai', apiModelId: 'o1-mini-2024-09-12' },
-    'gpt-4': { provider: 'openai', apiModelId: 'gpt-4' },
-    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' },
-    'gpt-3.5-turbo-0125': { provider: 'openai', apiModelId: 'gpt-3.5-turbo-0125' },
+    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra' },
 
     // GPT-6 Astra Preview / Cloud Agent with upstream gpt-4o fallback
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' }
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' },
+
+    // GPT-6.1 Sol Preview / Frontier Reasoning with upstream gpt-4o fallback
+    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' }
   };
 
   constructor() {
@@ -99,7 +83,7 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gpt-4o';
+      return 'gpt-6-astra';
     }
     return modelId;
   }

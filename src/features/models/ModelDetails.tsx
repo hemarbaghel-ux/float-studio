@@ -366,6 +366,17 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
               </code>
             </div>
             <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[#8B949E]">Attached Active Session</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/60 border border-emerald-700/50 text-emerald-400">
+                  Connected & Active
+                </span>
+              </div>
+              <code className="text-emerald-300 font-mono text-[11px] break-all block">
+                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.sessionId || 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'}
+              </code>
+            </div>
+            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
               <span className="text-[#8B949E] block mb-1">Codex Environment Identifier</span>
               <code className="text-slate-200 font-mono text-[11px] break-all">
                 {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.environmentId}
