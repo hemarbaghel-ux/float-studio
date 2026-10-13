@@ -11,7 +11,6 @@ import { UsageDashboard } from './features/models/UsageDashboard';
 import { ModelDetailsPage } from './features/models/ModelDetailsPage';
 import { OnboardingFlow } from './features/onboarding/OnboardingFlow';
 import { Dashboard } from './features/dashboard/Dashboard';
-import { IDEWorkspace } from './features/shell/IDEWorkspace';
 import { PricingPage } from './features/pricing/PricingPage';
 import { CheckoutPage } from './features/checkout/CheckoutPage';
 import { CheckoutReturnPage } from './features/checkout/CheckoutReturnPage';
@@ -254,14 +253,6 @@ export default function App() {
     return <Dashboard initialTab="new-chat" />;
   }
 
-  // Git Sync route in Dashboard
-  if (currentPath === '/git-sync' || currentPath === '/dashboard/git-sync') {
-    return <Dashboard initialTab="git-sync" />;
-  }
-
-  // Route IDE workspace
-  if (currentPath === '/workspace' || currentPath === '/ide') {
-    return <IDEWorkspace />;
   }
 
   // Route active chat to Dashboard

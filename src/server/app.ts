@@ -10,6 +10,14 @@ import { integrationsRouter } from './integrationsRouter';
 import { subscriptionRouter, handleStripeWebhook } from './subscription/subscriptionRouter';
 import express from 'express';
 import fs from 'fs';
+import dotenv from 'dotenv';
+
+// Load environment configuration (.env and .env.local) safely
+dotenv.config();
+if (fs.existsSync(path.resolve(process.cwd(), '.env.local'))) {
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false });
+}
+
 import { ModelRouter } from './providers/router';
 import { evalEngine } from './evalEngine';
 import { ServerPrivacyGuard } from './privacyGuard';
@@ -271,7 +279,7 @@ export async function startServer() {
     const isStream = req.body.stream === true || req.headers.accept?.includes('text/event-stream');
     const {
       messages,
-      model = 'gpt-6-astra',
+      model = 'gpt-4o',
       systemInstruction,
       reasoningEffort,
       effort,
@@ -509,6 +517,7 @@ export async function startServer() {
         suffix = '',
         language = 'plaintext',
         fileName = 'file',
+        model = 'gpt-4o-mini'
         model = 'gpt-6-astra'
       } = req.body || {};
 
@@ -564,6 +573,7 @@ ${boundedSuffix}
         endLine,
         fileName = 'file',
         language = 'plaintext',
+        model = 'gpt-4o'
         model = 'gpt-6-astra'
       } = req.body || {};
 

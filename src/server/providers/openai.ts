@@ -159,6 +159,11 @@ export class OpenAIAdapter implements AIProviderAdapter {
   }
 
   private resolveApiModel(model: string): string {
+    const mapping: Record<string, string> = {
+      'auto': 'gpt-4o',
+      'float-basic': 'gpt-4o-mini'
+    };
+    return mapping[model] || model;
     if (model === 'auto' || !model) return 'gpt-6-astra';
     return model;
   }

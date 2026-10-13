@@ -28,36 +28,6 @@ interface AIStore {
 
 export const defaultAgents: Agent[] = INITIAL_AGENTS;
 
-const OBSOLETE_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
-  'gemini-2.0-pro',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-pro',
-  'gemini-3.8-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-flash-latest',
-  'gemini-3.1-pro-preview',
-  'claude-3-7-sonnet-20250219',
-  'claude-3-5-sonnet-20241022',
-  'claude-3-5-haiku-20241022',
-  'claude-3-opus-20240229',
-  'claude-opus-5.5',
-  'claude-opus-5',
-  'claude-fable-5.1',
-  'claude-sonnet-5.5',
-  'grok-4.7',
-  'grok-4.6',
-  'grok-2-1212',
-  'grok-2',
-  'grok-2-vision-1212',
-  'grok-beta',
-  'composer-2.5',
-  'muse-spark-1.3'
-];
-
 const VALID_FLOAT_MODELS = ['gpt-6-astra', 'gpt-6.1-sol'];
 
 const getInitialSelectedModel = () => {
@@ -70,6 +40,7 @@ const getInitialSelectedModel = () => {
       localStorage.setItem('float_selected_model', 'gpt-6-astra');
     } catch {}
   }
+  return 'gpt-4o';
   return 'gpt-6-astra';
 };
 
@@ -98,6 +69,7 @@ const getInitialFavorites = (): string[] => {
       }
     } catch {}
   }
+  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1'];
   return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
@@ -114,6 +86,7 @@ const getInitialRecents = (): string[] => {
       }
     } catch {}
   }
+  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini'];
   return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
