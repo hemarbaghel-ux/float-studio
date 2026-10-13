@@ -106,8 +106,10 @@ export async function verifyFirebaseIdToken(token: string): Promise<{ uid: strin
     const isValid = verifySignature(token, cert);
     return isValid ? { uid: payload.sub, email: payload.email } : null;
   } catch (err) {
-    console.error('Signature verification error:', err);
-    return null;
+    // A certificate fetch/network failure is an infrastructure outage, not
+    // evidence that the caller supplied an invalid token. Let requireAuth
+    // return a retryable 503; invalid signatures still return null above.
+    throw err;
   }
 }
 
