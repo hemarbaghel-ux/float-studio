@@ -962,9 +962,11 @@ ${selectedCode || fullCode}
     try {
       const { projectId } = req.params;
       const { diagnostic, targetFileContent, modelId } = req.body;
+      const denied = await authorizeExecutionProject(projectId, req.user.uid);
+      if (denied) return res.status(denied.status).json({ error: denied.error });
 
-      if (!diagnostic || !diagnostic.message) {
-        return res.status(400).json({ error: 'A diagnostic object is required.' });
+      if (!diagnostic || typeof diagnostic.message !== 'string' || diagnostic.message.length > 10_000) {
+        return res.status(400).json({ error: 'A valid diagnostic object is required (message up to 10,000 characters).' });
       }
 
       const result = await ValidationService.explainDiagnostic({
@@ -1129,6 +1131,12 @@ ${selectedCode || fullCode}
     res.json(await evalEngine.getReviewsDurable(req.params.runId, req.user.uid));
   }));
 
+  // Do not let unknown API requests fall through to the SPA index.html.
+  // Returning HTML here makes frontend fetch(...).json() fail with a misleading parse error.
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
+  });
+
   // Static files or Vite dev middleware
   const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
   const distPath = path.join(process.cwd(), 'dist');
@@ -1167,18 +1175,33 @@ ${selectedCode || fullCode}
     app.use(vite.middlewares);
   }
 
-  // Global error handler preventing unhandled ENOENT crashes
-  app.use((err: any, _req: any, res: any, _next: any) => {
-    if (err?.code === 'ENOENT') {
-      if (fs.existsSync(rootIndexHtml)) {
-        return res.sendFile(rootIndexHtml);
+  // Centralized error handling: keep API failures machine-readable and never
+  // turn malformed/oversized JSON or missing API routes into a false success.
+  app.use((err: any, req: any, res: any, _next: any) => {
+    if (res.headersSent) {
+      return res.end();
+    }
+
+    const isApiRequest = typeof req.path === 'string' && req.path.startsWith('/api/');
+    if (isApiRequest) {
+      if (err?.type === 'entity.too.large' || err?.status === 413) {
+        return res.status(413).json({ error: 'Request payload is too large.' });
       }
-      return res.status(200).send('<!DOCTYPE html><html><head><meta http-equiv="refresh" content="2"></head><body>Loading...</body></html>');
+      if (err instanceof SyntaxError && err?.status === 400 && 'body' in err) {
+        return res.status(400).json({ error: 'Request body contains invalid JSON.' });
+      }
     }
-    console.error('Unhandled server error:', err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Internal Server Error' });
+
+    // ENOENT for a missing API/resource is a missing resource, not a reason
+    // to send the SPA HTML with status 200.
+    if (err?.code === 'ENOENT') {
+      return isApiRequest
+        ? res.status(404).json({ error: 'Requested resource was not found.' })
+        : res.status(404).send('Requested resource was not found.');
     }
+
+    console.error('Unhandled server error:', err?.message || 'Unknown server error');
+    return res.status(500).json({ error: 'Internal Server Error' });
   });
 
   const server = app.listen(PORT, '0.0.0.0', () => {

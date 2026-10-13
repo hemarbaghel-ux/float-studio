@@ -8,7 +8,6 @@ import {
 } from './base';
 import { AgentRunner } from '../agent/agentRunner';
 import { PortableAgentRunner } from '../agent/portableAgentRunner';
-import { GPT6_ASTRA_CLOUD_CONFIG } from './cloudAgentConfig';
 
 export function normalizeOpenAIError(error: any): AIProviderError {
   const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
@@ -91,7 +90,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
   name = 'OpenAI';
 
   isConfigured(): boolean {
-    const key = process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY || process.env.OPENAI_API_KEY;
+    const key = process.env.OPENAI_API_KEY;
     return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
   }
 
@@ -104,6 +103,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
+    const key = process.env.OPENAI_API_KEY;
     const isCloudAgent = forModel === 'gpt-6-astra' || forModel === 'gpt-6.1-sol' || forModel === 'gpt-6-sol' || forModel === 'gpt-6.1';
     const key = (isCloudAgent && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
       ? (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!
@@ -240,6 +240,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         response = await client.chat.completions.create(params);
       } catch (callErr: any) {
+        throw callErr;
         const isPreviewAgent = effectiveModel === 'gpt-6-astra' || effectiveModel === 'gpt-6.1-sol' || effectiveModel === 'gpt-6-sol' || effectiveModel === 'gpt-6.1';
         if (isPreviewAgent && (callErr?.status === 404 || callErr?.status === 429 || callErr?.status === 502 || callErr?.status === 503 || callErr?.status === 504 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect|enotfound|econnrefused|timeout|failed to fetch/i.test(callErr?.message || ''))) {
           // Preview Cloud Agent: Upstream fallback to gpt-4o with primary OpenAI credentials
@@ -316,6 +317,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         stream = await client.chat.completions.create(params, { signal });
       } catch (callErr: any) {
+        throw callErr;
         const isPreviewAgent = effectiveModel === 'gpt-6-astra' || effectiveModel === 'gpt-6.1-sol' || effectiveModel === 'gpt-6-sol' || effectiveModel === 'gpt-6.1';
         if (isPreviewAgent && (callErr?.status === 404 || callErr?.status === 429 || callErr?.status === 502 || callErr?.status === 503 || callErr?.status === 504 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect|enotfound|econnrefused|timeout|failed to fetch/i.test(callErr?.message || ''))) {
           // Preview Cloud Agent: Upstream fallback to gpt-4o with primary OpenAI credentials

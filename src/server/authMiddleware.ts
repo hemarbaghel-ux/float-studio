@@ -106,8 +106,10 @@ export async function verifyFirebaseIdToken(token: string): Promise<{ uid: strin
     const isValid = verifySignature(token, cert);
     return isValid ? { uid: payload.sub, email: payload.email } : null;
   } catch (err) {
-    console.error('Signature verification error:', err);
-    return null;
+    // A certificate fetch/network failure is an infrastructure outage, not
+    // evidence that the caller supplied an invalid token. Let requireAuth
+    // return a retryable 503; invalid signatures still return null above.
+    throw err;
   }
 }
 
@@ -127,11 +129,20 @@ export async function requireAuth(req: any, res: Response, next: NextFunction) {
     return res.status(401).json({ error: 'Authentication required. Token is empty.' });
   }
 
-  const user = await verifyFirebaseIdToken(token);
+  let user: { uid: string; email?: string } | null;
+  try {
+    user = await verifyFirebaseIdToken(token);
+  } catch (error) {
+    // A certificate/network outage is not proof that the token is invalid.
+    // Fail closed, but return a recoverable dependency error rather than an
+    // unhandled async rejection or a misleading authentication failure.
+    console.error('Firebase token verification unavailable:', error);
+    return res.status(503).json({ error: 'Authentication verification is temporarily unavailable. Please retry.' });
+  }
   if (!user) {
     return res.status(401).json({ error: 'Invalid or expired authentication token.' });
   }
 
   req.user = user;
-  next();
+  return next();
 }

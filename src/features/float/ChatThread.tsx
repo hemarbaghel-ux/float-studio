@@ -285,7 +285,10 @@ export function ChatThread({ chatId }: { chatId: string }) {
         const token = await user.getIdToken();
         const map = filesToMap(useIDEStore.getState().files);
         const mentioned = new Set(Array.from(prompt.matchAll(/@([\w./-]+)/g)).map((m) => m[1]).filter((p) => p in map));
-        const contextItems: AIContextItem[] = Object.entries(map).map(([path, content]) => ({
+        // Never send credential files, traversal paths, or private key material to a model.
+        const contextItems: AIContextItem[] = Object.entries(map)
+          .filter(([path]) => isSafeWorkspacePath(path))
+          .map(([path, content]) => ({
           id: path,
           type: mentioned.has(path) ? 'attachment' : 'file',
           name: path,
@@ -310,7 +313,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
             conversationHistory: base.filter((message) => message.content && !message.error)
               .slice(-12)
               .map((message) => ({ role: message.role, content: message.content })),
-            virtualFiles: flattenFileTree(useIDEStore.getState().files),
+            virtualFiles: flattenFileTree(useIDEStore.getState().files).filter((file) => isSafeWorkspacePath(file.path)),
             model: selectedModel,
             agentId: selectedAgent,
             systemInstruction: activeAgent?.systemInstructions,
@@ -339,13 +342,75 @@ export function ChatThread({ chatId }: { chatId: string }) {
         const decoder = new TextDecoder();
         let buffer = '';
         let full = '';
+        let receivedDone = false;
         const agentEvents: NonNullable<ThreadMessage['agentEvents']> = [];
         let finalChangeSet: ChangeSet | undefined;
+
+        const processEvent = (evt: string) => {
+          const dataLines = evt
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).replace(/^ /, ''));
+          if (!dataLines.length) return;
+
+          let data: any;
+          try {
+            data = JSON.parse(dataLines.join('\n'));
+          } catch {
+            throw new Error('FLOAT returned a malformed streaming event. Please retry.');
+          }
+
+          const currentElapsed = Date.now() - startTime;
+          if (useToolAgent && data.type === 'event') {
+            const event = data.data || {};
+            agentEvents.push(event);
+            patch({ agentEvents: [...agentEvents], latencyMs: currentElapsed });
+            if (event.type === 'failed') throw new Error(event.message || 'Agent execution failed.');
+          } else if (useToolAgent && data.type === 'delta') {
+            full += data.data?.text || data.text || '';
+            patch({ content: full, agentEvents: [...agentEvents], latencyMs: currentElapsed });
+          } else if (useToolAgent && data.type === 'result') {
+            finalChangeSet = data.data?.changeSet;
+            full = data.data?.text || full;
+            patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents], latencyMs: currentElapsed });
+          } else if (data.type === 'delta') {
+            if (typeof data.text !== 'string') throw new Error('FLOAT returned an invalid text chunk.');
+            full += data.text;
+            patch({ content: full, latencyMs: currentElapsed });
+          } else if (data.type === 'done') {
+            receivedDone = true;
+            if (typeof data.text === 'string' && data.text.length >= full.length) full = data.text;
+            patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
+          } else if (data.type === 'error') {
+            throw new Error(typeof data.error === 'string' ? data.error : 'Generation failed.');
+          } else {
+            throw new Error(`FLOAT returned an unknown streaming event: ${String(data.type || 'missing type')}.`);
+          }
+        };
+
         let streamError: { message: string; code?: string } | null = null;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
+          let boundary: number;
+          while ((boundary = buffer.search(/\r?\n\r?\n/)) !== -1) {
+            const separator = buffer.match(/^.*?(\r?\n\r?\n)/s)?.[1];
+            if (!separator) break;
+            const event = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + separator.length);
+            processEvent(event);
+          }
+        }
+
+        buffer += decoder.decode();
+        if (buffer.trim()) processEvent(buffer);
+        if (!receivedDone) {
+          throw new Error(full
+            ? 'The AI stream ended before completion was confirmed. Please retry.'
+            : 'The AI stream ended without a response. Check provider credentials, model access, and server logs.');
+        }
+        const totalElapsed = Date.now() - startTime;
           const events = buffer.split(/\r?\n\r?\n/);
           buffer = events.pop() || '';
           for (const evt of events) {

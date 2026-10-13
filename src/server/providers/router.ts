@@ -16,12 +16,16 @@ export interface ModelRouteDefinition {
 export class ModelRouter {
   private adapters: Map<string, AIProviderAdapter> = new Map();
 
-  // Strict, verified model mapping to provider + verified apiModelId
-  // The UI display name or alias must never be treated as the actual API model ID
+  // Explicit provider/model allowlist. Entries are supported route candidates, not
+  // proof that a model is enabled for the current account; upstream errors remain visible.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
     // Auto / Default (Deterministic routing to OpenAI flagship)
     'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
 
+    // Default lightweight route candidate (availability depends on server credentials)
+    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
+
+    // OpenAI route candidates (not a guarantee of account access)
     // Free Tier Model
     'float-basic': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
 
@@ -166,7 +170,7 @@ export class ModelRouter {
 
     if (!route) {
       throw new AIProviderError(
-        `Model "${modelId}" is not recognized or supported by the FLOAT router. Available verified models include: ${Object.keys(this.modelRoutes).join(', ')}`,
+        `Model "${modelId}" is not recognized or supported by the FLOAT router. Configured route candidates include: ${Object.keys(this.modelRoutes).join(', ')}`,
         'MODEL_NOT_FOUND',
         'FLOAT',
         404
