@@ -846,6 +846,7 @@ export function AIPanel() {
         if (done) break;
 
         if (activeConvIdRef.current !== targetConvId) {
+          streamCancelled = true;
           await reader.cancel();
           break;
         }
@@ -863,7 +864,7 @@ export function AIPanel() {
 
       buffer += decoder.decode();
       if (buffer.trim()) processSseEvent(buffer);
-      if (!receivedDone) {
+      if (!receivedDone && !streamCancelled) {
         throw new Error(
           accumulatedText
             ? 'The AI stream ended before completion was confirmed. Please retry.'
