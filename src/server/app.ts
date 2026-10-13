@@ -915,9 +915,11 @@ ${selectedCode || fullCode}
     try {
       const { projectId } = req.params;
       const { diagnostic, targetFileContent, modelId } = req.body;
+      const denied = await authorizeExecutionProject(projectId, req.user.uid);
+      if (denied) return res.status(denied.status).json({ error: denied.error });
 
-      if (!diagnostic || !diagnostic.message) {
-        return res.status(400).json({ error: 'A diagnostic object is required.' });
+      if (!diagnostic || typeof diagnostic.message !== 'string' || diagnostic.message.length > 10_000) {
+        return res.status(400).json({ error: 'A valid diagnostic object is required (message up to 10,000 characters).' });
       }
 
       const result = await ValidationService.explainDiagnostic({
