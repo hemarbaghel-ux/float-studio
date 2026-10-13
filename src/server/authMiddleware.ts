@@ -127,11 +127,20 @@ export async function requireAuth(req: any, res: Response, next: NextFunction) {
     return res.status(401).json({ error: 'Authentication required. Token is empty.' });
   }
 
-  const user = await verifyFirebaseIdToken(token);
+  let user: { uid: string; email?: string } | null;
+  try {
+    user = await verifyFirebaseIdToken(token);
+  } catch (error) {
+    // A certificate/network outage is not proof that the token is invalid.
+    // Fail closed, but return a recoverable dependency error rather than an
+    // unhandled async rejection or a misleading authentication failure.
+    console.error('Firebase token verification unavailable:', error);
+    return res.status(503).json({ error: 'Authentication verification is temporarily unavailable. Please retry.' });
+  }
   if (!user) {
     return res.status(401).json({ error: 'Invalid or expired authentication token.' });
   }
 
   req.user = user;
-  next();
+  return next();
 }
