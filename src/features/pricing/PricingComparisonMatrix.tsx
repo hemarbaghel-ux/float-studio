@@ -79,16 +79,16 @@ export const MATRIX_CATEGORIES: MatrixCategory[] = [
     description: 'Frontier AI models, composer modes, and inline assistance',
     features: [
       {
-        name: 'Everyday Model Access (Flash)',
-        description: 'Unlimited Gemini 3.1 Flash Lite and everyday fast models',
+        name: 'Everyday Model Access (GPT-4o mini)',
+        description: 'Unlimited GPT-4o mini and everyday fast coding assistance',
         hobby: 'included',
         pro: 'included',
         business: 'included',
         enterprise: 'included'
       },
       {
-        name: 'Frontier Models (Claude, GPT-4o)',
-        description: 'Claude 3.5 Sonnet, GPT-4o, and Gemini 2.5 Pro reasoning',
+        name: 'Frontier Models (GPT-6 Astra, GPT-6.1 Sol)',
+        description: 'OpenAI GPT-6 Astra and GPT-6.1 Sol preview models',
         hobby: 'limited',
         hobbyNote: '50 req/mo',
         pro: 'included',
@@ -369,9 +369,10 @@ export function StatusPill({ status, note }: { status: FeatureStatus; note?: str
 
 interface PricingComparisonMatrixProps {
   onSelectPlan?: (planId: string) => void;
+  billingCycle?: 'monthly' | 'yearly';
 }
 
-export function PricingComparisonMatrix({ onSelectPlan }: PricingComparisonMatrixProps) {
+export function PricingComparisonMatrix({ onSelectPlan, billingCycle = 'monthly' }: PricingComparisonMatrixProps) {
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>(() => {
     // Expand first two by default
     return { workspace: true, ai_modes: true, context: true };
@@ -380,6 +381,8 @@ export function PricingComparisonMatrix({ onSelectPlan }: PricingComparisonMatri
   const toggleCategory = (catId: string) => {
     setExpandedCategories(prev => ({ ...prev, [catId]: !prev[catId] }));
   };
+
+  const isYearly = billingCycle === 'yearly';
 
   return (
     <div className="w-full max-w-5xl mx-auto rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#12110D] shadow-xl overflow-hidden text-left">
@@ -419,8 +422,12 @@ export function PricingComparisonMatrix({ onSelectPlan }: PricingComparisonMatri
       <div className="grid grid-cols-12 px-4 py-3 bg-slate-100/90 dark:bg-[#1A1813] border-b border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-800 dark:text-slate-200 sticky top-0 z-10 backdrop-blur-sm">
         <div className="col-span-4 sm:col-span-5">Feature & Description</div>
         <div className="col-span-2 sm:col-span-2 text-center">Hobby ($0)</div>
-        <div className="col-span-2 sm:col-span-2 text-center text-purple-600 dark:text-purple-400">Pro ($20)</div>
-        <div className="col-span-2 sm:col-span-2 text-center">Business ($40)</div>
+        <div className="col-span-2 sm:col-span-2 text-center text-purple-600 dark:text-purple-400">
+          Pro ({isYearly ? '$16/mo' : '$20/mo'})
+        </div>
+        <div className="col-span-2 sm:col-span-2 text-center">
+          Business ({isYearly ? '$32/mo' : '$40/mo'})
+        </div>
         <div className="col-span-2 sm:col-span-1 text-center hidden sm:block">Enterprise</div>
       </div>
 
@@ -506,7 +513,7 @@ export function PricingComparisonMatrix({ onSelectPlan }: PricingComparisonMatri
             onClick={() => onSelectPlan('pro')}
             className="px-4 py-1.5 rounded-full bg-slate-900 text-white dark:bg-white dark:text-black font-semibold text-xs hover:opacity-90 transition-opacity cursor-pointer shrink-0"
           >
-            Upgrade to Pro ($20/mo)
+            Upgrade to Pro ({isYearly ? '$16/mo' : '$20/mo'})
           </button>
         )}
       </div>

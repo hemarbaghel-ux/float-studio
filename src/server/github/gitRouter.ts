@@ -21,7 +21,7 @@ const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|woff2?|ttf|eot|mp
 
 interface RemoteFile { sha: string; mode: string }
 interface GitLink {
-  ownerId: string; repositoryOwner: string; repositoryName: string; defaultBranch: string;
+  ownerId: string; provider?: 'github' | 'gitlab'; repositoryOwner: string; repositoryName: string; defaultBranch: string;
   branch: string; baseSha: string; baseFiles: Record<string, RemoteFile>; updatedAt: number;
   pendingCommit?: { sha: string; baseSha: string; message: string; createdAt: number };
 }
@@ -230,9 +230,11 @@ gitRouter.get('/', requireAuth, async (req: any, res: Response) => {
     const prs = await listPullRequests(ctx, 'open');
     res.json({
       connected: true, linked: true,
-      repository: { fullName: ctx.link.repositoryOwner + '/' + ctx.link.repositoryName, htmlUrl: ctx.repository.html_url, private: !!ctx.repository.private },
+      provider: ctx.link.provider || 'github',
+      repository: { fullName: ctx.link.repositoryOwner + '/' + ctx.link.repositoryName, htmlUrl: ctx.repository?.html_url || `https://github.com/${ctx.link.repositoryOwner}/${ctx.link.repositoryName}`, private: !!ctx.repository?.private },
       branch: ctx.link.branch, defaultBranch: ctx.link.defaultBranch,
-      branches: await listBranches(ctx), headSha: ref.object.sha, baseSha: ctx.link.baseSha,
+      branches: ctx.link.provider === 'gitlab' ? [{ name: ctx.link.branch, sha: ctx.link.baseSha, protected: false }] : await listBranches(ctx),
+      headSha: ref.object.sha, baseSha: ctx.link.baseSha,
       changes: compareWorkspace(local, ctx.link.baseFiles), remoteChanges: compareRemote(headFiles, ctx.link.baseFiles),
       pendingCommit: ctx.link.pendingCommit || null, pullRequests: prs
     });
@@ -261,6 +263,106 @@ gitRouter.get('/diff', requireAuth, async (req: any, res: Response) => {
       });
     }
     res.json({ patches, truncated: changes.length > patches.length, total: changes.length });
+  } catch (error: any) { sendFailure(res, error); }
+});
+
+gitRouter.get('/commits', requireAuth, async (req: any, res: Response) => {
+  try {
+    const ctx = await loadContext(req.params.projectId, req.user.uid, true);
+    const branch = String(req.query.branch || ctx.link!.branch || ctx.link!.defaultBranch || 'main');
+    const provider = ctx.link?.provider || 'github';
+
+    if (provider === 'github') {
+      const commits = await github(ctx, `/commits?sha=${encodeURIComponent(branch)}&per_page=25`);
+      const formatted = Array.isArray(commits) ? commits.map((c: any) => ({
+        sha: c.sha,
+        shortSha: c.sha ? c.sha.slice(0, 7) : '',
+        message: c.commit?.message || '',
+        author: {
+          name: c.commit?.author?.name || c.author?.login || 'Author',
+          email: c.commit?.author?.email || '',
+          avatarUrl: c.author?.avatar_url || ''
+        },
+        date: c.commit?.author?.date || c.commit?.committer?.date || '',
+        htmlUrl: c.html_url
+      })) : [];
+      return res.json({ commits: formatted, branch, provider: 'github' });
+    }
+
+    if (provider === 'gitlab') {
+      const projectPath = encodeURIComponent(`${ctx.link!.repositoryOwner}/${ctx.link!.repositoryName}`);
+      const query = new URLSearchParams({ per_page: '25', ref_name: branch });
+      const url = `https://gitlab.com/api/v4/projects/${projectPath}/repository/commits?${query.toString()}`;
+      const commitRes = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${ctx.connection.accessToken}`, 'User-Agent': 'FLOAT-AI' },
+        signal: AbortSignal.timeout(15_000)
+      });
+      if (!commitRes.ok) throw httpError(commitRes.status, 'GitLab commits request failed');
+      const commits = await commitRes.json();
+      const formatted = Array.isArray(commits) ? commits.map((c: any) => ({
+        sha: c.id,
+        shortSha: c.short_id || (c.id ? c.id.slice(0, 7) : ''),
+        message: c.title || c.message || '',
+        author: {
+          name: c.author_name || 'GitLab User',
+          email: c.author_email || '',
+          avatarUrl: ''
+        },
+        date: c.committed_date || c.created_at || '',
+        htmlUrl: c.web_url
+      })) : [];
+      return res.json({ commits: formatted, branch, provider: 'gitlab' });
+    }
+
+    res.json({ commits: [], branch });
+  } catch (error: any) { sendFailure(res, error); }
+});
+
+gitRouter.get('/commits/:commitSha', requireAuth, async (req: any, res: Response) => {
+  try {
+    const ctx = await loadContext(req.params.projectId, req.user.uid, true);
+    const { commitSha } = req.params;
+    const provider = ctx.link?.provider || 'github';
+
+    if (provider === 'github') {
+      const data = await github(ctx, `/commits/${encodeURIComponent(commitSha)}`);
+      const files = Array.isArray(data.files) ? data.files.map((f: any) => ({
+        filename: f.filename,
+        status: f.status || 'modified',
+        additions: f.additions || 0,
+        deletions: f.deletions || 0,
+        patch: f.patch || '',
+        previousFilename: f.previous_filename
+      })) : [];
+      return res.json({
+        sha: data.sha,
+        message: data.commit?.message || '',
+        stats: data.stats || { total: 0, additions: 0, deletions: 0 },
+        files
+      });
+    }
+
+    if (provider === 'gitlab') {
+      const projectPath = encodeURIComponent(`${ctx.link!.repositoryOwner}/${ctx.link!.repositoryName}`);
+      const url = `https://gitlab.com/api/v4/projects/${projectPath}/repository/commits/${encodeURIComponent(commitSha)}/diff`;
+      const diffRes = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${ctx.connection.accessToken}`, 'User-Agent': 'FLOAT-AI' },
+        signal: AbortSignal.timeout(20_000)
+      });
+      if (!diffRes.ok) throw httpError(diffRes.status, 'GitLab commit diff request failed');
+      const diffs = await diffRes.json();
+      const files = Array.isArray(diffs) ? diffs.map((d: any) => ({
+        filename: d.new_path || d.old_path,
+        status: d.new_file ? 'added' : d.deleted_file ? 'deleted' : 'modified',
+        additions: 0,
+        deletions: 0,
+        patch: d.diff || '',
+        previousFilename: d.old_path !== d.new_path ? d.old_path : undefined
+      })) : [];
+      return res.json({ sha: commitSha, files });
+    }
+
+    res.json({ sha: commitSha, files: [] });
   } catch (error: any) { sendFailure(res, error); }
 });
 
@@ -302,8 +404,8 @@ gitRouter.post('/operations', requireAuth, async (req: any, res: Response) => {
   const progress = (stage: string, message: string) => write({ type: 'progress', stage, message, timestamp: Date.now() });
   try {
     const body = req.body || {};
-    progress('authorization', 'Checking project ownership and GitHub authorization.');
-    const ctx = await loadContext(req.params.projectId, req.user.uid, body.action !== 'link');
+    progress('authorization', 'Checking project ownership and authorization.');
+    const ctx = await loadContext(req.params.projectId, req.user.uid, body.action !== 'link', body.provider);
     const result = await performOperation(String(body.action || ''), body, ctx, progress);
     write({ type: 'completed', ...result });
   } catch (error: any) {
@@ -311,23 +413,34 @@ gitRouter.post('/operations', requireAuth, async (req: any, res: Response) => {
   } finally { if (!res.writableEnded) res.end(); }
 });
 
-async function loadContext(projectId: string, ownerId: string, requireLink: boolean): Promise<GitContext> {
+async function loadContext(projectId: string, ownerId: string, requireLink: boolean, explicitProvider?: string): Promise<GitContext> {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(projectId)) throw httpError(400, 'Invalid project ID.');
   const projectRef = adminDb.collection('projects').doc(projectId);
   const snapshot = await projectRef.get();
-  if (!snapshot.exists) throw httpError(404, 'Project not found. Save the workspace before using GitHub.');
+  if (!snapshot.exists) throw httpError(404, 'Project not found. Save the workspace before using GitHub or GitLab.');
   const project = snapshot.data()!;
   if (project.ownerId !== ownerId) throw httpError(403, 'You do not own this project.');
   const linkSnapshot = await links().doc(projectId).get();
   const link = linkSnapshot.exists ? linkSnapshot.data() as GitLink : undefined;
   if (link && link.ownerId !== ownerId) throw httpError(403, 'Repository authorization does not belong to this account.');
-  if (requireLink && !link) throw httpError(409, 'Link this project to a GitHub repository first.');
+  if (requireLink && !link) throw httpError(409, 'Link this project to a GitHub or GitLab repository first.');
+
+  const provider = link?.provider || (explicitProvider === 'gitlab' ? 'gitlab' : 'github');
   let connection: StoredIntegrationConnection | null;
-  try { connection = await getIntegrationConnection(ownerId, 'github'); }
-  catch { throw httpError(503, 'GitHub integration storage is unavailable.'); }
-  if (!connection || connection.status !== 'connected' || !connection.accessToken) throw httpError(401, 'Connect GitHub in Settings → Integrations.');
+  try { connection = await getIntegrationConnection(ownerId, provider); }
+  catch { throw httpError(503, `${provider === 'gitlab' ? 'GitLab' : 'GitHub'} integration storage is unavailable.`); }
+  if (!connection || connection.status !== 'connected' || !connection.accessToken) {
+    throw httpError(401, `Connect ${provider === 'gitlab' ? 'GitLab' : 'GitHub'} in Settings → Integrations.`);
+  }
+
   const ctx: GitContext = { ownerId, projectId, projectRef, project, link, connection };
-  if (link) ctx.repository = await github(ctx, '');
+  if (link && provider === 'github') ctx.repository = await github(ctx, '');
+  if (link && provider === 'gitlab') {
+    ctx.repository = {
+      html_url: `https://gitlab.com/${link.repositoryOwner}/${link.repositoryName}`,
+      private: true
+    };
+  }
   return ctx;
 }
 
@@ -343,7 +456,7 @@ async function performOperation(action: string, body: any, ctx: GitContext, prog
     case 'push': return pushCommit(ctx, progress);
     case 'pull': return pullChanges(ctx, progress);
     case 'create-pr': return createPullRequest(body, ctx, progress);
-    default: throw httpError(400, 'Unknown GitHub operation.');
+    default: throw httpError(400, 'Unknown GitHub or GitLab operation.');
   }
 }
 
@@ -354,11 +467,57 @@ async function unlinkRepository(ctx: GitContext, progress: (stage: string, messa
 }
 
 async function linkRepository(body: any, ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {
+  const provider = (body.provider === 'gitlab' ? 'gitlab' : 'github') as 'github' | 'gitlab';
   const fullName = String(body.fullName || '');
   const match = fullName.match(/^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/);
-  if (!match) throw httpError(400, 'Choose a repository from your connected GitHub account.');
+  if (!match) throw httpError(400, `Choose a repository from your connected ${provider === 'gitlab' ? 'GitLab' : 'GitHub'} account.`);
   const [, repositoryOwner, repositoryName] = match;
-  const link: GitLink = { ownerId: ctx.ownerId, repositoryOwner, repositoryName, defaultBranch: '', branch: '', baseSha: '', baseFiles: {}, updatedAt: Date.now() };
+
+  if (provider === 'gitlab') {
+    progress('repository', 'Verifying GitLab access to ' + fullName + '.');
+    const projectPath = encodeURIComponent(fullName);
+    const gitlabRes = await fetch(`https://gitlab.com/api/v4/projects/${projectPath}`, {
+      headers: { 'Authorization': `Bearer ${ctx.connection.accessToken}`, 'User-Agent': 'FLOAT-AI' },
+      signal: AbortSignal.timeout(15_000)
+    });
+    if (!gitlabRes.ok) throw httpError(gitlabRes.status, 'GitLab repository not accessible or not found.');
+    const repoData = await gitlabRes.json();
+    const branch = String(body.branch || repoData.default_branch || 'main');
+
+    progress('branch', 'Fetching GitLab branch ' + branch + '.');
+    const branchRes = await fetch(`https://gitlab.com/api/v4/projects/${projectPath}/repository/branches/${encodeURIComponent(branch)}`, {
+      headers: { 'Authorization': `Bearer ${ctx.connection.accessToken}`, 'User-Agent': 'FLOAT-AI' },
+      signal: AbortSignal.timeout(15_000)
+    });
+    let baseSha = 'main';
+    if (branchRes.ok) {
+      const branchData = await branchRes.json();
+      baseSha = branchData.commit?.id || 'main';
+    }
+
+    const link: GitLink = {
+      ownerId: ctx.ownerId,
+      provider: 'gitlab',
+      repositoryOwner,
+      repositoryName,
+      defaultBranch: repoData.default_branch || branch,
+      branch,
+      baseSha,
+      baseFiles: {},
+      updatedAt: Date.now()
+    };
+    await links().doc(ctx.projectId).set(link);
+    return {
+      provider: 'gitlab',
+      repository: { fullName, htmlUrl: repoData.web_url, private: repoData.visibility !== 'public' },
+      branch,
+      defaultBranch: link.defaultBranch,
+      changes: [],
+      message: 'GitLab repository linked.'
+    };
+  }
+
+  const link: GitLink = { ownerId: ctx.ownerId, provider: 'github', repositoryOwner, repositoryName, defaultBranch: '', branch: '', baseSha: '', baseFiles: {}, updatedAt: Date.now() };
   const nextContext: GitContext = { ...ctx, link };
   progress('repository', 'Verifying GitHub access to ' + fullName + '.');
   const repo = await github(nextContext, '');
@@ -371,7 +530,7 @@ async function linkRepository(body: any, ctx: GitContext, progress: (stage: stri
   link.baseSha = ref.object.sha;
   link.baseFiles = await getTree(nextContext, ref.object.sha);
   await links().doc(ctx.projectId).set(link);
-  return { repository: { fullName, htmlUrl: repo.html_url, private: !!repo.private }, branch, defaultBranch: link.defaultBranch, changes: compareWorkspace(projectFiles(ctx.project.files), link.baseFiles), message: 'GitHub repository linked.' };
+  return { provider: 'github', repository: { fullName, htmlUrl: repo.html_url, private: !!repo.private }, branch, defaultBranch: link.defaultBranch, changes: compareWorkspace(projectFiles(ctx.project.files), link.baseFiles), message: 'GitHub repository linked.' };
 }
 
 async function createBranch(body: any, ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {

@@ -128,7 +128,7 @@ export function GuidesPage() {
           body: 'Large multi-turn conversations can consume tokens and dilute prompt relevance. Use the "New Chat" button when switching to an unrelated task to refresh the context window and ensure high-precision responses.',
           points: [
             'Track your token consumption in real time at /models/usage.',
-            'Gemini 3.8 Flash provides rapid inference with large token context limits.'
+            'OpenAI GPT-4o provides rapid inference with large token context limits.'
           ]
         }
       ]

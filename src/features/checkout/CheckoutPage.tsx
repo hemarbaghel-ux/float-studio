@@ -32,6 +32,7 @@ export function CheckoutPage() {
   } = useSubscriptionStore();
 
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlanId>('pro');
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
@@ -40,12 +41,16 @@ export function CheckoutPage() {
   const checkoutContainerRef = useRef<HTMLDivElement>(null);
   const embeddedCheckoutRef = useRef<StripeEmbeddedCheckout | null>(null);
 
-  // Parse plan from query parameters
+  // Parse plan and billing from query parameters
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const planParam = params.get('plan') as SubscriptionPlanId;
     if (planParam && ['pro', 'business', 'ultimate'].includes(planParam)) {
       setSelectedPlan(planParam);
+    }
+    const billingParam = params.get('billing');
+    if (billingParam === 'yearly' || billingParam === 'monthly') {
+      setBillingCycle(billingParam);
     }
   }, []);
 
@@ -268,6 +273,35 @@ export function CheckoutPage() {
               </div>
             </div>
 
+            {/* Billing Cycle Switcher */}
+            <div className="mb-6 flex items-center justify-between p-1 bg-[#141414] rounded-xl border border-white/5">
+              <button
+                type="button"
+                onClick={() => setBillingCycle('monthly')}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  billingCycle === 'monthly'
+                    ? 'bg-white text-black shadow-xs'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Monthly billing
+              </button>
+              <button
+                type="button"
+                onClick={() => setBillingCycle('yearly')}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  billingCycle === 'yearly'
+                    ? 'bg-white text-black shadow-xs'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>Annual billing</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">
+                  -20%
+                </span>
+              </button>
+            </div>
+
             {/* Plan header & price */}
             <div className="mb-6 pb-6 border-b border-white/10">
               <div className="flex items-center justify-between mb-2">
@@ -282,9 +316,17 @@ export function CheckoutPage() {
                 {planConfig.description}
               </p>
               <div className="flex items-baseline gap-1.5">
-                <span className="text-4xl font-extrabold text-white tracking-tight">${planConfig.monthlyPrice}</span>
+                <span className="text-4xl font-extrabold text-white tracking-tight">
+                  ${billingCycle === 'yearly' ? planConfig.yearlyPrice : planConfig.monthlyPrice}
+                </span>
                 <span className="text-xs text-slate-400">/ month</span>
-                <span className="text-[11px] text-slate-500 ml-2">USD, billed monthly</span>
+                {billingCycle === 'yearly' ? (
+                  <span className="text-[11px] text-emerald-400 ml-2 font-medium">
+                    Billed ${planConfig.yearlyAnnualTotal}/yr (save 20%)
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-slate-500 ml-2">USD, billed monthly</span>
+                )}
               </div>
             </div>
 

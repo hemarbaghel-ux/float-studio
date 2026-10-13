@@ -94,7 +94,7 @@ export const useEvalStore = create<EvalState>((set, get) => {
     activeBenchmark: null,
     isLoading: false,
     isPolling: false,
-    selectedModelsForComparison: ['gpt-4o', 'gemini-3.1-flash-lite'],
+    selectedModelsForComparison: ['gpt-6-astra', 'gpt-6.1-sol'],
     selectedAgentsForComparison: ['main-agent', 'coder-agent'],
     activeTab: 'overview',
     error: null,

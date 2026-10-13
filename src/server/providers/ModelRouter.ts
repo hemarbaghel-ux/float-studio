@@ -1,6 +1,4 @@
 import { AIProviderAdapter, AIModel, ModelRequest, ModelResponse } from '../../types/ai';
-import { GoogleGeminiAdapter } from './GoogleGeminiAdapter';
-import { AnthropicAdapter } from './AnthropicAdapter';
 import { OpenAIAdapter } from './OpenAIAdapter';
 import { ServerPrivacyGuard } from '../privacyGuard';
 
@@ -9,8 +7,6 @@ export class ModelRouter {
   private models: Map<string, AIModel> = new Map();
 
   constructor() {
-    this.adapters.set('google', new GoogleGeminiAdapter());
-    this.adapters.set('anthropic', new AnthropicAdapter());
     this.adapters.set('openai', new OpenAIAdapter());
   }
 

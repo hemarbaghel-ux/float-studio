@@ -18,11 +18,12 @@ import {
   ChevronRight,
   FileCode,
   Undo2,
-  AlertCircle
+  AlertCircle,
+  GitCommit
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useIDEStore } from '../../store';
-import { useIntegrationStore, type RepositoryItem } from '../../store/integrationStore';
+import { useIntegrationStore, type RepositoryItem, type GitCommitItem } from '../../store/integrationStore';
 import { flattenFileTree, cn } from '../../lib/utils';
 import { GitDiffModal, type GitDiffItem } from './GitDiffModal';
 import { CreatePullRequestModal } from './CreatePullRequestModal';
@@ -31,6 +32,7 @@ type Change = { path: string; status: 'added' | 'modified' | 'deleted' };
 type GitStatus = {
   connected: boolean;
   linked: boolean;
+  provider?: 'github' | 'gitlab';
   repository?: { fullName: string; htmlUrl: string; private: boolean };
   branch?: string;
   defaultBranch?: string;
@@ -62,8 +64,16 @@ type GitEvent = {
 
 export function GitPanel() {
   const { projectId, applyExecutionChanges, saveProject } = useIDEStore();
-  const { configuredProviders, connections, fetchIntegrations, getRepositories } = useIntegrationStore();
+  const { 
+    configuredProviders, 
+    connections, 
+    fetchIntegrations, 
+    getRepositories,
+    getCommits,
+    getCommitDiff
+  } = useIntegrationStore();
   const [status, setStatus] = useState<GitStatus | null>(null);
+  const [linkProvider, setLinkProvider] = useState<'github' | 'gitlab'>('github');
   const [repositories, setRepositories] = useState<RepositoryItem[]>([]);
   const [selectedRepo, setSelectedRepo] = useState('');
   const [stagedPaths, setStagedPaths] = useState<Set<string>>(new Set());
@@ -77,6 +87,10 @@ export function GitPanel() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string[]>([]);
   const [error, setError] = useState('');
+
+  // Commit history in IDE panel
+  const [recentCommits, setRecentCommits] = useState<GitCommitItem[]>([]);
+  const [loadingCommits, setLoadingCommits] = useState(false);
 
   // Discard changes confirmation state
   const [discardingPath, setDiscardingPath] = useState<string | null>(null);
@@ -158,15 +172,73 @@ export function GitPanel() {
     }
   };
 
-  const loadRepositories = async () => {
+  const loadRepositories = async (targetProvider: 'github' | 'gitlab' = linkProvider) => {
     setError('');
-    const result = await getRepositories('github');
+    const result = await getRepositories(targetProvider);
     if (!result.success) {
-      setError(result.error || 'Could not load authorized GitHub repositories.');
+      setError(result.error || `Could not load authorized ${targetProvider === 'gitlab' ? 'GitLab' : 'GitHub'} repositories.`);
       return;
     }
     setRepositories(result.repositories);
     if (result.repositories.length) setSelectedRepo(result.repositories[0].fullName);
+  };
+
+  const loadRecentCommits = useCallback(async () => {
+    if (!projectId || !status?.repository || !status?.linked) return;
+    setLoadingCommits(true);
+    try {
+      const parts = status.repository.fullName.split('/');
+      if (parts.length !== 2) return;
+      const [owner, repo] = parts;
+      const prov = status.provider || 'github';
+      const result = await getCommits(prov, owner, repo, status.branch);
+      if (result.success && result.commits) {
+        setRecentCommits(result.commits);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load recent commits in GitPanel:', err);
+    } finally {
+      setLoadingCommits(false);
+    }
+  }, [projectId, status?.repository, status?.linked, status?.provider, status?.branch, getCommits]);
+
+  useEffect(() => {
+    if (status?.linked && status?.repository) {
+      void loadRecentCommits();
+    }
+  }, [status?.linked, status?.repository?.fullName, status?.branch, loadRecentCommits]);
+
+  const openDiffForCommit = async (commit: GitCommitItem) => {
+    if (!projectId || !status?.repository) return;
+    setBusy(true);
+    setError('');
+    try {
+      const parts = status.repository.fullName.split('/');
+      if (parts.length !== 2) throw new Error('Invalid repository identifier');
+      const [owner, repo] = parts;
+      const prov = status.provider || 'github';
+      const result = await getCommitDiff(prov, owner, repo, commit.sha);
+      if (!result.success || !result.files) {
+        throw new Error(result.error || 'Failed to load commit diff');
+      }
+      const patches: GitDiffItem[] = result.files.map(f => ({
+        path: f.filename,
+        status: f.status === 'added' ? 'added' : f.status === 'deleted' ? 'deleted' : 'modified',
+        patch: f.patch,
+        before: '',
+        after: f.patch || ''
+      }));
+      if (patches.length === 0) {
+        throw new Error(`No changed files in commit ${commit.sha.slice(0, 7)}.`);
+      }
+      setDiffPatches(patches);
+      setDiffInitialPath(patches[0].path);
+      setDiffTitle(`Commit ${commit.sha.slice(0, 7)}: ${commit.message}`);
+    } catch (err: any) {
+      setError(err.message || 'Could not inspect commit diff.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const openDiffForFile = async (filePath?: string) => {
@@ -281,8 +353,12 @@ export function GitPanel() {
   }
 
   const githubConfigured = configuredProviders.includes('github');
+  const gitlabConfigured = configuredProviders.includes('gitlab');
+  const gitConfigured = githubConfigured || gitlabConfigured;
+
   const githubConnection = connections.find(c => c.provider === 'github');
-  const connected = githubConnection?.status === 'connected';
+  const gitlabConnection = connections.find(c => c.provider === 'gitlab');
+  const connected = (githubConnection?.status === 'connected') || (gitlabConnection?.status === 'connected');
 
   const allChanges = status?.changes || [];
   const stagedChanges = allChanges.filter(c => stagedPaths.has(c.path));
@@ -315,12 +391,12 @@ export function GitPanel() {
         )}
 
         {/* Not Configured State */}
-        {!githubConfigured && (
+        {!gitConfigured && (
           <div className="p-4 space-y-3">
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/10 space-y-2">
-              <p className="font-semibold text-slate-900 dark:text-white">GitHub isn&apos;t configured yet</p>
+              <p className="font-semibold text-slate-900 dark:text-white">Git isn&apos;t configured yet</p>
               <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                Configure GitHub OAuth credentials in environment settings to enable synchronization, branch reviews, and pull requests.
+                Configure GitHub or GitLab OAuth credentials in environment settings to enable synchronization, commit diffs, and pull requests.
               </p>
             </div>
             <button
@@ -333,24 +409,13 @@ export function GitPanel() {
         )}
 
         {/* Not Connected State */}
-        {githubConfigured && !connected && (
+        {gitConfigured && !connected && (
           <div className="p-4 space-y-3">
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/10 space-y-2">
-              {githubConnection?.status === 'expired' ? (
-                <>
-                  <p className="font-semibold text-amber-600 dark:text-amber-400">GitHub authorization expired</p>
-                  <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                    Reconnect your GitHub account in Settings → Integrations to restore repository access.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="font-semibold text-slate-900 dark:text-white">Connect GitHub</p>
-                  <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                    Connect your GitHub account to import repositories, branch, review changes, and create pull requests from FLOAT.
-                  </p>
-                </>
-              )}
+              <p className="font-semibold text-slate-900 dark:text-white">Connect Git Provider</p>
+              <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
+                Connect your GitHub or GitLab account in Integrations to import repositories, inspect commit diffs, and sync changes from FLOAT.
+              </p>
             </div>
             <button
               onClick={() => document.dispatchEvent(new CustomEvent('open-settings'))}
@@ -367,15 +432,46 @@ export function GitPanel() {
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/10 space-y-1.5">
               <p className="font-semibold text-slate-900 dark:text-white">Link a Repository</p>
               <p className="text-slate-500 dark:text-slate-400 text-[11px]">
-                Link this workspace to an authorized GitHub repository.
+                Link this workspace to an authorized GitHub or GitLab repository.
               </p>
             </div>
+
+            {/* Provider selection tabs */}
+            <div className="flex items-center gap-1 border border-slate-200 dark:border-white/10 rounded-lg p-0.5 bg-slate-100 dark:bg-white/5">
+              <button
+                type="button"
+                onClick={() => {
+                  setLinkProvider('github');
+                  void loadRepositories('github');
+                }}
+                className={cn(
+                  "flex-1 py-1 px-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer",
+                  linkProvider === 'github' ? "bg-white dark:bg-[#1a1a1a] shadow-xs text-slate-900 dark:text-white" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                )}
+              >
+                GitHub
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLinkProvider('gitlab');
+                  void loadRepositories('gitlab');
+                }}
+                className={cn(
+                  "flex-1 py-1 px-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer",
+                  linkProvider === 'gitlab' ? "bg-white dark:bg-[#1a1a1a] shadow-xs text-slate-900 dark:text-white" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                )}
+              >
+                GitLab
+              </button>
+            </div>
+
             <button
-              onClick={() => void loadRepositories()}
+              onClick={() => void loadRepositories(linkProvider)}
               disabled={busy}
-              className="w-full border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-white/5 transition-colors cursor-pointer flex items-center justify-between"
+              className="w-full border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-white/5 transition-colors cursor-pointer flex items-center justify-between text-slate-700 dark:text-slate-300"
             >
-              <span>Load accessible repositories</span>
+              <span>Load {linkProvider === 'gitlab' ? 'GitLab' : 'GitHub'} repositories</span>
               {busy && <LoaderCircle size={13} className="animate-spin" />}
             </button>
             {repositories.length > 0 && (
@@ -393,11 +489,11 @@ export function GitPanel() {
                 </select>
                 <button
                   disabled={busy || !selectedRepo}
-                  onClick={() => void run('link', { fullName: selectedRepo })}
+                  onClick={() => void run('link', { fullName: selectedRepo, provider: linkProvider })}
                   className="w-full rounded-lg px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <Link2 size={13} />
-                  <span>Link repository</span>
+                  <span>Link {linkProvider === 'gitlab' ? 'GitLab' : 'GitHub'} repository</span>
                 </button>
               </div>
             )}
@@ -779,6 +875,75 @@ export function GitPanel() {
               ) : (
                 <div className="text-[11px] text-slate-400 dark:text-slate-500">
                   No open pull requests for this repository.
+                </div>
+              )}
+            </div>
+
+            {/* Recent Commits Section */}
+            <div className="p-3 border-b border-slate-200 dark:border-[#2A2A2A] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold uppercase tracking-wider text-[11px] text-slate-500">
+                  Recent Commits
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void loadRecentCommits()}
+                  disabled={busy || loadingCommits}
+                  className="text-[11px] text-blue-600 dark:text-blue-400 font-medium hover:underline flex items-center gap-1 disabled:opacity-40 cursor-pointer"
+                  title="Fetch latest commits"
+                >
+                  <RefreshCw size={11} className={loadingCommits ? "animate-spin" : ""} />
+                  <span>Fetch</span>
+                </button>
+              </div>
+
+              {recentCommits.length > 0 ? (
+                <div className="space-y-1.5 pt-1">
+                  {recentCommits.slice(0, 8).map(commit => (
+                    <div
+                      key={commit.sha}
+                      className="p-2 rounded-lg border border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.02] text-xs hover:border-blue-500/50 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <div className="truncate flex-1">
+                          <p className="font-medium text-slate-900 dark:text-white truncate" title={commit.message}>
+                            {commit.message}
+                          </p>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            <span className="font-mono text-blue-500">{commit.sha.slice(0, 7)}</span>
+                            <span>•</span>
+                            <span className="truncate">{commit.author.name}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => void openDiffForCommit(commit)}
+                            disabled={busy}
+                            title="View commit diff in FLOAT IDE"
+                            className="p-1 hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                          >
+                            <Eye size={12} />
+                          </button>
+                          {commit.htmlUrl && (
+                            <a
+                              href={commit.htmlUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="View commit on remote"
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                            >
+                              <ExternalLink size={12} />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                  {loadingCommits ? 'Loading latest commits...' : 'No recent commits loaded. Click Fetch to retrieve.'}
                 </div>
               )}
             </div>

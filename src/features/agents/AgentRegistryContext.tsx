@@ -31,15 +31,15 @@ export interface AgentRegistryContextType {
 
 const AgentRegistryContext = createContext<AgentRegistryContextType | null>(null);
 
-// Default fallback model recommendations based on agent type
 const DEFAULT_FALLBACKS: Record<string, string> = {
-  'general-assistant': 'gemini-3.1-flash-lite',
-  'planner-agent': 'gemini-3.1-pro-preview',
-  'coder-agent': 'gpt-4o-mini',
-  'reviewer-agent': 'gemini-3.8-flash',
-  'explorer-agent': 'gemini-3.1-flash-lite',
-  'debugger-agent': 'o3-mini',
-  'ui-agent': 'gemini-3.8-flash'
+  'general-assistant': 'gpt-6-astra',
+  'planner-agent': 'gpt-6.1-sol',
+  'coder-agent': 'gpt-6.1-sol',
+  'reviewer-agent': 'gpt-6-astra',
+  'explorer-agent': 'gpt-6-astra',
+  'debugger-agent': 'gpt-6.1-sol',
+  'ui-agent': 'gpt-6-astra',
+  'astra-agent': 'gpt-6-astra'
 };
 
 export function AgentRegistryProvider({ children }: { children: React.ReactNode }) {

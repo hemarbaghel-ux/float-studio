@@ -33,7 +33,15 @@ export function ModelsFilteredPage({ providerId, title, description }: ModelsFil
     updateSettings({ theme: settings.theme === 'dark' ? 'light' : 'dark' });
   };
   
-  const activeModels = models.length > 0 ? models : INITIAL_MODELS;
+  const activeModels = useMemo(() => {
+    const list = models.length > 0 ? models : INITIAL_MODELS;
+    const seen = new Set<string>();
+    return list.filter(m => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+  }, [models]);
 
   const filteredModels = useMemo(() => {
     return activeModels.filter(m => m.providerId === providerId);

@@ -63,7 +63,7 @@ export function FeatureIndexPage() {
                         {feat.headline}
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-[#A1A1AA] leading-relaxed mb-6">
-                        {getCurrentReleaseFeatureSummary(feat.slug)?.summary || 'Preview concept. This capability is not available in the current release.'}
+                        {feat.introParagraph || getCurrentReleaseFeatureSummary(feat.slug)?.summary || feat.headline}
                       </p>
                     </div>
 

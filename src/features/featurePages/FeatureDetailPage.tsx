@@ -49,51 +49,8 @@ export function FeatureDetailPage({ slug }: FeatureDetailPageProps) {
     );
   }
 
-  if (!isFeatureInCurrentRelease(feature.slug)) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-[#0F0F0B] text-slate-900 dark:text-white flex flex-col justify-between">
-        <ResourcesHeader currentPath={`/features/${feature.slug}`} />
-        <main className="max-w-3xl mx-auto px-6 py-36 text-center">
-          <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 px-3 py-1 text-xs font-semibold uppercase tracking-wide mb-6">
-            Preview concept · Not available yet
-          </div>
-          <h1 className="text-4xl font-semibold mb-5">{feature.title} is not in this release</h1>
-          <p className="text-slate-600 dark:text-[#A1A1AA] mb-8 leading-relaxed">
-            This page was a product concept and does not describe a feature you can use in FLOAT today. The current release is a browser-based coding workspace; availability depends on the tools and providers enabled for your account.
-          </p>
-          <a href="/" onClick={(event) => { event.preventDefault(); window.history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }} className="inline-flex items-center gap-2 rounded-full bg-slate-900 dark:bg-white px-6 py-3 font-semibold text-white dark:text-black">
-            Open FLOAT <ArrowRight size={16} />
-          </a>
-        </main>
-        <ResourcesFooter />
-      </div>
-    );
-  }
-
+  const isCurrent = isFeatureInCurrentRelease(feature.slug);
   const currentReleaseSummary = getCurrentReleaseFeatureSummary(feature.slug);
-  if (currentReleaseSummary) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-[#0F0F0B] text-slate-900 dark:text-white flex flex-col">
-        <ResourcesHeader currentPath={`/features/${feature.slug}`} />
-        <main className="max-w-3xl mx-auto px-6 py-32">
-          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-3 py-1 text-xs font-semibold uppercase tracking-wide mb-6">
-            Available in the browser workspace
-          </div>
-          <h1 className="text-4xl font-semibold mb-5">{feature.title}</h1>
-          <p className="text-lg text-slate-600 dark:text-[#A1A1AA] leading-relaxed mb-8">{currentReleaseSummary.summary}</p>
-          <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6 mb-8">
-            <h2 className="font-semibold mb-2">Requirements and limits</h2>
-            <p className="text-sm leading-relaxed text-slate-600 dark:text-[#A1A1AA]">{currentReleaseSummary.limits}</p>
-          </section>
-          <div className="flex flex-wrap gap-3">
-            <a href="/dashboard" className="inline-flex items-center gap-2 rounded-full bg-slate-900 dark:bg-white px-6 py-3 font-semibold text-white dark:text-black">Open workspace <ArrowRight size={16} /></a>
-            <a href="/features" className="inline-flex items-center gap-2 rounded-full border border-slate-300 dark:border-white/15 px-6 py-3 font-medium">Feature overview</a>
-          </div>
-        </main>
-        <ResourcesFooter />
-      </div>
-    );
-  }
 
   const toggleFaq = (idx: number) => {
     setOpenFaqIndices((prev) =>
@@ -109,6 +66,28 @@ export function FeatureDetailPage({ slug }: FeatureDetailPageProps) {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0F0F0B] text-slate-900 dark:text-[#EDEDED] font-sans selection:bg-[#7C3AED]/20 dark:selection:bg-white/10 transition-colors">
       <ResourcesHeader currentPath={`/features/${feature.slug}`} />
+
+      {/* Release Status Banner */}
+      <div className="pt-24 px-6 max-w-4xl mx-auto">
+        {isCurrent && currentReleaseSummary ? (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-left flex items-start gap-3 mt-4">
+            <CheckCircle2 size={18} className="text-emerald-500 shrink-0 mt-0.5" />
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Available in Browser Workspace</div>
+              <p className="text-xs text-slate-700 dark:text-slate-300 mt-1">{currentReleaseSummary.summary}</p>
+              <p className="text-[11px] text-slate-500 dark:text-[#8B949E] mt-1"><span className="font-semibold">Limits:</span> {currentReleaseSummary.limits}</p>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-left flex items-start gap-3 mt-4">
+            <AlertCircle size={18} className="text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Preview Concept · Roadmap Capability</div>
+              <p className="text-xs text-slate-700 dark:text-slate-300 mt-1">This architecture specification illustrates planned capabilities. In the current release, FLOAT operates as an in-browser coding workspace with model-assisted planning and editing.</p>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Mobile Sticky Table of Contents Quick Jump Bar */}
       <div className="lg:hidden sticky top-16 z-30">

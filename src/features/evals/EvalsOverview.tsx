@@ -148,7 +148,7 @@ export function EvalsOverview({ onNewEval, onNewTask, onRunBenchmark }: EvalsOve
             </div>
             <h4 className="text-sm font-semibold text-white mb-1">No evaluation data yet</h4>
             <p className="text-xs text-[#8B949E] max-w-md mb-4">
-              Start an evaluation to test GPT-4o, Claude 3.5 Sonnet, Gemini 2.0, or your custom agents on real Python coding and debugging tasks.
+              Start an evaluation to test GPT-4o, o3-mini, o1, or your custom agents on real Python coding and debugging tasks.
             </p>
             <button
               onClick={onNewEval}

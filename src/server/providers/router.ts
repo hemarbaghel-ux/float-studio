@@ -5,14 +5,11 @@ import {
   AIProviderError,
   ProviderHealthCheckResult
 } from './base';
-import { GoogleGeminiAdapter } from './gemini';
 import { OpenAIAdapter } from './openai';
-import { AnthropicAdapter } from './anthropic';
-import { XAIAdapter } from './xai';
 import { ServerPrivacyGuard } from '../privacyGuard';
 
 export interface ModelRouteDefinition {
-  provider: 'google' | 'openai' | 'anthropic' | 'xai';
+  provider: 'openai';
   apiModelId: string;
 }
 
@@ -63,20 +60,20 @@ export class ModelRouter {
     'grok-2-vision-1212': { provider: 'xai', apiModelId: 'grok-2-vision-1212' },
     'grok-beta': { provider: 'xai', apiModelId: 'grok-beta' }
   };
+    // Auto / Default
+    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra' },
 
-  private retiredModels: Record<string, string> = {
-    'gemini-2.0-flash': 'gemini-3.1-flash-lite',
-    'gemini-1.5-flash': 'gemini-3.1-flash-lite',
-    'gemini-1.5-pro': 'gemini-3.1-pro-preview',
-    'gemini-2.5-flash': 'gemini-3.1-flash-lite',
-    'gemini-2.5-pro': 'gemini-3.1-pro-preview'
+    // GPT-6 Astra Preview / Cloud Agent with upstream gpt-4o fallback
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' },
+
+    // GPT-6.1 Sol Preview / Frontier Reasoning with upstream gpt-4o fallback
+    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' }
   };
 
   constructor() {
-    this.registerAdapter(new GoogleGeminiAdapter());
     this.registerAdapter(new OpenAIAdapter());
-    this.registerAdapter(new AnthropicAdapter());
-    this.registerAdapter(new XAIAdapter());
   }
 
   registerAdapter(adapter: AIProviderAdapter) {
@@ -127,26 +124,30 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gemini-3.1-flash-lite';
+      return 'gpt-6-astra';
     }
     return modelId;
   }
 
   validateModelAvailability(modelId: string): void {
-    if (modelId === 'gemini-2.0-flash') {
+    const lower = (modelId || '').toLowerCase();
+    if (
+      lower.startsWith('gemini') ||
+      lower.startsWith('claude') ||
+      lower.startsWith('grok') ||
+      lower.startsWith('deepseek') ||
+      lower.startsWith('composer') ||
+      lower.startsWith('muse') ||
+      lower.startsWith('llama') ||
+      lower.startsWith('mistral') ||
+      lower.startsWith('qwen') ||
+      lower.startsWith('cohere')
+    ) {
       throw new AIProviderError(
-        'The model gemini-2.0-flash has been retired by Google. Please update your code to use gemini-3.8-flash.',
-        'MODEL_NOT_FOUND',
-        'Google Gemini',
-        404
-      );
-    }
-    if (modelId.toLowerCase().startsWith('deepseek')) {
-      throw new AIProviderError(
-        `DeepSeek models (${modelId}) have been removed and are no longer supported by FLOAT AI. Please choose a supported model from Google Gemini, Anthropic Claude, OpenAI, or xAI.`,
-        'MODEL_NOT_FOUND',
+        `Model "${modelId}" belongs to an unsupported provider. FLOAT AI supports OpenAI models exclusively.`,
+        'UNSUPPORTED_PROVIDER',
         'FLOAT',
-        404
+        400
       );
     }
   }
@@ -160,6 +161,7 @@ export class ModelRouter {
 
   resolveRoute(modelId: string): { route: ModelRouteDefinition; adapter: AIProviderAdapter } {
     const key = (modelId || 'auto').trim();
+    this.validateModelAvailability(key);
     const route = this.modelRoutes[key];
 
     if (!route) {
@@ -334,7 +336,7 @@ export class ModelRouter {
 
     if (!adapter.runAgentLoop) {
       throw new AIProviderError(
-        `Autonomous agent loop is not supported for provider ${adapter.name}. Use Gemini for full tool execution.`,
+        `Autonomous agent loop is not supported for provider ${adapter.name}.`,
         'INVALID_REQUEST',
         adapter.name,
         400

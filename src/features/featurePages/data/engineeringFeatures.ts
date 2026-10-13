@@ -281,7 +281,7 @@ export function MobileDrawer({ open, onOpenChange, children }: DrawerProps) {
       providerKeyRequired: false,
       environmentNotes: 'Available across all composer interfaces in FLOAT.',
       knownLimitations: [
-        'Image attachments require multi-modal capable models (e.g. Gemini 2.5 Flash/Pro, GPT-4o, Claude 3.5/3.7).',
+        'Image attachments require multi-modal capable models (e.g. OpenAI GPT-4o, o1).',
         'Total file size must remain within the active model context window limit.'
       ]
     },

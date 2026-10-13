@@ -11,13 +11,8 @@ export function generateSampleUsageData(): ModelUsageRecord[] {
   const dayMs = 24 * 60 * 60 * 1000;
 
   const sampleModels = [
-    { provider: 'google', modelId: 'gemini-3.1-flash-lite', inputCostPer1M: 0.075, outputCostPer1M: 0.30, baseTokens: 35000 },
-    { provider: 'google', modelId: 'gemini-3.8-flash', inputCostPer1M: 0.15, outputCostPer1M: 0.60, baseTokens: 48000 },
-    { provider: 'openai', modelId: 'gpt-4o', inputCostPer1M: 2.50, outputCostPer1M: 10.00, baseTokens: 28000 },
-    { provider: 'openai', modelId: 'o3-mini', inputCostPer1M: 1.10, outputCostPer1M: 4.40, baseTokens: 32000 },
-    { provider: 'anthropic', modelId: 'claude-3-7-sonnet-20250219', inputCostPer1M: 3.00, outputCostPer1M: 15.00, baseTokens: 42000 },
-    { provider: 'anthropic', modelId: 'claude-3-5-haiku-20241022', inputCostPer1M: 0.80, outputCostPer1M: 4.00, baseTokens: 22000 },
-    { provider: 'xai', modelId: 'grok-2-1212', inputCostPer1M: 2.00, outputCostPer1M: 10.00, baseTokens: 25000 }
+    { provider: 'openai', modelId: 'gpt-6-astra', inputCostPer1M: 3.00, outputCostPer1M: 12.00, baseTokens: 42000 },
+    { provider: 'openai', modelId: 'gpt-6.1-sol', inputCostPer1M: 3.50, outputCostPer1M: 14.00, baseTokens: 38000 }
   ];
 
   // Distribute over the past 14 days

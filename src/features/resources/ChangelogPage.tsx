@@ -59,7 +59,7 @@ export const CHANGELOG_ENTRIES: ChangelogItem[] = [
     ],
     technicalDetails: [
       'Staged proposal review immutability guarantees: zero file writes without explicit human approval',
-      'Comprehensive multi-provider adapters for Gemini 3.1 Flash Lite, Claude 3.5 Sonnet, GPT-4o, and Grok 4.7'
+      'Consolidated OpenAI provider architecture featuring GPT-4o, o3-mini, and o1'
     ]
   },
   {

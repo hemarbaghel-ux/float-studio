@@ -1,5 +1,5 @@
 export type SourceType = 'official_provider' | 'independent_benchmark' | 'float_evaluation';
-export type ModelProviderId = 'google' | 'openai' | 'anthropic' | 'xai' | 'auto';
+export type ModelProviderId = 'openai' | 'auto';
 export type TrustworthyModelStatus = 'AVAILABLE' | 'NOT_CONFIGURED' | 'CONFIG_REQUIRED' | 'UNAVAILABLE';
 
 export interface VerifiedSource {

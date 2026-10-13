@@ -86,6 +86,14 @@ service cloud.firestore {
              data.reviewerId is string && data.reviewerId.size() <= 128;
     }
 
+    function isValidChatFeedback(data) {
+      return data.keys().hasAll(['ownerId', 'chatId', 'messageId', 'rating', 'createdAt', 'updatedAt']) &&
+             data.ownerId == request.auth.uid &&
+             data.chatId is string && data.chatId.size() <= 128 &&
+             data.messageId is string && data.messageId.size() <= 128 &&
+             data.rating in ['thumbs_up', 'thumbs_down'];
+    }
+
     function isValidUserConsent(data) {
       return data.keys().hasAll(['userId', 'sharingEnabled', 'policyVersion', 'source', 'updatedAt']) &&
              data.keys().hasOnly(['userId', 'sharingEnabled', 'policyVersion', 'source', 'consentTimestamp', 'updatedAt']) &&
@@ -246,6 +254,23 @@ service cloud.firestore {
                     incoming().createdAt == existing().createdAt &&
                     incoming().updatedAt == request.time;
       allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+    }
+
+    match /chatFeedback/{feedbackId} {
+      allow read, delete: if isSignedIn() && (resource == null || existing().ownerId == request.auth.uid);
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() &&
+                    isValidId(feedbackId) &&
+                    isValidChatFeedback(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+      allow update: if isSignedIn() &&
+                    isValidId(feedbackId) &&
+                    isValidChatFeedback(incoming()) &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time;
     }
 
     match /userSubscriptions/{userId} {

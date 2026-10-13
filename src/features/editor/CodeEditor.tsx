@@ -187,7 +187,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
     });
 
     // Add Inline Assistant command (Ctrl+K / Cmd+K)
-    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, () => {
+    const openInlineAssistant = () => {
       const selection = editor.getSelection();
       const model = editor.getModel();
       let text = '';
@@ -202,7 +202,14 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
 
       setInlineSelection({ text, startLine, endLine });
       setIsInlineAssistantOpen(true);
-    });
+    };
+
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, openInlineAssistant);
+
+    const handleGlobalInlineAssistant = () => {
+      openInlineAssistant();
+    };
+    window.addEventListener('open-inline-assistant', handleGlobalInlineAssistant);
 
     // Track active selection
     editor.onDidChangeCursorSelection(() => {

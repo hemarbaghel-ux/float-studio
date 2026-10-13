@@ -5,7 +5,6 @@ import {
   ArrowUp, PanelLeftClose, PanelLeftOpen,
   Loader2, Check, ChevronDown, X,
   ArrowRight, Filter, SlidersHorizontal, MoreHorizontal,
-  BarChart3
 } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { useAuthStore } from '../../store/authStore';
@@ -16,6 +15,7 @@ import { FloatLogo } from '../../components/FloatLogo';
 import { SettingsModal } from '../settings/SettingsModal';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { UsageAnalyticsView } from './UsageAnalyticsView';
+import { GitSyncDashboard } from './GitSyncDashboard';
 import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
 import { DASHBOARD_MODELS } from './dashboardModels';
 import { ModelSelector } from '../ai/ModelSelector';
@@ -53,12 +53,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [attachments, setAttachments] = useState<Attachments>({});
 
-  // Background automation runner
-  useAutomationScheduler();
-
-  // Dedicated 10-model selection matching Cursor-style screenshot
-  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(DASHBOARD_MODELS[0]?.id || 'gpt-4o');
-
   // Chats list & search
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -81,18 +75,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   }, [initialTab]);
 
   useEffect(() => {
-    const handlePopState = () => {
-      const pathname = window.location.pathname;
-      const match = pathname.match(/^\/chat\/([^/]+)/);
-      setActiveChatId(match ? match[1] : null);
-      if (pathname === '/automations') setActiveTab('automations');
-      else if (pathname === '/projects') setActiveTab('codebase');
-      else if (pathname.includes('/usage') || pathname.includes('/analytics')) setActiveTab('usage');
-      else if (pathname === '/integrations') setActiveTab('integrations');
-      else if (!match) setActiveTab('new-chat');
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   useEffect(() => {
@@ -169,6 +151,11 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       await deleteDoc(doc(db, 'projects', projectId));
       setProjects(prev => prev.filter(p => p.id !== projectId));
       if (projectToDelete === projectId) setProjectToDelete(null);
+      if (activeChatId === projectId) {
+        setActiveChatId(null);
+        window.history.pushState({}, '', '/dashboard');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }
     } catch (err) {
       console.error('Failed to delete chat:', err);
     }
@@ -244,7 +231,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 setActiveChatId(null);
                 setActiveTab('new-chat');
                 setPrompt('');
-                window.history.pushState({}, '', '/');
+                window.history.pushState({}, '', '/dashboard');
                 window.dispatchEvent(new PopStateEvent('popstate'));
               }}
               className="flex items-center hover:opacity-85 transition-opacity"
@@ -287,7 +274,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               setActiveChatId(null);
               setActiveTab('new-chat');
               setPrompt('');
-              window.history.pushState({}, '', '/');
               window.dispatchEvent(new PopStateEvent('popstate'));
               if (textareaRef.current) textareaRef.current.focus();
             }}
@@ -295,7 +281,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             className={`w-full flex items-center ${
               sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
             } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === 'new-chat'
                 ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
                 : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
             }`}
@@ -370,6 +355,26 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             <BarChart3 size={15} className="text-slate-600 dark:text-[#8B949E] shrink-0" />
             {!sidebarCollapsed && <span>Usage Analytics</span>}
           </button>
+
+          {/* Git Sync Button */}
+          <button
+            onClick={() => {
+              setActiveTab('git-sync');
+              window.history.pushState({}, '', '/git-sync');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }}
+            title="Git Sync"
+            className={`w-full flex items-center ${
+              sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
+            } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              activeTab === 'git-sync' || activeTab === 'git'
+                ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
+                : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <GitBranch size={15} className="text-slate-600 dark:text-[#8B949E] shrink-0" />
+            {!sidebarCollapsed && <span>Git Sync</span>}
+          </button>
         </div>
 
         {/* Chats Section */}
@@ -396,22 +401,29 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                   No chats yet
                 </div>
               ) : (
-                projects.map((p) => (
-                  <div
-                    key={p.id}
-                    onClick={() => handleResumeProject(p)}
-                    className="group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer text-slate-700 dark:text-[#C9D1D9] transition-colors"
-                  >
-                    <span className="truncate flex-1 font-normal text-left">{p.name}</span>
-                    <button
-                      onClick={(e) => handleDeleteProject(e, p.id)}
-                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-opacity p-0.5"
-                      title="Delete chat"
+                projects.map((p) => {
+                  const isSelected = activeChatId === p.id;
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => handleResumeProject(p)}
+                      className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-medium'
+                          : 'hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9]'
+                      }`}
                     >
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))
+                      <span className="truncate flex-1 font-normal text-left">{p.name}</span>
+                      <button
+                        onClick={(e) => handleDeleteProject(e, p.id)}
+                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-opacity p-0.5"
+                        title="Delete chat"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
@@ -445,7 +457,11 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       {/* MAIN CONTENT AREA                                        */}
       {/* ======================================================== */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative bg-[#F8F8F7] dark:bg-[#0A0A0A] transition-colors">
-        {activeTab === 'usage' || activeTab === 'analytics' ? (
+        {activeTab === 'git-sync' || activeTab === 'git' ? (
+          <div className="w-full h-full p-6 md:p-8 max-w-6xl mx-auto flex flex-col gap-6">
+            <GitSyncDashboard />
+          </div>
+        ) : activeTab === 'usage' || activeTab === 'analytics' ? (
           <div className="w-full h-full p-6 md:p-8 max-w-7xl mx-auto flex flex-col gap-6">
             <UsageAnalyticsView />
           </div>
@@ -540,7 +556,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             )}
           </div>
         ) : activeChatId ? (
-          <div className="w-full h-full flex flex-col min-h-0 bg-white dark:bg-[#0A0A0A]">
             <ChatThread chatId={activeChatId} />
           </div>
         ) : (
@@ -548,15 +563,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           /* MAIN COMPOSER INTERFACE (Matching image.png)           */
           /* ====================================================== */
           <div className="flex-1 flex flex-col items-center justify-start px-4 pt-28 sm:pt-32 pb-8 w-full max-w-4xl mx-auto">
-            {/* 1. Top Capsule Banner Tab */}
-            <button
-              type="button"
-              onClick={() => setShowSettings(true)}
-              className="w-full max-w-2xl py-2.5 px-4 bg-white dark:bg-[#141414] border border-b-0 border-slate-200/90 dark:border-[#2C2C2C] rounded-t-2xl text-xs text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
-            >
-              <span>Cloud Agents require a Start account</span>
-              <ArrowRight size={13} className="text-slate-500 dark:text-[#8B949E]" />
-            </button>
 
             {/* 2. Main Chat Composer Box */}
             <div className="w-full max-w-2xl bg-white dark:bg-[#141414] border border-slate-200/90 dark:border-[#2C2C2C] rounded-b-2xl shadow-sm p-4 relative flex flex-col transition-colors">
