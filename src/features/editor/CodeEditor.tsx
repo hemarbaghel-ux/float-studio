@@ -27,6 +27,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
   const monaco = useMonaco();
   const [isInlineAssistantOpen, setIsInlineAssistantOpen] = useState(false);
   const [inlinePosition, setInlinePosition] = useState<{ top: number; left: number } | null>(null);
+  const [inlineInstruction, setInlineInstruction] = useState<string>('');
   const [inlineSelection, setInlineSelection] = useState<{
     text: string;
     startLine?: number;
@@ -195,7 +196,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
     });
 
     // Add Inline Assistant command (Ctrl+K / Cmd+K)
-    const openInlineAssistant = () => {
+    const openInlineAssistant = (instructionText?: string) => {
       const selection = editor.getSelection();
       const model = editor.getModel();
       let text = '';
@@ -234,10 +235,49 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
 
       setInlineSelection({ text, startLine, endLine });
       setInlinePosition(posCoords);
+      setInlineInstruction(instructionText || '');
       setIsInlineAssistantOpen(true);
     };
 
-    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, openInlineAssistant);
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, () => {
+      openInlineAssistant();
+    });
+
+    // Register Monaco Code Action Quick Fix: "✨ Fix with FLOAT AI"
+    const codeActionDisposable = monacoInstance.languages.registerCodeActionProvider(currentLanguage, {
+      provideCodeActions: (_model: any, _range: any, context: any) => {
+        const markers = context.markers || [];
+        if (markers.length === 0) return { actions: [], dispose: () => {} };
+
+        const actions = markers.map((marker: any) => ({
+          title: `✨ Fix with FLOAT AI: ${marker.message}`,
+          kind: 'quickfix',
+          isPreferred: true,
+          command: {
+            id: 'float.quickfix.marker',
+            title: 'Fix with FLOAT AI',
+            arguments: [marker]
+          }
+        }));
+
+        return {
+          actions,
+          dispose: () => {}
+        };
+      }
+    });
+
+    const cmdDisposable = monacoInstance.editor.registerCommand('float.quickfix.marker', (_accessor: any, marker: any) => {
+      if (marker) {
+        editor.setSelection({
+          startLineNumber: marker.startLineNumber,
+          startColumn: marker.startColumn,
+          endLineNumber: marker.endLineNumber,
+          endColumn: marker.endColumn
+        });
+        openInlineAssistant(`Fix error: ${marker.message}`);
+      }
+    });
 
     // Add Composer command (Ctrl+I / Cmd+I)
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyI, () => {
@@ -322,6 +362,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
         startLine={inlineSelection.startLine}
         endLine={inlineSelection.endLine}
         editorPosition={inlinePosition}
+        initialInstruction={inlineInstruction}
         onProposalCreated={(changeSet) => {
           setReviewChangeSet(changeSet);
         }}

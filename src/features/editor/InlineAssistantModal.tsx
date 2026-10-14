@@ -16,6 +16,7 @@ interface InlineAssistantModalProps {
   startLine?: number;
   endLine?: number;
   editorPosition?: { top: number; left: number } | null;
+  initialInstruction?: string;
   onProposalCreated: (changeSet: ChangeSet) => void;
   onApplyDirectly?: (newContent: string) => void;
 }
@@ -31,6 +32,7 @@ export function InlineAssistantModal({
   startLine,
   endLine,
   editorPosition,
+  initialInstruction,
   onProposalCreated,
   onApplyDirectly
 }: InlineAssistantModalProps) {
@@ -49,7 +51,7 @@ export function InlineAssistantModal({
 
   useEffect(() => {
     if (isOpen) {
-      setInstruction('');
+      setInstruction(initialInstruction || '');
       setErrorMessage(null);
       setPendingDiff(null);
       setTimeout(() => {
@@ -62,7 +64,7 @@ export function InlineAssistantModal({
       }
       setPendingDiff(null);
     }
-  }, [isOpen]);
+  }, [isOpen, initialInstruction]);
 
   if (!isOpen) return null;
 
