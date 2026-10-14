@@ -19,8 +19,13 @@ export class ModelRouter {
   // Explicit provider/model allowlist. Entries are supported route candidates, not
   // proof that a model is enabled for the current account; upstream errors remain visible.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    auto: { provider: 'openai', apiModelId: 'gpt-4o' },
+    // Auto / Default
+    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra' },
+
+    // Free Tier Model
     'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
+
+    // OpenAI Models
     'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
     'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
     o1: { provider: 'openai', apiModelId: 'o1' },
@@ -31,7 +36,16 @@ export class ModelRouter {
     'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest' },
     'gpt-4o-2024-11-20': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
     'gpt-4': { provider: 'openai', apiModelId: 'gpt-4' },
-    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' }
+    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' },
+    'gpt-5.6-sol': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
+
+    // GPT-6 Astra Preview / Cloud Agent with upstream gpt-4o fallback
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' },
+
+    // GPT-6.1 Sol Preview / Frontier Reasoning with upstream gpt-4o fallback
+    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' }
   };
 
   constructor() {

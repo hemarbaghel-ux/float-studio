@@ -5,6 +5,7 @@ import {
   ArrowUp, PanelLeftClose, PanelLeftOpen,
   Loader2, Check, ChevronDown, X,
   ArrowRight, Filter, SlidersHorizontal, MoreHorizontal,
+  BarChart3, GitBranch,
 } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { useAuthStore } from '../../store/authStore';
@@ -51,6 +52,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const [showSettings, setShowSettings] = useState(false);
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>('gpt-4o');
   const [attachments, setAttachments] = useState<Attachments>({});
 
   // Chats list & search
@@ -281,6 +283,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             className={`w-full flex items-center ${
               sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
             } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              activeTab === 'new-chat' && !activeChatId
                 ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
                 : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
             }`}
@@ -556,6 +559,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             )}
           </div>
         ) : activeChatId ? (
+          <div className="flex-1 overflow-hidden flex flex-col h-full">
             <ChatThread chatId={activeChatId} />
           </div>
         ) : (

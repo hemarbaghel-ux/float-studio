@@ -185,6 +185,51 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
       mode: 'preview'
     }
   },
+  {
+    id: 'float-basic',
+    exactModelId: 'gpt-4o-mini',
+    displayName: 'FLOAT Basic',
+    providerId: 'openai',
+    family: 'float',
+    category: 'efficient',
+    snapshotVersion: 'basic-2026',
+    releaseDate: '2026-01-01',
+    description: 'Free tier developer model for basic coding assistance, simple functions, code explanations, and proposal review.',
+    contextWindow: 128000,
+    maxOutputTokens: 16384,
+    docUrl: 'https://openai.com/api/',
+    modalities: ['text', 'code'],
+    capabilities: {
+      coding: true,
+      reasoning: false,
+      tools: true,
+      vision: false,
+      structuredOutput: true,
+      streaming: true,
+      longContext: false
+    },
+    pricing: {
+      inputCostPer1M: 0,
+      outputCostPer1M: 0,
+      currency: 'USD',
+      pricingUnit: 'per 1M tokens',
+      effectiveDate: '2026-01-01',
+      sourceUrl: 'https://openai.com/api/pricing/'
+    },
+    limitations: [
+      'Basic model: not optimized for large-scale architectural redesign or complex algorithms.',
+      'Requires human proposal review before applying code diffs.',
+      'Free tier subject to hourly rate limits.'
+    ],
+    intendedUseCases: [
+      'Basic coding assistance and routine bug fixes',
+      'Function generation and unit tests',
+      'Code explanation and step-by-step plans'
+    ],
+    speed: 'fast',
+    availabilityStatus: 'AVAILABLE',
+    availabilityDetails: 'Free tier model available to all registered users.'
+  }
 ];
 
 export function getVerifiedModel(modelId: string): VerifiedModel | undefined {

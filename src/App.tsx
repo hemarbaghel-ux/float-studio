@@ -255,11 +255,7 @@ export default function App() {
     return <Dashboard initialTab="new-chat" />;
   }
 
-  }
-
-  // Render the actual conversation thread for deep links and refreshes.
-  // The previous route sent /chat/:id back to the empty new-chat composer,
-  // so the selected conversation never appeared after navigation.
+  // Route active chat to Dashboard
   if (currentPath.startsWith('/chat/')) {
     const chatId = decodeURIComponent(currentPath.slice('/chat/'.length).split('/')[0] || '');
     if (chatId) return <ChatThread chatId={chatId} />;

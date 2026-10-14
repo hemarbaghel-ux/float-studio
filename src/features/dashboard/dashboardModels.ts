@@ -244,26 +244,32 @@ export const DASHBOARD_MODELS: AIModel[] = [
   },
   {
     id: 'float-basic',
-    displayName: 'FLOAT Basic Free',
+    displayName: 'FLOAT Basic',
     shortName: 'FLOAT Basic',
     provider: 'FLOAT',
-    providerId: 'google',
+    providerId: 'openai',
     tier: 'Free',
     family: 'float',
     description: 'Free tier developer model for basic coding assistance, simple functions, code explanations, step-by-step plans, and straightforward debugging on the Free tier.',
-    contextWindow: 131072,
+    contextWindow: 128000,
     version: 'basic',
     reasoningLevel: 'Free · Basic coding assistance',
-    capabilities: { coding: true, reasoning: true, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: false },
+    capabilities: { coding: true, reasoning: false, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: false },
     capabilitiesList: ['Coding', 'Reviewing', 'Planning', 'Debugging', 'Exploring', 'UI assistance'],
     status: 'AVAILABLE',
     speed: 'fast',
     isNew: false,
-    apiModelId: 'gemini-3.8-flash',
+    apiModelId: 'gpt-4o-mini',
     supportsStreaming: true,
     supportsTools: true,
     supportsVision: false,
     supportsReasoning: false,
+    pricing: {
+      inputCost: 0,
+      outputCost: 0,
+      currency: 'USD',
+      effectiveDate: '2026-01-01'
+    },
     availability: 'Available'
   }
 ];

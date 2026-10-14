@@ -70,11 +70,13 @@ process.on('uncaughtException', (err: any) => {
 });
 
 async function bootstrap() {
+  console.log('\n  🚀 Starting FLOAT AI Studio...');
   const distBundle = path.join(process.cwd(), 'dist', 'server.cjs');
   const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
 
   // Load compiled CJS bundle in production deployment (when dist bundle exists and not running under tsx)
   if (!isRunningWithTsx && fs.existsSync(distBundle)) {
+    console.log('  📦 Loading production bundle (dist/server.cjs)...');
     process.env.NODE_ENV = process.env.NODE_ENV || 'production';
     const mod = await import(pathToFileURL(distBundle).href);
     const start = mod.startServer || mod.default?.startServer;
