@@ -1003,7 +1003,7 @@ export function AIPanel() {
           virtualFiles: virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
           conversationId: targetConvId,
           projectId: currentProjectId,
-          model: selectedModel || 'gpt-4o'
+          model: selectedModel || 'gpt-6.1-sol'
         })
       });
 
@@ -1946,13 +1946,13 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedModel(selectedModel === 'gpt-4o' ? 'gpt-4o-mini' : 'gpt-4o');
+                              setSelectedModel(selectedModel === 'gpt-6.1-sol' ? 'gpt-6-astra' : 'gpt-6.1-sol');
                               handleRetry(msg.id);
                             }}
                             className="px-2.5 py-1 text-xs font-semibold rounded-md bg-purple-600 text-white hover:bg-purple-700 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
                           >
                             <Sparkles size={12} />
-                            <span>Switch to {selectedModel === 'gpt-4o' ? 'GPT-4o mini' : 'GPT-4o'} & Retry</span>
+                            <span>Switch to {selectedModel === 'gpt-6.1-sol' ? 'GPT-6 Astra' : 'GPT-6.1 Sol'} & Retry</span>
                           </button>
                         )}
                       </div>
@@ -2201,11 +2201,11 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedModel('gpt-4o')}
+                onClick={() => setSelectedModel('gpt-6.1-sol')}
                 className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer shrink-0 shadow-xs flex items-center gap-1"
               >
                 <Sparkles size={11} />
-                <span>Switch to GPT-4o</span>
+                <span>Switch to GPT-6.1 Sol</span>
               </button>
             </div>
           )}

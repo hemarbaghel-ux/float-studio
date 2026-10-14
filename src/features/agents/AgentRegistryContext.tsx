@@ -32,14 +32,14 @@ export interface AgentRegistryContextType {
 const AgentRegistryContext = createContext<AgentRegistryContextType | null>(null);
 
 const DEFAULT_FALLBACKS: Record<string, string> = {
-  'general-assistant': 'gpt-4o',
-  'planner-agent': 'gpt-4o',
-  'coder-agent': 'gpt-4o',
-  'reviewer-agent': 'gpt-4o',
-  'explorer-agent': 'gpt-4o',
-  'debugger-agent': 'gpt-4o',
-  'ui-agent': 'gpt-4o',
-  'astra-agent': 'gpt-4o'
+  'general-assistant': 'gpt-6-astra',
+  'planner-agent': 'gpt-6-astra',
+  'coder-agent': 'gpt-6-astra',
+  'reviewer-agent': 'gpt-6-astra',
+  'explorer-agent': 'gpt-6-astra',
+  'debugger-agent': 'gpt-6-astra',
+  'ui-agent': 'gpt-6-astra',
+  'astra-agent': 'gpt-6-astra'
 };
 
 export function AgentRegistryProvider({ children }: { children: React.ReactNode }) {
@@ -59,8 +59,8 @@ export function AgentRegistryProvider({ children }: { children: React.ReactNode 
     const agentList = agents.length > 0 ? agents : INITIAL_AGENTS;
     for (const a of agentList) {
       defaults[a.id] = {
-        primaryModel: a.defaultModel || 'gemini-3.1-flash-lite',
-        fallbackModel: a.fallbackModel || DEFAULT_FALLBACKS[a.id] || 'gemini-3.1-flash-lite',
+        primaryModel: a.defaultModel || 'gpt-6.1-sol',
+        fallbackModel: a.fallbackModel || DEFAULT_FALLBACKS[a.id] || 'gpt-6-astra',
         isCustom: false
       };
     }

@@ -398,9 +398,9 @@ export class AgentOrchestrator {
       ? taskData.assignedAgentId 
       : 'main-agent';
 
-    let modelId = taskData.modelId || 'gpt-4o';
-    if (typeof modelId !== 'string' || (!modelId.startsWith('gpt-') && !modelId.startsWith('o1') && !modelId.startsWith('o3') && modelId !== 'auto' && modelId !== 'float-basic')) {
-      throw new Error('Background agents use the OpenAI agent loop. Select a verified OpenAI model for this task.');
+    let modelId = taskData.modelId || 'gpt-6.1-sol';
+    if (typeof modelId !== 'string' || (modelId !== 'gpt-6.1-sol' && modelId !== 'gpt-6-astra' && modelId !== 'auto')) {
+      modelId = 'gpt-6.1-sol';
     }
 
     const taskId = (typeof taskData.id === 'string' && /^[a-zA-Z0-9_\-]{8,64}$/.test(taskData.id.trim()))
@@ -561,7 +561,7 @@ export class AgentOrchestrator {
 
       await this.updateTaskStatus(taskId, 'EXECUTING', 20);
       const run = AgentRunner.run({
-        model: task.modelId || 'gpt-4o',
+        model: task.modelId || 'gpt-6.1-sol',
         provider: 'openai',
         prompt: boundedTaskPrompt,
         virtualFiles: safeFiles, projectName: task.context?.sourceProjectName || task.name,

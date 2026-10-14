@@ -19,7 +19,7 @@ interface ModelCostCalculatorProps {
 
 export function ModelCostCalculator({ initialModelId }: ModelCostCalculatorProps) {
   const { models } = useModelIntelligenceStore();
-  const [selectedModelId, setSelectedModelId] = useState<string>(initialModelId || 'gpt-4o');
+  const [selectedModelId, setSelectedModelId] = useState<string>(initialModelId || 'gpt-6.1-sol');
   const [activePreset, setActivePreset] = useState<WorkloadPreset>(WORKLOAD_PRESETS[1]);
   const [inputTokens, setInputTokens] = useState<number>(WORKLOAD_PRESETS[1].inputTokens);
   const [outputTokens, setOutputTokens] = useState<number>(WORKLOAD_PRESETS[1].outputTokens);

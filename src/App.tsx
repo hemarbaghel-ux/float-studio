@@ -151,7 +151,11 @@ export default function App() {
     }
   }
 
-  if (currentPath === '/evals' || currentPath === '/models/evals') {
+  if (currentPath === '/models/evals') {
+    return <ModelsEvalsPage />;
+  }
+
+  if (currentPath === '/evals') {
     return <EvalsPage />;
   }
 

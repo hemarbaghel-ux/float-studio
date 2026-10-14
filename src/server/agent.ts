@@ -10,28 +10,8 @@ interface VirtualFile {
 const router = new ModelRouter();
 
 router.registerModel({
-  id: 'gpt-4o',
-  displayName: 'GPT-4o Flagship',
-  providerId: 'openai',
-  family: 'gpt',
-  contextWindow: 128000,
-  capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true },
-  status: 'AVAILABLE',
-  speed: 'balanced'
-});
-router.registerModel({
-  id: 'gpt-4o-mini',
-  displayName: 'GPT-4o mini',
-  providerId: 'openai',
-  family: 'gpt',
-  contextWindow: 128000,
-  capabilities: { coding: true, reasoning: true, vision: false, tools: true, structuredOutput: true, streaming: true },
-  status: 'AVAILABLE',
-  speed: 'fast'
-});
-router.registerModel({
-  id: 'gpt-6-astra',
-  displayName: 'GPT-6 Astra (Preview)',
+  id: 'gpt-6.1-sol',
+  displayName: 'GPT-6.1 Sol (Preview)',
   providerId: 'openai',
   family: 'codex',
   contextWindow: 1000000,
@@ -40,8 +20,8 @@ router.registerModel({
   speed: 'fast'
 });
 router.registerModel({
-  id: 'gpt-6.1-sol',
-  displayName: 'GPT-6.1 Sol (Preview)',
+  id: 'gpt-6-astra',
+  displayName: 'GPT-6 Astra (Preview)',
   providerId: 'openai',
   family: 'codex',
   contextWindow: 1000000,
@@ -150,15 +130,10 @@ When proposing changes, provide the FULL complete file content in proposedConten
   let finalResponseText = '';
   const MAX_ITERATIONS = 10;
   
-  // Handle Auto Routing Strategy
+  // Handle Model Resolution
   let resolvedModelId = modelId;
-  if (resolvedModelId === 'auto') {
-     // Simple deterministic routing policy for Phase 3
-     if (prompt.toLowerCase().includes('refactor') || prompt.toLowerCase().includes('complex')) {
-        resolvedModelId = 'gemini-3.5-pro';
-     } else {
-        resolvedModelId = 'gemini-3.5-flash';
-     }
+  if (!resolvedModelId || resolvedModelId === 'auto' || (resolvedModelId !== 'gpt-6-astra' && resolvedModelId !== 'gpt-6.1-sol')) {
+    resolvedModelId = 'gpt-6.1-sol';
   }
 
   try {

@@ -70,11 +70,12 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'main-agent',
     name: 'Main Agent',
-    description: 'General purpose AI assistant powered by GPT-4o',
+    description: 'General purpose AI assistant powered by GPT-6.1 Sol',
     icon: 'Bot',
-    systemInstructions: 'You are the main FLOAT assistant powered by GPT-4o.',
-    defaultModel: 'gpt-4o',
-    allowedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'],
+    systemInstructions: 'You are the main FLOAT assistant powered by GPT-6.1 Sol.',
+    defaultModel: 'gpt-6.1-sol',
+    fallbackModel: 'gpt-6-astra',
+    allowedModels: ['gpt-6.1-sol', 'gpt-6-astra'],
     tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file', 'rename_file', 'delete_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: true, deleteFiles: true, terminal: false, webResearch: false },
     mode: 'agent'
@@ -82,11 +83,12 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'coder-agent',
     name: 'Coder',
-    description: 'Writes and modifies code with GPT-4o reasoning',
+    description: 'Writes and modifies code with GPT-6.1 Sol frontier reasoning',
     icon: 'Code',
-    systemInstructions: 'You are an expert coder powered by GPT-4o.',
-    defaultModel: 'gpt-4o',
-    allowedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'],
+    systemInstructions: 'You are an expert coder powered by GPT-6.1 Sol.',
+    defaultModel: 'gpt-6.1-sol',
+    fallbackModel: 'gpt-6-astra',
+    allowedModels: ['gpt-6.1-sol', 'gpt-6-astra'],
     tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file', 'rename_file', 'delete_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: true, deleteFiles: true, terminal: false, webResearch: false },
     mode: 'edit'
@@ -97,8 +99,9 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Reviews code for bugs and quality',
     icon: 'Eye',
     systemInstructions: 'You are a code reviewer.',
-    defaultModel: 'gpt-4o',
-    allowedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'],
+    defaultModel: 'gpt-6.1-sol',
+    fallbackModel: 'gpt-6-astra',
+    allowedModels: ['gpt-6.1-sol', 'gpt-6-astra'],
     tools: ['search_codebase', 'read_file', 'list_files'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
     mode: 'ask'
@@ -109,8 +112,9 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Plans complex architectural changes',
     icon: 'Map',
     systemInstructions: 'You are a software architect.',
-    defaultModel: 'gpt-4o',
-    allowedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'],
+    defaultModel: 'gpt-6.1-sol',
+    fallbackModel: 'gpt-6-astra',
+    allowedModels: ['gpt-6.1-sol', 'gpt-6-astra'],
     tools: ['search_codebase', 'read_file', 'list_files'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
     mode: 'ask'
@@ -121,8 +125,9 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Navigates and explains large codebases',
     icon: 'Compass',
     systemInstructions: 'You are a codebase explorer.',
-    defaultModel: 'gpt-4o',
-    allowedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'],
+    defaultModel: 'gpt-6.1-sol',
+    fallbackModel: 'gpt-6-astra',
+    allowedModels: ['gpt-6.1-sol', 'gpt-6-astra'],
     tools: ['search_codebase', 'read_file', 'list_files'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
     mode: 'ask'
@@ -133,8 +138,9 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Finds and fixes bugs',
     icon: 'Bug',
     systemInstructions: 'You are a debugging expert.',
-    defaultModel: 'gpt-4o',
-    allowedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'],
+    defaultModel: 'gpt-6.1-sol',
+    fallbackModel: 'gpt-6-astra',
+    allowedModels: ['gpt-6.1-sol', 'gpt-6-astra'],
     tools: ['search_codebase', 'read_file', 'list_files', 'modify_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: true, renameFiles: false, deleteFiles: false, terminal: true, webResearch: false },
     mode: 'edit'
@@ -145,8 +151,9 @@ export const INITIAL_AGENTS: Agent[] = [
     description: 'Builds beautiful user interfaces',
     icon: 'Layout',
     systemInstructions: 'You are an expert UI/UX developer.',
-    defaultModel: 'gpt-4o',
-    allowedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'],
+    defaultModel: 'gpt-6.1-sol',
+    fallbackModel: 'gpt-6-astra',
+    allowedModels: ['gpt-6.1-sol', 'gpt-6-astra'],
     tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
     mode: 'edit'
@@ -154,16 +161,16 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: 'astra-agent',
     name: 'Astra Cloud Agent',
-    description: 'Autonomous cloud execution agent powered by GPT-4o',
+    description: 'Autonomous cloud execution agent powered by GPT-6 Astra',
     icon: 'Sparkles',
-    systemInstructions: 'You are Astra, FLOAT AI\'s next-generation autonomous cloud execution agent powered by GPT-4o.',
-    defaultModel: 'gpt-4o',
-    fallbackModel: 'gpt-4o-mini',
-    allowedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'],
+    systemInstructions: 'You are Astra, FLOAT AI\'s next-generation autonomous cloud execution agent powered by GPT-6 Astra.',
+    defaultModel: 'gpt-6-astra',
+    fallbackModel: 'gpt-6.1-sol',
+    allowedModels: ['gpt-6-astra', 'gpt-6.1-sol'],
     tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file', 'rename_file', 'delete_file'],
     permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: true, deleteFiles: true, terminal: true, webResearch: true },
     mode: 'agent'
   }
 ];
 
-export const FLOAT_BASIC_MODEL = INITIAL_MODELS.find(m => m.id === 'float-basic') || DASHBOARD_MODELS.find(m => m.id === 'float-basic');
+export const FLOAT_BASIC_MODEL = undefined;

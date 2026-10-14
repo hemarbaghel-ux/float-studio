@@ -278,7 +278,9 @@ CRITICAL WORKFLOW CONSTRAINTS:
     }
 
     let effectiveModel = model;
-    if (!model || model === 'auto') effectiveModel = 'gpt-4o';
+    if (!model || model === 'auto' || model === 'gpt-6.1-sol' || model === 'gpt-6-astra') {
+      effectiveModel = 'gpt-4o';
+    }
 
     const client = new OpenAI({
       apiKey

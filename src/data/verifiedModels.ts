@@ -114,9 +114,9 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     ],
     speed: 'fast',
     availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Preview / Cloud Agent with upstream GPT-4o fallback. Remote connect: https://api.openai.com/v1/agents/api/connect/rt_7k2m',
+    availabilityDetails: 'Preview / Cloud Agent with upstream GPT-6.1 Sol fallback. Remote connect: https://api.openai.com/v1/agents/api/connect/rt_7k2m',
     deprecationStatus: 'preview',
-    fallbackModel: 'gpt-4o',
+    fallbackModel: 'gpt-6.1-sol',
     cloudAgentConfig: {
       remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_7k2m',
       environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
@@ -124,7 +124,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
       sessionStatus: 'connected',
       fallbackStrategy: 'upstream_fallback_if_unreachable',
       execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ' --session-id 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'`,
-      fallbackModel: 'gpt-4o',
+      fallbackModel: 'gpt-6.1-sol',
       mode: 'preview'
     }
   },
@@ -138,7 +138,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     snapshotVersion: 'preview-sol-2025',
     releaseDate: '2025-04-01',
     docUrl: 'https://platform.openai.com/docs/models/agents',
-    description: 'Next-generation frontier preview model with deep architectural reasoning, autonomous system design, and advanced codex execution capabilities with upstream fallback to GPT-4o.',
+    description: 'Next-generation frontier preview model with deep architectural reasoning, autonomous system design, and advanced codex execution capabilities with upstream fallback to GPT-6 Astra.',
     contextWindow: 1000000,
     maxOutputTokens: 65536,
     modalities: ['text', 'code', 'vision'],
@@ -161,7 +161,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
       sourceUrl: 'https://openai.com/api/pricing/'
     },
     limitations: [
-      'Preview frontier model: falls back to upstream GPT-4o if remote agent connection is unreachable.',
+      'Preview frontier model: falls back to upstream GPT-6 Astra if remote agent connection is unreachable.',
       'Requires server-side OPENAI_API_KEY, CODEX_API_KEY, or OPENAI_ENVIRONMENT_KEY.'
     ],
     intendedUseCases: [
@@ -171,64 +171,19 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     ],
     speed: 'fast',
     availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Preview frontier reasoning & coding model with upstream GPT-4o fallback. Remote connect: https://api.openai.com/v1/agents/api/connect/rt_7k2m',
+    availabilityDetails: 'Preview frontier reasoning & coding model with upstream GPT-6 Astra fallback. Remote connect: https://api.openai.com/v1/agents/api/connect/rt_7k2m',
     deprecationStatus: 'preview',
-    fallbackModel: 'gpt-4o',
+    fallbackModel: 'gpt-6-astra',
     cloudAgentConfig: {
       remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_7k2m',
-      environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
-      sessionId: 'sess_087a4d42ca75939b006ace64b295ac8193b83bd1fbfd9a4015',
+      environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+      sessionId: 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
       sessionStatus: 'connected',
       fallbackStrategy: 'upstream_fallback_if_unreachable',
-      execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ'`,
-      fallbackModel: 'gpt-4o',
+      execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ' --session-id 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'`,
+      fallbackModel: 'gpt-6-astra',
       mode: 'preview'
     }
-  },
-  {
-    id: 'float-basic',
-    exactModelId: 'gpt-4o-mini',
-    displayName: 'FLOAT Basic',
-    providerId: 'openai',
-    family: 'float',
-    category: 'efficient',
-    snapshotVersion: 'basic-2026',
-    releaseDate: '2026-01-01',
-    description: 'Free tier developer model for basic coding assistance, simple functions, code explanations, and proposal review.',
-    contextWindow: 128000,
-    maxOutputTokens: 16384,
-    docUrl: 'https://openai.com/api/',
-    modalities: ['text', 'code'],
-    capabilities: {
-      coding: true,
-      reasoning: false,
-      tools: true,
-      vision: false,
-      structuredOutput: true,
-      streaming: true,
-      longContext: false
-    },
-    pricing: {
-      inputCostPer1M: 0,
-      outputCostPer1M: 0,
-      currency: 'USD',
-      pricingUnit: 'per 1M tokens',
-      effectiveDate: '2026-01-01',
-      sourceUrl: 'https://openai.com/api/pricing/'
-    },
-    limitations: [
-      'Basic model: not optimized for large-scale architectural redesign or complex algorithms.',
-      'Requires human proposal review before applying code diffs.',
-      'Free tier subject to hourly rate limits.'
-    ],
-    intendedUseCases: [
-      'Basic coding assistance and routine bug fixes',
-      'Function generation and unit tests',
-      'Code explanation and step-by-step plans'
-    ],
-    speed: 'fast',
-    availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Free tier model available to all registered users.'
   }
 ];
 

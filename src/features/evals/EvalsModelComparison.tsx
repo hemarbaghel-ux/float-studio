@@ -7,9 +7,11 @@ export function EvalsModelComparison() {
   const { runs } = useEvalStore();
   const [selectedModels, setSelectedModels] = useState<string[]>(['gpt-6-astra', 'gpt-6.1-sol']);
 
+  const SUPPORTED_EVAL_MODELS = useMemo(() => new Set(['gpt-6-astra', 'gpt-6.1-sol']), []);
+
   const completedRuns = useMemo(() => {
-    return runs.filter(r => (r.status === 'completed' || r.status === 'Completed') && typeof (r.finalScore ?? r.score) === 'number');
-  }, [runs]);
+    return runs.filter(r => (r.status === 'completed' || r.status === 'Completed') && typeof (r.finalScore ?? r.score) === 'number' && SUPPORTED_EVAL_MODELS.has(r.modelId));
+  }, [runs, SUPPORTED_EVAL_MODELS]);
 
   // Aggregate stats per model strictly from completed runs
   const modelStats = useMemo(() => {
@@ -84,7 +86,7 @@ export function EvalsModelComparison() {
           <Cpu size={14} className="text-purple-400" />
           Select Models to Compare (max 4):
         </span>
-        {INITIAL_MODELS.map(model => {
+        {INITIAL_MODELS.filter(m => SUPPORTED_EVAL_MODELS.has(m.id)).map(model => {
           const isSelected = selectedModels.includes(model.id);
           return (
             <button

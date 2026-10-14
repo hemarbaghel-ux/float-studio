@@ -23,19 +23,25 @@ export function ModelsEvalsPage() {
     updateSettings({ theme: settings.theme === 'dark' ? 'light' : 'dark' });
   };
   
-  const activeModels = models.length > 0 ? models : INITIAL_MODELS;
+  const SUPPORTED_EVAL_MODELS = useMemo(() => new Set(['gpt-6-astra', 'gpt-6.1-sol']), []);
+
+  const activeModels = useMemo(() => {
+    const list = models.length > 0 ? models : INITIAL_MODELS;
+    return list.filter(m => SUPPORTED_EVAL_MODELS.has(m.id));
+  }, [models, SUPPORTED_EVAL_MODELS]);
 
   const graphData = useMemo(() => {
     const dataByModel = new Map();
     runs.forEach(run => {
-      if (run.status !== 'Completed') return;
+      if (run.status !== 'Completed' && run.status !== 'completed') return;
+      if (!SUPPORTED_EVAL_MODELS.has(run.modelId)) return;
       if (!dataByModel.has(run.modelId)) {
         dataByModel.set(run.modelId, { scoreSum: 0, costSum: 0, tokensSum: 0, stepsSum: 0, count: 0 });
       }
       const data = dataByModel.get(run.modelId);
-      data.scoreSum += (run.score || 0);
-      data.costSum += (run.metrics?.estimatedCost || 0);
-      data.tokensSum += (run.metrics?.tokenUsage?.total || 0);
+      data.scoreSum += (run.finalScore ?? run.score ?? 0);
+      data.costSum += (run.actualCost ?? run.estimatedCost ?? run.metrics?.estimatedCost ?? 0);
+      data.tokensSum += (run.totalTokens ?? run.metrics?.tokenUsage?.total ?? 0);
       data.stepsSum += (run.activity?.length || 0);
       data.count++;
     });
@@ -52,7 +58,7 @@ export function ModelsEvalsPage() {
         count: data.count
       };
     });
-  }, [runs, activeModels]);
+  }, [runs, activeModels, SUPPORTED_EVAL_MODELS]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0F0F0B] text-slate-900 dark:text-[#EDEDED] font-sans selection:bg-[#7C3AED]/20 dark:selection:bg-[#EDEDED] dark:selection:text-[#0F0F0B] transition-colors flex flex-col">
@@ -135,3 +141,5 @@ export function ModelsEvalsPage() {
     </div>
   );
 }
+
+export { ModelsEvalsPage as ModelEvalsPage };

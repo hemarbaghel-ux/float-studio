@@ -63,8 +63,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
             return { items: [] };
           }
 
-          // Check if provider is configured or if using built-in float-basic model
-          const isBasicModel = selectedModel === 'float-basic';
+          // Check if provider is configured
           const hasConfiguredProvider = Boolean(
             providers.openai?.configured ||
             providers.google?.configured ||
@@ -72,7 +71,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
             providers.ollama?.configured
           );
 
-          if (!isBasicModel && !hasConfiguredProvider) {
+          if (!hasConfiguredProvider) {
             return { items: [] };
           }
 
@@ -128,7 +127,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
                     suffix,
                     fileName,
                     language: currentLanguage,
-                    model: selectedModel || 'gpt-4o'
+                    model: selectedModel || 'gpt-6.1-sol'
                   })
                 });
 

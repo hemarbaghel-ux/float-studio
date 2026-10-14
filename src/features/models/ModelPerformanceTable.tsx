@@ -30,8 +30,14 @@ export function ModelPerformanceTable({ onRowClick, selectedBenchmark: initialBe
   const [sortField, setSortField] = useState<'score' | 'modelName' | 'evalDate' | 'benchmarkName'>('score');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
+  const SUPPORTED_EVAL_MODELS = useMemo(() => new Set(['gpt-6-astra', 'gpt-6.1-sol']), []);
+
   const filteredData = useMemo(() => {
     return VERIFIED_BENCHMARK_SCORES.filter((item) => {
+      // Globally supported models only
+      if (!SUPPORTED_EVAL_MODELS.has(item.modelId)) {
+        return false;
+      }
       // Benchmark filter
       if (benchmarkFilter !== 'all' && item.benchmarkId !== benchmarkFilter) {
         return false;
@@ -137,10 +143,7 @@ export function ModelPerformanceTable({ onRowClick, selectedBenchmark: initialBe
             className="w-full bg-[#0D1117] border border-[#30363D] rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-[#7C3AED]"
           >
             <option value="all">All Providers</option>
-            <option value="google">Google Gemini</option>
             <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="xai">xAI</option>
           </select>
         </div>
 

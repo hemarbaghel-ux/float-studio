@@ -2,8 +2,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 
 // Load environment variables early
-dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
+dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
 
 import { setupAgentOrchestratorRoutes } from './agentOrchestrator';
 import { integrationsRouter } from './integrationsRouter';
@@ -277,7 +277,7 @@ export async function startServer() {
     const isStream = req.body.stream === true || req.headers.accept?.includes('text/event-stream');
     const {
       messages,
-      model = 'gpt-4o',
+      model = 'gpt-6.1-sol',
       systemInstruction,
       reasoningEffort,
       effort,
@@ -515,7 +515,7 @@ export async function startServer() {
         suffix = '',
         language = 'plaintext',
         fileName = 'file',
-        model = 'gpt-4o'
+        model = 'gpt-6-astra'
       } = req.body || {};
 
       if (!prefix && !suffix) {
@@ -570,7 +570,7 @@ ${boundedSuffix}
         endLine,
         fileName = 'file',
         language = 'plaintext',
-        model = 'gpt-4o'
+        model = 'gpt-6-astra'
       } = req.body || {};
 
       if (!instruction.trim()) {
@@ -666,7 +666,7 @@ ${selectedCode || fullCode}
     }
 
     try {
-      const { prompt, virtualFiles, model = 'gpt-4o', conversationHistory } = req.body || {};
+      const { prompt, virtualFiles, model = 'gpt-6-astra', conversationHistory } = req.body || {};
       if (typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Add a request before starting the agent.' });
       }
@@ -755,7 +755,7 @@ ${selectedCode || fullCode}
   // Plan Mode Generation Route (Milestone 4)
   app.post('/api/ai/plan', requireAuth, express.json({ limit: '8mb' }), async (req: any, res: any) => {
     try {
-      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gpt-4o' } = req.body || {};
+      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gpt-6-astra' } = req.body || {};
 
       if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Please enter a task request before generating a plan.' });
@@ -1184,7 +1184,7 @@ ${selectedCode || fullCode}
       if (err?.type === 'entity.too.large' || err?.status === 413) {
         return res.status(413).json({ error: 'Request payload is too large.' });
       }
-      if (err instanceof SyntaxError && (err as any)?.status === 400 && 'body' in (err as any)) {
+      if (err instanceof SyntaxError && (err as any).status === 400 && 'body' in err) {
         return res.status(400).json({ error: 'Request body contains invalid JSON.' });
       }
     }

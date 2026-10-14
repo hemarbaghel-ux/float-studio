@@ -20,7 +20,7 @@ export function CreateEvalDialog({
   const { tasks, benchmarks, runEval, runBatchEval } = useEvalStore();
 
   const [evalType, setEvalType] = useState<'single' | 'benchmark'>('single');
-  const [selectedModelId, setSelectedModelId] = useState(preselectedModelId || 'gpt-4o');
+  const [selectedModelId, setSelectedModelId] = useState(preselectedModelId || 'gpt-6.1-sol');
   const [selectedAgentId, setSelectedAgentId] = useState('coder-agent');
   const [selectedTaskId, setSelectedTaskId] = useState(preselectedTaskId || (tasks[0]?.id || ''));
   const [selectedBenchmarkId, setSelectedBenchmarkId] = useState(preselectedBenchmarkId || (benchmarks[0]?.id || ''));
@@ -180,7 +180,7 @@ export function CreateEvalDialog({
               onChange={(e) => setSelectedModelId(e.target.value)}
               className="w-full p-2.5 bg-[#161B22] border border-[#30363D] rounded text-white focus:outline-none focus:border-purple-500"
             >
-              {INITIAL_MODELS.map(m => (
+              {INITIAL_MODELS.filter(m => m.id === 'gpt-6-astra' || m.id === 'gpt-6.1-sol').map(m => (
                 <option key={m.id} value={m.id}>
                   {m.displayName} ({m.providerId.toUpperCase()}) - ${m.pricing?.inputCost}/1M in, ${m.pricing?.outputCost}/1M out
                 </option>

@@ -52,9 +52,11 @@ export function PerformanceChart({ onPointClick }: PerformanceChartProps) {
   const [chartView, setChartView] = useState<ChartViewType>('perf-vs-cost');
   const [showTableView, setShowTableView] = useState(false);
 
+  const SUPPORTED_EVAL_MODELS = useMemo(() => new Set(['gpt-6-astra', 'gpt-6.1-sol']), []);
+
   // Scatter plot data: Performance (SWE-bench Verified) vs Input Cost ($/1M tokens)
   const scatterData = useMemo(() => {
-    const sweScores = VERIFIED_BENCHMARK_SCORES.filter(s => s.benchmarkId === 'swe-bench-verified');
+    const sweScores = VERIFIED_BENCHMARK_SCORES.filter(s => s.benchmarkId === 'swe-bench-verified' && SUPPORTED_EVAL_MODELS.has(s.modelId));
     return sweScores.map(score => {
       const model = VERIFIED_MODELS.find(m => m.id === score.modelId);
       const inputCost = model?.pricing?.inputCostPer1M ?? 0;
@@ -72,12 +74,12 @@ export function PerformanceChart({ onPointClick }: PerformanceChartProps) {
         testConfig: score.testConfiguration
       };
     });
-  }, []);
+  }, [SUPPORTED_EVAL_MODELS]);
 
   // Bar chart data for SWE-bench
   const sweBarData = useMemo(() => {
     return VERIFIED_BENCHMARK_SCORES
-      .filter(s => s.benchmarkId === 'swe-bench-verified')
+      .filter(s => s.benchmarkId === 'swe-bench-verified' && SUPPORTED_EVAL_MODELS.has(s.modelId))
       .map(s => ({
         modelId: s.modelId,
         name: s.modelName,
@@ -87,12 +89,12 @@ export function PerformanceChart({ onPointClick }: PerformanceChartProps) {
         config: s.testConfiguration
       }))
       .sort((a, b) => b.score - a.score);
-  }, []);
+  }, [SUPPORTED_EVAL_MODELS]);
 
   // Bar chart data for HumanEval
   const humanEvalBarData = useMemo(() => {
     return VERIFIED_BENCHMARK_SCORES
-      .filter(s => s.benchmarkId === 'humaneval')
+      .filter(s => s.benchmarkId === 'humaneval' && SUPPORTED_EVAL_MODELS.has(s.modelId))
       .map(s => ({
         modelId: s.modelId,
         name: s.modelName,
@@ -102,12 +104,12 @@ export function PerformanceChart({ onPointClick }: PerformanceChartProps) {
         config: s.testConfiguration
       }))
       .sort((a, b) => b.score - a.score);
-  }, []);
+  }, [SUPPORTED_EVAL_MODELS]);
 
   // Bar chart data for GPQA Diamond
   const gpqaBarData = useMemo(() => {
     return VERIFIED_BENCHMARK_SCORES
-      .filter(s => s.benchmarkId === 'gpqa-diamond')
+      .filter(s => s.benchmarkId === 'gpqa-diamond' && SUPPORTED_EVAL_MODELS.has(s.modelId))
       .map(s => ({
         modelId: s.modelId,
         name: s.modelName,
@@ -117,18 +119,20 @@ export function PerformanceChart({ onPointClick }: PerformanceChartProps) {
         config: s.testConfiguration
       }))
       .sort((a, b) => b.score - a.score);
-  }, []);
+  }, [SUPPORTED_EVAL_MODELS]);
 
   // Context window comparison
   const contextData = useMemo(() => {
-    return VERIFIED_MODELS.map(m => ({
-      modelId: m.id,
-      name: m.displayName,
-      context: m.contextWindow / 1000, // in thousands
-      providerId: m.providerId,
-      maxOutput: m.maxOutputTokens
-    })).sort((a, b) => b.context - a.context);
-  }, []);
+    return VERIFIED_MODELS
+      .filter(m => SUPPORTED_EVAL_MODELS.has(m.id))
+      .map(m => ({
+        modelId: m.id,
+        name: m.displayName,
+        context: m.contextWindow / 1000, // in thousands
+        providerId: m.providerId,
+        maxOutput: m.maxOutputTokens
+      })).sort((a, b) => b.context - a.context);
+  }, [SUPPORTED_EVAL_MODELS]);
 
   // Custom Scatter Tooltip
   const CustomScatterTooltip = ({ active, payload }: any) => {

@@ -387,8 +387,6 @@ export function ChatThread({ chatId }: { chatId: string }) {
             throw new Error(`FLOAT returned an unknown streaming event: ${String(data.type || 'missing type')}.`);
           }
         };
-
-        let streamError: { message: string; code?: string } | null = null;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;

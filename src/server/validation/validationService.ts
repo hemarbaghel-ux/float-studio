@@ -514,7 +514,7 @@ Please analyze this diagnostic and provide:
     let text = '';
     try {
       const result = await this.getModelRouter().generateContent({
-        model: req.modelId || 'gpt-4o',
+        model: req.modelId || 'gpt-6.1-sol',
         messages: [{ role: 'user', content: userPrompt }],
         systemInstruction
       });

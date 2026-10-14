@@ -19,33 +19,16 @@ export class ModelRouter {
   // Explicit provider/model allowlist. Entries are supported route candidates, not
   // proof that a model is enabled for the current account; upstream errors remain visible.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Auto / Default: maps to verified flagship GPT-4o
-    'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
+    // Auto / Default: maps to GPT-6.1 Sol
+    'auto': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
 
-    // Free Tier Model
-    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
-
-    // OpenAI Models
-    'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
-    'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
-    o1: { provider: 'openai', apiModelId: 'o1' },
-    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
-    'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
-    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview' },
-    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo' },
-    'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest' },
-    'gpt-4o-2024-11-20': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
-    'gpt-4': { provider: 'openai', apiModelId: 'gpt-4' },
-    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' },
-    'gpt-5.6-sol': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
-
-    // GPT-6 Astra Preview / Cloud Agent with upstream gpt-4o fallback
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' },
-
-    // GPT-6.1 Sol Preview / Frontier Reasoning with upstream gpt-4o fallback
+    // GPT-6.1 Sol Preview / Frontier Reasoning
     'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
     'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' }
+    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+
+    // GPT-6 Astra Preview / Cloud Agent
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' }
   };
 
   constructor() {
@@ -100,7 +83,7 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gpt-4o';
+      return 'gpt-6.1-sol';
     }
     return modelId;
   }

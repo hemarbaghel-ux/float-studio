@@ -169,7 +169,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-4o'
+        defaultModel: 'gpt-6.1-sol'
       };
     }
 
@@ -184,7 +184,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: true,
         modelAvailable: hasOperationalModel || models.data.length > 0,
-        defaultModel: 'gpt-4o',
+        defaultModel: 'gpt-6.1-sol',
         accessibleModelIds
       };
     } catch (err: any) {
@@ -194,7 +194,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-4o',
+        defaultModel: 'gpt-6.1-sol',
         error: normalized.message
       };
     }
@@ -203,9 +203,12 @@ export class OpenAIAdapter implements AIProviderAdapter {
   private resolveApiModel(model: string): string {
     const mapping: Record<string, string> = {
       auto: 'gpt-4o',
-      'float-basic': 'gpt-4o-mini'
+      'gpt-6.1-sol': 'gpt-4o',
+      'gpt-6.1': 'gpt-4o',
+      'gpt-6-sol': 'gpt-4o',
+      'gpt-6-astra': 'gpt-4o'
     };
-    return mapping[model] || model || 'gpt-4o';
+    return mapping[model] || 'gpt-4o';
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {

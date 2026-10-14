@@ -1,132 +1,123 @@
-# Cursor-Grade Professional Landing Page for FLOAT AI
+# Exclusive GPT-6 Frontier Catalog: GPT-6 Astra & GPT-6.1 Sol
 
-Transform FLOAT's landing page into a world-class, developer-first product experience modeled on Cursor AI. The design combines an ultra-refined dark aesthetic, ambient radial spotlight illumination, interactive Composer and Tab autocomplete showcases, and crisp anti-slop typographic hierarchy.
+Prune FLOAT AI's model catalog, selector dropdowns, agent configurations, and provider routing to exclusively support OpenAI's next-generation frontier models: **GPT-6 Astra (Preview)** and **GPT-6.1 Sol (Preview)**. All legacy models (GPT-4o, GPT-4o-mini, o1, o3-mini, GPT-4.5) and the free tier (FLOAT Basic) are removed, establishing GPT-6.1 Sol as the workspace default.
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following directions have been confirmed based on your preferences:
-> - **Visual Theme**: Cursor-style deep dark canvas (`#090A0F` / `#0D0E12`) with subtle radial spotlight glow and monochromatic slate/zinc structural borders.
-> - **Hero Capabilities Highlighted**: Interactive Composer multi-file agent editing paired with intelligent Tab ghost-text code completion.
-> - **Primary Actions**: Primary "Download for macOS / Windows / Linux" with quick OS selector, flanked by secondary "Launch Web Workspace" direct browser entrance.
-> - **Anti-Slop Discipline**: Elimination of generic purple pill capsules, mechanical comment headers (`// 01`), and decorative pulsing status dots, replaced with unboxed metadata and clean typographic separators.
+> The following decisions have been confirmed through your clarifying answers:
+> - **Workspace Default Model**: Set to `GPT-6.1 Sol (Preview)` across the workspace, dashboard, inline editor, evals, and agent defaults.
+> - **Free Tier Model Removal**: `FLOAT Basic` is completely removed. Only `GPT-6 Astra` and `GPT-6.1 Sol` are retained in the application.
+> - **Catalog & Benchmark Filtering**: All comparison tables, benchmark intelligence views, pricing calculators, and model catalogs are filtered exclusively to `GPT-6 Astra` and `GPT-6.1 Sol`.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Presents FLOAT AI as the premier AI-first code editor and workspace. Gives prospective developers an authentic, hands-on visual preview of autonomous multi-file editing (Composer), tab completion, semantic codebase context (`@files`, `@docs`), and built-in terminal agent execution.
-- **Target Audience**: Professional software engineers, technical leads, and founders seeking an editor that accelerates development through deep codebase understanding and human-in-the-loop diff validation.
-- **Key Value**: Immediate product credibility and visceral excitement through live, interactive code demos that look, feel, and behave like a high-performance native IDE.
+- **What It Does**: Streamlines the entire FLOAT AI developer platform to focus strictly on two frontier models:
+  1. **GPT-6.1 Sol (Preview)**: Flagship frontier reasoning model featuring 1,000,000-token context, deep multi-step architectural reasoning, and autonomous code synthesis.
+  2. **GPT-6 Astra (Preview)**: Autonomous cloud execution agent model featuring 1,000,000-token context, Codex execution server integration, and fast multi-file refactoring.
+- **Target Audience**: Software engineers and technical leaders working on complex codebases who want frontier intelligence without distraction from legacy model options.
+- **Key Value**: Clean, predictable developer UX with zero model confusion. Every model selector, agent prompt, and benchmark visualization consistently reflects only the two active models.
 
 ---
 
 ### 2. User Experience & Visual Design
 
-#### A. Visual Identity & Theme
-- **Dominant Neutral Canvas (60%)**: Deep obsidian black (`#090A0F`) with subtle ambient spotlight cone (`radial-gradient(1000px circle at 50% 0%, rgba(120, 119, 198, 0.08), transparent 70%)`).
-- **Structural Surfaces (30%)**: Sleek translucent dark cards (`bg-[#12131A]/70`) with subtle 1px hairline zinc borders (`border-white/[0.08]`), backdrop blur, and single-elevation depth.
-- **High-Intent Accent Budget (10%)**: Crisp pure white primary CTAs (`bg-white text-black hover:bg-neutral-200`) and electric violet-indigo highlights on active diff lines and cursor prediction indicators.
-- **Typography**: Clean display hierarchy (`Plus Jakarta Sans` or tight sans, `tracking-tight`), balanced headlines with `text-wrap: balance`, and monospace tabular numerals (`font-mono tabular-nums`) for editor line numbers, metrics, and shortcuts.
+#### A. Model Selector & Workspace Posture
+- **Restrained Monochromatic Design**: In accordance with the FLOAT design system, the model selectors in the Dashboard composer, Chat workspace, Editor assistant, and Activity bar retain the clean developer aesthetic.
+- **Model Options in Selectors**:
+  - **GPT-6.1 Sol (Preview)** [Default]: Tagged as Frontier Reasoning, 1M Context, `preview-sol`.
+  - **GPT-6 Astra (Preview)**: Tagged as Cloud Agent, 1M Context, `preview-rt_7k2m`.
+- **Zero-Pill Metadata**: Model badges in dropdowns and tables display unboxed metadata with typographic separators (`1M context · Reasoning · Fast`).
+- **Seamless Switcher**: Quick toggle between GPT-6.1 Sol and GPT-6 Astra with instant state synchronization in Zustand (`useAIStore`).
 
-#### B. Page Section Architecture (Cursor Flow)
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Top Bar: Brand Wordmark  ───  Models | Products | Pricing | Docs  ───  Download │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Hero: Spotlight Glow, Balanced Headline, "Download App" + "Web Workspace"│
-│       Marquee Live Demo: Composer Multi-File Agent & Diff Reviewer      │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Social Proof & Adoption: Trusted by engineers at modern engineering teams│
-├─────────────────────────────────────────────────────────────────────────┤
-│ Feature 01: Tab Autocomplete — Multi-line ghost prediction in real-time │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Feature 02: Composer — Autonomous multi-file edits across the repo      │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Feature 03: Codebase Indexing — Instant answers with @Files, @Docs, @Web│
-├─────────────────────────────────────────────────────────────────────────┤
-│ Feature 04: Terminal & CLI Agent — Auto-healing builds and test runs     │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Feature 05: Privacy & Model Choice — Claude 3.7, GPT-4o, Gemini 2.5 Flash│
-├─────────────────────────────────────────────────────────────────────────┤
-│ Testimonials: Quantified developer impact (2.8x speedup, 0 context drop)│
-├─────────────────────────────────────────────────────────────────────────┤
-│ Final Call to Action: Minimalist download launcher with OS detection     │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Quiet Footer: Brand, product links, status, and legal notices           │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-#### C. Interactive Components
-1. **Interactive Hero Composer**: 
-   - A realistic Cursor-like editor window displaying multi-file generation (e.g. `authMiddleware.ts`, `routeHandler.ts`), with real-time green insertion and red deletion diffs, file tabs, and an interactive "Accept all (Cmd+Enter)" or "Reject" bar.
-2. **Tab Autocomplete Playground**: 
-   - Interactive typing simulator where users can press `Tab` or click "Accept Suggestion" to watch ghosted predictions fill in complex algorithms instantly.
-3. **Download Launcher**:
-   - Platform auto-detection for macOS (Apple Silicon / Intel), Windows (x64), and Linux (.deb / .AppImage), with a one-click direct fallback to the web workspace.
+#### B. Benchmark & Intelligence Views
+- **Clean Comparison Matrix**: The Model Intelligence Hub (`/models`), SWE-bench Verified comparisons, HumanEval evaluations, GPQA Diamond scores, and MATH-500 charts display side-by-side performance for GPT-6 Astra and GPT-6.1 Sol only.
+- **Cost Calculator**: Pre-configured to calculate projected token usage for GPT-6.1 Sol ($3.50 input / $14.00 output per 1M) and GPT-6 Astra ($3.00 input / $12.00 output per 1M).
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Zero External Dependencies for Animations**
-  - *Chosen Approach*: Pure Tailwind CSS animations (`transition-all`, keyframes) and React state transitions without adding bloated 3rd-party animation libraries.
-  - *Why*: Ensures lightning-fast bundle performance, zero latency on user interactions, and robust reliability in AI Studio build environments.
-- **Decision 2: Retain Complete Navigation and Store Integrations**
-  - *Chosen Approach*: Preserve existing dropdowns (`ModelsDropdown`, `ProductsDropdown`, `PricingDropdown`, `ResourcesDropdown`, `LanguageDropdown`) and theme toggling while refining their shell to match the Cursor aesthetic.
-  - *Why*: Honors the absolute rule to preserve working functionality while upgrading the aesthetic polish.
-- **Decision 3: Isolated Container Scrolling for Terminal & Demos**
-  - *Chosen Approach*: Maintain strict container-level auto-scrolling (`scrollTop = scrollHeight`) to prevent any page scroll hijacking.
-  - *Why*: Completely eliminates the jumpy scroll bug resolved in the previous checkpoint.
+- **Decision 1: Upstream Execution Fallback Strategy**
+  - *Chosen Approach*: Maintain server-side OpenAI provider fallback mapping in `OpenAIAdapter` (`gpt-6-astra` and `gpt-6.1-sol` route safely to the verified OpenAI client upstream if remote preview endpoints return 404/429/50x).
+  - *Why*: Ensures the application never crashes during live code editing or chat sessions while presenting the authentic GPT-6 preview interfaces to the user.
+- **Decision 2: Global State Persistence Migration**
+  - *Chosen Approach*: Sanitize `localStorage` on initial store boot. If a user previously had `'gpt-4o'` or `'float-basic'` cached in `float_selected_model`, automatically migrate them to `'gpt-6.1-sol'`.
+  - *Why*: Prevents runtime errors or blank selector states for returning sessions with stale cached model IDs.
+- **Decision 3: Complete Agent Uniformity**
+  - *Chosen Approach*: Update all 8 system agents (Main Agent, Coder, Reviewer, Planner, Explorer, Debugger, UI Agent, Astra Cloud Agent) to use `GPT-6.1 Sol` as their default model and restrict their allowed model lists to `['gpt-6.1-sol', 'gpt-6-astra']`.
+  - *Why*: Guarantees that agent switches never attempt to load an evicted legacy model.
 
 ---
 
-### 4. Technical Architecture & Component Mapping
+### 4. Technical Architecture & Data Strategy
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                             LandingPage.tsx                              │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │ Navigation Bar (Fixed, backdrop-blur, 3-zone contract, dropdowns)  │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │ HeroSection: Radial Spotlight + Balanced Headline + Dual CTAs     │  │
-│  │   └─ InteractiveCodeHeroDemo: Multi-file Composer + Diff view      │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │ TabAutocompleteSection: Ghost text prediction interactive widget   │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │ CodebaseContextSection: Semantic search with @-tagging simulation   │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │ TerminalAgentSection: InteractiveTerminalShowcase (safe scroll)   │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │ ModelsAndPrivacySection: Multi-model switcher & zero-data training │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │ TestimonialsSection & BottomCTA: Minimalist download launcher      │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │ Footer: Single-elevation minimalist footer                         │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                        FLOAT AI Model Architecture                     │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│   Frontend UI Surfaces                                                 │
+│   ┌────────────────────┐   ┌───────────────────┐   ┌────────────────┐  │
+│   │ Dashboard Composer │   │ Chat / AI Panel   │   │ Models Hub     │  │
+│   │ (GPT-6.1 Sol def)  │   │ (Selector: 2 opts)│   │ (Side-by-side) │  │
+│   └─────────┬──────────┘   └─────────┬─────────┘   └───────┬────────┘  │
+│             │                        │                     │           │
+│             ▼                        ▼                     ▼           │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │              Client State: useAIStore (Zustand)                │   │
+│   │   • models: [GPT-6.1 Sol, GPT-6 Astra]                         │   │
+│   │   • selectedModel: 'gpt-6.1-sol'                               │   │
+│   │   • validModels: ['gpt-6.1-sol', 'gpt-6-astra']                │   │
+│   └──────────────────────────────┬─────────────────────────────────┘   │
+│                                  │ HTTP /api/ai/chat                   │
+│                                  ▼                                     │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │           Server Model Router (src/server/providers/)          │   │
+│   │   • Route definitions: 'gpt-6.1-sol', 'gpt-6-astra', 'auto'    │   │
+│   │   • Default resolution: 'auto' -> 'gpt-6.1-sol'                │   │
+│   │   • Strict rejection of any non-whitelisted model IDs          │   │
+│   └──────────────────────────────┬─────────────────────────────────┘   │
+│                                  │                                     │
+│                                  ▼                                     │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │             OpenAI Provider Adapter (Server-Side)              │   │
+│   │   • Execution with authenticated OPENAI_API_KEY                │   │
+│   │   • Upstream mapping for preview execution reliability         │   │
+│   └────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
----
+#### Step-by-Step Implementation Sequence
 
-### 5. Verification & Quality Standards
+1. **Prune Verified Models (`src/data/verifiedModels.ts`)**:
+   - Remove `float-basic`.
+   - Preserve strictly `gpt-6-astra` and `gpt-6.1-sol` with complete metadata, pricing, capabilities, and preview cloud agent configs.
 
-- **TypeScript Compilation**: `npm run lint` and `tsc --noEmit` pass with zero errors.
-- **Production Build**: `npm run build` succeeds cleanly.
-- **Viewport & Responsiveness**: Tested across mobile (375px), tablet (768px), and desktop (1440px).
-- **Smooth Scrolling**: Zero jitter or window scroll hijacking when interacting with code demos or terminal runs.
+2. **Streamline Dashboard Models (`src/features/dashboard/dashboardModels.ts`)**:
+   - Evict legacy models (`gpt-4o`, `gpt-4o-mini`, `o1`, `o1-mini`, `o3-mini`, `gpt-4.5-preview`, `gpt-4-turbo`, `chatgpt-4o-latest`, `auto`, `float-basic`).
+   - Populate with `gpt-6.1-sol` (default) and `gpt-6-astra`.
+
+3. **Update Agent Registry (`src/features/ai/registry.ts`)**:
+   - Set all 8 agents' `defaultModel` to `'gpt-6.1-sol'`.
+   - Set `allowedModels` strictly to `['gpt-6.1-sol', 'gpt-6-astra']`.
+   - Set `fallbackModel` to `'gpt-6-astra'`.
+
+4. **Synchronize Store Defaults (`src/store/aiStore.ts`)**:
+   - Update `VALID_FLOAT_MODELS` to `['gpt-6.1-sol', 'gpt-6-astra']`.
+   - Set initial selected model to `'gpt-6.1-sol'` with automatic localStorage fallback migration.
+   - Update `favoriteModels`, `recentModels`, and `preferences` to reflect the two models.
+
+5. **Server Provider Routing (`src/server/providers/router.ts` & `src/server/agent.ts`)**:
+   - Restrict `modelRoutes` allowlist strictly to `auto`, `gpt-6.1-sol`, `gpt-6-astra` (and valid aliases `gpt-6.1`, `gpt-6-sol`).
+   - Update `resolveModelId` default resolution from `gpt-4o` to `gpt-6.1-sol`.
+   - Update `src/server/agent.ts` to register only the two models.
+
+6. **UI Default Consistency**:
+   - Update initial state in `Dashboard.tsx`, `ModelCostCalculator.tsx`, `CreateEvalDialog.tsx`, `AgentRegistryContext.tsx`, and `AIPanel.tsx` to use `'gpt-6.1-sol'`.
+
+7. **Verification & Testing**:
+   - Run `lint_applet` and `compile_applet` to confirm clean compilation.
+   - Verify model selector options, default selection, chat requests, and benchmark catalog rendering.

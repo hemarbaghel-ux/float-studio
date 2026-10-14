@@ -37,6 +37,9 @@ import {
   saveEvalRun,
 } from './evalPersistence';
 
+// Globally supported models for evaluations in FLOAT AI
+export const SUPPORTED_EVAL_MODELS = new Set<string>(['gpt-6-astra', 'gpt-6.1-sol']);
+
 // Built-in standard evaluation tasks for coding, debugging, refactoring, and agentic workflows
 const INITIAL_TASKS: EvalTask[] = [
   {
@@ -453,6 +456,11 @@ export class EvalEngine {
       }
     }
 
+    // Global enforcement: strictly permit only GPT-6 Astra and GPT-6.1 Sol
+    if (!SUPPORTED_EVAL_MODELS.has(modelId)) {
+      throw new Error(`Model "${modelId}" is not supported for evaluations. FLOAT AI supports GPT-6 Astra and GPT-6.1 Sol exclusively.`);
+    }
+
     // Runtime check for user's consent preference (defaults strictly to false)
     const dataSharingAllowed = options?.dataSharingAllowed !== undefined
       ? options.dataSharingAllowed === true
@@ -515,6 +523,16 @@ export class EvalEngine {
   }
 
   private async executePipeline(run: EvalRun, task: EvalTask): Promise<void> {
+    if (!SUPPORTED_EVAL_MODELS.has(run.modelId)) {
+      run.status = 'failed';
+      run.errorType = 'UnsupportedModel';
+      run.errorMessage = `Model "${run.modelId}" is not supported for evaluations. FLOAT AI supports GPT-6 Astra and GPT-6.1 Sol exclusively.`;
+      run.completedAt = Date.now();
+      run.durationMs = 0;
+      run.duration = 0;
+      return;
+    }
+
     const startTime = Date.now();
     const model = INITIAL_MODELS.find(m => m.id === run.modelId);
     
@@ -733,14 +751,16 @@ export class EvalEngine {
     return true;
   }
 
-  // Run Queries
+  // Run Queries (globally filtered to supported frontier models)
   getRuns(): EvalRun[] {
-    return this.runs;
+    return this.runs.filter((run) => SUPPORTED_EVAL_MODELS.has(run.modelId));
   }
 
   async getRunsDurable(ownerId: string): Promise<EvalRun[]> {
     if (!hasAdminCredentials()) {
-      return this.runs.filter((run) => run.ownerId === ownerId).sort((a, b) => b.startedAt - a.startedAt);
+      return this.runs
+        .filter((run) => run.ownerId === ownerId && SUPPORTED_EVAL_MODELS.has(run.modelId))
+        .sort((a, b) => b.startedAt - a.startedAt);
     }
     try {
       const runs = await listEvalRuns(ownerId);
@@ -756,17 +776,24 @@ export class EvalEngine {
         console.warn('[EvalEngine] Failed to load durable runs:', error?.message || error);
       }
     }
-    return this.runs.filter((run) => run.ownerId === ownerId).sort((a, b) => b.startedAt - a.startedAt);
+    return this.runs
+      .filter((run) => run.ownerId === ownerId && SUPPORTED_EVAL_MODELS.has(run.modelId))
+      .sort((a, b) => b.startedAt - a.startedAt);
   }
 
   async getRunDurable(id: string, ownerId: string): Promise<EvalRun | null> {
     const local = this.getRun(id);
-    if (local?.ownerId === ownerId) return local;
+    if (local?.ownerId === ownerId) {
+      return SUPPORTED_EVAL_MODELS.has(local.modelId) ? local : null;
+    }
     if (!hasAdminCredentials()) return null;
     try {
       const run = await getEvalRun(id, ownerId);
-      if (run) this.runs.unshift(run);
-      return run;
+      if (run) {
+        this.runs.unshift(run);
+        return SUPPORTED_EVAL_MODELS.has(run.modelId) ? run : null;
+      }
+      return null;
     } catch (error: any) {
       if (isPermissionDeniedError(error)) {
         markAdminCredentialsUnavailable(error);
@@ -846,7 +873,9 @@ export class EvalEngine {
   }
 
   getRun(id: string): EvalRun | undefined {
-    return this.runs.find(r => r.id === id);
+    const run = this.runs.find(r => r.id === id);
+    if (!run || !SUPPORTED_EVAL_MODELS.has(run.modelId)) return undefined;
+    return run;
   }
 
   cancelRun(id: string): boolean {
@@ -891,10 +920,11 @@ export class EvalEngine {
     );
   }
 
-  // Leaderboard Calculation strictly from completed evaluation runs (excluding private/unconsented runs)
+  // Leaderboard Calculation strictly from completed evaluation runs of supported models (excluding private/unconsented runs)
   getLeaderboard(benchmarkId?: string, minEvaluations = 1): LeaderboardEntry[] {
     const completedRuns = this.runs.filter(r => 
       (r.status === 'completed' || r.status === 'Completed') && 
+      SUPPORTED_EVAL_MODELS.has(r.modelId) &&
       typeof (r.finalScore ?? r.score) === 'number' &&
       (!benchmarkId || r.benchmarkId === benchmarkId) &&
       !r.isPrivate &&
@@ -972,6 +1002,9 @@ export class EvalEngine {
 
   // Model-specific analytics (excluding unconsented/private runs from shared statistics)
   getModelAnalytics(modelId: string) {
+    if (!SUPPORTED_EVAL_MODELS.has(modelId)) {
+      return null;
+    }
     const runs = this.runs.filter(r => 
       r.modelId === modelId && 
       (r.status === 'completed' || r.status === 'Completed') &&

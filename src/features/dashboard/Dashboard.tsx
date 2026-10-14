@@ -52,7 +52,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const [showSettings, setShowSettings] = useState(false);
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>('gpt-4o');
+  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>('gpt-6.1-sol');
   const [attachments, setAttachments] = useState<Attachments>({});
 
   // Chats list & search

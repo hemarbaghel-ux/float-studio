@@ -33,7 +33,8 @@ export function EvalsBenchmarks({ onRunBenchmark }: EvalsBenchmarksProps) {
   const [selectedIndustryBenchmark, setSelectedIndustryBenchmark] = useState<string>(VERIFIED_BENCHMARK_DEFINITIONS[0].id);
 
   const currentDef = VERIFIED_BENCHMARK_DEFINITIONS.find(b => b.id === selectedIndustryBenchmark) || VERIFIED_BENCHMARK_DEFINITIONS[0];
-  const scoresForCurrent = VERIFIED_BENCHMARK_SCORES.filter(s => s.benchmarkId === currentDef.id);
+  const SUPPORTED_EVAL_MODELS = new Set(['gpt-6-astra', 'gpt-6.1-sol']);
+  const scoresForCurrent = VERIFIED_BENCHMARK_SCORES.filter(s => s.benchmarkId === currentDef.id && SUPPORTED_EVAL_MODELS.has(s.modelId));
 
   return (
     <div className="space-y-6">

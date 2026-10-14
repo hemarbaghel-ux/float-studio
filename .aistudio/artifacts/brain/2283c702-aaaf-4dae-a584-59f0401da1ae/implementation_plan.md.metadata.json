@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to transform FLOAT's landing page into a professional, Cursor-inspired developer experience with dark mode spotlight glow, Composer multi-file demos, Tab prediction showcase, and strict anti-slop typographic discipline.",
-  "updatedAt":  "2026-10-11T08:43:32.111640966Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Implementation plan for pruning FLOAT AI's model catalog to exclusively support GPT-6 Astra (Preview) and GPT-6.1 Sol (Preview). Covers removing obsolete models and FLOAT Basic, configuring GPT-6.1 Sol as the default across workspace and server routes, updating model selectors, agent configurations, and benchmarks, and maintaining upstream fallback to OpenAI.",
+  "updatedAt": "2026-10-14T10:36:12.121272352Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

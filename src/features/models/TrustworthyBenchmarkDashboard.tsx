@@ -35,18 +35,23 @@ export function TrustworthyBenchmarkDashboard() {
   const { runs } = useEvalStore();
 
   // Combine verified external benchmark results + real completed FLOAT runs
+  const SUPPORTED_EVAL_MODELS = useMemo(() => new Set(['gpt-6-astra', 'gpt-6.1-sol']), []);
+
+  // Combine verified external benchmark results + real completed FLOAT runs
   const allResults = useMemo(() => {
     const list: VerifiedBenchmarkResult[] = [];
 
     // 1. Ingest verified external benchmark results
-    VERIFIED_MODELS.forEach(m => {
+    VERIFIED_MODELS.filter(m => SUPPORTED_EVAL_MODELS.has(m.id)).forEach(m => {
       m.benchmarks.forEach(b => {
-        list.push(b);
+        if (SUPPORTED_EVAL_MODELS.has(b.modelId)) {
+          list.push(b);
+        }
       });
     });
 
-    // 2. Ingest real completed FLOAT evaluations from evalEngine
-    runs.filter(r => r.status === 'Completed' && typeof r.score === 'number').forEach(run => {
+    // 2. Ingest real completed FLOAT evaluations from evalEngine (strictly supported models)
+    runs.filter(r => (r.status === 'Completed' || r.status === 'completed') && typeof (r.finalScore ?? r.score) === 'number' && SUPPORTED_EVAL_MODELS.has(r.modelId)).forEach(run => {
       const model = VERIFIED_MODELS.find(m => m.id === run.modelId);
       list.push({
         id: `float-run-${run.id}`,
@@ -56,7 +61,7 @@ export function TrustworthyBenchmarkDashboard() {
         modelId: run.modelId,
         modelName: model?.displayName || run.modelId,
         modelVersion: run.modelId,
-        score: Number(run.score.toFixed(1)),
+        score: Number(((run.finalScore ?? run.score) as number).toFixed(1)),
         unit: '%',
         evaluator: 'FLOAT Evaluation Harness',
         sourceType: 'float_evaluation',
@@ -69,11 +74,15 @@ export function TrustworthyBenchmarkDashboard() {
     });
 
     return list;
-  }, [runs]);
+  }, [runs, SUPPORTED_EVAL_MODELS]);
 
   // Filtering
   const filteredResults = useMemo(() => {
     return allResults.filter(item => {
+      if (!SUPPORTED_EVAL_MODELS.has(item.modelId)) {
+        return false;
+      }
+
       // Benchmark filter
       if (selectedBenchmark !== 'all' && item.benchmarkId !== selectedBenchmark) {
         return false;
@@ -111,7 +120,7 @@ export function TrustworthyBenchmarkDashboard() {
       }
       return sortOrder === 'desc' ? -comparison : comparison;
     });
-  }, [allResults, selectedBenchmark, selectedProvider, selectedSourceType, searchQuery, sortField, sortOrder]);
+  }, [allResults, selectedBenchmark, selectedProvider, selectedSourceType, searchQuery, sortField, sortOrder, SUPPORTED_EVAL_MODELS]);
 
   const toggleSort = (field: 'score' | 'modelName' | 'evaluationDate') => {
     if (sortField === field) {
@@ -169,7 +178,9 @@ export function TrustworthyBenchmarkDashboard() {
             </div>
             <div className="h-4 w-px bg-slate-200 dark:bg-white/10" />
             <div>
-              <span className="font-semibold text-slate-900 dark:text-white text-base mr-1">{VERIFIED_MODELS.length}</span>
+              <span className="font-semibold text-slate-900 dark:text-white text-base mr-1">
+                {VERIFIED_MODELS.filter(m => SUPPORTED_EVAL_MODELS.has(m.id)).length}
+              </span>
               <span>Models Audited</span>
             </div>
           </div>
@@ -237,10 +248,7 @@ export function TrustworthyBenchmarkDashboard() {
               className="bg-transparent border border-slate-200 dark:border-white/10 rounded px-2 py-0.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none"
             >
               <option value="all">All Providers</option>
-              <option value="google">Google</option>
               <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="xai">xAI</option>
             </select>
           </div>
 

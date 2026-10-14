@@ -4,8 +4,8 @@ import { pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
 
 // Load environment variables from .env.local and .env
-dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
+dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
 
 // Server-wide resilience: intercept benign client cancellation signals
 const originalConsoleError = console.error;

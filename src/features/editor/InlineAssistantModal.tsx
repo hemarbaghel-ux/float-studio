@@ -96,7 +96,7 @@ export function InlineAssistantModal({
           endLine,
           fileName,
           language,
-          model: selectedModel || 'gpt-4o'
+          model: selectedModel || 'gpt-6.1-sol'
         })
       });
 

@@ -54,14 +54,18 @@ interface EvalState {
   exportRuns: (format: 'json' | 'csv') => void;
 }
 
+export const SUPPORTED_EVAL_MODELS = new Set<string>(['gpt-6-astra', 'gpt-6.1-sol']);
+
 export const useEvalStore = create<EvalState>((set, get) => {
   let pollTimer: any = null;
 
   const startPollingIfNeeded = (runs: EvalRun[]) => {
-    const hasActive = runs.some(r => r.status === 'running' || r.status === 'queued' || r.status === 'Running' || r.status === 'Queued');
+    const supportedRuns = runs.filter(r => SUPPORTED_EVAL_MODELS.has(r.modelId));
+    const hasActive = supportedRuns.some(r => r.status === 'running' || r.status === 'queued' || r.status === 'Running' || r.status === 'Queued');
     if (hasActive && !pollTimer) {
       pollTimer = setInterval(async () => {
-        const latestRuns = await evalService.getRuns();
+        const rawLatest = await evalService.getRuns();
+        const latestRuns = rawLatest.filter(r => SUPPORTED_EVAL_MODELS.has(r.modelId));
         set({ runs: latestRuns });
 
         // Update selectedRun if currently viewing an active run
@@ -94,7 +98,7 @@ export const useEvalStore = create<EvalState>((set, get) => {
     activeBenchmark: null,
     isLoading: false,
     isPolling: false,
-    selectedModelsForComparison: ['gpt-6-astra', 'gpt-6.1-sol'],
+    selectedModelsForComparison: ['gpt-6.1-sol', 'gpt-6-astra'],
     selectedAgentsForComparison: ['main-agent', 'coder-agent'],
     activeTab: 'overview',
     error: null,
@@ -116,7 +120,8 @@ export const useEvalStore = create<EvalState>((set, get) => {
 
     fetchRuns: async () => {
       try {
-        const runs = await evalService.getRuns();
+        const rawRuns = await evalService.getRuns();
+        const runs = rawRuns.filter(r => SUPPORTED_EVAL_MODELS.has(r.modelId));
         set({ runs });
         startPollingIfNeeded(runs);
       } catch (e: any) {
@@ -145,12 +150,13 @@ export const useEvalStore = create<EvalState>((set, get) => {
     fetchAll: async () => {
       set({ isLoading: true, error: null });
       try {
-        const [tasks, runs, benchmarks, leaderboard] = await Promise.all([
+        const [tasks, rawRuns, benchmarks, leaderboard] = await Promise.all([
           evalService.getTasks(),
           evalService.getRuns(),
           evalService.getBenchmarks(),
           evalService.getLeaderboard()
         ]);
+        const runs = rawRuns.filter(r => SUPPORTED_EVAL_MODELS.has(r.modelId));
         set({ tasks, runs, benchmarks, leaderboard, isLoading: false });
         startPollingIfNeeded(runs);
       } catch (e: any) {
@@ -176,6 +182,9 @@ export const useEvalStore = create<EvalState>((set, get) => {
     },
 
     runEval: async (params) => {
+      if (!SUPPORTED_EVAL_MODELS.has(params.modelId)) {
+        throw new Error(`Model "${params.modelId}" is not supported for evaluations. Supported models are GPT-6 Astra and GPT-6.1 Sol.`);
+      }
       const run = await evalService.runEvaluation(params);
       set((state) => {
         const updated = [run, ...state.runs.filter(r => r.id !== run.id)];
@@ -186,10 +195,10 @@ export const useEvalStore = create<EvalState>((set, get) => {
     },
 
     runBatchEval: async ({ taskIds, modelIds, agentId, benchmarkId }) => {
-      for (const modelId of modelIds) {
+      const validModels = modelIds.filter(m => SUPPORTED_EVAL_MODELS.has(m));
+      for (const modelId of validModels) {
         for (const taskId of taskIds) {
-          // provider is determined by model prefix or router
-          const providerId = modelId.startsWith('gemini') ? 'google' : modelId.startsWith('claude') ? 'anthropic' : 'openai';
+          const providerId = 'openai';
           await get().runEval({ taskId, modelId, agentId, providerId, benchmarkId });
         }
       }

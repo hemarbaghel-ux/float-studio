@@ -28,8 +28,9 @@ export function EvalsLeaderboard() {
     fetchLeaderboard(workspaceBenchmarkId === 'all' ? undefined : workspaceBenchmarkId, minEvaluations);
   }, [workspaceBenchmarkId, minEvaluations, fetchLeaderboard]);
 
+  const SUPPORTED_EVAL_MODELS = new Set(['gpt-6-astra', 'gpt-6.1-sol']);
   const verifiedScoresForBenchmark = VERIFIED_BENCHMARK_SCORES
-    .filter(s => s.benchmarkId === selectedBenchmarkId)
+    .filter(s => s.benchmarkId === selectedBenchmarkId && SUPPORTED_EVAL_MODELS.has(s.modelId))
     .sort((a, b) => b.score - a.score);
 
   const currentBenchmarkDef = VERIFIED_BENCHMARK_DEFINITIONS.find(b => b.id === selectedBenchmarkId);

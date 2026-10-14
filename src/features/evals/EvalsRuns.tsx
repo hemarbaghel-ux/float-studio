@@ -96,7 +96,7 @@ export function EvalsRuns({ onNewEval }: EvalsRunsProps) {
             className="p-1.5 bg-[#0D1117] border border-[#30363D] rounded-lg text-xs text-[#C9D1D9] focus:outline-none focus:border-purple-500"
           >
             <option value="all">All Models</option>
-            {INITIAL_MODELS.map(m => (
+            {INITIAL_MODELS.filter(m => m.id === 'gpt-6-astra' || m.id === 'gpt-6.1-sol').map(m => (
               <option key={m.id} value={m.id}>{m.displayName}</option>
             ))}
           </select>

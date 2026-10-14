@@ -2,9 +2,13 @@ import React from 'react';
 import { useEvalStore } from '../../store/evalStore';
 import { useAIStore } from '../../store/aiStore';
 
+import { SUPPORTED_EVAL_MODELS } from '../../store/evalStore';
+
 export function EvalsModels() {
   const { runs } = useEvalStore();
   const { models } = useAIStore();
+
+  const supportedModels = models.filter(m => SUPPORTED_EVAL_MODELS.has(m.id));
 
   return (
     <div className="p-8 max-w-6xl mx-auto flex flex-col gap-6">
@@ -23,7 +27,7 @@ export function EvalsModels() {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#30363D]">
-            {models.map(model => {
+            {supportedModels.map(model => {
               const modelRuns = runs.filter(r => r.modelId === model.id && r.status === 'Completed');
               const totalRuns = modelRuns.length;
               
