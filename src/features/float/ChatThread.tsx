@@ -411,48 +411,6 @@ export function ChatThread({ chatId }: { chatId: string }) {
             : 'The AI stream ended without a response. Check provider credentials, model access, and server logs.');
         }
         const totalElapsed = Date.now() - startTime;
-          const events = buffer.split(/\r?\n\r?\n/);
-          buffer = events.pop() || '';
-          for (const evt of events) {
-            const line = evt.split(/\r?\n/).find((l) => l.startsWith('data:'));
-            if (!line) continue;
-            try {
-              const data = JSON.parse(line.slice(5).trim());
-              const currentElapsed = Date.now() - startTime;
-              if (useToolAgent && data.type === 'event') {
-                const event = data.data || {};
-                agentEvents.push(event);
-                patch({ agentEvents: [...agentEvents] });
-                if (event.type === 'failed') {
-                  const agentErr = new Error(event.message || 'Agent execution failed.');
-                  (agentErr as any).code = event.code || 'AGENT_ERROR';
-                  throw agentErr;
-                }
-              } else if (useToolAgent && data.type === 'delta') {
-                full += data.data?.text || data.text || '';
-                patch({ content: full, agentEvents: [...agentEvents], latencyMs: currentElapsed });
-              } else if (useToolAgent && data.type === 'result') {
-                finalChangeSet = data.data?.changeSet;
-                full = data.data?.text || full;
-                patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents], latencyMs: currentElapsed });
-              } else if (data.type === 'delta' && data.text) {
-                full += data.text;
-                patch({ content: full, latencyMs: currentElapsed });
-              } else if (data.type === 'done') {
-                if (data.text && data.text.length >= full.length) full = data.text;
-                patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
-              } else if (data.type === 'error') {
-                streamError = { message: data.error || 'Generation failed', code: data.code || 'PROVIDER_ERROR' };
-                const sErr = new Error(streamError.message);
-                (sErr as any).code = streamError.code;
-                throw sErr;
-              }
-            } catch (e: any) {
-              if (e instanceof SyntaxError) continue;
-              throw e;
-            }
-          }
-        }
         if (activeChatIdRef.current !== chatId) return;
         if (!full && !finalChangeSet) {
           throw new Error('Provider returned an empty response. Please verify provider connectivity and try again.');
