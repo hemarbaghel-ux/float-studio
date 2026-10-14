@@ -276,7 +276,7 @@ export async function startServer() {
     const isStream = req.body.stream === true || req.headers.accept?.includes('text/event-stream');
     const {
       messages,
-      model = 'gpt-6.1-sol',
+      model = 'gpt-4o-mini',
       systemInstruction,
       reasoningEffort,
       effort,
