@@ -11,6 +11,8 @@ import { UsageDashboard } from './features/models/UsageDashboard';
 import { ModelDetailsPage } from './features/models/ModelDetailsPage';
 import { OnboardingFlow } from './features/onboarding/OnboardingFlow';
 import { Dashboard } from './features/dashboard/Dashboard';
+import { ChatThread } from './features/float/ChatThread';
+import { IDEWorkspace } from './features/shell/IDEWorkspace';
 import { PricingPage } from './features/pricing/PricingPage';
 import { CheckoutPage } from './features/checkout/CheckoutPage';
 import { CheckoutReturnPage } from './features/checkout/CheckoutReturnPage';
@@ -255,6 +257,8 @@ export default function App() {
 
   // Route active chat to Dashboard
   if (currentPath.startsWith('/chat/')) {
+    const chatId = decodeURIComponent(currentPath.slice('/chat/'.length).split('/')[0] || '');
+    if (chatId) return <ChatThread chatId={chatId} />;
     return <Dashboard initialTab="new-chat" />;
   }
 

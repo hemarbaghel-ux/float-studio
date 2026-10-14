@@ -16,8 +16,8 @@ export interface ModelRouteDefinition {
 export class ModelRouter {
   private adapters: Map<string, AIProviderAdapter> = new Map();
 
-  // Strict, verified model mapping to provider + verified apiModelId
-  // The UI display name or alias must never be treated as the actual API model ID
+  // Explicit provider/model allowlist. Entries are supported route candidates, not
+  // proof that a model is enabled for the current account; upstream errors remain visible.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
     // Auto / Default
     'auto': { provider: 'openai', apiModelId: 'gpt-6-astra' },
@@ -28,7 +28,7 @@ export class ModelRouter {
     // OpenAI Models
     'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
     'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
-    'o1': { provider: 'openai', apiModelId: 'o1' },
+    o1: { provider: 'openai', apiModelId: 'o1' },
     'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
     'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
     'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview' },
@@ -100,7 +100,7 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gpt-6-astra';
+      return 'auto';
     }
     return modelId;
   }
@@ -142,7 +142,7 @@ export class ModelRouter {
 
     if (!route) {
       throw new AIProviderError(
-        `Model "${modelId}" is not recognized or supported by the FLOAT router. Available verified models include: ${Object.keys(this.modelRoutes).join(', ')}`,
+        `Model "${modelId}" is not recognized or supported by the FLOAT router. Configured route candidates include: ${Object.keys(this.modelRoutes).join(', ')}`,
         'MODEL_NOT_FOUND',
         'FLOAT',
         404

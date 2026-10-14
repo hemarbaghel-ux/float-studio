@@ -25,7 +25,6 @@ Browser-local project, transcript, and automation caches are partitioned by Fire
 
 ```sh
 npm run lint
-npm test
 npm run build
 npm start
 ```
