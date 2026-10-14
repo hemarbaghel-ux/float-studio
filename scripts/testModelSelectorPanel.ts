@@ -24,41 +24,10 @@ function assert(condition: boolean, message: string) {
 
 console.log('=== Testing FLOAT AI Model Selector & Hover Information Panel ===\n');
 
-// 1. Verify 10 models in order
-assert(DASHBOARD_MODELS.length === 10, `DASHBOARD_MODELS contains exactly 10 models (found ${DASHBOARD_MODELS.length})`);
-
-const expectedNames = [
-  'GPT-4o Flagship Balanced',
-  'o3-mini Reasoning High Fast',
-  'GPT-4o mini Fast Fast',
-  'o1 Deep Reasoning High',
-  'o1-mini Fast Reasoning',
-  'GPT-4.5 Preview Flagship',
-  'GPT-4 Turbo Medium',
-  'ChatGPT-4o Latest Fast',
-  'Auto Dynamic Balanced',
-  'FLOAT Basic'
-];
-
-expectedNames.forEach((expected, i) => {
-  assert(DASHBOARD_MODELS[i]?.displayName === expected || DASHBOARD_MODELS[i]?.displayName.startsWith('FLOAT Basic'), `Model ${i + 1} is "${expected}"`);
-});
-
-// 2. GPT-4o metadata matching Cursor-class workspace reference
-const gpt4o = DASHBOARD_MODELS[0];
-assert(gpt4o.id === 'gpt-4o', 'Model 1 id is gpt-4o');
-assert(gpt4o.reasoningLevel === 'Balanced', 'GPT-4o reasoningLevel is "Balanced"');
-assert(gpt4o.version === '2024-11-20', 'GPT-4o version is "2024-11-20"');
-assert(formatContextWindow(gpt4o.contextWindow) === '128k context window', `GPT-4o context window formatted as 128k context window (got: ${formatContextWindow(gpt4o.contextWindow)})`);
-assert(gpt4o.provider === 'OpenAI', 'GPT-4o provider is OpenAI');
-
-// 3. o3-mini NEW badge & reasoning metadata
-const o3mini = DASHBOARD_MODELS[1];
-assert(o3mini.isNew === true, 'o3-mini has isNew: true');
-assert(o3mini.reasoningLevel === 'High Fast', 'o3-mini reasoningLevel is "High Fast"');
-assert(o3mini.version === 'high effort', 'o3-mini version is "high effort"');
-assert(formatContextWindow(o3mini.contextWindow) === '200k context window', `o3-mini context window formatted as 200k context window (got: ${formatContextWindow(o3mini.contextWindow)})`);
-assert(o3mini.provider === 'OpenAI', 'o3-mini provider is OpenAI');
+// 1. Verify the dashboard catalog matches the two explicitly routed API models.
+assert(DASHBOARD_MODELS.length === 2, `DASHBOARD_MODELS contains the two supported models (found ${DASHBOARD_MODELS.length})`);
+assert(DASHBOARD_MODELS[0]?.id === 'gpt-4o-mini', 'Default fast model is gpt-4o-mini');
+assert(DASHBOARD_MODELS[1]?.id === 'gpt-4o', 'General-purpose model is gpt-4o');
 
 // 4. Metadata presence across all models in registry
 INITIAL_MODELS.slice(0, 10).forEach(m => {
