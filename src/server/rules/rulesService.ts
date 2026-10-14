@@ -122,17 +122,17 @@ export class RulesService {
       const rawPath = f.path || f.name || '';
       const norm = normalizeWorkspacePath(rawPath);
 
-      // Support Cursor compatibility (.cursorrules file in workspace root)
-      if (norm === '.cursorrules') {
+      // Support FLOAT and Cursor workspace rule files in workspace root
+      if (norm === '.cursorrules' || norm === '.floatrules') {
         const rawContent = (f.content || '').trim();
         if (rawContent) {
           repoRules.push({
-            id: 'repo-cursorrules',
-            name: 'Cursor Rules (.cursorrules)',
+            id: `repo-${norm.replace('.', '')}`,
+            name: norm === '.floatrules' ? 'FLOAT Rules (.floatrules)' : 'Cursor Rules (.cursorrules)',
             content: rawContent.slice(0, MAX_RULE_LENGTH),
             scope: 'repository',
             enabled: true,
-            priority: 2
+            priority: norm === '.floatrules' ? 1 : 2
           });
         }
         continue;

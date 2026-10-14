@@ -66,7 +66,7 @@ export function IDEWorkspace() {
     document.documentElement.classList.toggle('dark', settings.theme === 'dark');
   }, [settings.theme]);
 
-  // Global keyboard shortcuts (e.g. Ctrl+L / Cmd+L for Cursor AI Chat panel)
+  // Global keyboard shortcuts (Ctrl+L / Cmd+L for AI Chat panel, Ctrl+I / Cmd+I for Composer)
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
       if ((e.key === 'l' || e.key === 'L') && (e.ctrlKey || e.metaKey)) {
@@ -74,7 +74,17 @@ export function IDEWorkspace() {
         useIDEStore.getState().toggleRightSidebar();
         // Focus the chat input
         setTimeout(() => {
-          const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"]') as HTMLTextAreaElement;
+          const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"], textarea[placeholder*="Agent"]') as HTMLTextAreaElement;
+          aiInput?.focus();
+        }, 80);
+      } else if ((e.key === 'i' || e.key === 'I') && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (!useIDEStore.getState().rightSidebarOpen) {
+          useIDEStore.getState().toggleRightSidebar();
+        }
+        window.dispatchEvent(new CustomEvent('switch-ai-mode', { detail: { mode: 'agent' } }));
+        setTimeout(() => {
+          const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"], textarea[placeholder*="Agent"]') as HTMLTextAreaElement;
           aiInput?.focus();
         }, 80);
       }

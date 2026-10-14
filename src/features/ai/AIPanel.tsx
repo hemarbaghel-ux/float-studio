@@ -368,6 +368,20 @@ export function AIPanel() {
     }
   }, [initialPrompt]);
 
+  // Composer mode activation (Cmd+I / Ctrl+I)
+  useEffect(() => {
+    const handleSwitchMode = (e: any) => {
+      if (e.detail?.mode) {
+        setActiveWorkflowMode(e.detail.mode);
+        setTimeout(() => {
+          textareaRef.current?.focus();
+        }, 60);
+      }
+    };
+    window.addEventListener('switch-ai-mode', handleSwitchMode);
+    return () => window.removeEventListener('switch-ai-mode', handleSwitchMode);
+  }, []);
+
   // Phase 25: Process queued developer message when agent reaches completion
   useEffect(() => {
     if (!isLoading && !isSubmittingRef.current && queuedMessages.length > 0) {

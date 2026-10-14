@@ -239,6 +239,18 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
 
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, openInlineAssistant);
 
+    // Add Composer command (Ctrl+I / Cmd+I)
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyI, () => {
+      if (!useIDEStore.getState().rightSidebarOpen) {
+        useIDEStore.getState().toggleRightSidebar();
+      }
+      window.dispatchEvent(new CustomEvent('switch-ai-mode', { detail: { mode: 'agent' } }));
+      setTimeout(() => {
+        const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"], textarea[placeholder*="Agent"]') as HTMLTextAreaElement;
+        aiInput?.focus();
+      }, 80);
+    });
+
     const handleGlobalInlineAssistant = () => {
       openInlineAssistant();
     };
