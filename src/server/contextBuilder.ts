@@ -88,6 +88,12 @@ export interface AssembledContext {
 
 // Model-specific context window budgets in characters
 const MODEL_BUDGET_MAP: Record<string, number> = {
+  'gpt-4o': 96000,
+  'gpt-4o-mini': 48000,
+  'o1': 96000,
+  'o3-mini': 96000,
+  'float-basic': 32000,
+  'gemini-3.8-flash': 96000,
   'gpt-6.1-sol': 96000,
   'gpt-6-astra': 96000
 };
