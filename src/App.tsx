@@ -253,8 +253,6 @@ export default function App() {
     return <Dashboard initialTab="new-chat" />;
   }
 
-  }
-
   // Route active chat to Dashboard
   if (currentPath.startsWith('/chat/')) {
     return <Dashboard initialTab="new-chat" />;

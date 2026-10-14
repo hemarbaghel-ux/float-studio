@@ -357,7 +357,7 @@ export function PricingPage() {
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Detailed Plan Comparison</h2>
             <p className="mt-2 text-xs sm:text-sm text-slate-600 dark:text-[#8B949E]">Compare all capabilities, model access, and team features across plans.</p>
           </div>
-          <PricingComparisonMatrix onSelectPlan={handleSelectPlan} billingCycle={billingCycle} />
+          <PricingComparisonMatrix onSelectPlan={handleSelectPlan} billingCycle={billingPeriod === 'annual' ? 'yearly' : 'monthly'} />
         </div>
       </section>
     </main>
