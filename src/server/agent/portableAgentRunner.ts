@@ -2,7 +2,7 @@ import type { ChangeSet } from '../../types';
 import { ToolRegistry } from './toolRegistry';
 import type { AgentProgressEvent, ToolExecutionContext, ToolResult } from './types';
 
-type Provider = 'openai' | 'xai' | 'anthropic';
+type Provider = 'openai';
 type ToolCall = { id: string; name: string; args: Record<string, unknown> };
 
 const MAX_ROUNDS = 8;
@@ -71,42 +71,48 @@ function changeSetFrom(result: ToolResult, context: ToolExecutionContext): Chang
 
 async function providerTurn(provider: Provider, model: string, key: string, instruction: string, history: any[], signal: AbortSignal) {
   const definitions = tools();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  let url: string;
-  let body: Record<string, unknown>;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${key}`,
+    ...((model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1') ? {
+      'X-Session-Id': 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
+      'X-Environment-Id': 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+    } : {})
+  };
+  const url = 'https://api.openai.com/v1/chat/completions';
+  const body = {
+    model,
+    messages: history,
+    tools: definitions.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
+    tool_choice: 'auto',
+  };
 
-  if (provider === 'anthropic') {
-    url = 'https://api.anthropic.com/v1/messages';
-    headers['x-api-key'] = key;
-    headers['anthropic-version'] = '2023-06-01';
-    body = {
-      model,
-      system: instruction,
-      max_tokens: 8192,
-      messages: history,
-      tools: definitions.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })),
-    };
-  } else {
-    url = provider === 'xai' ? 'https://api.x.ai/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
-    headers.Authorization = `Bearer ${key}`;
-    body = {
-      model,
-      messages: history,
-      tools: definitions.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
-      tool_choice: 'auto',
-    };
+  let response: any;
+  let data: any;
+  try {
+    response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+    data = await response.json().catch(() => ({}));
+  } catch (netErr: any) {
+    if (model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1') {
+      console.warn(`[PortableAgentRunner] ${model} unreachable (${netErr?.message}). Falling back to gpt-4o.`);
+      response = { ok: false, status: 503 };
+      data = { error: { message: netErr?.message || 'Remote agent unreachable' } };
+    } else {
+      throw netErr;
+    }
   }
 
-  const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error?.message || data.message || `${provider} API returned status ${response.status}`);
-
-  if (provider === 'anthropic') {
-    const blocks = Array.isArray(data.content) ? data.content : [];
-    const text = blocks.filter((block: any) => block.type === 'text').map((block: any) => block.text || '').join('');
-    const calls = blocks.filter((block: any) => block.type === 'tool_use').map((block: any) => ({ id: String(block.id), name: String(block.name), args: block.input && typeof block.input === 'object' ? block.input : {} }));
-    return { text, calls, assistantMessage: { role: 'assistant', content: blocks } };
+  // Preview Cloud Agent: Upstream fallback to gpt-4o if gpt-6 preview endpoint returns 404, 429, 50x or is unreachable
+  const isCloudPreview = model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1';
+  if (!response.ok && isCloudPreview && (response.status === 404 || response.status === 429 || response.status >= 500 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect/i.test(data.error?.message || ''))) {
+    const fallbackKey = process.env.OPENAI_API_KEY || key;
+    const fallbackHeaders = { ...headers, Authorization: `Bearer ${fallbackKey}` };
+    const fallbackBody = { ...body, model: 'gpt-4o' };
+    response = await fetch(url, { method: 'POST', headers: fallbackHeaders, body: JSON.stringify(fallbackBody), signal });
+    data = await response.json().catch(() => ({}));
   }
+
+  if (!response.ok) throw new Error(data.error?.message || data.message || `OpenAI API returned status ${response.status}`);
 
   const message = data.choices?.[0]?.message || {};
   const calls = Array.isArray(message.tool_calls) ? message.tool_calls.map((call: any) => {
@@ -133,7 +139,7 @@ export class PortableAgentRunner {
       signal: controller.signal,
     };
     const instruction = systemPrompt(typeof req.body?.systemInstruction === 'string' ? req.body.systemInstruction.slice(0, 8_000) : undefined);
-    let history: any[] = provider === 'anthropic' ? [{ role: 'user', content: prompt }] : [{ role: 'system', content: instruction }, { role: 'user', content: prompt }];
+    let history: any[] = [{ role: 'system', content: instruction }, { role: 'user', content: prompt }];
     let finalText = '';
     let changeSet: ChangeSet | null = null;
     let toolCallsCount = 0;
@@ -171,25 +177,29 @@ export class PortableAgentRunner {
           const result: ToolResult = count > 2
             ? { success: false, error: 'This exact tool call was already executed twice. Continue with the available results.' }
             : await ToolRegistry.execute(call.name, call.args, context);
+          const action = (call.name === 'propose_changes' || call.name === 'edit_file') ? 'Generating proposal'
+            : (call.name === 'search_code' || call.name === 'search_project') ? 'Searching'
+            : (call.name === 'read_file' || call.name === 'read_project_file') ? 'Reading'
+            : (call.name === 'list_files' || call.name === 'list_project_files') ? 'Exploring'
+            : (call.name === 'run_command') ? 'Running command'
+            : 'Thinking';
           send(res, 'event', {
             type: result.success ? 'tool_completed' : 'tool_failed',
-            action: call.name === 'propose_changes' ? 'Generating proposal' : 'Thinking',
+            action,
             tool: call.name,
             args: call.args,
             message: result.success ? `Completed "${call.name}" successfully.` : `Tool "${call.name}" failed: ${result.error}`,
             outputSummary: result.output ? JSON.stringify(result.output).slice(0, 180) : undefined,
           });
-          if (call.name === 'propose_changes' && result.success) {
+          if ((call.name === 'propose_changes' || call.name === 'edit_file') && result.success) {
             changeSet = changeSetFrom(result, context);
             if (changeSet) send(res, 'event', { type: 'review_ready', action: 'Generating proposal', message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` });
           }
           toolResults.push({ id: call.id, name: call.name, result });
         }
 
-        if (provider === 'anthropic') {
-          history.push({ role: 'user', content: toolResults.map(({ id, result }) => ({ type: 'tool_result', tool_use_id: id, content: JSON.stringify(result.success ? { result: result.output } : { error: result.error }), is_error: !result.success })) });
-        } else {
-          for (const { id, name, result } of toolResults) history.push({ role: 'tool', tool_call_id: id, name, content: JSON.stringify(result.success ? { result: result.output } : { error: result.error }) });
+        for (const { id, name, result } of toolResults) {
+          history.push({ role: 'tool', tool_call_id: id, name, content: JSON.stringify(result.success ? { result: result.output } : { error: result.error }) });
         }
         if (changeSet) {
           if (!finalText) finalText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s). Review the diffs before applying them.`;

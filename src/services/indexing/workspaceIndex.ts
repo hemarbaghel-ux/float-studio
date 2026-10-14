@@ -740,6 +740,24 @@ export class WorkspaceIndex {
   }
 
   /**
+   * Finds symbol definitions matching name and optional kind filter.
+   */
+  public findSymbols(query: string, kindFilter?: string): Array<{ path: string; symbol: CodeSymbol }> {
+    const q = query.trim().toLowerCase();
+    const results: Array<{ path: string; symbol: CodeSymbol }> = [];
+    for (const [name, list] of this.symbolIndex.entries()) {
+      if (name === q || name.includes(q)) {
+        for (const item of list) {
+          if (!kindFilter || item.symbol.kind === kindFilter) {
+            results.push(item);
+          }
+        }
+      }
+    }
+    return results;
+  }
+
+  /**
    * Clears the index completely.
    */
   public clear(): void {

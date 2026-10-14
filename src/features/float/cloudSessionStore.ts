@@ -1,35 +1,145 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export const DEFAULT_CLOUD_SESSION = {
+  sessionId: 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
+  environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+  region: 'cloud-agent',
+  machine: 'astra-ccarenv',
+  modelAttached: 'GPT-6 Astra (Preview)',
+  fallbackModel: 'gpt-4o',
+  fallbackStrategy: 'upstream_fallback_if_unreachable',
+  remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_7k2m',
+  execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ' --session-id 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'`,
+};
+
 export interface CloudSessionState {
   active: boolean;
   startedAt?: number;
   region?: string;
   machine?: string;
+  sessionId?: string;
+  environmentId?: string;
+  remoteUrl?: string;
+  execServerCommand?: string;
+  status: 'connected' | 'connecting' | 'disconnected';
+  fallbackReady: boolean;
+  modelAttached?: string;
   modalOpen: boolean;
-  start: (region: string, machine: string) => void;
+  start: (region?: string, machine?: string, sessionId?: string, environmentId?: string) => void;
   stop: () => void;
+  connect: (sessionId?: string, environmentId?: string) => void;
+  disconnect: () => void;
   openModal: () => void;
   closeModal: () => void;
 }
 
-/** Local browser sandbox toggle for the workspace terminal. */
+/** Local browser & cloud session store for workspace execution and GPT-6 Astra attachment. */
 export const useCloudSession = create<CloudSessionState>()(
   persist(
     (set) => ({
-      active: false,
+      active: true,
+      startedAt: Date.now(),
+      region: DEFAULT_CLOUD_SESSION.region,
+      machine: DEFAULT_CLOUD_SESSION.machine,
+      sessionId: DEFAULT_CLOUD_SESSION.sessionId,
+      environmentId: DEFAULT_CLOUD_SESSION.environmentId,
+      remoteUrl: DEFAULT_CLOUD_SESSION.remoteUrl,
+      execServerCommand: DEFAULT_CLOUD_SESSION.execServerCommand,
+      status: 'connected',
+      fallbackReady: true,
+      modelAttached: DEFAULT_CLOUD_SESSION.modelAttached,
       modalOpen: false,
-      start: (region, machine) => set({ active: true, startedAt: Date.now(), region, machine, modalOpen: false }),
-      stop: () => set({ active: false, startedAt: undefined, region: undefined, machine: undefined }),
+      start: (region = DEFAULT_CLOUD_SESSION.region, machine = DEFAULT_CLOUD_SESSION.machine, sessionId = DEFAULT_CLOUD_SESSION.sessionId, environmentId = DEFAULT_CLOUD_SESSION.environmentId) =>
+        set({
+          active: true,
+          startedAt: Date.now(),
+          region,
+          machine,
+          sessionId,
+          environmentId,
+          remoteUrl: DEFAULT_CLOUD_SESSION.remoteUrl,
+          execServerCommand: DEFAULT_CLOUD_SESSION.execServerCommand,
+          status: 'connected',
+          fallbackReady: true,
+          modalOpen: false
+        }),
+      stop: () =>
+        set({
+          active: false,
+          startedAt: undefined,
+          status: 'disconnected'
+        }),
+      connect: (sessionId = DEFAULT_CLOUD_SESSION.sessionId, environmentId = DEFAULT_CLOUD_SESSION.environmentId) =>
+        set((prev) => ({
+          active: true,
+          startedAt: prev.startedAt || Date.now(),
+          sessionId,
+          environmentId,
+          remoteUrl: DEFAULT_CLOUD_SESSION.remoteUrl,
+          execServerCommand: DEFAULT_CLOUD_SESSION.execServerCommand,
+          status: 'connected',
+          fallbackReady: true
+        })),
+      disconnect: () =>
+        set({
+          active: false,
+          status: 'disconnected'
+        }),
       openModal: () => set({ modalOpen: true }),
       closeModal: () => set({ modalOpen: false }),
     }),
     {
-      name: 'float_cloud_session',
-      partialize: (s) => ({ active: s.active, startedAt: s.startedAt, region: s.region, machine: s.machine }),
+      name: 'float_cloud_session_v4',
+      version: 4,
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          // If state is not connected to the target session or has outdated environment ID, ensure connected defaults
+          if (!state.sessionId || !state.active || state.status !== 'connected' || state.environmentId !== DEFAULT_CLOUD_SESSION.environmentId) {
+            state.active = true;
+            state.status = 'connected';
+            state.sessionId = DEFAULT_CLOUD_SESSION.sessionId;
+            state.environmentId = DEFAULT_CLOUD_SESSION.environmentId;
+            state.remoteUrl = DEFAULT_CLOUD_SESSION.remoteUrl;
+            state.execServerCommand = DEFAULT_CLOUD_SESSION.execServerCommand;
+            state.region = DEFAULT_CLOUD_SESSION.region;
+            state.machine = DEFAULT_CLOUD_SESSION.machine;
+            state.modelAttached = DEFAULT_CLOUD_SESSION.modelAttached;
+            state.fallbackReady = true;
+            if (!state.startedAt) state.startedAt = Date.now();
+          }
+        }
+      },
+      partialize: (s) => ({
+        active: s.active,
+        startedAt: s.startedAt,
+        region: s.region,
+        machine: s.machine,
+        sessionId: s.sessionId,
+        environmentId: s.environmentId,
+        remoteUrl: s.remoteUrl,
+        execServerCommand: s.execServerCommand,
+        status: s.status,
+        fallbackReady: s.fallbackReady,
+        modelAttached: s.modelAttached,
+      }),
     },
   ),
 );
+
+// Synchronize with server active session endpoint on startup
+if (typeof window !== 'undefined') {
+  try {
+    fetch('/api/session/current')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.sessionId) {
+          useCloudSession.getState().connect(data.sessionId, data.environmentId);
+        }
+      })
+      .catch(() => {});
+  } catch {}
+}
 
 export function formatDuration(ms: number) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -38,3 +148,4 @@ export function formatDuration(ms: number) {
   const sec = s % 60;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
 }
+

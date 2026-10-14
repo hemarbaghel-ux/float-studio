@@ -50,7 +50,7 @@ export function ResourcesFooter() {
         <div className="flex flex-col gap-3">
           <h4 className="text-slate-900 dark:text-white font-semibold text-xs tracking-wider uppercase">{t('footer.legal', 'Platform')}</h4>
           <span className="text-slate-500 dark:text-[#8B949E] text-xs">React 19 & Monaco</span>
-          <span className="text-slate-500 dark:text-[#8B949E] text-xs">Gemini & Multi-Model</span>
+          <span className="text-slate-500 dark:text-[#8B949E] text-xs">OpenAI Architecture</span>
           <span className="text-slate-500 dark:text-[#8B949E] text-xs">Firebase Secured</span>
         </div>
       </div>

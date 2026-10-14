@@ -68,7 +68,7 @@ export function HelpPage() {
       id: 'faq-5',
       category: 'AI & Models',
       question: 'Which AI models are supported and how are requests routed?',
-      answer: 'FLOAT features a centralized provider router. The active primary model is Gemini 3.8 Flash, which provides fast inference and generous context windows. You can benchmark models, review evaluation tasks, and track token usage at /models and /models/usage.',
+      answer: 'FLOAT features a centralized provider router. The active primary model is OpenAI GPT-4o, which provides fast inference and generous context windows. You can benchmark models, review evaluation tasks, and track token usage at /models and /models/usage.',
       tips: [
         'FLOAT does not perform silent fallbacks: if an API error occurs, an explicit actionable message is displayed.'
       ]

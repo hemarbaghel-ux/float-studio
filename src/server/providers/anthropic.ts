@@ -315,14 +315,11 @@ export class AnthropicAdapter implements AIProviderAdapter {
     prompt: string,
     virtualFiles: any[]
   ): Promise<void> {
-    if (!this.isConfigured()) {
-      throw new AIProviderError(
-        `Anthropic is not configured on the FLOAT server. To run agents with "${model}", configure ANTHROPIC_API_KEY.`,
-        'AUTH_ERROR',
-        'Anthropic',
-        401
-      );
-    }
-    return PortableAgentRunner.run('anthropic', req, res, model, prompt, virtualFiles, process.env.ANTHROPIC_API_KEY!);
+    throw new AIProviderError(
+      'Autonomous agent loop is only supported for OpenAI models in FLOAT AI.',
+      'INVALID_REQUEST',
+      'Anthropic',
+      400
+    );
   }
 }

@@ -28,29 +28,20 @@ interface AIStore {
 
 export const defaultAgents: Agent[] = INITIAL_AGENTS;
 
-const OBSOLETE_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
-  'gemini-2.0-pro',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-pro'
-];
+const VALID_FLOAT_MODELS = ['gpt-6-astra', 'gpt-6.1-sol'];
 
 const getInitialSelectedModel = () => {
   if (typeof window !== 'undefined') {
     try {
       const saved = localStorage.getItem('float_selected_model');
-      if (saved && !OBSOLETE_MODELS.includes(saved)) {
+      if (saved && VALID_FLOAT_MODELS.includes(saved)) {
         return saved;
       }
-      if (saved && OBSOLETE_MODELS.includes(saved)) {
-        localStorage.setItem('float_selected_model', 'auto');
-      }
+      localStorage.setItem('float_selected_model', 'gpt-6-astra');
     } catch {}
   }
   return 'gpt-4o';
+  return 'gpt-6-astra';
 };
 
 const getInitialEffort = (): ReasoningEffortLevel => {
@@ -71,11 +62,15 @@ const getInitialFavorites = (): string[] => {
       const saved = localStorage.getItem('float_favorite_models');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter(m => VALID_FLOAT_MODELS.includes(m));
+          if (filtered.length > 0) return filtered;
+        }
       }
     } catch {}
   }
   return ['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1'];
+  return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
 const getInitialRecents = (): string[] => {
@@ -84,11 +79,15 @@ const getInitialRecents = (): string[] => {
       const saved = localStorage.getItem('float_recent_models');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter(m => VALID_FLOAT_MODELS.includes(m));
+          if (filtered.length > 0) return filtered;
+        }
       }
     } catch {}
   }
   return ['gpt-4o', 'o3-mini', 'gpt-4o-mini'];
+  return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
 export const useAIStore = create<AIStore>((set) => ({
@@ -100,19 +99,24 @@ export const useAIStore = create<AIStore>((set) => ({
   favoriteModels: getInitialFavorites(),
   recentModels: getInitialRecents(),
   providers: {
-    google: { enabled: true, configured: true, defaultModel: 'gemini-3.1-flash-lite' },
-    openai: { enabled: true, configured: false, defaultModel: 'gpt-4o' },
-    anthropic: { enabled: true, configured: false, defaultModel: 'claude-3-7-sonnet-20250219' },
-    xai: { enabled: true, configured: false, defaultModel: 'grok-4.7' },
-    auto: { enabled: true, configured: true, defaultModel: 'gemini-3.1-flash-lite' },
+    openai: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' },
+    auto: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' }
   },
   preferences: {
-    preferredModel: 'auto',
-    fallbackModel: 'gemini-3.1-flash-lite',
+    preferredModel: 'gpt-6-astra',
+    fallbackModel: 'gpt-6.1-sol',
     speedPreference: 'fast',
     qualityPreference: 'high'
   },
-  setModels: (models) => set({ models }),
+  setModels: (models) => {
+    const seen = new Set<string>();
+    const deduplicated = models.filter(m => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+    set({ models: deduplicated });
+  },
   setAgents: (agents) => set({ agents }),
   setSelectedModel: (selectedModel) => {
     if (typeof window !== 'undefined') {
@@ -189,8 +193,9 @@ export const useAIStore = create<AIStore>((set) => ({
             // Sync model availability based on real provider configuration
             const updatedModels = state.models.map((m) => {
               const pId = m.providerId?.toLowerCase();
-              if (pId === 'auto') return m;
-              const isConfigured = updatedProviders[pId]?.configured ?? false;
+              const isConfigured = (pId === 'auto' || pId === 'openai')
+                ? (updatedProviders.openai?.configured ?? false)
+                : (updatedProviders[pId]?.configured ?? false);
               return {
                 ...m,
                 status: isConfigured ? ('AVAILABLE' as const) : ('CONFIG_REQUIRED' as const),

@@ -167,21 +167,21 @@ export function FeatureMockup({ feature }: MockupProps) {
             <div className="p-3 bg-[#1E1C18] border border-white/10 rounded-lg flex items-center justify-between">
               <div>
                 <div className="text-white font-medium">Subagent 1: Refactor authMiddleware.ts</div>
-                <div className="text-[10px] text-slate-400">Claude 3.7 Sonnet • Deep Reasoning</div>
+                <div className="text-[10px] text-slate-400">OpenAI o3-mini • Deep Reasoning</div>
               </div>
               <span className="text-emerald-400 font-mono text-[11px]">Done (2.1s)</span>
             </div>
             <div className="p-3 bg-[#1E1C18] border border-white/10 rounded-lg flex items-center justify-between">
               <div>
                 <div className="text-white font-medium">Subagent 2: Build MissionControl.tsx UI</div>
-                <div className="text-[10px] text-slate-400">xAI Grok 2 • Frontend generation</div>
+                <div className="text-[10px] text-slate-400">GPT-4o • UI Generation</div>
               </div>
               <span className="text-amber-400 font-mono text-[11px]">Running...</span>
             </div>
             <div className="p-3 bg-[#1E1C18] border border-white/10 rounded-lg flex items-center justify-between">
               <div>
                 <div className="text-white font-medium">Subagent 3: Index benchmark datasets</div>
-                <div className="text-[10px] text-slate-400">Gemini 2.5 Flash • High-throughput</div>
+                <div className="text-[10px] text-slate-400">GPT-4o mini • High-throughput</div>
               </div>
               <span className="text-emerald-400 font-mono text-[11px]">Done (0.8s)</span>
             </div>

@@ -298,14 +298,11 @@ export class XAIAdapter implements AIProviderAdapter {
     prompt: string,
     virtualFiles: any[]
   ): Promise<void> {
-    if (!this.isConfigured()) {
-      throw new AIProviderError(
-        `xAI is not configured on the FLOAT server. To run agents with "${model}", configure XAI_API_KEY in the server environment.`,
-        'AUTH_ERROR',
-        'xAI',
-        401
-      );
-    }
-    return PortableAgentRunner.run('xai', req, res, model, prompt, virtualFiles, process.env.XAI_API_KEY!);
+    throw new AIProviderError(
+      'Autonomous agent loop is only supported for OpenAI models in FLOAT AI.',
+      'INVALID_REQUEST',
+      'xAI',
+      400
+    );
   }
 }

@@ -350,6 +350,15 @@ export function PricingPage() {
             </div>
           </div>
         </div>
+
+        {/* Feature Comparison Matrix */}
+        <div className="mt-16 pt-12 border-t border-slate-200 dark:border-white/10">
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Detailed Plan Comparison</h2>
+            <p className="mt-2 text-xs sm:text-sm text-slate-600 dark:text-[#8B949E]">Compare all capabilities, model access, and team features across plans.</p>
+          </div>
+          <PricingComparisonMatrix onSelectPlan={handleSelectPlan} billingCycle={billingCycle} />
+        </div>
       </section>
     </main>
   );

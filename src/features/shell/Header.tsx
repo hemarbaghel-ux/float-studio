@@ -5,10 +5,12 @@ import { LanguageDropdown } from '../../components/LanguageDropdown';
 import { AccountMenu } from '../../components/AccountMenu';
 import { useIDEStore } from '../../store';
 import { useI18nStore } from '../../store/i18nStore';
+import { useCloudSession } from '../float/cloudSessionStore';
 
 export function Header() {
   const { projectName, settings, updateSettings } = useIDEStore();
   const { t } = useI18nStore();
+  const cloudSession = useCloudSession();
 
   const toggleTheme = () => {
     updateSettings({ theme: settings.theme === 'dark' ? 'light' : 'dark' });
@@ -54,8 +56,8 @@ export function Header() {
         </button>
         <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400 text-[10px] font-medium border border-emerald-200 dark:border-emerald-500/20">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Ready</span>
-        </div>
+          <span>Session: {cloudSession.active ? 'Connected' : 'Attach'}</span>
+        </button>
       </div>
 
       {/* Center Search / Command Palette shortcut */}

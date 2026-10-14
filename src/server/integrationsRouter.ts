@@ -934,7 +934,182 @@ integrationsRouter.get('/:provider/repositories', requireAuth, async (req: any, 
   }
 });
 
-// 7. Disconnect Integration
+// 7. Fetch Commits for a Repository (GitHub or GitLab)
+integrationsRouter.get('/:provider/repositories/:owner/:repo/commits', requireAuth, async (req: any, res: Response) => {
+  const { provider, owner, repo } = req.params;
+  const branch = req.query.branch ? String(req.query.branch) : undefined;
+  const userId = req.user.uid;
+
+  let connection: StoredIntegrationConnection | null;
+  try {
+    connection = await getIntegrationConnection(userId, provider);
+  } catch (error: any) {
+    return res.status(503).json({ error: 'Integration storage is unavailable.' });
+  }
+  if (!connection || connection.status !== 'connected' || !connection.accessToken) {
+    return res.status(404).json({ error: `No active ${provider} connection found. Please connect your account first.` });
+  }
+
+  try {
+    if (provider === 'github') {
+      const query = new URLSearchParams({ per_page: '25' });
+      if (branch) query.set('sha', branch);
+      const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?${query.toString()}`;
+      const commitRes = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${connection.accessToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'FLOAT-AI'
+        },
+        signal: AbortSignal.timeout(15_000)
+      });
+
+      if (!commitRes.ok) {
+        throw new Error(`GitHub commits request failed (HTTP ${commitRes.status})`);
+      }
+
+      const commits = await commitRes.json();
+      const formatted = Array.isArray(commits) ? commits.map((c: any) => ({
+        sha: c.sha,
+        shortSha: c.sha ? c.sha.slice(0, 7) : '',
+        message: c.commit?.message || '',
+        author: {
+          name: c.commit?.author?.name || c.author?.login || 'Author',
+          email: c.commit?.author?.email || '',
+          avatarUrl: c.author?.avatar_url || ''
+        },
+        date: c.commit?.author?.date || c.commit?.committer?.date || '',
+        htmlUrl: c.html_url
+      })) : [];
+
+      return res.json({ success: true, commits: formatted, branch: branch || 'default' });
+    }
+
+    if (provider === 'gitlab') {
+      const projectPath = encodeURIComponent(`${owner}/${repo}`);
+      const query = new URLSearchParams({ per_page: '25' });
+      if (branch) query.set('ref_name', branch);
+      const url = `https://gitlab.com/api/v4/projects/${projectPath}/repository/commits?${query.toString()}`;
+      const commitRes = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${connection.accessToken}`,
+          'User-Agent': 'FLOAT-AI'
+        },
+        signal: AbortSignal.timeout(15_000)
+      });
+
+      if (!commitRes.ok) {
+        throw new Error(`GitLab commits request failed (HTTP ${commitRes.status})`);
+      }
+
+      const commits = await commitRes.json();
+      const formatted = Array.isArray(commits) ? commits.map((c: any) => ({
+        sha: c.id,
+        shortSha: c.short_id || (c.id ? c.id.slice(0, 7) : ''),
+        message: c.title || c.message || '',
+        author: {
+          name: c.author_name || 'GitLab User',
+          email: c.author_email || '',
+          avatarUrl: ''
+        },
+        date: c.committed_date || c.created_at || '',
+        htmlUrl: c.web_url
+      })) : [];
+
+      return res.json({ success: true, commits: formatted, branch: branch || 'default' });
+    }
+
+    return res.status(400).json({ error: `Unsupported provider: ${provider}` });
+  } catch (err: any) {
+    console.error(`[Integrations][${provider}] Commits fetch error:`, err.message);
+    res.status(500).json({ error: err.message || 'Failed to fetch commits' });
+  }
+});
+
+// 8. Fetch Commit Diff (GitHub or GitLab)
+integrationsRouter.get('/:provider/repositories/:owner/:repo/commits/:sha/diff', requireAuth, async (req: any, res: Response) => {
+  const { provider, owner, repo, sha } = req.params;
+  const userId = req.user.uid;
+
+  let connection: StoredIntegrationConnection | null;
+  try {
+    connection = await getIntegrationConnection(userId, provider);
+  } catch {
+    return res.status(503).json({ error: 'Integration storage is unavailable.' });
+  }
+  if (!connection || connection.status !== 'connected' || !connection.accessToken) {
+    return res.status(404).json({ error: `No active ${provider} connection found.` });
+  }
+
+  try {
+    if (provider === 'github') {
+      const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(sha)}`;
+      const commitRes = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${connection.accessToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'FLOAT-AI'
+        },
+        signal: AbortSignal.timeout(20_000)
+      });
+
+      if (!commitRes.ok) throw new Error(`GitHub commit diff request failed (HTTP ${commitRes.status})`);
+      const data = await commitRes.json();
+      const files = Array.isArray(data.files) ? data.files.map((f: any) => ({
+        filename: f.filename,
+        status: f.status || 'modified',
+        additions: f.additions || 0,
+        deletions: f.deletions || 0,
+        patch: f.patch || '',
+        previousFilename: f.previous_filename
+      })) : [];
+
+      return res.json({
+        success: true,
+        sha: data.sha,
+        message: data.commit?.message || '',
+        stats: data.stats || { total: 0, additions: 0, deletions: 0 },
+        files
+      });
+    }
+
+    if (provider === 'gitlab') {
+      const projectPath = encodeURIComponent(`${owner}/${repo}`);
+      const url = `https://gitlab.com/api/v4/projects/${projectPath}/repository/commits/${encodeURIComponent(sha)}/diff`;
+      const diffRes = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${connection.accessToken}`,
+          'User-Agent': 'FLOAT-AI'
+        },
+        signal: AbortSignal.timeout(20_000)
+      });
+
+      if (!diffRes.ok) throw new Error(`GitLab commit diff request failed (HTTP ${diffRes.status})`);
+      const diffs = await diffRes.json();
+      const files = Array.isArray(diffs) ? diffs.map((d: any) => ({
+        filename: d.new_path || d.old_path,
+        status: d.new_file ? 'added' : d.deleted_file ? 'deleted' : 'modified',
+        additions: 0,
+        deletions: 0,
+        patch: d.diff || '',
+        previousFilename: d.old_path !== d.new_path ? d.old_path : undefined
+      })) : [];
+
+      return res.json({
+        success: true,
+        sha,
+        files
+      });
+    }
+
+    return res.status(400).json({ error: `Unsupported provider: ${provider}` });
+  } catch (err: any) {
+    console.error(`[Integrations][${provider}] Commit diff error:`, err.message);
+    res.status(500).json({ error: err.message || 'Failed to fetch commit diff' });
+  }
+});
+
+// 9. Disconnect Integration
 integrationsRouter.post('/disconnect/:id', requireAuth, async (req: any, res: Response) => {
   const { id } = req.params;
   const userId = req.user.uid;

@@ -69,6 +69,28 @@ export interface RepositoryItem {
   language: string;
 }
 
+export interface GitCommitItem {
+  sha: string;
+  shortSha: string;
+  message: string;
+  author: {
+    name: string;
+    email: string;
+    avatarUrl?: string;
+  };
+  date: string;
+  htmlUrl?: string;
+}
+
+export interface GitCommitDiffFile {
+  filename: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  additions: number;
+  deletions: number;
+  patch: string;
+  previousFilename?: string;
+}
+
 interface IntegrationState {
   configuredProviders: IntegrationProvider[];
   providerDetails: Record<string, ProviderSetupInfo>;
@@ -89,6 +111,17 @@ interface IntegrationState {
     success: boolean;
     repositories: RepositoryItem[];
     accountName?: string;
+    error?: string;
+  }>;
+  getCommits: (provider: IntegrationProvider, owner: string, repo: string, branch?: string) => Promise<{
+    success: boolean;
+    commits: GitCommitItem[];
+    error?: string;
+  }>;
+  getCommitDiff: (provider: IntegrationProvider, owner: string, repo: string, sha: string) => Promise<{
+    success: boolean;
+    commit?: any;
+    files: GitCommitDiffFile[];
     error?: string;
   }>;
   disconnect: (connectionId: string) => Promise<boolean>;
@@ -168,6 +201,52 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
       };
     } catch (err: any) {
       return { success: false, repositories: [], error: err.message || 'Network error' };
+    }
+  },
+
+  getCommits: async (provider: IntegrationProvider, owner: string, repo: string, branch?: string) => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        return { success: false, commits: [], error: 'Authentication required. Please sign in.' };
+      }
+      const query = branch ? `?branch=${encodeURIComponent(branch)}` : '';
+      const res = await fetch(`/api/integrations/${provider}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits${query}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, commits: [], error: data.error || 'Failed to fetch commits' };
+      }
+      return {
+        success: true,
+        commits: data.commits || []
+      };
+    } catch (err: any) {
+      return { success: false, commits: [], error: err.message || 'Network error' };
+    }
+  },
+
+  getCommitDiff: async (provider: IntegrationProvider, owner: string, repo: string, sha: string) => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        return { success: false, files: [], error: 'Authentication required. Please sign in.' };
+      }
+      const res = await fetch(`/api/integrations/${provider}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(sha)}/diff`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, files: [], error: data.error || 'Failed to fetch commit diff' };
+      }
+      return {
+        success: true,
+        commit: data,
+        files: data.files || []
+      };
+    } catch (err: any) {
+      return { success: false, files: [], error: err.message || 'Network error' };
     }
   },
 

@@ -109,7 +109,7 @@ export const useModelIntelligenceStore = create<ModelIntelligenceState>((set, ge
   selectedEvaluatorFilter: 'all',
   searchQuery: '',
   selectedModelId: null,
-  comparisonModelIds: ['gemini-3.1-flash-lite', 'claude-3-7-sonnet-20250219'],
+  comparisonModelIds: ['gpt-6-astra', 'gpt-6.1-sol'],
   activeWorkload: WORKLOAD_PRESETS[1], // Feature Refactor
   customInputTokens: WORKLOAD_PRESETS[1].inputTokens,
   customOutputTokens: WORKLOAD_PRESETS[1].outputTokens,

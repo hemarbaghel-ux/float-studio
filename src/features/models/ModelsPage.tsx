@@ -78,7 +78,15 @@ export function ModelsPage() {
     updateSettings({ theme: settings.theme === 'dark' ? 'light' : 'dark' });
   };
 
-  const activeModels: AIModel[] = models.length > 0 ? models : INITIAL_MODELS;
+  const activeModels: AIModel[] = useMemo(() => {
+    const list = models.length > 0 ? models : INITIAL_MODELS;
+    const seen = new Set<string>();
+    return list.filter(m => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+  }, [models]);
 
   // Filtered models for catalog view
   const filteredModels = useMemo(() => {
@@ -270,7 +278,7 @@ export function ModelsPage() {
               <div className="p-4 rounded-xl bg-[#12161F] border border-[#21262D]">
                 <span className="text-[11px] uppercase font-semibold text-[#8B949E] block">Frontier Models</span>
                 <span className="text-2xl font-bold text-white mt-1 block">{VERIFIED_MODELS.length}</span>
-                <span className="text-[11px] text-purple-300 mt-0.5 block">Google, OpenAI, Anthropic, xAI</span>
+                <span className="text-[11px] text-purple-300 mt-0.5 block">Verified OpenAI Suite</span>
               </div>
 
               <div className="p-4 rounded-xl bg-[#12161F] border border-[#21262D]">
@@ -381,12 +389,9 @@ export function ModelsPage() {
                         onChange={(e) => setFilterProvider(e.target.value)}
                         className="bg-[#12161F] border border-[#21262D] rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-[#7C3AED]"
                       >
-                        <option value="All">All Providers</option>
-                        <option value="FLOAT">FLOAT</option>
-                        <option value="Google">Google</option>
+                        <option value="All">All OpenAI Models</option>
                         <option value="OpenAI">OpenAI</option>
-                        <option value="Anthropic">Anthropic</option>
-                        <option value="xAI">xAI</option>
+                        <option value="FLOAT">FLOAT Free Tier</option>
                       </select>
                     </div>
 
@@ -435,7 +440,7 @@ export function ModelsPage() {
                             </div>
 
                             {/* Live verified status badge */}
-                            {model.tier === 'Free' || model.id === 'float-basic' ? (
+                            {model.tier === 'Free' ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 shrink-0">
                                 <CheckCircle2 size={10} className="text-emerald-400" />
                                 Free Tier

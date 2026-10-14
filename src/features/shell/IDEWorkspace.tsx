@@ -66,6 +66,23 @@ export function IDEWorkspace() {
     document.documentElement.classList.toggle('dark', settings.theme === 'dark');
   }, [settings.theme]);
 
+  // Global keyboard shortcuts (e.g. Ctrl+L / Cmd+L for Cursor AI Chat panel)
+  useEffect(() => {
+    const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      if ((e.key === 'l' || e.key === 'L') && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        useIDEStore.getState().toggleRightSidebar();
+        // Focus the chat input
+        setTimeout(() => {
+          const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"]') as HTMLTextAreaElement;
+          aiInput?.focus();
+        }, 80);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalShortcuts);
+    return () => window.removeEventListener('keydown', handleGlobalShortcuts);
+  }, []);
+
   // Expose function to open settings globally for now
   useEffect(() => {
     const handleOpenSettings = () => setSettingsOpen(true);

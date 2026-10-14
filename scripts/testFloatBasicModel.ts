@@ -31,10 +31,10 @@ async function runFloatBasicTests() {
   assert(foundInInitial?.displayName === 'FLOAT Basic', 'Display name is "FLOAT Basic"');
   assert(foundInInitial?.shortName === 'FLOAT Basic', 'Short name is "FLOAT Basic"');
   assert(foundInInitial?.tier === 'Free', 'Tier is explicitly "Free"');
-  assert(foundInInitial?.provider === 'FLOAT', 'Provider branding is "FLOAT"');
-  assert(foundInInitial?.providerId === 'google', 'Backend providerId is "google"');
-  assert(foundInInitial?.apiModelId === 'gemini-3.8-flash', 'apiModelId is "gemini-3.8-flash"');
-  assert(foundInInitial?.contextWindow === 131072, 'Context window is verified 131072 tokens');
+  assert(foundInInitial?.provider?.includes('FLOAT'), 'Provider branding contains "FLOAT"');
+  assert(foundInInitial?.providerId === 'openai', 'Backend providerId is "openai"');
+  assert(foundInInitial?.apiModelId === 'gpt-4o-mini', 'apiModelId is "gpt-4o-mini"');
+  assert(foundInInitial?.contextWindow === 128000, 'Context window is verified 128000 tokens');
   assert(foundInInitial?.status === 'AVAILABLE', 'Status is "AVAILABLE" for Free users');
   assert(foundInInitial?.pricing?.inputCost === 0, 'Input token cost is 0 (Free)');
   assert(foundInInitial?.pricing?.outputCost === 0, 'Output token cost is 0 (Free)');
@@ -62,22 +62,21 @@ async function runFloatBasicTests() {
   // Test Suite 4: Backend ModelRouter Resolution
   console.log('\n--- Test Suite 4: Backend Model Routing ---');
   const route = router.resolveRoute('float-basic');
-  assert(route.route.provider === 'google', 'float-basic routes to Google backend provider');
-  assert(route.route.apiModelId === 'gemini-3.8-flash', 'float-basic routes to gemini-3.8-flash apiModelId');
+  assert(route.route.provider === 'openai', 'float-basic routes to OpenAI backend provider');
+  assert(route.route.apiModelId === 'gpt-4o-mini', 'float-basic routes to gpt-4o-mini apiModelId');
   assert(typeof route.adapter.generateContent === 'function', 'Resolved adapter has generateContent method');
 
   const adapter = router.getAdapterForModel('float-basic');
-  assert(adapter.id === 'google', 'getAdapterForModel("float-basic") returns Google adapter');
+  assert(adapter.id === 'openai', 'getAdapterForModel("float-basic") returns OpenAI adapter');
 
-  // Test Suite 5: Paid-Only Model Protection & Fallback Prohibition
-  console.log('\n--- Test Suite 5: Paid-Only Model Protection & Fallback Prohibition ---');
-  // Selecting float-basic does not alter other routes
+  // Test Suite 5: OpenAI Routing & Unsupported Provider Rejection
+  console.log('\n--- Test Suite 5: OpenAI Model Routing & Provider Protection ---');
   const gptRoute = router.resolveRoute('gpt-4o');
   assert(gptRoute.route.provider === 'openai', 'gpt-4o remains routed to OpenAI');
-  const claudeRoute = router.resolveRoute('claude-3-5-sonnet-20241022');
-  assert(claudeRoute.route.provider === 'anthropic', 'claude-3-5-sonnet remains routed to Anthropic');
-  const grokRoute = router.resolveRoute('grok-4.7');
-  assert(grokRoute.route.provider === 'xai', 'grok-4.7 remains routed to xAI');
+  const miniRoute = router.resolveRoute('gpt-4o-mini');
+  assert(miniRoute.route.provider === 'openai', 'gpt-4o-mini routes to OpenAI');
+  const o1Route = router.resolveRoute('o1');
+  assert(o1Route.route.provider === 'openai', 'o1 routes to OpenAI');
 
   // Invalid model resolution throws 404 MODEL_NOT_FOUND
   let invalidError: any = null;

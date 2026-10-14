@@ -63,25 +63,12 @@ export function ModelsDropdown({ currentPath }: ModelsDropdownProps) {
               <span className="text-[10px] text-slate-400 font-mono">Catalog</span>
             </a>
             <a 
-              href="/models/gemini" 
-              onClick={() => setIsOpen(false)}
-              className="px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white transition-colors"
-            >
-              Gemini
-            </a>
-            <a 
               href="/models/gpt" 
               onClick={() => setIsOpen(false)}
-              className="px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white transition-colors"
+              className="px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white transition-colors flex items-center justify-between"
             >
-              GPT
-            </a>
-            <a 
-              href="/models/claude" 
-              onClick={() => setIsOpen(false)}
-              className="px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white transition-colors"
-            >
-              Claude
+              <span>OpenAI Models</span>
+              <span className="text-[10px] text-emerald-500 font-mono">Active</span>
             </a>
             <div className="my-1 border-t border-slate-100 dark:border-white/5" />
             <a 
