@@ -1,18 +1,18 @@
-// Ensure process environment satisfies CODEX_API_KEY and OPENAI_ENVIRONMENT_KEY
-if (process.env.OPENAI_API_KEY) {
-  process.env.OPENAI_ENVIRONMENT_KEY = process.env.OPENAI_ENVIRONMENT_KEY || process.env.OPENAI_API_KEY;
-  process.env.CODEX_API_KEY = process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY;
-}
-
+/**
+ * Cloud-agent credentials and session identifiers must be supplied by the deployment
+ * environment. FLOAT must not embed guessed or copied session IDs in source control.
+ * A configured value is not proof of a live connection; the server reports that
+ * distinction separately until a real provider handshake is implemented.
+ */
 export const GPT6_ASTRA_CLOUD_CONFIG = {
   modelId: 'gpt-6-astra',
   fallbackModel: 'gpt-6.1-sol',
-  sessionId: 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
-  environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
-  sessionStatus: 'connected' as const,
-  fallbackStrategy: 'upstream_fallback_if_unreachable' as const,
-  remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_7k2m',
-  execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ' --session-id 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'`,
+  sessionId: process.env.FLOAT_CLOUD_SESSION_ID?.trim() || undefined,
+  environmentId: process.env.FLOAT_CLOUD_ENVIRONMENT_ID?.trim() || undefined,
+  sessionStatus: 'disconnected' as const,
+  fallbackStrategy: 'disabled_until_verified' as const,
+  remoteUrl: process.env.FLOAT_CLOUD_REMOTE_URL?.trim() || undefined,
+  execServerCommand: undefined,
   tier: 'Preview',
   type: 'Cloud Agent',
   provider: 'openai'
