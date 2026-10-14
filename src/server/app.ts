@@ -27,7 +27,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
-import { GPT6_ASTRA_CLOUD_CONFIG, KNOWN_CLOUD_SESSIONS } from './providers/cloudAgentConfig';
+import { GPT6_ASTRA_CLOUD_CONFIG } from './providers/cloudAgentConfig';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
