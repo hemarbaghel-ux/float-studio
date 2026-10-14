@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, ArrowRight, X, Loader2, AlertCircle } from 'lucide-react';
+import { Sparkles, ArrowRight, X, Loader2, AlertCircle, Check, RotateCcw, FileDiff } from 'lucide-react';
 import { auth } from '../../lib/firebase';
 import { useAIStore } from '../../store/aiStore';
 import { ChangeSet } from '../../types';
@@ -15,7 +15,9 @@ interface InlineAssistantModalProps {
   selectedCode: string;
   startLine?: number;
   endLine?: number;
+  editorPosition?: { top: number; left: number } | null;
   onProposalCreated: (changeSet: ChangeSet) => void;
+  onApplyDirectly?: (newContent: string) => void;
 }
 
 export function InlineAssistantModal({
@@ -28,11 +30,19 @@ export function InlineAssistantModal({
   selectedCode,
   startLine,
   endLine,
-  onProposalCreated
+  editorPosition,
+  onProposalCreated,
+  onApplyDirectly
 }: InlineAssistantModalProps) {
   const [instruction, setInstruction] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pendingDiff, setPendingDiff] = useState<{
+    proposedContent: string;
+    transformedSelection?: string;
+    diffStats?: { additions: number; deletions: number };
+    changeSet: ChangeSet;
+  } | null>(null);
   const { selectedModel, setSelectedModel } = useAIStore();
   const inputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -41,6 +51,7 @@ export function InlineAssistantModal({
     if (isOpen) {
       setInstruction('');
       setErrorMessage(null);
+      setPendingDiff(null);
       setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
@@ -49,6 +60,7 @@ export function InlineAssistantModal({
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+      setPendingDiff(null);
     }
   }, [isOpen]);
 
@@ -116,8 +128,17 @@ export function InlineAssistantModal({
         ]
       };
 
-      onClose();
-      onProposalCreated(changeSet);
+      if (onApplyDirectly) {
+        setPendingDiff({
+          proposedContent,
+          transformedSelection: data.transformedSelection,
+          diffStats: data.diffStats,
+          changeSet
+        });
+      } else {
+        onClose();
+        onProposalCreated(changeSet);
+      }
     } catch (err: any) {
       if (err.name === 'AbortError' || /abort/i.test(err.message || '')) {
         return;
@@ -129,7 +150,34 @@ export function InlineAssistantModal({
     }
   };
 
+  const handleAccept = () => {
+    if (pendingDiff) {
+      if (onApplyDirectly) {
+        onApplyDirectly(pendingDiff.proposedContent);
+      } else {
+        onProposalCreated(pendingDiff.changeSet);
+      }
+      onClose();
+    }
+  };
+
+  const handleReject = () => {
+    setPendingDiff(null);
+    onClose();
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (pendingDiff) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleReject();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        handleAccept();
+      }
+      return;
+    }
+
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
@@ -141,17 +189,32 @@ export function InlineAssistantModal({
 
   const hasSelection = Boolean(selectedCode && selectedCode.trim() && startLine !== undefined && endLine !== undefined);
 
+  const containerStyle: React.CSSProperties = editorPosition
+    ? {
+        position: 'fixed',
+        top: Math.min(Math.max(16, editorPosition.top), window.innerHeight - 380),
+        left: Math.min(Math.max(16, editorPosition.left), window.innerWidth - 600),
+        zIndex: 50
+      }
+    : {};
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-24 bg-black/40 backdrop-blur-xs">
+    <div
+      className={editorPosition ? "fixed inset-0 z-50 pointer-events-none" : "fixed inset-0 z-50 flex items-start justify-center pt-24 bg-black/40 backdrop-blur-xs"}
+      onClick={onClose}
+    >
       <div 
-        className="w-full max-w-xl bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+        style={containerStyle}
+        className="pointer-events-auto w-full max-w-xl bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header / Target indicator */}
         <div className="flex items-center justify-between px-3.5 py-2 border-b border-slate-100 dark:border-[#202020] bg-slate-50/50 dark:bg-[#181818]/50">
           <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-[#A1A1AA]">
             <Sparkles size={13} className="text-blue-500" />
-            <span className="font-semibold text-slate-800 dark:text-slate-200">Inline AI Assistant</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200">
+              {pendingDiff ? 'Diff Ready' : 'Inline AI Assistant'}
+            </span>
             <span className="text-slate-400 dark:text-[#555]">•</span>
             <span className="font-mono text-[11px] truncate max-w-[180px]">{fileName}</span>
             {hasSelection && (
@@ -173,88 +236,152 @@ export function InlineAssistantModal({
           </div>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-3">
-          <div className="relative flex items-center">
-            <input
-              ref={inputRef}
-              type="text"
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={isLoading}
-              placeholder={hasSelection ? `Edit selection (e.g. "Add null check", "Refactor to helper function")...` : `Edit ${fileName} (e.g. "Add error handling", "Convert to async/await")...`}
-              className="w-full px-3 py-2.5 text-sm bg-slate-50 dark:bg-[#1A1A1A] text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-[#666] border border-slate-200 dark:border-[#333] rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
-            />
-            <button
-              type="submit"
-              disabled={!instruction.trim() || isLoading}
-              className="absolute right-2 px-2.5 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 size={12} className="animate-spin" />
-                  <span>Generating...</span>
-                </>
-              ) : (
-                <>
-                  <span>Generate</span>
-                  <ArrowRight size={12} />
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Quick Action Chips (Explain, Edit, Refactor, Fix, Optimize, Document, Test Generation) */}
-          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-            {[
-              { label: 'Fix', prompt: 'Find and fix bugs, errors, or edge cases in this code' },
-              { label: 'Refactor', prompt: 'Refactor this code for readability, clean structure, and modern standards' },
-              { label: 'Optimize', prompt: 'Optimize performance and reduce redundant computations' },
-              { label: 'Add Tests', prompt: 'Generate unit tests covering core behavior and boundary cases' },
-              { label: 'Document', prompt: 'Add clear JSDoc / documentation comments and types' },
-              { label: 'Explain', prompt: 'Add comments explaining how this logic works step by step' }
-            ].map(chip => (
+        {/* Diff Review View */}
+        {pendingDiff ? (
+          <div className="p-3.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Proposed Changes</span>
+                {pendingDiff.diffStats && (
+                  <span className="flex items-center gap-1.5 text-xs font-mono">
+                    <span className="text-emerald-600 dark:text-emerald-400">+{pendingDiff.diffStats.additions}</span>
+                    <span className="text-rose-600 dark:text-rose-400">-{pendingDiff.diffStats.deletions}</span>
+                  </span>
+                )}
+              </div>
               <button
-                key={chip.label}
                 type="button"
                 onClick={() => {
-                  setInstruction(chip.prompt);
-                  inputRef.current?.focus();
+                  onProposalCreated(pendingDiff.changeSet);
+                  onClose();
                 }}
-                className="px-2 py-0.5 rounded text-[11px] bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-[#A1A1AA] transition-colors cursor-pointer"
+                className="flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
               >
-                {chip.label}
+                <FileDiff size={12} />
+                <span>Full Diff Viewer</span>
               </button>
-            ))}
-          </div>
+            </div>
 
-          {/* Model selection and footer hints */}
-          <div className="flex items-center justify-between mt-2.5 px-0.5 pt-1 text-xs text-slate-500 dark:text-[#777]">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px]">Model:</span>
-              <ModelSelector
-                activeModelId={selectedModel}
-                onModelChange={setSelectedModel}
-                variant="compact"
+            {/* Snippet preview */}
+            {pendingDiff.transformedSelection && (
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-[#282828] bg-slate-50 dark:bg-[#0E0E0E] p-2.5 font-mono text-xs text-slate-800 dark:text-slate-200">
+                <pre className="whitespace-pre-wrap">{pendingDiff.transformedSelection}</pre>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-[#222]">
+              <button
+                type="button"
+                onClick={() => setPendingDiff(null)}
+                className="px-2.5 py-1.5 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-md flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <RotateCcw size={12} />
+                <span>Refine prompt</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleReject}
+                  className="px-3 py-1.5 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-md border border-rose-200 dark:border-rose-900/40 transition-colors cursor-pointer"
+                >
+                  Reject (Esc)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAccept}
+                  className="px-3.5 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-md shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Check size={13} />
+                  <span>Accept (Enter ↵)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Form Body */
+          <form onSubmit={handleSubmit} className="p-3">
+            <div className="relative flex items-center">
+              <input
+                ref={inputRef}
+                type="text"
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isLoading}
+                placeholder={hasSelection ? `Edit selection (e.g. "Add null check", "Refactor to helper function")...` : `Edit ${fileName} (e.g. "Add error handling", "Convert to async/await")...`}
+                className="w-full px-3 py-2.5 text-sm bg-slate-50 dark:bg-[#1A1A1A] text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-[#666] border border-slate-200 dark:border-[#333] rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
               />
+              <button
+                type="submit"
+                disabled={!instruction.trim() || isLoading}
+                className="absolute right-2 px-2.5 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin" />
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Generate</span>
+                    <ArrowRight size={12} />
+                  </>
+                )}
+              </button>
             </div>
-            <div className="flex items-center gap-3 text-[11px]">
-              <span>Generates a reviewable diff proposal</span>
-              <kbd className="px-1 py-0.5 font-mono bg-slate-100 dark:bg-[#202020] rounded text-[10px] border border-slate-200 dark:border-[#2E2E2E]">
-                Enter ↵
-              </kbd>
-            </div>
-          </div>
 
-          {/* Error Banner */}
-          {errorMessage && (
-            <div className="mt-2.5 p-2.5 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
-              <AlertCircle size={14} className="mt-0.5 shrink-0" />
-              <div className="flex-1">{errorMessage}</div>
+            {/* Quick Action Chips */}
+            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+              {[
+                { label: 'Fix', prompt: 'Find and fix bugs, errors, or edge cases in this code' },
+                { label: 'Refactor', prompt: 'Refactor this code for readability, clean structure, and modern standards' },
+                { label: 'Optimize', prompt: 'Optimize performance and reduce redundant computations' },
+                { label: 'Add Tests', prompt: 'Generate unit tests covering core behavior and boundary cases' },
+                { label: 'Document', prompt: 'Add clear JSDoc / documentation comments and types' },
+                { label: 'Explain', prompt: 'Add comments explaining how this logic works step by step' }
+              ].map(chip => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => {
+                    setInstruction(chip.prompt);
+                    inputRef.current?.focus();
+                  }}
+                  className="px-2 py-0.5 rounded text-[11px] bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-[#A1A1AA] transition-colors cursor-pointer"
+                >
+                  {chip.label}
+                </button>
+              ))}
             </div>
-          )}
-        </form>
+
+            {/* Model selection and footer hints */}
+            <div className="flex items-center justify-between mt-2.5 px-0.5 pt-1 text-xs text-slate-500 dark:text-[#777]">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px]">Model:</span>
+                <ModelSelector
+                  activeModelId={selectedModel}
+                  onModelChange={setSelectedModel}
+                  variant="compact"
+                />
+              </div>
+              <div className="flex items-center gap-3 text-[11px]">
+                <span>Accept diff directly into editor</span>
+                <kbd className="px-1 py-0.5 font-mono bg-slate-100 dark:bg-[#202020] rounded text-[10px] border border-slate-200 dark:border-[#2E2E2E]">
+                  Enter ↵
+                </kbd>
+              </div>
+            </div>
+
+            {/* Error Banner */}
+            {errorMessage && (
+              <div className="mt-2.5 p-2.5 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                <div className="flex-1">{errorMessage}</div>
+              </div>
+            )}
+          </form>
+        )}
       </div>
     </div>
   );

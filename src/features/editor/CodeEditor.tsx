@@ -26,6 +26,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
   const editorRef = useRef<any>(null);
   const monaco = useMonaco();
   const [isInlineAssistantOpen, setIsInlineAssistantOpen] = useState(false);
+  const [inlinePosition, setInlinePosition] = useState<{ top: number; left: number } | null>(null);
   const [inlineSelection, setInlineSelection] = useState<{
     text: string;
     startLine?: number;
@@ -61,9 +62,16 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
             return { items: [] };
           }
 
-          // Check if provider is configured / enabled (support active OpenAI or Google provider)
-          const currentProviderState = providers.openai?.configured ? providers.openai : providers.google;
-          if (!currentProviderState?.configured) {
+          // Check if provider is configured or if using built-in float-basic model
+          const isBasicModel = selectedModel === 'float-basic';
+          const hasConfiguredProvider = Boolean(
+            providers.openai?.configured ||
+            providers.google?.configured ||
+            providers.anthropic?.configured ||
+            providers.ollama?.configured
+          );
+
+          if (!isBasicModel && !hasConfiguredProvider) {
             return { items: [] };
           }
 
@@ -193,14 +201,39 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
       let text = '';
       let startLine: number | undefined = undefined;
       let endLine: number | undefined = undefined;
+      let posCoords: { top: number; left: number } | null = null;
 
       if (selection && model && !selection.isEmpty()) {
         text = model.getValueInRange(selection);
         startLine = selection.startLineNumber;
         endLine = selection.endLineNumber;
+        const scrolledPos = editor.getScrolledVisiblePosition(selection.getEndPosition());
+        if (scrolledPos) {
+          const editorDom = editor.getDomNode();
+          const rect = editorDom?.getBoundingClientRect();
+          if (rect) {
+            posCoords = {
+              top: rect.top + scrolledPos.top + scrolledPos.height + 8,
+              left: Math.max(rect.left + 24, Math.min(rect.left + scrolledPos.left, rect.right - 580))
+            };
+          }
+        }
+      } else if (selection) {
+        const scrolledPos = editor.getScrolledVisiblePosition(selection.getPosition());
+        if (scrolledPos) {
+          const editorDom = editor.getDomNode();
+          const rect = editorDom?.getBoundingClientRect();
+          if (rect) {
+            posCoords = {
+              top: rect.top + scrolledPos.top + scrolledPos.height + 8,
+              left: Math.max(rect.left + 24, Math.min(rect.left + scrolledPos.left, rect.right - 580))
+            };
+          }
+        }
       }
 
       setInlineSelection({ text, startLine, endLine });
+      setInlinePosition(posCoords);
       setIsInlineAssistantOpen(true);
     };
 
@@ -276,8 +309,13 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
         selectedCode={inlineSelection.text}
         startLine={inlineSelection.startLine}
         endLine={inlineSelection.endLine}
+        editorPosition={inlinePosition}
         onProposalCreated={(changeSet) => {
           setReviewChangeSet(changeSet);
+        }}
+        onApplyDirectly={(newContent) => {
+          updateFileContent(fileId, newContent);
+          markTabModified(fileId, true);
         }}
       />
     </>
