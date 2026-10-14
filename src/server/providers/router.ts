@@ -19,20 +19,11 @@ export class ModelRouter {
   // Explicit provider/model allowlist. Entries are supported route candidates, not
   // proof that a model is enabled for the current account; upstream errors remain visible.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Auto / Default (Deterministic routing to OpenAI flagship)
-    'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
-
-    // Default lightweight route candidate (availability depends on server credentials)
+    auto: { provider: 'openai', apiModelId: 'gpt-4o' },
     'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
-
-    // OpenAI route candidates (not a guarantee of account access)
-    // Free Tier Model
-    'float-basic': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-
-    // OpenAI Models
     'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
     'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
-    'o1': { provider: 'openai', apiModelId: 'o1' },
+    o1: { provider: 'openai', apiModelId: 'o1' },
     'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
     'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
     'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview' },
@@ -40,40 +31,7 @@ export class ModelRouter {
     'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest' },
     'gpt-4o-2024-11-20': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
     'gpt-4': { provider: 'openai', apiModelId: 'gpt-4' },
-    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' },
-    'gpt-5.6-sol': { provider: 'openai', apiModelId: 'gpt-4o-2024-11-20' },
-
-    // Google Gemini Models
-    'gemini-3.8-flash': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-    'gemini-3.1-flash-lite': { provider: 'google', apiModelId: 'gemini-3.8-flash' },
-
-    // Anthropic Models
-    'claude-3-7-sonnet-20250219': { provider: 'anthropic', apiModelId: 'claude-3-7-sonnet-20250219' },
-    'claude-3-5-sonnet-20241022': { provider: 'anthropic', apiModelId: 'claude-3-5-sonnet-20241022' },
-    'claude-3-5-haiku-20241022': { provider: 'anthropic', apiModelId: 'claude-3-5-haiku-20241022' },
-    'claude-3-opus-20240229': { provider: 'anthropic', apiModelId: 'claude-3-opus-20240229' },
-    'claude-opus-5.5': { provider: 'anthropic', apiModelId: 'claude-3-opus-20240229' },
-    'claude-opus-5': { provider: 'anthropic', apiModelId: 'claude-3-opus-20240229' },
-    'claude-fable-5.1': { provider: 'anthropic', apiModelId: 'claude-3-7-sonnet-20250219' },
-    'claude-sonnet-5.5': { provider: 'anthropic', apiModelId: 'claude-3-5-sonnet-20241022' },
-
-    // xAI
-    'grok-4.7': { provider: 'xai', apiModelId: 'grok-2-1212' },
-    'grok-2-1212': { provider: 'xai', apiModelId: 'grok-2-1212' },
-    'grok-2': { provider: 'xai', apiModelId: 'grok-2' },
-    'grok-2-vision-1212': { provider: 'xai', apiModelId: 'grok-2-vision-1212' },
-    'grok-beta': { provider: 'xai', apiModelId: 'grok-beta' }
-  };
-    // Auto / Default
-    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra' },
-
-    // GPT-6 Astra Preview / Cloud Agent with upstream gpt-4o fallback
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' },
-
-    // GPT-6.1 Sol Preview / Frontier Reasoning with upstream gpt-4o fallback
-    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
-    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' }
+    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' }
   };
 
   constructor() {
@@ -128,7 +86,7 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gpt-6-astra';
+      return 'auto';
     }
     return modelId;
   }
