@@ -70,6 +70,9 @@ async function runTests() {
   assert(basicRoute.route.provider === 'openai', 'float-basic routes to OpenAI provider');
   assert(basicRoute.route.apiModelId === 'gpt-4o-mini', 'float-basic resolves to gpt-4o-mini API ID');
 
+  assert(router.resolveModelId('auto') === 'gpt-4o-mini', 'Auto resolves to an explicitly supported API model');
+  assert(router.resolveModelId('') === 'gpt-4o-mini', 'Empty model selection resolves to the supported default');
+
   // Test 4: NO Silent Fallback to Gemini when Model Fails or is Unknown
   console.log('\n--- Test Suite 4: Prohibition of Silent Fallbacks & DeepSeek Removal ---');
   let unknownModelError: any = null;
