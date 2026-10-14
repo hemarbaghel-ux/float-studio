@@ -10,13 +10,7 @@ import { integrationsRouter } from './integrationsRouter';
 import { subscriptionRouter, handleStripeWebhook } from './subscription/subscriptionRouter';
 import express from 'express';
 import fs from 'fs';
-import dotenv from 'dotenv';
 
-// Load environment configuration (.env and .env.local) safely
-dotenv.config();
-if (fs.existsSync(path.resolve(process.cwd(), '.env.local'))) {
-  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false });
-}
 
 import { ModelRouter } from './providers/router';
 import { evalEngine } from './evalEngine';
@@ -34,7 +28,6 @@ import { doc, getDoc } from 'firebase/firestore';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
-import { GPT6_ASTRA_CLOUD_CONFIG } from './providers/cloudAgentConfig';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -85,33 +78,26 @@ export async function startServer() {
     res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
   });
 
-  // Current connected session endpoint (GPT-6 Astra + Workspace Session)
+  // Remote agent sessions are not implemented in this release. Report the real
+  // state instead of returning hard-coded connected/success responses.
   app.get(['/api/session/current', '/api/session/status', '/api/session'], (_req, res) => {
     res.status(200).json({
-      connected: true,
-      active: true,
-      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-      status: GPT6_ASTRA_CLOUD_CONFIG.sessionStatus,
-      modelId: GPT6_ASTRA_CLOUD_CONFIG.modelId,
-      fallbackModel: GPT6_ASTRA_CLOUD_CONFIG.fallbackModel,
-      fallbackStrategy: GPT6_ASTRA_CLOUD_CONFIG.fallbackStrategy,
-      targets: ['gpt-6-astra', 'gpt-6.1-sol', 'workspace-session'],
-      remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
+      connected: false,
+      active: false,
+      status: 'not_configured',
+      reason: 'Remote agent sessions are not implemented in this release.'
     });
   });
 
   app.post(['/api/session/connect', '/api/session/reconnect'], (_req, res) => {
-    res.status(200).json({
-      success: true,
-      connected: true,
-      active: true,
-      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-      status: 'connected',
-      targets: ['gpt-6-astra', 'gpt-6.1-sol', 'workspace-session'],
+    res.status(501).json({
+      success: false,
+      connected: false,
+      status: 'not_implemented',
+      error: 'Remote agent session connection is not implemented in this release.'
     });
   });
+
   app.get('/api/ready', async (_req, res) => {
     if (!hasAdminCredentials()) return res.status(503).json({ status: 'not_ready', dependency: 'firebase_admin' });
     try {
