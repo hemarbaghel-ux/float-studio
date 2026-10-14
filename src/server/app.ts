@@ -78,35 +78,34 @@ export async function startServer() {
     res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
   });
 
-  // Cloud agent session status and connection configuration
+  // Cloud-agent sessions must never be reported as connected merely because
+  // a preset/config object exists. This build does not implement a verified
+  // remote-session handshake, so expose configuration status without leaking
+  // internal commands or accepting client-controlled shell parameters.
   app.get(['/api/session/current', '/api/session/status', '/api/session'], (_req, res) => {
+    const sessionConfigured = Boolean(
+      GPT6_ASTRA_CLOUD_CONFIG.sessionId &&
+      GPT6_ASTRA_CLOUD_CONFIG.environmentId &&
+      GPT6_ASTRA_CLOUD_CONFIG.remoteUrl
+    );
     res.status(200).json({
-      connected: true,
-      active: true,
-      status: 'connected',
-      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-      modelAttached: GPT6_ASTRA_CLOUD_CONFIG.modelId,
-      remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
-      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand,
-      knownSessions: KNOWN_CLOUD_SESSIONS
+      connected: false,
+      active: false,
+      status: sessionConfigured ? 'configured_unverified' : 'not_configured',
+      configured: sessionConfigured,
+      sessionId: sessionConfigured ? GPT6_ASTRA_CLOUD_CONFIG.sessionId : null,
+      environmentId: sessionConfigured ? GPT6_ASTRA_CLOUD_CONFIG.environmentId : null,
+      modelAttached: GPT6_ASTRA_CLOUD_CONFIG.modelId || null,
+      note: 'A verified remote-session handshake is not implemented in this build.'
     });
   });
 
-  app.post(['/api/session/connect', '/api/session/reconnect'], (req, res) => {
-    const { sessionId, environmentId } = req.body || {};
-    if (sessionId) (GPT6_ASTRA_CLOUD_CONFIG as any).sessionId = sessionId;
-    if (environmentId) {
-      (GPT6_ASTRA_CLOUD_CONFIG as any).environmentId = environmentId;
-      (GPT6_ASTRA_CLOUD_CONFIG as any).execServerCommand = `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${environmentId}'`;
-    }
-    res.status(200).json({
-      success: true,
-      connected: true,
-      status: 'connected',
-      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand
+  app.post(['/api/session/connect', '/api/session/reconnect'], (_req, res) => {
+    res.status(501).json({
+      success: false,
+      connected: false,
+      status: 'not_implemented',
+      error: 'Remote cloud-session connection is not implemented. FLOAT will not claim a session is connected without a verified handshake.'
     });
   });
 
