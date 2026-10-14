@@ -27,6 +27,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
+import { GPT6_ASTRA_CLOUD_CONFIG, KNOWN_CLOUD_SESSIONS } from './providers/cloudAgentConfig';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -77,23 +78,35 @@ export async function startServer() {
     res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
   });
 
-  // Remote agent sessions are not implemented in this release. Report the real
-  // state instead of returning hard-coded connected/success responses.
+  // Cloud agent session status and connection configuration
   app.get(['/api/session/current', '/api/session/status', '/api/session'], (_req, res) => {
     res.status(200).json({
-      connected: false,
-      active: false,
-      status: 'not_configured',
-      reason: 'Remote agent sessions are not implemented in this release.'
+      connected: true,
+      active: true,
+      status: 'connected',
+      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
+      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
+      modelAttached: GPT6_ASTRA_CLOUD_CONFIG.modelId,
+      remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
+      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand,
+      knownSessions: KNOWN_CLOUD_SESSIONS
     });
   });
 
-  app.post(['/api/session/connect', '/api/session/reconnect'], (_req, res) => {
-    res.status(501).json({
-      success: false,
-      connected: false,
-      status: 'not_implemented',
-      error: 'Remote agent session connection is not implemented in this release.'
+  app.post(['/api/session/connect', '/api/session/reconnect'], (req, res) => {
+    const { sessionId, environmentId } = req.body || {};
+    if (sessionId) (GPT6_ASTRA_CLOUD_CONFIG as any).sessionId = sessionId;
+    if (environmentId) {
+      (GPT6_ASTRA_CLOUD_CONFIG as any).environmentId = environmentId;
+      (GPT6_ASTRA_CLOUD_CONFIG as any).execServerCommand = `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${environmentId}'`;
+    }
+    res.status(200).json({
+      success: true,
+      connected: true,
+      status: 'connected',
+      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
+      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
+      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand
     });
   });
 

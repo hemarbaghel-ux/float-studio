@@ -5,7 +5,7 @@ import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loade
 import { cn, flattenFileTree } from '../../lib/utils';
 import { executeProjectCommand } from '../../services/projectExecution';
 import { ValidationPanel } from '../../components/panels/ValidationPanel';
-import { useCloudSession } from '../float/cloudSessionStore';
+import { useCloudSession, AVAILABLE_PROFILES } from '../float/cloudSessionStore';
 import { isShellCommand, runShell } from '../float/sandbox';
 import { sandboxFs } from '../float/workspaceFs';
 import { auth } from '../../lib/firebase';
@@ -107,30 +107,53 @@ export function BottomPanel() {
         return;
     }
 
-    if (trimmed === 'session start' || trimmed === 'session stop' || trimmed === 'session disconnect' || trimmed === 'session' || trimmed === 'session status' || trimmed.startsWith('session connect')) {
+    if (trimmed === 'session' || trimmed.startsWith('session ')) {
+      const parts = trimmed.split(/\s+/);
+      const sub = parts[1]?.toLowerCase();
       const cs = useCloudSession.getState();
-      if (trimmed === 'session stop' || trimmed === 'session disconnect') {
+
+      if (sub === 'stop' || sub === 'disconnect') {
         cs.stop();
-      } else {
-        cs.connect();
+        addTerminalEntry({
+          type: 'output',
+          content: 'Session disconnected. Type "session connect" or "session sol" to reconnect.'
+        });
+        return;
       }
+
+      if (sub === 'sol') {
+        const solProfile = AVAILABLE_PROFILES.find(p => p.id === 'sol') || AVAILABLE_PROFILES[0];
+        cs.start('cloud-agent', 'sol-ccarenv', solProfile.sessionId, solProfile.environmentId, solProfile.model);
+      } else if (sub === 'astra' || sub === 'new') {
+        const astraProfile = AVAILABLE_PROFILES.find(p => p.id === 'astra') || AVAILABLE_PROFILES[1];
+        cs.start('cloud-agent', 'astra-ccarenv', astraProfile.sessionId, astraProfile.environmentId, astraProfile.model);
+      } else if (sub === 'connect') {
+        const customSession = parts[2];
+        const customEnv = parts[3];
+        if (customSession && customEnv) {
+          cs.start('cloud-agent', 'custom-ccarenv', customSession, customEnv, 'Custom Agent');
+        } else {
+          cs.connect();
+        }
+      }
+
       const now = useCloudSession.getState();
       if (now.active) {
         addTerminalEntry({
           type: 'output',
           content: `Cloud execution session connected & active:
-  Session ID:    ${now.sessionId || 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'}
-  Environment:   ${now.environmentId || 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ'}
-  Remote:        https://api.openai.com/v1/agents/api/connect/rt_7k2m
-  Exec Server:   codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m'
-  Attached to:   GPT-6 Astra (Preview) & Workspace Session
+  Agent Target:  ${now.modelAttached || 'GPT-6.1 Sol (Preview)'}
+  Session ID:    ${now.sessionId || 'sess_087a4d42ca75939b006ace64b295ac8193b83bd1fbfd9a4015'}
+  Environment:   ${now.environmentId || 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ'}
+  Remote URL:    https://api.openai.com/v1/agents/api/connect/rt_7k2m
+  Exec Server:   codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${now.environmentId || 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ'}'
   Upstream:      Connected (Automatic upstream fallback to GPT-4o if unreachable)
-  Type 'session stop' to end session.`
+  Commands:      session sol | session astra | session connect <sessId> <envId> | session stop`
         });
       } else {
         addTerminalEntry({
           type: 'output',
-          content: 'Session is currently disconnected. Type: session connect to re-attach.'
+          content: 'Session is currently disconnected. Type: session connect, session sol, or session astra to re-attach.'
         });
       }
       return;

@@ -176,11 +176,11 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     fallbackModel: 'gpt-4o',
     cloudAgentConfig: {
       remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_7k2m',
-      environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
-      sessionId: 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
+      environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+      sessionId: 'sess_087a4d42ca75939b006ace64b295ac8193b83bd1fbfd9a4015',
       sessionStatus: 'connected',
       fallbackStrategy: 'upstream_fallback_if_unreachable',
-      execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ' --session-id 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'`,
+      execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ'`,
       fallbackModel: 'gpt-4o',
       mode: 'preview'
     }

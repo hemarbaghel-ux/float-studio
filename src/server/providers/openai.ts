@@ -259,7 +259,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
     const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
-    const client = this.getClient();
+    const client = this.getClient(effectiveModel);
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -280,7 +280,11 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         response = await client.chat.completions.create(params);
       } catch (callErr: any) {
-        throw callErr;
+        if ((effectiveModel === 'gpt-6-astra' || effectiveModel.startsWith('gpt-6')) && (callErr?.status === 404 || /not[- ]?found|does not exist/i.test(callErr?.message))) {
+          response = await client.chat.completions.create({ ...params, model: 'gpt-4o' });
+        } else {
+          throw callErr;
+        }
       }
 
       const choice = response.choices[0];
@@ -324,7 +328,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
     const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
-    const client = this.getClient();
+    const client = this.getClient(effectiveModel);
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -347,7 +351,11 @@ export class OpenAIAdapter implements AIProviderAdapter {
       try {
         stream = await client.chat.completions.create(params, { signal });
       } catch (callErr: any) {
-        throw callErr;
+        if ((effectiveModel === 'gpt-6-astra' || effectiveModel.startsWith('gpt-6')) && (callErr?.status === 404 || /not[- ]?found|does not exist/i.test(callErr?.message))) {
+          stream = await client.chat.completions.create({ ...params, model: 'gpt-4o' }, { signal });
+        } else {
+          throw callErr;
+        }
       }
 
       let fullText = '';

@@ -25,26 +25,26 @@ async function runPhase7Tests() {
 
   // Valid active models resolve to proper adapter
   try {
-    const flashLiteAdapter = router.getAdapterForModel('gemini-3.1-flash-lite');
-    assert(flashLiteAdapter.id === 'google', 'Resolves gemini-3.1-flash-lite to google provider adapter');
+    const gpt4oAdapter = router.getAdapterForModel('gpt-4o');
+    assert(gpt4oAdapter.id === 'openai', 'Resolves gpt-4o to openai provider adapter');
     
-    const flash38Adapter = router.getAdapterForModel('gemini-3.8-flash');
-    assert(flash38Adapter.id === 'google', 'Resolves gemini-3.8-flash to google provider adapter');
+    const gpt4oMiniAdapter = router.getAdapterForModel('gpt-4o-mini');
+    assert(gpt4oMiniAdapter.id === 'openai', 'Resolves gpt-4o-mini to openai provider adapter');
 
-    assert(router.resolveModelId('auto') === 'gemini-3.1-flash-lite', 'Resolves auto model to gemini-3.1-flash-lite');
+    assert(router.resolveModelId('auto') === 'gpt-4o', 'Resolves auto model to gpt-4o');
   } catch (e: any) {
-    assert(false, `Failed resolving active Gemini models: ${e.message}`);
+    assert(false, `Failed resolving active OpenAI models: ${e.message}`);
   }
 
-  // Retired model throws clear availability error, never silently fall back
+  // Non-OpenAI model throws clear unsupported provider error, never silently fall back
   try {
     router.validateModelAvailability('gemini-2.0-flash');
     assert(false, 'Should have rejected retired model gemini-2.0-flash');
   } catch (err: any) {
-    assert(err.message.includes('retired by Google'), 'Rejects retired gemini-2.0-flash with clear upgrade message');
+    assert(err.code === 'UNSUPPORTED_PROVIDER' || err.message.includes('unsupported provider'), 'Rejects non-OpenAI models with clear error');
   }
 
-  // Unconfigured external providers throw clean error, NEVER silently fallback to Gemini
+  // External non-OpenAI models throw clean UNSUPPORTED_PROVIDER error, NEVER silently fallback
   try {
     const openaiAdapter = router.getAdapterForModel('gpt-4o');
     assert(openaiAdapter.id === 'openai', 'Resolves gpt-4o strictly to openai adapter');
@@ -53,10 +53,10 @@ async function runPhase7Tests() {
   }
 
   try {
-    const xaiAdapter = router.getAdapterForModel('grok-4.7');
-    assert(xaiAdapter.id === 'xai', 'Resolves Grok 4.7 strictly to xAI adapter');
+    router.getAdapterForModel('grok-4.7');
+    assert(false, 'Should have rejected grok-4.7 as unsupported provider');
   } catch (e: any) {
-    assert(false, `Failed resolving grok-4.7: ${e.message}`);
+    assert(e.code === 'UNSUPPORTED_PROVIDER' || e.message.includes('unsupported provider'), 'Rejects grok-4.7 as unsupported provider without silent fallback');
   }
 
   // Unrecognized model rejected with clear message

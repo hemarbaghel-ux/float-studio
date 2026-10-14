@@ -31,19 +31,19 @@ async function runStageBTests() {
   const router = new ModelRouter();
 
   // Test 1: Active Model Resolution
-  test('Resolves auto to gemini-3.1-flash-lite', () => {
-    assert.strictEqual(router.resolveModelId('auto'), 'gemini-3.1-flash-lite');
+  test('Resolves auto to gpt-4o', () => {
+    assert.strictEqual(router.resolveModelId('auto'), 'gpt-4o');
   });
 
-  test('Resolves exact gemini-3.8-flash model', () => {
-    assert.strictEqual(router.resolveModelId('gemini-3.8-flash'), 'gemini-3.8-flash');
+  test('Resolves exact gpt-4o model', () => {
+    assert.strictEqual(router.resolveModelId('gpt-4o'), 'gpt-4o');
   });
 
-  // Test 2: Rejection of Retired Models with Helpful Message
-  test('Throws descriptive error when retired model is requested', () => {
+  // Test 2: Rejection of Non-OpenAI Models
+  test('Throws descriptive error when retired or non-OpenAI model is requested', () => {
     assert.throws(
       () => router.validateModelAvailability('gemini-2.0-flash'),
-      /retired by Google/
+      /unsupported provider/
     );
   });
 
@@ -53,24 +53,28 @@ async function runStageBTests() {
     assert.strictEqual(adapter.id, 'openai');
   });
 
-  test('Maps claude-3-7-sonnet to anthropic provider', () => {
-    const adapter = router.getAdapterForModel('claude-3-7-sonnet-20250219');
-    assert.strictEqual(adapter.id, 'anthropic');
+  test('Rejects claude as unsupported provider', () => {
+    assert.throws(
+      () => router.getAdapterForModel('claude-3-7-sonnet-20250219'),
+      /unsupported provider/
+    );
   });
 
-  test('Maps grok-2 to xai provider', () => {
-    const adapter = router.getAdapterForModel('grok-2-1212');
-    assert.strictEqual(adapter.id, 'xai');
+  test('Rejects grok as unsupported provider', () => {
+    assert.throws(
+      () => router.getAdapterForModel('grok-2-1212'),
+      /unsupported provider/
+    );
   });
 
-  test('Rejects deepseek models with MODEL_NOT_FOUND error (no silent fallback)', () => {
+  test('Rejects deepseek models with unsupported provider error (no silent fallback)', () => {
     assert.throws(
       () => router.getAdapterForModel('deepseek-reasoner'),
-      /DeepSeek models .* have been removed|not recognized or supported/
+      /unsupported provider/
     );
     assert.throws(
       () => router.getAdapterForModel('deepseek-chat'),
-      /DeepSeek models .* have been removed|not recognized or supported/
+      /unsupported provider/
     );
   });
 
@@ -82,12 +86,9 @@ async function runStageBTests() {
   });
 
   // Test 4: Provider Configuration check
-  test('Returns configured status map for all registered adapters', () => {
+  test('Returns configured status map for registered adapters', () => {
     const status = router.getProviderStatus();
-    assert.ok(status.google, 'Google status must be present');
     assert.ok(status.openai, 'OpenAI status must be present');
-    assert.ok(status.anthropic, 'Anthropic status must be present');
-    assert.ok(status.xai, 'xAI status must be present');
     assert.strictEqual(status.deepseek, undefined, 'DeepSeek status must not be present');
   });
 

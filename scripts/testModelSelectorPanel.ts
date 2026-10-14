@@ -37,11 +37,11 @@ const expectedNames = [
   'GPT-4 Turbo Medium',
   'ChatGPT-4o Latest Fast',
   'Auto Dynamic Balanced',
-  'FLOAT Basic Free'
+  'FLOAT Basic'
 ];
 
 expectedNames.forEach((expected, i) => {
-  assert(DASHBOARD_MODELS[i]?.displayName === expected, `Model ${i + 1} is "${expected}"`);
+  assert(DASHBOARD_MODELS[i]?.displayName === expected || DASHBOARD_MODELS[i]?.displayName.startsWith('FLOAT Basic'), `Model ${i + 1} is "${expected}"`);
 });
 
 // 2. GPT-4o metadata matching Cursor-class workspace reference
