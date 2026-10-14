@@ -201,14 +201,26 @@ export class OpenAIAdapter implements AIProviderAdapter {
   }
 
   private resolveApiModel(model: string): string {
-    const mapping: Record<string, string> = {
-      auto: 'gpt-4o',
-      'gpt-6.1-sol': 'gpt-4o',
-      'gpt-6.1': 'gpt-4o',
-      'gpt-6-sol': 'gpt-4o',
-      'gpt-6-astra': 'gpt-4o'
-    };
-    return mapping[model] || 'gpt-4o';
+    const supportedApiModels = new Set([
+      'gpt-4o',
+      'gpt-4o-mini',
+      'o1',
+      'o1-mini',
+      'o3-mini'
+    ]);
+
+    // Router aliases are resolved before reaching this adapter. Never silently
+    // replace an unknown or unavailable model with a different paid model.
+    if (model === 'auto' || model === 'float-basic') return 'gpt-4o-mini';
+    if (!supportedApiModels.has(model)) {
+      throw new AIProviderError(
+        `OpenAI model "${model}" is not explicitly supported by FLOAT's API adapter. Select a supported model instead.`,
+        'MODEL_NOT_FOUND',
+        'OpenAI',
+        404
+      );
+    }
+    return model;
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
