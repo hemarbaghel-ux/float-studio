@@ -198,7 +198,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     contextWindow: 128000,
     maxOutputTokens: 16384,
     docUrl: 'https://openai.com/api/',
-    modalities: { text: true, image: false, audio: false },
+    modalities: ['text', 'code'],
     capabilities: {
       coding: true,
       reasoning: false,
