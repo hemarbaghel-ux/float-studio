@@ -94,7 +94,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
     return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
   }
 
-  private getClient(forModel?: string): OpenAI {
+  private getClient(): OpenAI {
     if (!this.isConfigured()) {
       throw new AIProviderError(
         "OpenAI is not configured on the FLOAT server. To use OpenAI models, configure OPENAI_API_KEY in the server environment.",
@@ -103,21 +103,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    const key = process.env.OPENAI_API_KEY;
-    const isCloudAgent = forModel === 'gpt-6-astra' || forModel === 'gpt-6.1-sol' || forModel === 'gpt-6-sol' || forModel === 'gpt-6.1';
-    const key = (isCloudAgent && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
-      ? (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!
-      : (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!;
-
-    const defaultHeaders = isCloudAgent ? {
-      'X-Session-Id': GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      'X-Environment-Id': GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-    } : undefined;
-
-    return new OpenAI({
-      apiKey: key,
-      ...(defaultHeaders ? { defaultHeaders } : {})
-    });
+    // Session/environment identifiers are not OpenAI API credentials.
+    return new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
   }
 
   async checkHealth(): Promise<ProviderHealthCheckResult> {
@@ -160,12 +147,10 @@ export class OpenAIAdapter implements AIProviderAdapter {
 
   private resolveApiModel(model: string): string {
     const mapping: Record<string, string> = {
-      'auto': 'gpt-4o',
+      auto: 'gpt-4o',
       'float-basic': 'gpt-4o-mini'
     };
     return mapping[model] || model;
-    if (model === 'auto' || !model) return 'gpt-6-astra';
-    return model;
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
@@ -219,7 +204,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
     const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
-    const client = this.getClient(effectiveModel);
+    const client = this.getClient();
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -241,16 +226,6 @@ export class OpenAIAdapter implements AIProviderAdapter {
         response = await client.chat.completions.create(params);
       } catch (callErr: any) {
         throw callErr;
-        const isPreviewAgent = effectiveModel === 'gpt-6-astra' || effectiveModel === 'gpt-6.1-sol' || effectiveModel === 'gpt-6-sol' || effectiveModel === 'gpt-6.1';
-        if (isPreviewAgent && (callErr?.status === 404 || callErr?.status === 429 || callErr?.status === 502 || callErr?.status === 503 || callErr?.status === 504 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect|enotfound|econnrefused|timeout|failed to fetch/i.test(callErr?.message || ''))) {
-          // Preview Cloud Agent: Upstream fallback to gpt-4o with primary OpenAI credentials
-          console.warn(`[OpenAI Provider] ${effectiveModel} session endpoint unreachable or unavailable (${callErr?.message || callErr?.status}). Triggering automatic upstream fallback to gpt-4o.`);
-          params.model = 'gpt-4o';
-          const fallbackClient = process.env.OPENAI_API_KEY ? this.getClient('gpt-4o') : client;
-          response = await fallbackClient.chat.completions.create(params);
-        } else {
-          throw callErr;
-        }
       }
 
       const choice = response.choices[0];
@@ -294,7 +269,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
     const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
-    const client = this.getClient(effectiveModel);
+    const client = this.getClient();
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -318,16 +293,6 @@ export class OpenAIAdapter implements AIProviderAdapter {
         stream = await client.chat.completions.create(params, { signal });
       } catch (callErr: any) {
         throw callErr;
-        const isPreviewAgent = effectiveModel === 'gpt-6-astra' || effectiveModel === 'gpt-6.1-sol' || effectiveModel === 'gpt-6-sol' || effectiveModel === 'gpt-6.1';
-        if (isPreviewAgent && (callErr?.status === 404 || callErr?.status === 429 || callErr?.status === 502 || callErr?.status === 503 || callErr?.status === 504 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect|enotfound|econnrefused|timeout|failed to fetch/i.test(callErr?.message || ''))) {
-          // Preview Cloud Agent: Upstream fallback to gpt-4o with primary OpenAI credentials
-          console.warn(`[OpenAI Provider] ${effectiveModel} session streaming endpoint unreachable (${callErr?.message || callErr?.status}). Triggering automatic upstream fallback to gpt-4o.`);
-          params.model = 'gpt-4o';
-          const fallbackClient = process.env.OPENAI_API_KEY ? this.getClient('gpt-4o') : client;
-          stream = await fallbackClient.chat.completions.create(params, { signal });
-        } else {
-          throw callErr;
-        }
       }
 
       let fullText = '';
@@ -375,11 +340,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    const isCloudAgent = model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1';
-    const apiKey = (isCloudAgent && (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY))
-      ? (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!
-      : (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)!;
-
+    const apiKey = process.env.OPENAI_API_KEY!;
     return PortableAgentRunner.run('openai', req, res, model, prompt, virtualFiles, apiKey);
   }
 }
