@@ -8,9 +8,15 @@ import {
 } from './base';
 import { AgentRunner } from '../agent/agentRunner';
 import { PortableAgentRunner } from '../agent/portableAgentRunner';
+import { GPT6_ASTRA_CLOUD_CONFIG } from './cloudAgentConfig';
+
+function sanitizeOpenAIErrorMessage(msg: string): string {
+  return msg.replace(/sk-[a-zA-Z0-9_\-]{8,}/g, 'sk-[REDACTED]');
+}
 
 export function normalizeOpenAIError(error: any): AIProviderError {
-  const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
+  const rawMsg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
+  const msg = sanitizeOpenAIErrorMessage(rawMsg);
   const status = error?.status || error?.statusCode;
 
   if (
@@ -32,6 +38,16 @@ export function normalizeOpenAIError(error: any): AIProviderError {
       'AUTH_ERROR',
       'OpenAI',
       401,
+      { original: msg }
+    );
+  }
+
+  if (status === 403 || /permission_denied|forbidden|country_not_supported/i.test(msg)) {
+    return new AIProviderError(
+      "OpenAI permission denied. The configured credentials do not have permission to access the requested resource.",
+      'AUTH_ERROR',
+      'OpenAI',
+      403,
       { original: msg }
     );
   }
@@ -89,13 +105,43 @@ export class OpenAIAdapter implements AIProviderAdapter {
   id = 'openai';
   name = 'OpenAI';
 
-  isConfigured(): boolean {
-    const key = process.env.OPENAI_API_KEY;
-    return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
+  /**
+   * Authoritative, documented credential resolver for OpenAI.
+   * Primary documented credential source for OpenAI API requests is OPENAI_API_KEY.
+   */
+  public resolveApiKey(forModel?: string): string | undefined {
+    const isCloudPreview = forModel === 'gpt-6-astra' || forModel === 'gpt-6.1-sol' || forModel === 'gpt-6-sol' || forModel === 'gpt-6.1';
+
+    // 1. For cloud preview agents, check session credentials if available
+    if (isCloudPreview) {
+      const cloudKey = (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)?.trim();
+      if (cloudKey && cloudKey.length > 0 && !cloudKey.includes('replace_with')) {
+        return cloudKey;
+      }
+    }
+
+    // 2. Primary documented credential source for OpenAI API requests
+    const primaryKey = process.env.OPENAI_API_KEY?.trim();
+    if (primaryKey && primaryKey.length > 0 && !primaryKey.includes('replace_with')) {
+      return primaryKey;
+    }
+
+    // 3. Fallback to legacy environment variables with documented migration notice
+    const legacyKey = (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)?.trim();
+    if (legacyKey && legacyKey.length > 0 && !legacyKey.includes('replace_with')) {
+      return legacyKey;
+    }
+
+    return undefined;
   }
 
-  private getClient(): OpenAI {
-    if (!this.isConfigured()) {
+  isConfigured(): boolean {
+    return Boolean(this.resolveApiKey());
+  }
+
+  private getClient(forModel?: string): OpenAI {
+    const key = this.resolveApiKey(forModel);
+    if (!key) {
       throw new AIProviderError(
         "OpenAI is not configured on the FLOAT server. To use OpenAI models, configure OPENAI_API_KEY in the server environment.",
         'AUTH_ERROR',
@@ -103,8 +149,17 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    // Session/environment identifiers are not OpenAI API credentials.
-    return new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+    const isCloudAgent = forModel === 'gpt-6-astra' || forModel === 'gpt-6.1-sol' || forModel === 'gpt-6-sol' || forModel === 'gpt-6.1';
+
+    const defaultHeaders = isCloudAgent ? {
+      'X-Session-Id': GPT6_ASTRA_CLOUD_CONFIG.sessionId,
+      'X-Environment-Id': GPT6_ASTRA_CLOUD_CONFIG.environmentId,
+    } : undefined;
+
+    return new OpenAI({
+      apiKey: key,
+      ...(defaultHeaders ? { defaultHeaders } : {})
+    });
   }
 
   async checkHealth(): Promise<ProviderHealthCheckResult> {
@@ -114,22 +169,22 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-6-astra'
+        defaultModel: 'gpt-4o'
       };
     }
 
     try {
-      const client = this.getClient();
+      const client = this.getClient('gpt-4o');
       // Lightweight verification using models.list
       const models = await client.models.list();
       const accessibleModelIds = models.data.map(m => m.id);
-      const hasOperationalModel = accessibleModelIds.some(m => m.includes('gpt-4') || m.includes('o1') || m.includes('o3') || m.includes('gpt-6'));
+      const hasOperationalModel = accessibleModelIds.some(m => m.includes('gpt-4') || m.includes('o1') || m.includes('o3'));
       return {
         provider: 'OpenAI',
         configured: true,
         authenticated: true,
         modelAvailable: hasOperationalModel || models.data.length > 0,
-        defaultModel: 'gpt-6-astra',
+        defaultModel: 'gpt-4o',
         accessibleModelIds
       };
     } catch (err: any) {
@@ -139,7 +194,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-6-astra',
+        defaultModel: 'gpt-4o',
         error: normalized.message
       };
     }
@@ -150,7 +205,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
       auto: 'gpt-4o',
       'float-basic': 'gpt-4o-mini'
     };
-    return mapping[model] || model;
+    return mapping[model] || model || 'gpt-4o';
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
@@ -332,7 +387,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
     prompt: string,
     virtualFiles: any[]
   ): Promise<void> {
-    if (!this.isConfigured()) {
+    const apiKey = this.resolveApiKey(model);
+    if (!apiKey) {
       throw new AIProviderError(
         `OpenAI is not configured on the FLOAT server. To run agents with "${model}", configure OPENAI_API_KEY.`,
         'AUTH_ERROR',
@@ -340,7 +396,6 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    const apiKey = process.env.OPENAI_API_KEY!;
     return PortableAgentRunner.run('openai', req, res, model, prompt, virtualFiles, apiKey);
   }
 }

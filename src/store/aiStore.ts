@@ -28,7 +28,7 @@ interface AIStore {
 
 export const defaultAgents: Agent[] = INITIAL_AGENTS;
 
-const VALID_FLOAT_MODELS = ['gpt-6-astra', 'gpt-6.1-sol'];
+const VALID_FLOAT_MODELS = ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol'];
 
 const getInitialSelectedModel = () => {
   if (typeof window !== 'undefined') {
@@ -37,11 +37,10 @@ const getInitialSelectedModel = () => {
       if (saved && VALID_FLOAT_MODELS.includes(saved)) {
         return saved;
       }
-      localStorage.setItem('float_selected_model', 'gpt-6-astra');
+      localStorage.setItem('float_selected_model', 'gpt-4o');
     } catch {}
   }
   return 'gpt-4o';
-  return 'gpt-6-astra';
 };
 
 const getInitialEffort = (): ReasoningEffortLevel => {
@@ -70,7 +69,6 @@ const getInitialFavorites = (): string[] => {
     } catch {}
   }
   return ['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1'];
-  return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
 const getInitialRecents = (): string[] => {
@@ -87,7 +85,6 @@ const getInitialRecents = (): string[] => {
     } catch {}
   }
   return ['gpt-4o', 'o3-mini', 'gpt-4o-mini'];
-  return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
 export const useAIStore = create<AIStore>((set) => ({
@@ -99,12 +96,12 @@ export const useAIStore = create<AIStore>((set) => ({
   favoriteModels: getInitialFavorites(),
   recentModels: getInitialRecents(),
   providers: {
-    openai: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' },
-    auto: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' }
+    openai: { enabled: true, configured: false, defaultModel: 'gpt-4o' },
+    auto: { enabled: true, configured: false, defaultModel: 'gpt-4o' }
   },
   preferences: {
-    preferredModel: 'gpt-6-astra',
-    fallbackModel: 'gpt-6.1-sol',
+    preferredModel: 'gpt-4o',
+    fallbackModel: 'gpt-4o-mini',
     speedPreference: 'fast',
     qualityPreference: 'high'
   },

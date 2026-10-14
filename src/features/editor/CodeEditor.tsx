@@ -26,6 +26,8 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
   const editorRef = useRef<any>(null);
   const monaco = useMonaco();
   const [isInlineAssistantOpen, setIsInlineAssistantOpen] = useState(false);
+  const [inlinePosition, setInlinePosition] = useState<{ top: number; left: number } | null>(null);
+  const [inlineInstruction, setInlineInstruction] = useState<string>('');
   const [inlineSelection, setInlineSelection] = useState<{
     text: string;
     startLine?: number;
@@ -61,9 +63,16 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
             return { items: [] };
           }
 
-          // Check if provider is configured / enabled (support active OpenAI or Google provider)
-          const currentProviderState = providers.openai?.configured ? providers.openai : providers.google;
-          if (!currentProviderState?.configured) {
+          // Check if provider is configured or if using built-in float-basic model
+          const isBasicModel = selectedModel === 'float-basic';
+          const hasConfiguredProvider = Boolean(
+            providers.openai?.configured ||
+            providers.google?.configured ||
+            providers.anthropic?.configured ||
+            providers.ollama?.configured
+          );
+
+          if (!isBasicModel && !hasConfiguredProvider) {
             return { items: [] };
           }
 
@@ -187,24 +196,100 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
     });
 
     // Add Inline Assistant command (Ctrl+K / Cmd+K)
-    const openInlineAssistant = () => {
+    const openInlineAssistant = (instructionText?: string) => {
       const selection = editor.getSelection();
       const model = editor.getModel();
       let text = '';
       let startLine: number | undefined = undefined;
       let endLine: number | undefined = undefined;
+      let posCoords: { top: number; left: number } | null = null;
 
       if (selection && model && !selection.isEmpty()) {
         text = model.getValueInRange(selection);
         startLine = selection.startLineNumber;
         endLine = selection.endLineNumber;
+        const scrolledPos = editor.getScrolledVisiblePosition(selection.getEndPosition());
+        if (scrolledPos) {
+          const editorDom = editor.getDomNode();
+          const rect = editorDom?.getBoundingClientRect();
+          if (rect) {
+            posCoords = {
+              top: rect.top + scrolledPos.top + scrolledPos.height + 8,
+              left: Math.max(rect.left + 24, Math.min(rect.left + scrolledPos.left, rect.right - 580))
+            };
+          }
+        }
+      } else if (selection) {
+        const scrolledPos = editor.getScrolledVisiblePosition(selection.getPosition());
+        if (scrolledPos) {
+          const editorDom = editor.getDomNode();
+          const rect = editorDom?.getBoundingClientRect();
+          if (rect) {
+            posCoords = {
+              top: rect.top + scrolledPos.top + scrolledPos.height + 8,
+              left: Math.max(rect.left + 24, Math.min(rect.left + scrolledPos.left, rect.right - 580))
+            };
+          }
+        }
       }
 
       setInlineSelection({ text, startLine, endLine });
+      setInlinePosition(posCoords);
+      setInlineInstruction(instructionText || '');
       setIsInlineAssistantOpen(true);
     };
 
-    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, openInlineAssistant);
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, () => {
+      openInlineAssistant();
+    });
+
+    // Register Monaco Code Action Quick Fix: "✨ Fix with FLOAT AI"
+    const codeActionDisposable = monacoInstance.languages.registerCodeActionProvider(currentLanguage, {
+      provideCodeActions: (_model: any, _range: any, context: any) => {
+        const markers = context.markers || [];
+        if (markers.length === 0) return { actions: [], dispose: () => {} };
+
+        const actions = markers.map((marker: any) => ({
+          title: `✨ Fix with FLOAT AI: ${marker.message}`,
+          kind: 'quickfix',
+          isPreferred: true,
+          command: {
+            id: 'float.quickfix.marker',
+            title: 'Fix with FLOAT AI',
+            arguments: [marker]
+          }
+        }));
+
+        return {
+          actions,
+          dispose: () => {}
+        };
+      }
+    });
+
+    const cmdDisposable = monacoInstance.editor.registerCommand('float.quickfix.marker', (_accessor: any, marker: any) => {
+      if (marker) {
+        editor.setSelection({
+          startLineNumber: marker.startLineNumber,
+          startColumn: marker.startColumn,
+          endLineNumber: marker.endLineNumber,
+          endColumn: marker.endColumn
+        });
+        openInlineAssistant(`Fix error: ${marker.message}`);
+      }
+    });
+
+    // Add Composer command (Ctrl+I / Cmd+I)
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyI, () => {
+      if (!useIDEStore.getState().rightSidebarOpen) {
+        useIDEStore.getState().toggleRightSidebar();
+      }
+      window.dispatchEvent(new CustomEvent('switch-ai-mode', { detail: { mode: 'agent' } }));
+      setTimeout(() => {
+        const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"], textarea[placeholder*="Agent"]') as HTMLTextAreaElement;
+        aiInput?.focus();
+      }, 80);
+    });
 
     const handleGlobalInlineAssistant = () => {
       openInlineAssistant();
@@ -276,8 +361,14 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
         selectedCode={inlineSelection.text}
         startLine={inlineSelection.startLine}
         endLine={inlineSelection.endLine}
+        editorPosition={inlinePosition}
+        initialInstruction={inlineInstruction}
         onProposalCreated={(changeSet) => {
           setReviewChangeSet(changeSet);
+        }}
+        onApplyDirectly={(newContent) => {
+          updateFileContent(fileId, newContent);
+          markTabModified(fileId, true);
         }}
       />
     </>

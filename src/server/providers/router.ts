@@ -19,8 +19,8 @@ export class ModelRouter {
   // Explicit provider/model allowlist. Entries are supported route candidates, not
   // proof that a model is enabled for the current account; upstream errors remain visible.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Auto / Default
-    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra' },
+    // Auto / Default: maps to verified flagship GPT-4o
+    'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
 
     // Free Tier Model
     'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
@@ -100,7 +100,7 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'auto';
+      return 'gpt-4o';
     }
     return modelId;
   }

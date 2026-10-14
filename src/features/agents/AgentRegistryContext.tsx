@@ -32,14 +32,14 @@ export interface AgentRegistryContextType {
 const AgentRegistryContext = createContext<AgentRegistryContextType | null>(null);
 
 const DEFAULT_FALLBACKS: Record<string, string> = {
-  'general-assistant': 'gpt-6-astra',
-  'planner-agent': 'gpt-6.1-sol',
-  'coder-agent': 'gpt-6.1-sol',
-  'reviewer-agent': 'gpt-6-astra',
-  'explorer-agent': 'gpt-6-astra',
-  'debugger-agent': 'gpt-6.1-sol',
-  'ui-agent': 'gpt-6-astra',
-  'astra-agent': 'gpt-6-astra'
+  'general-assistant': 'gpt-4o',
+  'planner-agent': 'gpt-4o',
+  'coder-agent': 'gpt-4o',
+  'reviewer-agent': 'gpt-4o',
+  'explorer-agent': 'gpt-4o',
+  'debugger-agent': 'gpt-4o',
+  'ui-agent': 'gpt-4o',
+  'astra-agent': 'gpt-4o'
 };
 
 export function AgentRegistryProvider({ children }: { children: React.ReactNode }) {

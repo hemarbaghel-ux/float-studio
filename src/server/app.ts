@@ -502,7 +502,7 @@ export async function startServer() {
         suffix = '',
         language = 'plaintext',
         fileName = 'file',
-        model = 'gpt-6-astra'
+        model = 'gpt-4o'
       } = req.body || {};
 
       if (!prefix && !suffix) {
@@ -557,7 +557,7 @@ ${boundedSuffix}
         endLine,
         fileName = 'file',
         language = 'plaintext',
-        model = 'gpt-6-astra'
+        model = 'gpt-4o'
       } = req.body || {};
 
       if (!instruction.trim()) {
@@ -653,7 +653,7 @@ ${selectedCode || fullCode}
     }
 
     try {
-      const { prompt, virtualFiles, model = 'gpt-6-astra', conversationHistory } = req.body || {};
+      const { prompt, virtualFiles, model = 'gpt-4o', conversationHistory } = req.body || {};
       if (typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Add a request before starting the agent.' });
       }
@@ -742,7 +742,7 @@ ${selectedCode || fullCode}
   // Plan Mode Generation Route (Milestone 4)
   app.post('/api/ai/plan', requireAuth, express.json({ limit: '8mb' }), async (req: any, res: any) => {
     try {
-      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gpt-6-astra' } = req.body || {};
+      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gpt-4o' } = req.body || {};
 
       if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Please enter a task request before generating a plan.' });
