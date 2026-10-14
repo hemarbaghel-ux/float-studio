@@ -43,12 +43,7 @@ function resolvePort(): number {
     }
   }
 
-  // 2. In development mode, dev server must run on port 3000 as required by environment
-  if (process.env.NODE_ENV !== 'production') {
-    return 3000;
-  }
-
-  // 3. In production, use Cloud Run PORT env var (e.g. 8080) or default to 3000
+  // 2. In development or production, check PORT env var (e.g. Cloud Run 8080 or custom port) or default to 3000
   return Number(process.env.PORT) || 3000;
 }
 
@@ -1115,7 +1110,7 @@ ${selectedCode || fullCode}
       }
     });
   } else {
-    // Development mode: always use Vite middleware for live HMR and seamless reload
+    console.log('  ⚡ Initializing Vite development server...');
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
@@ -1125,6 +1120,7 @@ ${selectedCode || fullCode}
       appType: 'spa',
     });
     app.use(vite.middlewares);
+    console.log('  ✓ Vite development middleware ready');
   }
 
   // Global error handler preventing unhandled ENOENT crashes
@@ -1141,19 +1137,42 @@ ${selectedCode || fullCode}
     }
   });
 
+  let retryCount = 0;
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`);
+    console.log(`\n  ======================================================`);
+    console.log(`  🌟 FLOAT AI Studio is running!`);
+    console.log(`  ➜  Local:   http://localhost:${PORT}/`);
+    console.log(`  ➜  Network: http://127.0.0.1:${PORT}/`);
+    console.log(`  ➜  Mode:    ${process.env.NODE_ENV || 'development'}`);
+    console.log(`  ======================================================\n`);
   });
 
   server.on('error', (err: any) => {
     if (err?.code === 'EADDRINUSE') {
-      console.warn(`Port ${PORT} in use; attempting recovery in 1s...`);
-      setTimeout(() => {
+      retryCount++;
+      if (retryCount <= 2) {
+        console.warn(`[FLOAT AI] Port ${PORT} in use; attempting recovery in 1s (${retryCount}/2)...`);
+        setTimeout(() => {
+          try {
+            server.close();
+          } catch {}
+          server.listen(PORT, '0.0.0.0');
+        }, 1000);
+      } else {
+        const altPort = PORT + 1;
+        console.warn(`[FLOAT AI] Port ${PORT} busy; falling back to port ${altPort}...`);
         try {
           server.close();
         } catch {}
-        server.listen(PORT, '0.0.0.0');
-      }, 1000);
+        server.listen(altPort, '0.0.0.0', () => {
+          console.log(`\n  ======================================================`);
+          console.log(`  🌟 FLOAT AI Studio is running!`);
+          console.log(`  ➜  Local:   http://localhost:${altPort}/`);
+          console.log(`  ➜  Network: http://127.0.0.1:${altPort}/`);
+          console.log(`  ➜  Mode:    ${process.env.NODE_ENV || 'development'}`);
+          console.log(`  ======================================================\n`);
+        });
+      }
     } else {
       console.error('Server listen error:', err);
     }

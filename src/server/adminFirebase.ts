@@ -4,17 +4,6 @@ import fs from 'fs';
 import path from 'path';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Cloud Run uses its attached service account through Application Default
-// Credentials. Local development can use GOOGLE_APPLICATION_CREDENTIALS.
-const existing = getApps().find((app) => app.name === 'float-admin');
-const adminApp = existing || initializeApp({
-  credential: applicationDefault(),
-  projectId: firebaseConfig.projectId,
-}, 'float-admin');
-
-// The applet uses a named Firestore database, so admin persistence must use it too.
-export const adminDb = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
-
 let adminCredentialsDisabled = false;
 
 export function markAdminCredentialsUnavailable(_reason?: unknown): void {
@@ -53,3 +42,16 @@ export function hasAdminCredentials(): boolean {
     }
   });
 }
+
+// Cloud Run uses its attached service account through Application Default
+// Credentials. Local development can use GOOGLE_APPLICATION_CREDENTIALS.
+const existing = getApps().find((app) => app.name === 'float-admin');
+const adminApp = existing || initializeApp(
+  hasAdminCredentials()
+    ? { credential: applicationDefault(), projectId: firebaseConfig.projectId }
+    : { projectId: firebaseConfig.projectId },
+  'float-admin'
+);
+
+// The applet uses a named Firestore database, so admin persistence must use it too.
+export const adminDb = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
