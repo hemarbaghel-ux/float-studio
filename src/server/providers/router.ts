@@ -19,8 +19,8 @@ export class ModelRouter {
   // Strict, verified model mapping to provider + verified apiModelId
   // The UI display name or alias must never be treated as the actual API model ID
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Auto / Default
-    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra' },
+    // Auto / Default: maps to verified flagship GPT-4o
+    'auto': { provider: 'openai', apiModelId: 'gpt-4o' },
 
     // Free Tier Model
     'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
@@ -100,7 +100,7 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gpt-6-astra';
+      return 'gpt-4o';
     }
     return modelId;
   }

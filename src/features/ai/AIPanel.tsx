@@ -950,7 +950,7 @@ export function AIPanel() {
           virtualFiles: virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
           conversationId: targetConvId,
           projectId: currentProjectId,
-          model: selectedModel || 'gpt-6-astra'
+          model: selectedModel || 'gpt-4o'
         })
       });
 
@@ -1893,13 +1893,13 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedModel(selectedModel === 'gpt-6-astra' ? 'gpt-6.1-sol' : 'gpt-6-astra');
+                              setSelectedModel(selectedModel === 'gpt-4o' ? 'gpt-4o-mini' : 'gpt-4o');
                               handleRetry(msg.id);
                             }}
                             className="px-2.5 py-1 text-xs font-semibold rounded-md bg-purple-600 text-white hover:bg-purple-700 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
                           >
                             <Sparkles size={12} />
-                            <span>Switch to {selectedModel === 'gpt-6-astra' ? 'GPT-6.1 Sol' : 'GPT-6 Astra'} & Retry</span>
+                            <span>Switch to {selectedModel === 'gpt-4o' ? 'GPT-4o mini' : 'GPT-4o'} & Retry</span>
                           </button>
                         )}
                       </div>
@@ -2137,22 +2137,22 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             </div>
           )}
 
-          {/* Obsolete model warning banner */}
-          {selectedModel !== 'gpt-6-astra' && selectedModel !== 'gpt-6.1-sol' && (
+          {/* Unsupported model warning banner */}
+          {!INITIAL_MODELS.some(m => m.id === selectedModel) && (
             <div className="mx-3 mt-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between gap-2 shadow-2xs">
               <div className="flex items-center gap-1.5 min-w-0">
                 <AlertCircle size={14} className="shrink-0 text-amber-500" />
                 <span className="truncate">
-                  Model <strong>{selectedModel}</strong> is not an active model in FLOAT.
+                  Model <strong>{selectedModel}</strong> is not configured or supported in FLOAT.
                 </span>
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedModel('gpt-6-astra')}
+                onClick={() => setSelectedModel('gpt-4o')}
                 className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer shrink-0 shadow-xs flex items-center gap-1"
               >
                 <Sparkles size={11} />
-                <span>Switch to GPT-6 Astra</span>
+                <span>Switch to GPT-4o</span>
               </button>
             </div>
           )}

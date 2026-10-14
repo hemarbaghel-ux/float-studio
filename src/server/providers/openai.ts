@@ -127,7 +127,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-6-astra'
+        defaultModel: 'gpt-4o'
       };
     }
 
@@ -136,13 +136,13 @@ export class OpenAIAdapter implements AIProviderAdapter {
       // Lightweight verification using models.list
       const models = await client.models.list();
       const accessibleModelIds = models.data.map(m => m.id);
-      const hasOperationalModel = accessibleModelIds.some(m => m.includes('gpt-4') || m.includes('o1') || m.includes('o3') || m.includes('gpt-6'));
+      const hasOperationalModel = accessibleModelIds.some(m => m.includes('gpt-4') || m.includes('o1') || m.includes('o3'));
       return {
         provider: 'OpenAI',
         configured: true,
         authenticated: true,
         modelAvailable: hasOperationalModel || models.data.length > 0,
-        defaultModel: 'gpt-6-astra',
+        defaultModel: 'gpt-4o',
         accessibleModelIds
       };
     } catch (err: any) {
@@ -152,7 +152,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-6-astra',
+        defaultModel: 'gpt-4o',
         error: normalized.message
       };
     }
@@ -163,9 +163,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
       'auto': 'gpt-4o',
       'float-basic': 'gpt-4o-mini'
     };
-    return mapping[model] || model;
-    if (model === 'auto' || !model) return 'gpt-6-astra';
-    return model;
+    return mapping[model] || model || 'gpt-4o';
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
