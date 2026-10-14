@@ -169,7 +169,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-6.1-sol'
+        defaultModel: 'gpt-4o-mini'
       };
     }
 
@@ -184,7 +184,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: true,
         modelAvailable: hasOperationalModel || models.data.length > 0,
-        defaultModel: 'gpt-6.1-sol',
+        defaultModel: 'gpt-4o-mini',
         accessibleModelIds
       };
     } catch (err: any) {
@@ -194,7 +194,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-6.1-sol',
+        defaultModel: 'gpt-4o-mini',
         error: normalized.message
       };
     }
