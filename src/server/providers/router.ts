@@ -19,16 +19,18 @@ export class ModelRouter {
   // Explicit provider/model allowlist. Entries are supported route candidates, not
   // proof that a model is enabled for the current account; upstream errors remain visible.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Auto / Default: maps to GPT-6.1 Sol
-    'auto': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    // Auto uses a stable, documented API model. Availability still depends on
+    // the server credential and account access; failures are surfaced to users.
+    'auto': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
 
-    // GPT-6.1 Sol Preview / Frontier Reasoning
-    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
-    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
-
-    // GPT-6 Astra Preview / Cloud Agent
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' }
+    // Explicitly routed OpenAI API model IDs. Do not map preview/product labels
+    // to a different upstream model without telling the user.
+    'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
+    'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
+    'o1': { provider: 'openai', apiModelId: 'o1' },
+    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
+    'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
+    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini' }
   };
 
   constructor() {
