@@ -113,8 +113,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
       'Complex software engineering challenges with upstream GPT-4o fallback'
     ],
     speed: 'fast',
-    availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Preview / Cloud Agent with upstream GPT-6.1 Sol fallback. Remote connect: https://api.openai.com/v1/agents/api/connect/rt_7k2m',
+    availabilityStatus: 'UNAVAILABLE',
+    availabilityDetails: 'Not supported by FLOAT’s current OpenAI API router. A verified cloud-agent integration is not implemented; this model must not be presented as operational.',
     deprecationStatus: 'preview',
     fallbackModel: 'gpt-6.1-sol',
     cloudAgentConfig: {
@@ -170,8 +170,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
       'Autonomous agent execution with OpenAI Codex execution server'
     ],
     speed: 'fast',
-    availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Preview frontier reasoning & coding model with upstream GPT-6 Astra fallback. Remote connect: https://api.openai.com/v1/agents/api/connect/rt_7k2m',
+    availabilityStatus: 'UNAVAILABLE',
+    availabilityDetails: 'Not supported by FLOAT’s current OpenAI API router. Select an explicitly routed API model instead.',
     deprecationStatus: 'preview',
     fallbackModel: 'gpt-6-astra',
     cloudAgentConfig: {
