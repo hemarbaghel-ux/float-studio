@@ -84,10 +84,12 @@ export class ModelRouter {
   }
 
   resolveModelId(modelId: string): string {
-    if (modelId === 'auto' || !modelId) {
-      return 'gpt-6.1-sol';
+    // Keep the UI's Auto/default selection aligned with an explicitly routed API model.
+    // A product label must never resolve to a preview model that the router rejects.
+    if (!modelId || modelId.trim().toLowerCase() === 'auto') {
+      return 'gpt-4o-mini';
     }
-    return modelId;
+    return modelId.trim();
   }
 
   validateModelAvailability(modelId: string): void {
