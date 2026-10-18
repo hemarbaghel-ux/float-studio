@@ -33,6 +33,21 @@
             document.documentElement.setAttribute('data-theme', 'light');
           }
         } catch (e) {}
+
+        window.addEventListener('unhandledrejection', function(event) {
+          try {
+            var reason = event.reason;
+            var msg = typeof reason === 'string' ? reason : (reason && (reason.message || reason.msg) ? (reason.message || reason.msg) : JSON.stringify(reason || ''));
+            if (
+              (reason && (reason.type === 'cancelation' || reason.type === 'cancelled' || reason.name === 'AbortError')) ||
+              msg.indexOf('operation is manually canceled') !== -1 ||
+              msg.indexOf('cancelation') !== -1
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          } catch (e) {}
+        }, true);
       })();
     </script>
   </head>

@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { useUsageStore, ModelUsageRecord } from '../../store/usageStore';
 import { generateSampleUsageData } from '../models/sampleUsageData';
+import { UsageSavingsCard } from './UsageSavingsCard';
 import { apiFetch } from '../../services/api';
 
 interface ProviderStatus {
@@ -543,6 +544,11 @@ export function UsageAnalyticsView() {
           })}
         </div>
       </div>
+
+      {/* ======================================================== */}
+      {/* GEMINI FALLBACK & COST SAVINGS OVERVIEW                  */}
+      {/* ======================================================== */}
+      <UsageSavingsCard />
 
       {/* ======================================================== */}
       {/* KEY METRICS SUMMARY STATS                                */}

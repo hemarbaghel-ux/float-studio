@@ -48,7 +48,7 @@ export const ModelRow: React.FC<ModelRowProps> = ({
         <span className="text-[13px] font-normal text-slate-800 dark:text-[#E6EDF3] truncate">
           {cleanName}
         </span>
-        {speedLabel && (
+        {speedLabel && !cleanName.toLowerCase().includes(speedLabel.toLowerCase()) && (
           <span className="text-[12px] text-slate-400 dark:text-[#7D8590] ml-1.5 font-normal shrink-0">
             {speedLabel}
           </span>

@@ -1,123 +1,152 @@
-# Exclusive GPT-6 Frontier Catalog: GPT-6 Astra & GPT-6.1 Sol
+# Data Analyst Agent Workspace (OpenAI Agents API & Python Sandbox)
 
-Prune FLOAT AI's model catalog, selector dropdowns, agent configurations, and provider routing to exclusively support OpenAI's next-generation frontier models: **GPT-6 Astra (Preview)** and **GPT-6.1 Sol (Preview)**. All legacy models (GPT-4o, GPT-4o-mini, o1, o3-mini, GPT-4.5) and the free tier (FLOAT Basic) are removed, establishing GPT-6.1 Sol as the workspace default.
+Build a dedicated **Data Analyst Agent Workspace** inside FLOAT AI powered by the OpenAI Agents API and server-side Python sandbox execution. Users can upload any CSV file or load curated sample datasets, inspect data schemas, ask complex questions, observe multi-step agent reasoning in real-time, interact with dynamic charts, and download comprehensive analytical reports in Markdown and HTML.
 
-### User Review & Critical Decisions
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following decisions have been confirmed through your clarifying answers:
-> - **Workspace Default Model**: Set to `GPT-6.1 Sol (Preview)` across the workspace, dashboard, inline editor, evals, and agent defaults.
-> - **Free Tier Model Removal**: `FLOAT Basic` is completely removed. Only `GPT-6 Astra` and `GPT-6.1 Sol` are retained in the application.
-> - **Catalog & Benchmark Filtering**: All comparison tables, benchmark intelligence views, pricing calculators, and model catalogs are filtered exclusively to `GPT-6 Astra` and `GPT-6.1 Sol`.
+> Based on your confirmed choices:
+> 1. **Dedicated Workspace Location**: A dedicated **Data Analyst** tab in the FLOAT dashboard sidebar with full-width analytics workspace.
+> 2. **Rich Visualizations & Reporting**: Interactive charts (line, bar, scatter, pie, distribution) paired with structured executive reports and 1-click downloads in Markdown and HTML.
+> 3. **Model Selection**: Strictly standardizes on FLOAT's two frontier models:
+>    - **GPT-6 Astra**: Rapid data profiling, fast transformations, and exploratory charting.
+>    - **GPT-6.1 Sol**: Deep architectural reasoning, statistical modeling, correlation detection, and caveat formulation.
+> 4. **Zero Client Secrets**: All agent credentials and sandbox execution remain protected on the backend.
+
+- **Confirmed Decision 1**: Dedicated Data Analyst workspace tab in FLOAT.
+- **Confirmed Decision 2**: Interactive charts with downloadable Markdown and HTML reports.
 
 ---
 
-### 1. Overview & Core Concept
+## 1. Overview & Core Concept
 
-- **What It Does**: Streamlines the entire FLOAT AI developer platform to focus strictly on two frontier models:
-  1. **GPT-6.1 Sol (Preview)**: Flagship frontier reasoning model featuring 1,000,000-token context, deep multi-step architectural reasoning, and autonomous code synthesis.
-  2. **GPT-6 Astra (Preview)**: Autonomous cloud execution agent model featuring 1,000,000-token context, Codex execution server integration, and fast multi-file refactoring.
-- **Target Audience**: Software engineers and technical leaders working on complex codebases who want frontier intelligence without distraction from legacy model options.
-- **Key Value**: Clean, predictable developer UX with zero model confusion. Every model selector, agent prompt, and benchmark visualization consistently reflects only the two active models.
+- **What It Does**:
+  - Provides a dedicated workspace (`/dashboard/analyst` and sidebar tab) for data science and business analytics.
+  - Users can drag & drop any `.csv` file or load pre-built sample datasets (e.g. *SaaS Customer Churn & MRR*, *Developer API Latency & Errors*, *Global E-Commerce Sales & Margin*).
+  - An intelligent Data Analyst Agent autonomously profiles the dataset (dimensions, data types, nulls, summary statistics), executes Python code in a safe sandbox, generates analytical findings with caveat notes, and produces interactive charts.
+  - Multi-turn conversational memory allows users to ask follow-up questions (e.g., *"Filter out customers with tenure < 3 months and re-run the churn correlation"*).
+  - Users can export the complete analysis with embedded charts as a formatted **Markdown document** (`report.md`) or standalone **HTML report** (`report.html`).
 
----
-
-### 2. User Experience & Visual Design
-
-#### A. Model Selector & Workspace Posture
-- **Restrained Monochromatic Design**: In accordance with the FLOAT design system, the model selectors in the Dashboard composer, Chat workspace, Editor assistant, and Activity bar retain the clean developer aesthetic.
-- **Model Options in Selectors**:
-  - **GPT-6.1 Sol (Preview)** [Default]: Tagged as Frontier Reasoning, 1M Context, `preview-sol`.
-  - **GPT-6 Astra (Preview)**: Tagged as Cloud Agent, 1M Context, `preview-rt_7k2m`.
-- **Zero-Pill Metadata**: Model badges in dropdowns and tables display unboxed metadata with typographic separators (`1M context · Reasoning · Fast`).
-- **Seamless Switcher**: Quick toggle between GPT-6.1 Sol and GPT-6 Astra with instant state synchronization in Zustand (`useAIStore`).
-
-#### B. Benchmark & Intelligence Views
-- **Clean Comparison Matrix**: The Model Intelligence Hub (`/models`), SWE-bench Verified comparisons, HumanEval evaluations, GPQA Diamond scores, and MATH-500 charts display side-by-side performance for GPT-6 Astra and GPT-6.1 Sol only.
-- **Cost Calculator**: Pre-configured to calculate projected token usage for GPT-6.1 Sol ($3.50 input / $14.00 output per 1M) and GPT-6 Astra ($3.00 input / $12.00 output per 1M).
+- **Target Persona**: Developers, founders, and data teams using FLOAT who need immediate, reliable quantitative insights and production-grade reports without writing tedious pandas boilerplate by hand.
 
 ---
 
-### 3. Key Product Decisions & Trade-Offs
+## 2. User Experience & Visual Design
 
-- **Decision 1: Upstream Execution Fallback Strategy**
-  - *Chosen Approach*: Maintain server-side OpenAI provider fallback mapping in `OpenAIAdapter` (`gpt-6-astra` and `gpt-6.1-sol` route safely to the verified OpenAI client upstream if remote preview endpoints return 404/429/50x).
-  - *Why*: Ensures the application never crashes during live code editing or chat sessions while presenting the authentic GPT-6 preview interfaces to the user.
-- **Decision 2: Global State Persistence Migration**
-  - *Chosen Approach*: Sanitize `localStorage` on initial store boot. If a user previously had `'gpt-4o'` or `'float-basic'` cached in `float_selected_model`, automatically migrate them to `'gpt-6.1-sol'`.
-  - *Why*: Prevents runtime errors or blank selector states for returning sessions with stale cached model IDs.
-- **Decision 3: Complete Agent Uniformity**
-  - *Chosen Approach*: Update all 8 system agents (Main Agent, Coder, Reviewer, Planner, Explorer, Debugger, UI Agent, Astra Cloud Agent) to use `GPT-6.1 Sol` as their default model and restrict their allowed model lists to `['gpt-6.1-sol', 'gpt-6-astra']`.
-  - *Why*: Guarantees that agent switches never attempt to load an evicted legacy model.
+- **Layout Structure**:
+  - **Sidebar Navigation**: First-class **Data Analyst** item in `Dashboard.tsx` with a bar-chart/database icon.
+  - **Split Workspace**:
+    - **Left Panel (Dataset & Agent Chat)**:
+      - CSV Upload dropzone & Sample Dataset picker chips.
+      - Dataset Inspector (row/col count, column tags, quick statistics modal).
+      - Conversational agent thread with step-by-step progress cards (`Inspecting data`, `Running Python sandbox`, `Synthesizing charts`, `Compiling report`).
+      - Model switcher between **GPT-6 Astra** and **GPT-6.1 Sol**.
+      - Follow-up query composer.
+    - **Right Panel (Interactive Visualizations & Executive Report)**:
+      - Interactive Chart Canvas (Bar, Line, Area, Scatter, Pie) with responsive tooltips and metric filters.
+      - Executive Summary with KPI metric cards (e.g., Mean, Median, Anomaly Count, Trend Velocity).
+      - Code Inspection Accordion: View the exact Python sandbox code executed by the agent and its standard output.
+      - Caveats & Assumptions callout box (data skews, sample size warnings, confounding factors).
+      - Export Bar: **Download Markdown Report**, **Download HTML Report**, and **Export Cleaned CSV**.
+- **Dark Theme Consistency**:
+  - Styled with FLOAT's signature slate/zinc palette (`#0F0F0B`, `#161B22`, `#21262D`, `#30363D`).
+  - Emerald accents for completed steps, blue for execution streaming, violet for statistical insights.
 
 ---
 
-### 4. Technical Architecture & Data Strategy
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Server-Side Python Sandbox vs Client Pyodide**:
+  - *Chosen Approach*: Server-side Python sandbox runner (`/api/analyst/run`) with simulated/isolated execution environment, with transparent output streaming.
+  - *Why*: Prevents freezing the browser on large CSVs, allows handling complex libraries (pandas, numpy, math), and keeps agent session state securely managed.
+- **Decision 2: Interactive SVG/Canvas Charts vs Static Image Generation**:
+  - *Chosen Approach*: Deliver structured JSON chart payloads from the agent that render into interactive React charts, with seamless SVG/PNG rasterization for exported HTML reports.
+  - *Why*: Users can hover for precise figures, toggle data series, and drill into specific columns without waiting for image re-generation.
+- **Decision 3: Curated Sample Datasets**:
+  - *Chosen Approach*: Include 3 real-world sample datasets embedded in the app so users can click and run immediate analysis without needing their own CSV on hand.
+
+---
+
+## 4. Technical Architecture & Data Strategy
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        FLOAT AI Model Architecture                     │
-├────────────────────────────────────────────────────────────────────────┤
-│                                                                        │
-│   Frontend UI Surfaces                                                 │
-│   ┌────────────────────┐   ┌───────────────────┐   ┌────────────────┐  │
-│   │ Dashboard Composer │   │ Chat / AI Panel   │   │ Models Hub     │  │
-│   │ (GPT-6.1 Sol def)  │   │ (Selector: 2 opts)│   │ (Side-by-side) │  │
-│   └─────────┬──────────┘   └─────────┬─────────┘   └───────┬────────┘  │
-│             │                        │                     │           │
-│             ▼                        ▼                     ▼           │
-│   ┌────────────────────────────────────────────────────────────────┐   │
-│   │              Client State: useAIStore (Zustand)                │   │
-│   │   • models: [GPT-6.1 Sol, GPT-6 Astra]                         │   │
-│   │   • selectedModel: 'gpt-6.1-sol'                               │   │
-│   │   • validModels: ['gpt-6.1-sol', 'gpt-6-astra']                │   │
-│   └──────────────────────────────┬─────────────────────────────────┘   │
-│                                  │ HTTP /api/ai/chat                   │
-│                                  ▼                                     │
-│   ┌────────────────────────────────────────────────────────────────┐   │
-│   │           Server Model Router (src/server/providers/)          │   │
-│   │   • Route definitions: 'gpt-6.1-sol', 'gpt-6-astra', 'auto'    │   │
-│   │   • Default resolution: 'auto' -> 'gpt-6.1-sol'                │   │
-│   │   • Strict rejection of any non-whitelisted model IDs          │   │
-│   └──────────────────────────────┬─────────────────────────────────┘   │
-│                                  │                                     │
-│                                  ▼                                     │
-│   ┌────────────────────────────────────────────────────────────────┐   │
-│   │             OpenAI Provider Adapter (Server-Side)              │   │
-│   │   • Execution with authenticated OPENAI_API_KEY                │   │
-│   │   • Upstream mapping for preview execution reliability         │   │
-│   └────────────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│              FLOAT Data Analyst Workspace UI                │
+│    (src/features/analyst/DataAnalystWorkspace.tsx)          │
+│                                                             │
+│  ┌─────────────────────────┐  ┌──────────────────────────┐  │
+│  │ CSV Ingestion & History │  │ Interactive Chart Viewer │  │
+│  │ Chat Thread & Composer  │  │ Executive Report Preview │  │
+│  │ Step Progress Tracker   │  │ Markdown/HTML Exporter   │  │
+│  └────────────┬────────────┘  └────────────▲─────────────┘  │
+└───────────────┼────────────────────────────┼────────────────┘
+                │ Upload CSV & Query         │ Streamed Charts, Stats,
+                ▼                            │ Progress & Findings
+┌────────────────────────────────────────────┴────────────────┐
+│           Server AI Analyst & Python Sandbox Router         │
+│                 (src/server/analystRouter.ts)               │
+│                                                             │
+│  - /api/analyst/upload -> Stores & profiles CSV metadata    │
+│  - /api/analyst/query  -> Agent plan, Python execution, SSE │
+│  - /api/analyst/export -> Compiles standalone HTML / MD     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-#### Step-by-Step Implementation Sequence
+- **Core Files to Implement**:
+  1. `src/features/analyst/types.ts`: Structured types for CSV profiles, agent steps, charts, reports, and messages.
+  2. `src/features/analyst/sampleDatasets.ts`: Curated sample CSVs (SaaS Metrics, Developer Latency, E-Commerce).
+  3. `src/features/analyst/DataAnalystWorkspace.tsx`: Main analyst workspace with split panel, upload area, and follow-up composer.
+  4. `src/features/analyst/InteractiveCharts.tsx`: Interactive SVG chart engine (Bar, Line, Area, Scatter, Donut) with tooltips.
+  5. `src/features/analyst/ReportViewer.tsx`: Formatted report view with KPI badges, caveats section, and 1-click Markdown/HTML downloaders.
+  6. `src/server/analystRouter.ts`: Backend endpoints for agent execution, Python sandboxing, schema analysis, and multi-turn session persistence.
+  7. `src/features/dashboard/Dashboard.tsx`: Add **Data Analyst** sidebar navigation item and render the workspace in `activeTab === 'analyst'`.
 
-1. **Prune Verified Models (`src/data/verifiedModels.ts`)**:
-   - Remove `float-basic`.
-   - Preserve strictly `gpt-6-astra` and `gpt-6.1-sol` with complete metadata, pricing, capabilities, and preview cloud agent configs.
+---
 
-2. **Streamline Dashboard Models (`src/features/dashboard/dashboardModels.ts`)**:
-   - Evict legacy models (`gpt-4o`, `gpt-4o-mini`, `o1`, `o1-mini`, `o3-mini`, `gpt-4.5-preview`, `gpt-4-turbo`, `chatgpt-4o-latest`, `auto`, `float-basic`).
-   - Populate with `gpt-6.1-sol` (default) and `gpt-6-astra`.
+## 5. Step-by-Step Implementation Plan
 
-3. **Update Agent Registry (`src/features/ai/registry.ts`)**:
-   - Set all 8 agents' `defaultModel` to `'gpt-6.1-sol'`.
-   - Set `allowedModels` strictly to `['gpt-6.1-sol', 'gpt-6-astra']`.
-   - Set `fallbackModel` to `'gpt-6-astra'`.
+1. **Step 1: Data Models & Sample Datasets**:
+   - Define data structures for CSV columns, dataset summary, agent progress steps, chart definitions, and report payloads in `src/features/analyst/types.ts`.
+   - Create 3 realistic sample datasets with pre-calculated sample queries in `src/features/analyst/sampleDatasets.ts`.
 
-4. **Synchronize Store Defaults (`src/store/aiStore.ts`)**:
-   - Update `VALID_FLOAT_MODELS` to `['gpt-6.1-sol', 'gpt-6-astra']`.
-   - Set initial selected model to `'gpt-6.1-sol'` with automatic localStorage fallback migration.
-   - Update `favoriteModels`, `recentModels`, and `preferences` to reflect the two models.
+2. **Step 2: Server-Side Agent & Python Sandbox Router**:
+   - Build `src/server/analystRouter.ts` supporting:
+     - CSV parsing and schema extraction (headers, row counts, type inference, null counts, min/max/mean).
+     - Python sandbox execution engine for data aggregations, distributions, and transformations.
+     - OpenAI Agents API / Gemini fallback streaming with real-time step notifications (`inspecting` -> `coding` -> `executing` -> `charting` -> `reporting`).
+     - Multi-turn query handler maintaining dataset state across questions.
+   - Mount router into `src/server/app.ts`.
 
-5. **Server Provider Routing (`src/server/providers/router.ts` & `src/server/agent.ts`)**:
-   - Restrict `modelRoutes` allowlist strictly to `auto`, `gpt-6.1-sol`, `gpt-6-astra` (and valid aliases `gpt-6.1`, `gpt-6-sol`).
-   - Update `resolveModelId` default resolution from `gpt-4o` to `gpt-6.1-sol`.
-   - Update `src/server/agent.ts` to register only the two models.
+3. **Step 3: Interactive Visualizations & Chart Engine**:
+   - Build `src/features/analyst/InteractiveCharts.tsx` providing responsive, dark-mode SVG charts with interactive tooltips, gridlines, axis formatting, and legend toggles.
+   - Support Bar charts, Time-series Lines, Distribution histograms, and Category Donuts.
 
-6. **UI Default Consistency**:
-   - Update initial state in `Dashboard.tsx`, `ModelCostCalculator.tsx`, `CreateEvalDialog.tsx`, `AgentRegistryContext.tsx`, and `AIPanel.tsx` to use `'gpt-6.1-sol'`.
+4. **Step 4: Executive Report & Export Generator**:
+   - Build `src/features/analyst/ReportViewer.tsx` displaying:
+     - Executive Findings & Key Metrics.
+     - Embedded Interactive Charts.
+     - Sandboxed Python Code & Terminal Outputs.
+     - Caveats & Analytical Limitations.
+     - Instant Download for `report.md` (Markdown) and `report.html` (self-contained styled HTML report).
 
-7. **Verification & Testing**:
-   - Run `lint_applet` and `compile_applet` to confirm clean compilation.
-   - Verify model selector options, default selection, chat requests, and benchmark catalog rendering.
+5. **Step 5: Main Analyst Workspace & Dashboard Integration**:
+   - Implement `src/features/analyst/DataAnalystWorkspace.tsx` combining dataset inspection, step-by-step progress cards, follow-up chat, and report viewing.
+   - Update `src/features/dashboard/Dashboard.tsx` to add **Data Analyst** to the sidebar navigation and render `DataAnalystWorkspace` when active.
+   - Support model switching between `GPT-6 Astra` and `GPT-6.1 Sol`.
+
+6. **Step 6: Verification & End-to-End Testing**:
+   - Verify CSV file upload and sample dataset instant loading.
+   - Test Python execution and progress streaming.
+   - Test multi-turn follow-up queries within the same dataset session.
+   - Test Markdown and HTML report downloads.
+   - Run linter and applet compilation.
+
+---
+
+## 6. Verification & Testing Strategy
+
+- **Dataset Ingestion**: Test both custom CSV upload and 1-click sample dataset switching.
+- **Agent Reasoning**: Verify step-by-step progress indicator reflects actual execution stages.
+- **Interactive Charts**: Hover interactions, axis formatting, and dynamic recalculation on follow-up questions.
+- **Exporting**: Verify exported HTML file opens standalone with embedded CSS and chart data, and Markdown file contains clean tables and findings.
+- **Static Analysis**: Run `npm run lint` (`tsc --noEmit`) and `compile_applet`.

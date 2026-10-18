@@ -25,6 +25,12 @@ import { useCloudSession } from './cloudSessionStore';
 import { AttachMenu, SlashMenu, slashMatches } from './ComposerExtras';
 import { CloudSessionBanner } from './CloudSession';
 import { ChatFeedbackButtons } from './ChatFeedbackButtons';
+import {
+  streamFloatAgentMessage,
+  getFloatAgentConfig,
+  type StreamStatusUpdate,
+} from '../../services/floatAgent';
+import { ApiConfigModal } from '../settings/ApiConfigModal';
 
 type ChangeStatus = 'pending' | 'accepted' | 'rejected';
 
@@ -112,6 +118,8 @@ export function ChatThread({ chatId }: { chatId: string }) {
   const [drawer, setDrawer] = useState<'files' | 'terminal' | null>(null);
   const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
+  const [showApiConfig, setShowApiConfig] = useState(false);
+  const [agentStreamStatus, setAgentStreamStatus] = useState<StreamStatusUpdate | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -122,6 +130,12 @@ export function ChatThread({ chatId }: { chatId: string }) {
   useEffect(() => {
     activeChatIdRef.current = chatId;
   }, [chatId]);
+
+  useEffect(() => {
+    const handleOpen = () => setShowApiConfig(true);
+    document.addEventListener('open-api-config-modal', handleOpen);
+    return () => document.removeEventListener('open-api-config-modal', handleOpen);
+  }, []);
 
   // Load the project when opening /chat/:id directly (refresh / shared link)
   useEffect(() => {
@@ -279,6 +293,62 @@ export function ChatThread({ chatId }: { chatId: string }) {
       setStreaming(true);
 
       const patch = (p: Partial<ThreadMessage>) => setMessages((prev) => prev.map((m) => (m.id === modelMsg.id ? { ...m, ...p } : m)));
+
+      // Connect to live OpenAI Agent Session flow for gpt-6.1-sol / float-agent
+      const isAgentSession =
+        selectedModel === 'gpt-6.1-sol' ||
+        selectedModel.startsWith('gpt-6') ||
+        selectedModel.includes('sol') ||
+        selectedAgent === 'float-agent';
+
+      if (isAgentSession) {
+        abortRef.current = new AbortController();
+        const historyForAgent = base
+          .filter((m) => m.content && !m.error)
+          .map((m) => ({
+            role: m.role,
+            content: m.content,
+          }));
+
+        let full = '';
+        try {
+          const finalOutput = await streamFloatAgentMessage({
+            prompt,
+            modelId: selectedModel,
+            conversationHistory: historyForAgent,
+            signal: abortRef.current.signal,
+            onChunk: (_chunk, fullText) => {
+              full = fullText;
+              const currentElapsed = Date.now() - startTime;
+              patch({ content: full, latencyMs: currentElapsed });
+            },
+            onStatus: (status) => {
+              setAgentStreamStatus(status);
+            },
+          });
+
+          const totalElapsed = Date.now() - startTime;
+          const pending: Record<string, { status: ChangeStatus }> = {};
+          for (const seg of parseSegments(finalOutput)) {
+            if (seg.kind !== 'text') pending[seg.path] = { status: 'pending' };
+          }
+          patch({ content: finalOutput, changes: pending, latencyMs: totalElapsed });
+        } catch (e: any) {
+          if (activeChatIdRef.current !== chatId) return;
+          if (e?.name === 'AbortError') {
+            patch({ cancelled: true });
+          } else {
+            patch({ error: e?.message || String(e), errorCode: e?.code });
+          }
+        } finally {
+          if (activeChatIdRef.current === chatId) {
+            abortRef.current = null;
+            setStreaming(false);
+            setAgentStreamStatus(null);
+          }
+        }
+        return;
+      }
 
       try {
         if (!user) throw new Error('Please sign in to chat with FLOAT.');
@@ -597,11 +667,14 @@ export function ChatThread({ chatId }: { chatId: string }) {
             icon={Code2}
             label="Open in Editor"
             onClick={() => {
-              window.history.pushState({}, '', '/workspace');
+              const currentId = chatId || useIDEStore.getState().projectId;
+              const targetUrl = currentId ? `/workspace/${currentId}` : '/workspace';
+              window.history.pushState({}, '', targetUrl);
               window.dispatchEvent(new PopStateEvent('popstate'));
             }}
           />
           <HeaderButton icon={Download} label="Export" onClick={() => void exportZip(projectName || 'project', useIDEStore.getState().files)} />
+          <HeaderButton icon={KeyRound} label="API Config" onClick={() => setShowApiConfig(true)} />
         </div>
 
         {/* messages */}
@@ -641,6 +714,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
                   chatId={chatId}
                   msg={m}
                   streaming={streaming && m.id === messages[messages.length - 1]?.id}
+                  streamStatus={streaming && m.id === messages[messages.length - 1]?.id ? agentStreamStatus : null}
                   onAccept={(seg) => applySegment(m.id, seg)}
                   onReject={(seg) => seg.kind !== 'text' && setChange(m.id, seg.path, 'rejected')}
                   onUndo={(seg) => undoSegment(m.id, seg, m.changes?.[seg.kind === 'text' ? '' : seg.path]?.before)}
@@ -654,7 +728,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
         <div className="shrink-0 px-4 pb-4">
           <div className="max-w-3xl mx-auto">
             <CloudSessionBanner />
-            <div className="relative bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 rounded-b-2xl shadow-lg focus-within:border-slate-400 dark:focus-within:border-white/30">
+            <div className="relative bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 rounded-2xl shadow-lg focus-within:border-slate-400 dark:focus-within:border-white/30">
               <SlashMenu prompt={input} index={Math.min(slashIndex, Math.max(0, slashItems.length - 1))} onPick={(t) => setInput(t)} />
               {mention && mentionItems.length > 0 && (
                 <div className="absolute left-3 right-3 bottom-full mb-2 z-40 rounded-xl border border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#141414] p-1 shadow-2xl">
@@ -734,6 +808,9 @@ export function ChatThread({ chatId }: { chatId: string }) {
           {drawer === 'files' ? <FilesPanel paths={paths} /> : <MiniTerminal />}
         </aside>
       )}
+
+      {/* Settings / API Config modal */}
+      <ApiConfigModal isOpen={showApiConfig} onClose={() => setShowApiConfig(false)} />
     </div>
   );
 }
@@ -754,11 +831,12 @@ function HeaderButton({ icon: Icon, label, onClick, active }: { icon: any; label
 /* ----------------------------------------------------------------------------------------- */
 
 function AssistantMessage({
-  chatId, msg, streaming, onAccept, onReject, onUndo,
+  chatId, msg, streaming, streamStatus, onAccept, onReject, onUndo,
 }: {
   chatId: string;
   msg: ThreadMessage;
   streaming: boolean;
+  streamStatus?: StreamStatusUpdate | null;
   onAccept: (seg: Segment) => void;
   onReject: (seg: Segment) => void;
   onUndo: (seg: Segment) => void;
@@ -782,8 +860,13 @@ function AssistantMessage({
       {(msg.modelId || (msg.latencyMs !== undefined && msg.latencyMs > 0)) && (
         <div className="flex items-center gap-2 px-0.5 text-[11px] text-slate-500 dark:text-[#8B949E]">
           {msg.modelId && (
-            <span className="font-semibold text-slate-700 dark:text-[#C9D1D9]">
-              {models.find((m) => m.id === msg.modelId)?.displayName || msg.modelId}
+            <span className="font-semibold text-slate-700 dark:text-[#C9D1D9] inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+              {msg.modelId === 'gpt-6-astra'
+                ? 'GPT-6 Astra'
+                : msg.modelId === 'gpt-6.1-sol'
+                ? 'GPT-6.1 Sol'
+                : (models.find((m) => m.id === msg.modelId)?.shortName || models.find((m) => m.id === msg.modelId)?.displayName || msg.modelId)}
             </span>
           )}
           {msg.latencyMs !== undefined && msg.latencyMs > 0 && (
@@ -817,7 +900,20 @@ function AssistantMessage({
           </div>
         </div>
       )}
-      {segments.length === 0 && streaming && (
+      {streaming && streamStatus && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-purple-500/10 dark:bg-purple-500/15 border border-purple-200/80 dark:border-purple-800/50 text-xs text-purple-900 dark:text-purple-200">
+          <Loader2 size={13} className="animate-spin text-purple-600 dark:text-purple-400 shrink-0" />
+          <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
+            <span className="font-semibold">{streamStatus.message}</span>
+            {streamStatus.detail && (
+              <span className="text-[11px] text-purple-700/80 dark:text-purple-300/80 font-mono">
+                · {streamStatus.detail}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {segments.length === 0 && streaming && !streamStatus && (
         <div className="flex items-center gap-2 text-xs text-slate-400">
           <Loader2 size={12} className="animate-spin" /> Thinking…
         </div>
@@ -896,22 +992,138 @@ function AssistantMessage({
 function CodeBlock({ children }: { children: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
   const text = extractText(children);
+
+  // Extract language from props (e.g. className="language-typescript")
+  const childElement = React.isValidElement(children) ? children : null;
+  const className = (childElement?.props as any)?.className || '';
+  const langMatch = /language-([a-zA-Z0-9_-]+)/.exec(className);
+  const language = langMatch ? langMatch[1] : '';
+
+  const lines = text.split('\n');
+  if (lines.length > 1 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+
   return (
-    <div className="relative group my-2">
-      <button
-        onClick={() => {
-          void navigator.clipboard.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
-        }}
-        className="absolute right-2 top-2 p-1 rounded bg-white/10 text-slate-300 opacity-0 group-hover:opacity-100 cursor-pointer"
-        aria-label="Copy code"
-      >
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-      </button>
-      <pre className="overflow-x-auto rounded-xl bg-[#0D1117] text-[#E6EDF3] p-3.5 text-xs leading-relaxed font-mono">{children}</pre>
+    <div className="relative group my-3 rounded-xl border border-slate-200 dark:border-[#30363D] bg-[#0D1117] overflow-hidden shadow-sm not-prose">
+      {/* Codeblock header bar */}
+      <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#161B22] border-b border-[#30363D] text-[11px] text-[#8B949E] select-none">
+        <div className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#E06C75]/70 inline-block" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#E5C07B]/70 inline-block" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#98C379]/70 inline-block" />
+          <span className="font-mono uppercase font-semibold text-[#C9D1D9] ml-1">
+            {language || 'code'}
+          </span>
+          <span className="text-[10px] text-[#6E7681]">
+            ({lines.length} line{lines.length === 1 ? '' : 's'})
+          </span>
+        </div>
+        <button
+          onClick={() => {
+            void navigator.clipboard.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          }}
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] text-[#C9D1D9] hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+          aria-label="Copy code"
+        >
+          {copied ? (
+            <>
+              <Check size={12} className="text-emerald-400" />
+              <span className="text-emerald-400 font-medium">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy size={12} />
+              <span>Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Code body with line numbers and syntax highlighted tokens */}
+      <div className="overflow-x-auto p-3 text-xs leading-relaxed font-mono flex">
+        {/* Line numbers column */}
+        <div className="select-none text-right pr-3.5 border-r border-[#30363D]/80 text-[#484F58] shrink-0 font-mono text-[11px] leading-5">
+          {lines.map((_, idx) => (
+            <div key={idx}>{idx + 1}</div>
+          ))}
+        </div>
+        {/* Code content column */}
+        <div className="pl-3.5 flex-1 min-w-0 text-[#E6EDF3] font-mono text-[11px] leading-5">
+          {lines.map((line, idx) => (
+            <div key={idx} className="whitespace-pre">
+              {renderSyntaxHighlightedLine(line, language)}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
+}
+
+function renderSyntaxHighlightedLine(line: string, _lang?: string): React.ReactNode {
+  if (!line) return '\u00A0';
+
+  // Check for whole line comments
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith('//') || trimmed.startsWith('#')) {
+    const indent = line.slice(0, line.length - trimmed.length);
+    return (
+      <>
+        <span>{indent}</span>
+        <span className="text-[#8B949E] italic">{trimmed}</span>
+      </>
+    );
+  }
+
+  // Tokenize line using regex
+  const tokenRegex =
+    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\/[^\n]*|#[^\n]*|\b\d+(?:\.\d+)?\b|\b(?:import|export|default|from|const|let|var|function|return|if|else|for|while|switch|case|break|class|extends|implements|interface|type|async|await|try|catch|finally|throw|typeof|instanceof|void|def|elif|pass|lambda|with|as|in|is|yield|raise|except|self|new)\b|\b(?:true|false|null|undefined|None|True|False)\b|\b(?:string|number|boolean|any|unknown|never|Record|Array|Promise|Partial|React|FC)\b|[a-zA-Z_$][a-zA-Z0-9_$]*(?=\()|[a-zA-Z_$][a-zA-Z0-9_$]*|[^\s\w]|\s+)/g;
+
+  const KEYWORDS = new Set([
+    'import', 'export', 'default', 'from', 'const', 'let', 'var', 'function',
+    'return', 'if', 'else', 'for', 'while', 'switch', 'case', 'break',
+    'class', 'extends', 'implements', 'interface', 'type', 'async', 'await',
+    'try', 'catch', 'finally', 'throw', 'typeof', 'instanceof', 'void',
+    'def', 'elif', 'pass', 'lambda', 'with', 'as', 'in', 'is', 'yield', 'raise', 'except', 'self', 'new'
+  ]);
+
+  const CONSTANTS = new Set(['true', 'false', 'null', 'undefined', 'None', 'True', 'False']);
+  const TYPES = new Set(['string', 'number', 'boolean', 'any', 'unknown', 'never', 'Record', 'Array', 'Promise', 'Partial', 'React', 'FC']);
+
+  const parts: React.ReactNode[] = [];
+  let match: RegExpExecArray | null;
+  let idx = 0;
+
+  while ((match = tokenRegex.exec(line)) !== null) {
+    const token = match[0];
+    const key = `${idx++}-${token}`;
+
+    if (token.startsWith('//') || token.startsWith('#')) {
+      parts.push(<span key={key} className="text-[#8B949E] italic">{token}</span>);
+    } else if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) {
+      parts.push(<span key={key} className="text-[#A5D6FF]">{token}</span>);
+    } else if (/^\d+(\.\d+)?$/.test(token)) {
+      parts.push(<span key={key} className="text-[#79C0FF]">{token}</span>);
+    } else if (KEYWORDS.has(token)) {
+      parts.push(<span key={key} className="text-[#FF7B72] font-semibold">{token}</span>);
+    } else if (CONSTANTS.has(token)) {
+      parts.push(<span key={key} className="text-[#79C0FF] font-medium">{token}</span>);
+    } else if (TYPES.has(token)) {
+      parts.push(<span key={key} className="text-[#FFA657] font-medium">{token}</span>);
+    } else {
+      const nextChar = line[match.index + token.length];
+      if (nextChar === '(' && /^[a-zA-Z_$]/.test(token)) {
+        parts.push(<span key={key} className="text-[#D2A8FF]">{token}</span>);
+      } else {
+        parts.push(<span key={key}>{token}</span>);
+      }
+    }
+  }
+
+  return parts.length ? parts : line;
 }
 
 function extractText(node: React.ReactNode): string {

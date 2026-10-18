@@ -136,6 +136,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
   private resolveApiModel(model: string): string {
     // Map obsolete model identifiers to active gemini-3.8-flash
     if (
+      model === 'gemini-2.5-flash' ||
       model === 'gemini-2.0-flash' ||
       model === 'gemini-1.5-flash' ||
       model === 'gemini-1.5-pro' ||
@@ -145,6 +146,9 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       model === 'auto'
     ) {
       return 'gemini-3.8-flash';
+    }
+    if (model === 'gemini-2.5-pro') {
+      return 'gemini-3.1-pro-preview';
     }
     return model;
   }

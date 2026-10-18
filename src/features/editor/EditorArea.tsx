@@ -74,9 +74,9 @@ export function EditorArea() {
       
       {!splitFileId ? (
         // Standard Single Editor with Breadcrumbs
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 flex flex-col min-h-0 h-full w-full overflow-hidden relative">
           <Breadcrumbs fileId={activeFileId} />
-          <div className="flex-1 relative min-h-0">
+          <div className="flex-1 relative min-h-0 h-full w-full overflow-hidden">
             <CodeEditor 
               fileId={activeFileId!} 
               fileName={getFileName(activeFileId)} 
@@ -86,11 +86,11 @@ export function EditorArea() {
         </div>
       ) : (
         // Side-by-Side Split Editor View
-        <div className="flex-1 flex min-h-0 divide-x divide-slate-200 dark:divide-[#2A2A2A]">
+        <div className="flex-1 flex min-h-0 h-full w-full overflow-hidden relative divide-x divide-slate-200 dark:divide-[#2A2A2A]">
           {/* Left Pane (Active File) */}
-          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          <div className="flex-1 flex flex-col min-h-0 min-w-0 h-full overflow-hidden relative">
             <Breadcrumbs fileId={activeFileId} />
-            <div className="flex-1 relative min-h-0">
+            <div className="flex-1 relative min-h-0 h-full w-full overflow-hidden">
               <CodeEditor 
                 fileId={activeFileId!} 
                 fileName={getFileName(activeFileId)} 
@@ -100,7 +100,7 @@ export function EditorArea() {
           </div>
 
           {/* Right Pane (Split File) */}
-          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          <div className="flex-1 flex flex-col min-h-0 min-w-0 h-full overflow-hidden relative">
             <div className="flex items-center justify-between bg-slate-50 dark:bg-[#0E0E0E] border-b border-slate-200 dark:border-[#202020] pr-2">
               <div className="flex-1 min-w-0">
                 <Breadcrumbs fileId={splitFileId} />
@@ -113,7 +113,7 @@ export function EditorArea() {
                 <X size={12} />
               </button>
             </div>
-            <div className="flex-1 relative min-h-0">
+            <div className="flex-1 relative min-h-0 h-full w-full overflow-hidden">
               <CodeEditor 
                 fileId={splitFileId!} 
                 fileName={getFileName(splitFileId)} 

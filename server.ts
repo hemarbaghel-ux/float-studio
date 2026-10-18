@@ -75,14 +75,26 @@ async function bootstrap() {
   const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
 
   // Load compiled CJS bundle in production deployment (when dist bundle exists and not running under tsx)
-  if (!isRunningWithTsx && fs.existsSync(distBundle)) {
-    console.log('  📦 Loading production bundle (dist/server.cjs)...');
-    process.env.NODE_ENV = process.env.NODE_ENV || 'production';
-    const mod = await import(pathToFileURL(distBundle).href);
-    const start = mod.startServer || mod.default?.startServer;
-    if (typeof start === 'function') {
-      await start();
-      return;
+  if (!isRunningWithTsx) {
+    if (!fs.existsSync(distBundle)) {
+      try {
+        console.log('  📦 Pre-compiling server bundle (dist/server.cjs)...');
+        const { execSync } = await import('node:child_process');
+        execSync('npx esbuild src/server/app.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs', { stdio: 'inherit' });
+      } catch (buildErr) {
+        console.warn('  ⚠️ On-the-fly server bundle build failed, falling back to source import:', buildErr);
+      }
+    }
+
+    if (fs.existsSync(distBundle)) {
+      console.log('  📦 Loading production bundle (dist/server.cjs)...');
+      process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+      const mod = await import(pathToFileURL(distBundle).href);
+      const start = mod.startServer || mod.default?.startServer;
+      if (typeof start === 'function') {
+        await start();
+        return;
+      }
     }
   }
 

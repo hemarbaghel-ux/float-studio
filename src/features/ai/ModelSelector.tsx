@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAIStore } from '../../store/aiStore';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Key } from 'lucide-react';
 import { INITIAL_MODELS } from './registry';
 import { AIModel } from '../../types/ai';
 import { Portal } from '../../components/Portal';
@@ -504,6 +504,26 @@ export function ModelSelector({
                 setIsCardPinned(true);
               }}
             />
+
+            {/* Configure API Keys (Cursor BYOK) */}
+            <div className="p-1.5 border-t border-slate-200 dark:border-[#21262D] bg-slate-50/60 dark:bg-[#161B22]/60">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  document.dispatchEvent(new CustomEvent('open-api-config-modal'));
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium text-slate-700 dark:text-[#C9D1D9] hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Key size={13} className="text-emerald-500" />
+                  <span>Configure API Keys...</span>
+                </div>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  BYOK
+                </span>
+              </button>
+            </div>
           </div>
         </Portal>
       )}

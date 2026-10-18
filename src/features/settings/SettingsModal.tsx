@@ -1,18 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useIDEStore } from '../../store';
 import { useAuthStore } from '../../store/authStore';
-import { LogOut, X, Sun, Moon, Laptop, User, Copy, Check, Sparkles, Sliders, Palette, ShieldCheck, Plug, Shield, ExternalLink, AlertCircle } from 'lucide-react';
+import { LogOut, X, Sun, Moon, Laptop, User, Copy, Check, Sparkles, Sliders, Palette, ShieldCheck, Plug, Shield, ExternalLink, AlertCircle, Key, Loader2, RotateCcw, Eye, EyeOff, Activity } from 'lucide-react';
 import { FloatLogo } from '../../components/FloatLogo';
 import { cn } from '../../lib/utils';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { useConsentStore } from '../../store/consentStore';
+import { ApiKeysManager } from './ApiKeysManager';
 
-export function SettingsModal({ onClose }: { onClose: () => void }) {
+export function SettingsModal({ onClose, initialSection }: { onClose: () => void; initialSection?: 'profile' | 'appearance' | 'editor' | 'integrations' | 'privacy' | 'agent' }) {
   const { settings, updateSettings } = useIDEStore();
   const { user, logout } = useAuthStore();
   const { preferences, updateConsent, withdrawConsent, isSaving: isSavingConsent, error: consentError, clearError } = useConsentStore();
   const [copiedUid, setCopiedUid] = useState(false);
-  const [activeSection, setActiveSection] = useState<'profile' | 'appearance' | 'editor' | 'integrations' | 'privacy'>('profile');
+  const [activeSection, setActiveSection] = useState<'profile' | 'appearance' | 'editor' | 'integrations' | 'privacy' | 'agent'>(initialSection || 'profile');
   const [consentSuccessMsg, setConsentSuccessMsg] = useState<string | null>(null);
 
   const copyUid = () => {
@@ -112,6 +113,18 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           >
             <Shield size={14} />
             <span>Privacy & Data</span>
+          </button>
+          <button
+            onClick={() => setActiveSection('agent')}
+            className={cn(
+              "flex items-center gap-2 px-3 py-2 text-xs font-medium border-b-2 transition-colors -mb-px cursor-pointer",
+              activeSection === 'agent'
+                ? "border-slate-900 text-slate-900 dark:border-white dark:text-white font-semibold"
+                : "border-transparent text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white"
+            )}
+          >
+            <Key size={14} className="text-purple-600 dark:text-purple-400" />
+            <span>OpenAI Agent & Keys</span>
           </button>
         </div>
 
@@ -542,6 +555,13 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   <ExternalLink size={12} />
                 </a>
               </div>
+            </div>
+          )}
+
+          {/* AI KEYS & MODELS (CURSOR BYOK) */}
+          {activeSection === 'agent' && (
+            <div className="space-y-4">
+              <ApiKeysManager />
             </div>
           )}
 

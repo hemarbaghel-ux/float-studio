@@ -7,11 +7,13 @@ import { INITIAL_MODELS } from '../ai/registry';
 export function EvalsTrends() {
   const { runs } = useEvalStore();
 
+  const SUPPORTED_EVAL_MODELS = useMemo(() => new Set(['gpt-6-astra', 'gpt-6.1-sol']), []);
+
   const completedRuns = useMemo(() => {
     return runs
-      .filter(r => (r.status === 'completed' || r.status === 'Completed') && typeof (r.finalScore ?? r.score) === 'number')
+      .filter(r => (r.status === 'completed' || r.status === 'Completed') && typeof (r.finalScore ?? r.score) === 'number' && SUPPORTED_EVAL_MODELS.has(r.modelId))
       .sort((a, b) => a.startedAt - b.startedAt);
-  }, [runs]);
+  }, [runs, SUPPORTED_EVAL_MODELS]);
 
   const hasEnoughData = completedRuns.length >= 2;
 

@@ -83,7 +83,7 @@ export function FileExplorer() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto pb-4 group">
+      <div className="flex-1 min-h-0 overflow-y-auto pb-4 group relative">
         {files.map(node => (
           <FileTreeNode key={node.id} node={node} level={0} onFileClick={openFile} />
         ))}

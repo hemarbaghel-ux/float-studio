@@ -37,10 +37,10 @@ const getInitialSelectedModel = () => {
       if (saved && VALID_FLOAT_MODELS.includes(saved as any)) {
         return saved;
       }
-      localStorage.setItem('float_selected_model', 'gpt-6.1-sol');
+      localStorage.setItem('float_selected_model', 'gpt-6-astra');
     } catch {}
   }
-  return 'gpt-6.1-sol';
+  return 'gpt-6-astra';
 };
 
 const getInitialEffort = (): ReasoningEffortLevel => {

@@ -74,7 +74,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
   {
     id: 'gpt-6-astra',
     exactModelId: 'gpt-6-astra',
-    displayName: 'GPT-6 Astra (Preview)',
+    displayName: 'GPT-6 Astra Deep Reasoning',
     providerId: 'openai',
     family: 'codex',
     category: 'flagship_coding',
@@ -131,7 +131,7 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
   {
     id: 'gpt-6.1-sol',
     exactModelId: 'gpt-6.1-sol',
-    displayName: 'GPT-6.1 Sol (Preview)',
+    displayName: 'GPT-6.1 Sol Deep Reasoning',
     providerId: 'openai',
     family: 'codex',
     category: 'advanced_reasoning',

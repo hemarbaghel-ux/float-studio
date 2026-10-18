@@ -73,6 +73,9 @@ export default function App() {
           url.pathname === '/integrations' ||
           url.pathname === '/git-sync' ||
           url.pathname === '/dashboard/git-sync' ||
+          url.pathname === '/analyst' ||
+          url.pathname === '/dashboard/analyst' ||
+          url.pathname === '/data-analyst' ||
           url.pathname === '/usage' ||
           url.pathname === '/analytics' ||
           url.pathname === '/dashboard/usage' ||
@@ -239,6 +242,13 @@ export default function App() {
 
   // Dashboard route for specific tabs
   if (
+    currentPath === '/analyst' ||
+    currentPath === '/dashboard/analyst' ||
+    currentPath === '/data-analyst'
+  ) {
+    return <Dashboard initialTab="analyst" />;
+  }
+  if (
     currentPath === '/usage' ||
     currentPath === '/analytics' ||
     currentPath === '/dashboard/usage' ||
@@ -257,6 +267,11 @@ export default function App() {
   }
   if (currentPath === '/dashboard') {
     return <Dashboard initialTab="new-chat" />;
+  }
+
+  // Dedicated Code Editor / IDE Workspace routes
+  if (currentPath === '/workspace' || currentPath === '/ide' || currentPath.startsWith('/workspace/')) {
+    return <IDEWorkspace />;
   }
 
   // Route active chat to Dashboard

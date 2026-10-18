@@ -28,6 +28,8 @@ import { projectProcessManager, ExecutionFile, ExecutionEvent } from './executio
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
 import { GPT6_ASTRA_CLOUD_CONFIG, KNOWN_CLOUD_SESSIONS } from './providers/cloudAgentConfig';
+import { GoogleGenAI } from '@google/genai';
+import { analystRouter } from './analystRouter';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -72,6 +74,9 @@ export async function startServer() {
 
   // Subscription & Checkout Routes
   app.use('/api/subscription', subscriptionRouter);
+
+  // Data Analyst Agent & Python Sandbox Routes
+  app.use('/api/analyst', analystRouter);
 
   // Health check endpoint for Cloud Run and monitoring
   app.get('/api/health', (_req, res) => {
@@ -504,6 +509,171 @@ export async function startServer() {
         code: errorCode,
         provider: errorProvider
       });
+    }
+  });
+
+  // Google Gemini Free Streaming Fallback Endpoint (models gemini-2.5-flash / gemini-2.5-pro via @google/genai)
+  app.post('/api/ai/gemini-stream', async (req: any, res: any) => {
+    const { prompt, conversationHistory = [], systemInstruction, geminiModel, model, customApiKey } = req.body || {};
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'Prompt is required' });
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+
+    const abortController = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) abortController.abort();
+    });
+
+    const defaultSystemInstruction =
+      'You are FLOAT, an elite AI developer platform and deep-reasoning coding assistant inspired by Cursor.\n\n' +
+      'Engineering Standards:\n' +
+      '1. Provide clean, complete, copy-pasteable code blocks with explicit language identifiers (e.g. ```typescript, ```python, ```tsx).\n' +
+      '2. Specify file paths clearly before code blocks (e.g. `src/services/api.ts`).\n' +
+      '3. Explain changes concisely, focusing on technical rationale, architectural decisions, and edge-case handling without conversational fluff.\n' +
+      '4. Use robust error handling, strict TypeScript types, and never leave incomplete ellipsis stubs or unhandled placeholders in functional logic.\n' +
+      '5. When modifying existing code, provide exact snippets that can be directly applied to the project.';
+
+    // Choose primary model based on requested agent / tier
+    const isPro = geminiModel === 'gemini-3.1-pro-preview' || geminiModel === 'gemini-2.5-pro' || model === 'gpt-6.1-sol';
+    const primaryModel = isPro ? 'gemini-3.1-pro-preview' : 'gemini-3.8-flash';
+
+    try {
+      const apiKey = (typeof customApiKey === 'string' && customApiKey.trim()) ? customApiKey.trim() : process.env.GEMINI_API_KEY;
+      const ai = apiKey ? new GoogleGenAI({ apiKey }) : new GoogleGenAI();
+
+      // Format contents for Gemini SDK
+      const contents: any[] = [];
+      if (Array.isArray(conversationHistory)) {
+        for (const msg of conversationHistory.slice(-10)) {
+          if (!msg.content) continue;
+          contents.push({
+            role: msg.role === 'model' || msg.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: msg.content }]
+          });
+        }
+      }
+      contents.push({
+        role: 'user',
+        parts: [{ text: prompt }]
+      });
+
+      let responseStream;
+      try {
+        responseStream = await ai.models.generateContentStream({
+          model: primaryModel,
+          contents,
+          config: {
+            systemInstruction: systemInstruction || defaultSystemInstruction
+          }
+        });
+      } catch (primaryErr: any) {
+        console.warn(`Primary Gemini model ${primaryModel} failed, trying gemini-3.8-flash:`, primaryErr?.message);
+        responseStream = await ai.models.generateContentStream({
+          model: 'gemini-3.8-flash',
+          contents,
+          config: {
+            systemInstruction: systemInstruction || defaultSystemInstruction
+          }
+        });
+      }
+
+      for await (const chunk of responseStream) {
+        if (abortController.signal.aborted || res.destroyed || res.writableEnded) break;
+        const text = chunk.text || '';
+        if (text) {
+          res.write(`data: ${JSON.stringify({ delta: text })}\n\n`);
+        }
+      }
+
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        res.end();
+      }
+    } catch (err: any) {
+      console.error('Gemini Stream Error:', err);
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ error: err.message || 'Gemini streaming error' })}\n\n`);
+        res.end();
+      }
+    }
+  });
+
+  // Verify user-supplied provider API keys (OpenAI, Anthropic, Gemini, DeepSeek)
+  app.post('/api/ai/verify-key', express.json(), async (req: any, res: any) => {
+    const { provider, key } = req.body || {};
+    if (!provider || !key || typeof key !== 'string') {
+      return res.status(400).json({ valid: false, message: 'Provider and API key are required.' });
+    }
+
+    const cleanKey = key.trim();
+
+    try {
+      if (provider === 'openai') {
+        const resp = await fetch('https://api.openai.com/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (resp.ok) {
+          return res.json({ valid: true, message: 'OpenAI API key authenticated successfully!' });
+        }
+        const err = await resp.json().catch(() => ({}));
+        const errMsg = err.error?.message || `HTTP ${resp.status}`;
+        if (/quota|billing|credit/i.test(errMsg)) {
+          return res.json({ valid: true, message: 'Key authenticated, but OpenAI quota is currently exhausted.' });
+        }
+        return res.json({ valid: false, message: errMsg });
+      }
+
+      if (provider === 'anthropic') {
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': cleanKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'claude-3-5-sonnet-20241022',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'ping' }]
+          })
+        });
+        if (resp.ok || resp.status === 400 || (resp.status !== 401 && resp.status !== 403)) {
+          return res.json({ valid: true, message: 'Anthropic API key authenticated successfully!' });
+        }
+        const err = await resp.json().catch(() => ({}));
+        return res.json({ valid: false, message: err.error?.message || `HTTP ${resp.status}` });
+      }
+
+      if (provider === 'deepseek') {
+        const resp = await fetch('https://api.deepseek.com/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (resp.ok) {
+          return res.json({ valid: true, message: 'DeepSeek API key authenticated successfully!' });
+        }
+        const err = await resp.json().catch(() => ({}));
+        return res.json({ valid: false, message: err.error?.message || `HTTP ${resp.status}` });
+      }
+
+      if (provider === 'gemini') {
+        const ai = new GoogleGenAI({ apiKey: cleanKey });
+        await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: 'ping'
+        });
+        return res.json({ valid: true, message: 'Google Gemini API key verified successfully!' });
+      }
+
+      return res.status(400).json({ valid: false, message: `Unsupported provider: ${provider}` });
+    } catch (verifyErr: any) {
+      return res.json({ valid: false, message: verifyErr.message || 'Key verification failed' });
     }
   });
 

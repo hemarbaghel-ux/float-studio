@@ -1,16 +1,41 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export interface CloudProfile {
+  id: string;
+  name: string;
+  sessionId: string;
+  environmentId: string;
+  model: string;
+}
+
+export const AVAILABLE_PROFILES: CloudProfile[] = [
+  {
+    id: 'sol',
+    name: 'GPT-6.1 Sol (Default)',
+    sessionId: 'sess_087a4d42ca75939b006ace64b295ac8193b83bd1fbfd9a4015',
+    environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+    model: 'GPT-6.1 Sol (Preview)',
+  },
+  {
+    id: 'astra',
+    name: 'GPT-6 Astra',
+    sessionId: 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
+    environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+    model: 'GPT-6 Astra (Preview)',
+  },
+];
+
 export const DEFAULT_CLOUD_SESSION = {
-  sessionId: 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
-  environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+  sessionId: AVAILABLE_PROFILES[0].sessionId,
+  environmentId: AVAILABLE_PROFILES[0].environmentId,
   region: 'cloud-agent',
-  machine: 'astra-ccarenv',
-  modelAttached: 'GPT-6 Astra (Preview)',
-  fallbackModel: 'gpt-6.1-sol',
+  machine: 'sol-ccarenv',
+  modelAttached: AVAILABLE_PROFILES[0].model,
+  fallbackModel: 'gpt-6-astra',
   fallbackStrategy: 'upstream_fallback_if_unreachable',
   remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_7k2m',
-  execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ' --session-id 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'`,
+  execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${AVAILABLE_PROFILES[0].environmentId}' --session-id '${AVAILABLE_PROFILES[0].sessionId}'`,
 };
 
 export interface CloudSessionState {
@@ -26,9 +51,9 @@ export interface CloudSessionState {
   fallbackReady: boolean;
   modelAttached?: string;
   modalOpen: boolean;
-  start: (region?: string, machine?: string, sessionId?: string, environmentId?: string) => void;
+  start: (region?: string, machine?: string, sessionId?: string, environmentId?: string, modelAttached?: string) => void;
   stop: () => void;
-  connect: (sessionId?: string, environmentId?: string) => void;
+  connect: (sessionId?: string, environmentId?: string, modelAttached?: string) => void;
   disconnect: () => void;
   openModal: () => void;
   closeModal: () => void;
@@ -50,7 +75,13 @@ export const useCloudSession = create<CloudSessionState>()(
       fallbackReady: true,
       modelAttached: DEFAULT_CLOUD_SESSION.modelAttached,
       modalOpen: false,
-      start: (region = DEFAULT_CLOUD_SESSION.region, machine = DEFAULT_CLOUD_SESSION.machine, sessionId = DEFAULT_CLOUD_SESSION.sessionId, environmentId = DEFAULT_CLOUD_SESSION.environmentId) =>
+      start: (
+        region = DEFAULT_CLOUD_SESSION.region,
+        machine = DEFAULT_CLOUD_SESSION.machine,
+        sessionId = DEFAULT_CLOUD_SESSION.sessionId,
+        environmentId = DEFAULT_CLOUD_SESSION.environmentId,
+        modelAttached = DEFAULT_CLOUD_SESSION.modelAttached
+      ) =>
         set({
           active: true,
           startedAt: Date.now(),
@@ -58,8 +89,9 @@ export const useCloudSession = create<CloudSessionState>()(
           machine,
           sessionId,
           environmentId,
+          modelAttached,
           remoteUrl: DEFAULT_CLOUD_SESSION.remoteUrl,
-          execServerCommand: DEFAULT_CLOUD_SESSION.execServerCommand,
+          execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${environmentId}' --session-id '${sessionId}'`,
           status: 'connected',
           fallbackReady: true,
           modalOpen: false
@@ -70,14 +102,19 @@ export const useCloudSession = create<CloudSessionState>()(
           startedAt: undefined,
           status: 'disconnected'
         }),
-      connect: (sessionId = DEFAULT_CLOUD_SESSION.sessionId, environmentId = DEFAULT_CLOUD_SESSION.environmentId) =>
+      connect: (
+        sessionId = DEFAULT_CLOUD_SESSION.sessionId,
+        environmentId = DEFAULT_CLOUD_SESSION.environmentId,
+        modelAttached = DEFAULT_CLOUD_SESSION.modelAttached
+      ) =>
         set((prev) => ({
           active: true,
           startedAt: prev.startedAt || Date.now(),
           sessionId,
           environmentId,
+          modelAttached: modelAttached || prev.modelAttached || DEFAULT_CLOUD_SESSION.modelAttached,
           remoteUrl: DEFAULT_CLOUD_SESSION.remoteUrl,
-          execServerCommand: DEFAULT_CLOUD_SESSION.execServerCommand,
+          execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${environmentId}' --session-id '${sessionId}'`,
           status: 'connected',
           fallbackReady: true
         })),

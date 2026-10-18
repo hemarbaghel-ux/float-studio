@@ -3,6 +3,8 @@ import { useEvalStore } from '../../store/evalStore';
 
 export function EvalHistoryList() {
   const { runs } = useEvalStore();
+  const SUPPORTED_EVAL_MODELS = new Set(['gpt-6-astra', 'gpt-6.1-sol']);
+  const activeRuns = runs.filter(r => SUPPORTED_EVAL_MODELS.has(r.modelId));
 
   return (
     <div className="bg-[#0D1117] border border-[#30363D] rounded-xl overflow-hidden">
@@ -21,14 +23,14 @@ export function EvalHistoryList() {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#30363D]">
-            {runs.length === 0 ? (
+            {activeRuns.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-4 py-8 text-center text-[#8B949E]">
                   No evaluation history found.
                 </td>
               </tr>
             ) : (
-              runs.map((run) => (
+              activeRuns.map((run) => (
                 <tr key={run.id} className="hover:bg-[#161B22] transition-colors">
                   <td className="px-4 py-3 text-[#C9D1D9] font-medium truncate max-w-[150px]" title={run.taskId}>{run.taskId}</td>
                   <td className="px-4 py-3 text-[#8B949E]">{run.modelId}</td>

@@ -6,7 +6,9 @@ import { INITIAL_MODELS } from '../ai/registry';
 export function EvalsReports() {
   const { runs, tasks, exportRuns } = useEvalStore();
 
-  const completedRuns = runs.filter(r => r.status === 'completed' || r.status === 'Completed');
+  const SUPPORTED_EVAL_MODELS = new Set(['gpt-6-astra', 'gpt-6.1-sol']);
+  const activeRuns = runs.filter(r => SUPPORTED_EVAL_MODELS.has(r.modelId));
+  const completedRuns = activeRuns.filter(r => r.status === 'completed' || r.status === 'Completed');
   const scoredRuns = completedRuns.filter(r => typeof (r.finalScore ?? r.score) === 'number');
   const testedRuns = completedRuns.filter(r => r.testsPassed !== undefined);
   const hasData = scoredRuns.length > 0;
@@ -58,7 +60,7 @@ export function EvalsReports() {
           </div>
           <h3 className="text-lg font-bold text-white">Platform Benchmark Audit Summary</h3>
           <p className="text-xs text-[#8B949E] mt-1">
-            Evidence-based summary compiled from {runs.length} total execution records ({completedRuns.length} completed, {runs.length - completedRuns.length} non-completed).
+            Evidence-based summary compiled from {activeRuns.length} total execution records ({completedRuns.length} completed, {activeRuns.length - completedRuns.length} non-completed).
           </p>
         </div>
 

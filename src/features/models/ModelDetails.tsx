@@ -373,7 +373,7 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
                 </span>
               </div>
               <code className="text-emerald-300 font-mono text-[11px] break-all block">
-                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.sessionId || 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01'}
+                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.sessionId || 'Auto-Provisioned Session'}
               </code>
             </div>
             <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">

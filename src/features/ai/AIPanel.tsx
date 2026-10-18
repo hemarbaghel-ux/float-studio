@@ -1462,7 +1462,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
   const isSelectionAvailable = !!(activeSelection && activeSelection.text.trim());
 
   return (
-    <div className="h-full flex flex-col bg-slate-50 dark:bg-[#0A0A0A]">
+    <div className="h-full w-full min-h-0 flex flex-col bg-slate-50 dark:bg-[#0A0A0A] overflow-hidden relative">
       {/* Hidden File Input for local source upload */}
       <input
         ref={fileInputRef}
@@ -1827,7 +1827,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
       <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 scrollbar-thin"
+        className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-5 scrollbar-thin relative"
       >
         {aiMessages.length === 0 ? (
           <div className="text-center my-auto py-8 text-sm text-slate-500 dark:text-[#8B949E] flex flex-col items-center">

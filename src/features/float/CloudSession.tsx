@@ -14,52 +14,7 @@ function useTick(ms: number, enabled: boolean) {
 
 /** Banner shown on top of the composer. Opens the session dialog or shows the live session. */
 export function CloudSessionBanner() {
-  const { active, startedAt, openModal, stop, sessionId, modelAttached, connect } = useCloudSession();
-  const now = useTick(1000, active);
-
-  if (!active) {
-    return (
-      <button
-        type="button"
-        onClick={() => connect()}
-        className="w-full py-2.5 px-4 bg-emerald-50/50 dark:bg-emerald-950/20 border border-b-0 border-emerald-300 dark:border-emerald-500/30 rounded-t-2xl text-xs text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-950/40 transition-colors flex items-center justify-between gap-1.5 cursor-pointer shadow-2xs"
-      >
-        <div className="flex items-center gap-2">
-          <Cloud size={13} className="text-emerald-500" />
-          <span>Attach session: <strong className="font-mono">sess_087a...</strong> ({modelAttached || 'GPT-6.1 Sol'} + Workspace)</span>
-        </div>
-        <span className="font-semibold text-[11px] underline">Connect Now</span>
-      </button>
-    );
-  }
-
-  const shortSession = sessionId ? `${sessionId.slice(0, 15)}...` : 'sess_087a4d42ca7...';
-
-  return (
-    <div className="w-full py-2 px-4 bg-emerald-50 dark:bg-emerald-500/10 border border-b-0 border-emerald-200 dark:border-emerald-500/20 rounded-t-2xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-2 shadow-2xs">
-      <div className="flex items-center gap-2 truncate">
-        <span className="relative flex h-2 w-2 flex-shrink-0">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-        </span>
-        <Check size={13} className="flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
-        <span className="truncate">
-          Session <span className="font-mono">{shortSession}</span> · <span className="font-semibold text-emerald-600 dark:text-emerald-400">Connected</span> ({formatDuration(now - (startedAt ?? now))})
-        </span>
-        <span className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-300/40">
-          {modelAttached || 'GPT-6.1 Sol'} + Workspace · Fallback ready
-        </span>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <button type="button" onClick={openModal} className="hover:underline text-[11px] opacity-80 cursor-pointer">
-          Details & Connect
-        </button>
-        <button type="button" onClick={stop} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-[11px] cursor-pointer">
-          Disconnect
-        </button>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 export function CloudSessionModal() {

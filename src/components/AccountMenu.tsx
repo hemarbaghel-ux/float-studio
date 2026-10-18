@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useId } from 'react';
 import {
   Home, Settings, User as UserIcon, ArrowDownCircle, Sun, Moon,
   HelpCircle, LogOut, ChevronRight, Check, Sparkles, FileText,
-  Laptop, SlidersHorizontal, Mail, Loader2, Palette
+  Laptop, SlidersHorizontal, Mail, Loader2, Palette, KeyRound,
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useIDEStore, applyThemeToDocument } from '../store';
@@ -411,6 +411,18 @@ export function AccountMenu({
             >
               <Settings size={14} className="text-slate-400 dark:text-[#8B949E] shrink-0" />
               <span className="flex-1">My Settings</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setIsOpen(false);
+                document.dispatchEvent(new CustomEvent('open-api-config-modal'));
+              }}
+              role="menuitem"
+              className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-left hover:bg-slate-50 dark:hover:bg-white/5 text-slate-700 dark:text-[#C9D1D9] hover:text-slate-900 dark:hover:text-white"
+            >
+              <KeyRound size={14} className="text-purple-600 dark:text-purple-400 shrink-0" />
+              <span className="flex-1">API & Agent Config</span>
             </button>
           </div>
 

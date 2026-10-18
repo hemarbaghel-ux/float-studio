@@ -74,8 +74,11 @@ export function LandingPage() {
             {t('nav.signin', 'Sign in')}
           </button>
           <button
-            onClick={handleStart}
-            className="px-4 py-1.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-semibold"
+            onClick={() => {
+              window.history.pushState({}, '', '/download');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }}
+            className="px-4 py-1.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-semibold cursor-pointer"
           >
             {t('nav.download', 'Download')}
           </button>

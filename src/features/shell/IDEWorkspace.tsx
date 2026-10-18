@@ -12,6 +12,7 @@ import { SearchPanel } from '../search/SearchPanel';
 import { GitPanel } from '../git/GitPanel';
 import { CommandPalette } from '../command-palette/CommandPalette';
 import { SettingsModal } from '../settings/SettingsModal';
+import { ApiConfigModal } from '../settings/ApiConfigModal';
 
 import { AgentManagerModal } from '../ai/AgentManagerModal';
 import { EvalsWorkspace } from '../evals/EvalsWorkspace';
@@ -29,31 +30,43 @@ export function IDEWorkspace() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [agentManagerOpen, setAgentManagerOpen] = useState(false);
+  const [apiConfigOpen, setApiConfigOpen] = useState(false);
   const { setProject } = useIDEStore();
+
+  useEffect(() => {
+    const handleOpen = () => setApiConfigOpen(true);
+    document.addEventListener('open-api-config-modal', handleOpen);
+    return () => document.removeEventListener('open-api-config-modal', handleOpen);
+  }, []);
 
   useEffect(() => {
     const handleLocationOrLoad = () => {
       const path = window.location.pathname;
+      let id = '';
       if (path.startsWith('/chat/')) {
-        const id = path.replace('/chat/', '').trim();
-        if (id && useIDEStore.getState().projectId !== id) {
-          getDoc(doc(db, 'projects', id))
-            .then(snap => {
-              if (snap.exists()) {
-                const data = snap.data();
-                let parsedFiles = [];
-                try {
-                  parsedFiles = typeof data.files === 'string' ? JSON.parse(data.files) : (data.files || []);
-                } catch {
-                  parsedFiles = [];
-                }
-                setProject(data.name || 'Untitled Project', parsedFiles, id);
+        id = path.replace('/chat/', '').trim();
+      } else if (path.startsWith('/workspace/')) {
+        id = path.replace('/workspace/', '').trim();
+      } else if (path === '/workspace' || path === '/ide') {
+        id = useIDEStore.getState().projectId || '';
+      }
+      if (id && useIDEStore.getState().projectId !== id) {
+        getDoc(doc(db, 'projects', id))
+          .then(snap => {
+            if (snap.exists()) {
+              const data = snap.data();
+              let parsedFiles = [];
+              try {
+                parsedFiles = typeof data.files === 'string' ? JSON.parse(data.files) : (data.files || []);
+              } catch {
+                parsedFiles = [];
               }
-            })
-            .catch(err => {
-              console.error('Failed to load project from cloud:', err);
-            });
-        }
+              setProject(data.name || 'Untitled Project', parsedFiles, id);
+            }
+          })
+          .catch(err => {
+            console.error('Failed to load project from cloud:', err);
+          });
       }
     };
 
@@ -113,36 +126,36 @@ export function IDEWorkspace() {
   }, [files]); // Re-run effect when files change to debounce save
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-slate-100 dark:bg-[#000000] text-slate-800 dark:text-[#C9D1D9] flex flex-col font-sans selection:bg-slate-300 dark:selection:bg-white/20">
+    <div className="h-screen w-full max-w-full overflow-hidden bg-slate-100 dark:bg-[#000000] text-slate-800 dark:text-[#C9D1D9] flex flex-col font-sans selection:bg-slate-300 dark:selection:bg-white/20 relative">
       <Header />
       
-      <div className="flex-1 flex min-w-0 overflow-hidden">
+      <div className="flex-1 flex min-w-0 h-[calc(100vh-2.5rem)] overflow-hidden relative">
         <ActivityBar />
         
-        <div className="flex-1 flex min-w-0">
+        <div className="flex-1 flex min-w-0 h-full overflow-hidden relative">
         
         {leftSidebarOpen && (
-          <div className="w-64 bg-white dark:bg-[#0A0A0A] border-r border-slate-200 dark:border-[#2A2A2A] shrink-0 flex flex-col">
+          <div className="w-64 h-full min-h-0 bg-white dark:bg-[#0A0A0A] border-r border-slate-200 dark:border-[#2A2A2A] shrink-0 flex flex-col relative overflow-hidden">
             {activeSidebarView === 'explorer' ? <FileExplorer /> : activeSidebarView === 'search' ? <SearchPanel /> : <GitPanel />}
           </div>
         )}
 
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex-1 min-h-0 relative">
+        <div className="flex-1 flex flex-col min-w-0 h-full min-h-0 overflow-hidden relative">
+          <div className="flex-1 min-h-0 relative h-full w-full overflow-hidden">
             {activeWorkspace === 'code' && <EditorArea />}
             {activeWorkspace === 'evals' && <EvalsWorkspace />}
             {activeWorkspace === 'agents' && <AgentsWorkspace />}
           </div>
           
           {bottomPanelOpen && (
-            <div className="h-48 border-t border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#080808] shrink-0">
+            <div className="h-48 border-t border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#080808] shrink-0 relative overflow-hidden">
               <BottomPanel />
             </div>
           )}
         </div>
 
         {rightSidebarOpen && (
-          <div className="w-80 border-l border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#0A0A0A] shrink-0 flex flex-col">
+          <div className="w-80 lg:w-96 max-w-[45vw] h-full min-h-0 border-l border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#0A0A0A] shrink-0 flex flex-col relative overflow-hidden">
             <AIPanel />
           </div>
         )}
@@ -153,6 +166,7 @@ export function IDEWorkspace() {
       <CommandPalette />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {agentManagerOpen && <AgentManagerModal onClose={() => setAgentManagerOpen(false)} />}
+      <ApiConfigModal isOpen={apiConfigOpen} onClose={() => setApiConfigOpen(false)} />
     </div>
   );
 }

@@ -16,11 +16,13 @@ interface EvalsOverviewProps {
 export function EvalsOverview({ onNewEval, onNewTask, onRunBenchmark }: EvalsOverviewProps) {
   const { runs, tasks, benchmarks, setSelectedRun, setActiveTab } = useEvalStore();
 
-  const completedRuns = runs.filter(r => r.status === 'completed' || r.status === 'Completed');
+  const SUPPORTED_EVAL_MODELS = new Set(['gpt-6-astra', 'gpt-6.1-sol']);
+  const activeRuns = runs.filter(r => SUPPORTED_EVAL_MODELS.has(r.modelId));
+  const completedRuns = activeRuns.filter(r => r.status === 'completed' || r.status === 'Completed');
   const scoredRuns = completedRuns.filter(r => typeof (r.finalScore ?? r.score) === 'number');
   const testedRuns = completedRuns.filter(r => r.testsPassed !== undefined);
-  const failedRuns = runs.filter(r => r.status === 'failed' || r.status === 'Failed');
-  const runningRuns = runs.filter(r => r.status === 'running' || r.status === 'queued' || r.status === 'Running');
+  const failedRuns = activeRuns.filter(r => r.status === 'failed' || r.status === 'Failed');
+  const runningRuns = activeRuns.filter(r => r.status === 'running' || r.status === 'queued' || r.status === 'Running');
 
   const hasData = scoredRuns.length > 0;
 
@@ -54,7 +56,7 @@ export function EvalsOverview({ onNewEval, onNewTask, onRunBenchmark }: EvalsOve
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
         <StatCard
           label="Total Evaluations"
-          value={runs.length.toString()}
+          value={activeRuns.length.toString()}
           subtext={`${completedRuns.length} completed, ${runningRuns.length} active`}
           icon={Activity}
         />
@@ -141,7 +143,7 @@ export function EvalsOverview({ onNewEval, onNewTask, onRunBenchmark }: EvalsOve
           )}
         </div>
 
-        {runs.length === 0 ? (
+        {activeRuns.length === 0 ? (
           <div className="p-12 text-center flex flex-col items-center justify-center">
             <div className="w-12 h-12 bg-[#0D1117] rounded-full flex items-center justify-center mb-3 border border-[#30363D]">
               <BarChart3 className="text-[#8B949E]" size={22} />
@@ -174,7 +176,7 @@ export function EvalsOverview({ onNewEval, onNewTask, onRunBenchmark }: EvalsOve
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#30363D]">
-                {runs.slice(0, 6).map(run => {
+                {activeRuns.slice(0, 6).map(run => {
                   const modelMeta = INITIAL_MODELS.find(m => m.id === run.modelId);
                   const isRunning = run.status === 'running' || run.status === 'queued' || run.status === 'Running';
                   const isPassed = (run.status === 'completed' || run.status === 'Completed') && (run.finalScore ?? run.score ?? 0) >= 70;

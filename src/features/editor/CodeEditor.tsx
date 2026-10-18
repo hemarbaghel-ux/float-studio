@@ -317,6 +317,17 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
         setActiveSelection(null);
       }
     });
+
+    // Recalculate editor coordinates whenever parent bounds change
+    if (typeof ResizeObserver !== 'undefined') {
+      const domNode = editor.getDomNode();
+      if (domNode?.parentElement) {
+        const resizeObserver = new ResizeObserver(() => {
+          editor.layout();
+        });
+        resizeObserver.observe(domNode.parentElement);
+      }
+    }
   };
 
   const isDark = typeof document !== 'undefined'
@@ -333,6 +344,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
         onChange={handleEditorChange}
         onMount={handleEditorDidMount}
         options={{
+          automaticLayout: true,
           fontSize: settings.fontSize,
           wordWrap: settings.wordWrap,
           minimap: { enabled: settings.minimap },

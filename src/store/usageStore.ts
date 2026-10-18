@@ -17,6 +17,8 @@ export interface ModelUsageRecord {
   estimatedCost: number;
   status: 'success' | 'error';
   errorType?: string;
+  isFallback?: boolean;
+  savingsUSD?: number;
 }
 
 interface UsageStore {

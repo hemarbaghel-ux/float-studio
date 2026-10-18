@@ -5,17 +5,27 @@ import {
   ArrowUp, PanelLeftClose, PanelLeftOpen,
   Loader2, Check, ChevronDown, X,
   ArrowRight, Filter, SlidersHorizontal, MoreHorizontal,
-  BarChart3, GitBranch,
+  BarChart3, GitBranch, KeyRound, Terminal, Bug, FileSpreadsheet,
 } from 'lucide-react';
 import { useIDEStore } from '../../store';
+import { DataAnalystWorkspace } from '../analyst/DataAnalystWorkspace';
+
+const STARTER_PROMPTS = [
+  { label: 'Build a React counter component', icon: Sparkles },
+  { label: 'Create a REST API client with retries', icon: Terminal },
+  { label: 'Debug memory leak in useEffect', icon: Bug },
+  { label: 'Write TypeScript schema validator', icon: Code2 },
+];
 import { useAuthStore } from '../../store/authStore';
 import { useAIStore } from '../../store/aiStore';
 import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { FloatLogo } from '../../components/FloatLogo';
 import { SettingsModal } from '../settings/SettingsModal';
+import { ApiConfigModal } from '../settings/ApiConfigModal';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { UsageAnalyticsView } from './UsageAnalyticsView';
+import { UsageSavingsCard } from './UsageSavingsCard';
 import { GitSyncDashboard } from './GitSyncDashboard';
 import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
 import { DASHBOARD_MODELS } from './dashboardModels';
@@ -40,19 +50,29 @@ interface ProjectItem {
 }
 
 export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) {
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeTab, setActiveTab] = useState(() => {
+    const p = window.location.pathname;
+    if (p === '/dashboard/analyst' || p === '/analyst' || p === '/data-analyst') return 'analyst';
+    if (p === '/dashboard/usage' || p === '/usage' || p === '/analytics') return 'usage';
+    if (p === '/git-sync') return 'git-sync';
+    if (p === '/automations') return 'automations';
+    if (p === '/integrations') return 'integrations';
+    if (p === '/projects') return 'projects';
+    return initialTab;
+  });
   const [activeChatId, setActiveChatId] = useState<string | null>(() => {
     const match = window.location.pathname.match(/^\/chat\/([^/]+)/);
     return match ? match[1] : null;
   });
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState('Build a React counter component');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showApiConfig, setShowApiConfig] = useState(false);
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>('gpt-6.1-sol');
+  const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(() => useAIStore.getState().selectedModel || 'gpt-6-astra');
   const [attachments, setAttachments] = useState<Attachments>({});
 
   // Chats list & search
@@ -70,13 +90,37 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const resolveTab = (pathname: string): string => {
+    if (pathname === '/dashboard/analyst' || pathname === '/analyst' || pathname === '/data-analyst') return 'analyst';
+    if (pathname === '/dashboard/usage' || pathname === '/usage' || pathname === '/analytics') return 'usage';
+    if (pathname === '/git-sync' || pathname === '/dashboard/git-sync') return 'git-sync';
+    if (pathname === '/automations' || pathname === '/dashboard/automations') return 'automations';
+    if (pathname === '/integrations' || pathname === '/dashboard/integrations') return 'integrations';
+    if (pathname === '/projects' || pathname === '/codebase' || pathname === '/dashboard/projects') return 'codebase';
+    if (pathname === '/' || pathname === '/dashboard') return 'new-chat';
+    return initialTab;
+  };
+
   useEffect(() => {
-    setActiveTab(initialTab);
-    const match = window.location.pathname.match(/^\/chat\/([^/]+)/);
+    const p = window.location.pathname;
+    setActiveTab(resolveTab(p));
+    const match = p.match(/^\/chat\/([^/]+)/);
     setActiveChatId(match ? match[1] : null);
+
+    const handlePopState = () => {
+      const current = window.location.pathname;
+      setActiveTab(resolveTab(current));
+      const chatMatch = current.match(/^\/chat\/([^/]+)/);
+      setActiveChatId(chatMatch ? chatMatch[1] : null);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, [initialTab]);
 
   useEffect(() => {
+    const openConfig = () => setShowApiConfig(true);
+    document.addEventListener('open-api-config-modal', openConfig);
+    return () => document.removeEventListener('open-api-config-modal', openConfig);
   }, []);
 
   useEffect(() => {
@@ -315,6 +359,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           {/* Codebase Button with Early Beta Badge */}
           <button
             onClick={() => {
+              setActiveChatId(null);
               setActiveTab('codebase');
               window.history.pushState({}, '', '/projects');
               window.dispatchEvent(new PopStateEvent('popstate'));
@@ -323,7 +368,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             className={`w-full flex items-center ${
               sidebarCollapsed ? 'justify-center px-0' : 'justify-between px-3'
             } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === 'codebase'
+              activeTab === 'codebase' || activeTab === 'projects'
                 ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
                 : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
             }`}
@@ -378,6 +423,8 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
             <GitBranch size={15} className="text-slate-600 dark:text-[#8B949E] shrink-0" />
             {!sidebarCollapsed && <span>Git Sync</span>}
           </button>
+
+          {/* End of primary navigation buttons */}
         </div>
 
         {/* Chats Section */}
@@ -460,7 +507,9 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       {/* MAIN CONTENT AREA                                        */}
       {/* ======================================================== */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative bg-[#F8F8F7] dark:bg-[#0A0A0A] transition-colors">
-        {activeTab === 'git-sync' || activeTab === 'git' ? (
+        {activeTab === 'analyst' || activeTab === 'data-analyst' ? (
+          <DataAnalystWorkspace />
+        ) : activeTab === 'git-sync' || activeTab === 'git' ? (
           <div className="w-full h-full p-6 md:p-8 max-w-6xl mx-auto flex flex-col gap-6">
             <GitSyncDashboard />
           </div>
@@ -643,6 +692,66 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                     </button>
                   </div>
               </div>
+
+              {/* Starter Prompt Chips Bar */}
+              <div className="hidden" style={{ display: 'none' }}>
+                {STARTER_PROMPTS.map((item) => {
+                  const isActive = prompt.trim() === item.label;
+                  return (
+                    <div
+                      key={item.label}
+                      className={`group inline-flex items-center rounded-lg border transition-all text-xs ${
+                        isActive
+                          ? 'bg-slate-900 text-white dark:bg-white dark:text-black border-slate-900 dark:border-white shadow-xs'
+                          : 'bg-white/80 dark:bg-[#141414] border-slate-200/90 dark:border-[#2C2C2C] text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white hover:border-slate-300 dark:hover:border-[#444]'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPrompt(item.label);
+                          if (textareaRef.current) {
+                            textareaRef.current.focus();
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer focus:outline-none"
+                        title={`Load "${item.label}"`}
+                      >
+                        <item.icon size={12} className={isActive ? 'text-current' : 'text-slate-400 dark:text-[#6E7681]'} />
+                        <span className="font-normal">{item.label}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStart(item.label);
+                        }}
+                        disabled={isSubmitting}
+                        className={`px-1.5 py-1.5 border-l opacity-60 hover:opacity-100 transition-opacity cursor-pointer ${
+                          isActive
+                            ? 'border-white/20 dark:border-black/20 text-current'
+                            : 'border-slate-200 dark:border-[#2C2C2C] text-slate-400 dark:text-[#6E7681] hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                        title={`Run "${item.label}" immediately`}
+                        aria-label={`Run "${item.label}" immediately`}
+                      >
+                        <ArrowRight size={11} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* AI Token Usage & Cost Savings Overview */}
+              <div className="hidden" style={{ display: 'none' }}>
+                <UsageSavingsCard
+                  onViewFullAnalytics={() => {
+                    setActiveTab('usage');
+                    window.history.pushState({}, '', '/dashboard/usage');
+                    window.dispatchEvent(new PopStateEvent('popstate'));
+                  }}
+                />
+              </div>
             </div>
         )}
       </main>
@@ -654,6 +763,8 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       {showAgentManager && (
         <AgentManagerModal onClose={() => setShowAgentManager(false)} />
       )}
+      {/* OpenAI Agent Session & API Config Modal */}
+      <ApiConfigModal isOpen={showApiConfig} onClose={() => setShowApiConfig(false)} />
     </div>
   );
 }
