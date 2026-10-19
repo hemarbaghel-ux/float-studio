@@ -126,7 +126,7 @@ export function IDEWorkspace() {
   }, [files]); // Re-run effect when files change to debounce save
 
   return (
-    <div className="h-screen w-full max-w-full overflow-hidden bg-slate-100 dark:bg-[#000000] text-slate-800 dark:text-[#C9D1D9] flex flex-col font-sans selection:bg-slate-300 dark:selection:bg-white/20 relative">
+    <div className="float-ide-workspace h-screen w-full max-w-full overflow-hidden bg-slate-100 dark:bg-[#000000] text-slate-800 dark:text-[#C9D1D9] flex flex-col font-sans selection:bg-slate-300 dark:selection:bg-white/20 relative">
       <Header />
       
       <div className="flex-1 flex min-w-0 h-[calc(100vh-2.5rem)] overflow-hidden relative">

@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { LanguageProvider } from './components/LanguageProvider';
 import './index.css';
+import './styles/float-ide-design.css';
 
 const LegacyCacheRecovery = lazy(() => import('./components/LegacyCacheRecovery').then((module) => ({ default: module.LegacyCacheRecovery })));
 
