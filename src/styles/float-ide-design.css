@@ -1,0 +1,140 @@
+/*
+ * FLOAT IDE design system
+ * Original implementation inspired by common modern AI-code-editor patterns.
+ * Not copied from Cursor's proprietary application source.
+ */
+:root {
+  --float-ide-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --float-ide-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --float-ide-radius-sm: 5px;
+  --float-ide-radius-md: 8px;
+  --float-ide-radius-lg: 11px;
+  --float-ide-space-1: 4px;
+  --float-ide-space-2: 8px;
+  --float-ide-space-3: 12px;
+  --float-ide-space-4: 16px;
+  --float-ide-space-5: 20px;
+  --float-ide-space-6: 24px;
+  --float-ide-motion-fast: 120ms;
+  --float-ide-motion-normal: 180ms;
+  --float-ide-ease: cubic-bezier(.2, .7, .2, 1);
+
+  --float-ide-canvas: #111111;
+  --float-ide-surface: #171717;
+  --float-ide-surface-raised: #1c1c1c;
+  --float-ide-surface-hover: #242424;
+  --float-ide-border: #2b2b2b;
+  --float-ide-border-strong: #383838;
+  --float-ide-text: #e7e7e7;
+  --float-ide-text-muted: #a1a1aa;
+  --float-ide-text-subtle: #71717a;
+  --float-ide-accent: #d4d4d8;
+  --float-ide-focus: #a1a1aa;
+  --float-ide-success: #75c99a;
+  --float-ide-warning: #e8bd70;
+  --float-ide-danger: #f18b8b;
+}
+
+html.light {
+  --float-ide-canvas: #f7f7f7;
+  --float-ide-surface: #ffffff;
+  --float-ide-surface-raised: #fafafa;
+  --float-ide-surface-hover: #f0f0f0;
+  --float-ide-border: #e5e5e5;
+  --float-ide-border-strong: #d4d4d4;
+  --float-ide-text: #202020;
+  --float-ide-text-muted: #66666f;
+  --float-ide-text-subtle: #8a8a93;
+  --float-ide-accent: #343434;
+  --float-ide-focus: #737373;
+}
+
+.float-ide-workspace {
+  font-family: var(--float-ide-font-sans);
+  background: var(--float-ide-canvas);
+  color: var(--float-ide-text);
+  color-scheme: dark;
+}
+
+html.light .float-ide-workspace {
+  color-scheme: light;
+}
+
+.float-ide-workspace :where(button, input, textarea, select) {
+  font: inherit;
+}
+
+.float-ide-workspace :where(button) {
+  transition:
+    background-color var(--float-ide-motion-fast) var(--float-ide-ease),
+    border-color var(--float-ide-motion-fast) var(--float-ide-ease),
+    color var(--float-ide-motion-fast) var(--float-ide-ease),
+    opacity var(--float-ide-motion-fast) var(--float-ide-ease);
+}
+
+.float-ide-workspace :where(button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible) {
+  outline: 2px solid var(--float-ide-focus);
+  outline-offset: 2px;
+}
+
+.float-ide-workspace :where(textarea, input) {
+  accent-color: var(--float-ide-accent);
+}
+
+.float-ide-workspace :where(pre, code, .font-mono) {
+  font-family: var(--float-ide-font-mono);
+}
+
+.float-ide-workspace ::selection {
+  background: rgb(161 161 170 / 30%);
+}
+
+.float-ide-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--float-ide-border-strong) transparent;
+}
+
+.float-ide-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.float-ide-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.float-ide-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--float-ide-border-strong);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.float-ide-panel {
+  background: var(--float-ide-surface);
+  border-color: var(--float-ide-border);
+}
+
+.float-ide-panel-raised {
+  background: var(--float-ide-surface-raised);
+  border-color: var(--float-ide-border);
+}
+
+.float-ide-muted {
+  color: var(--float-ide-text-muted);
+}
+
+.float-ide-subtle {
+  color: var(--float-ide-text-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float-ide-workspace *,
+  .float-ide-workspace *::before,
+  .float-ide-workspace *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
