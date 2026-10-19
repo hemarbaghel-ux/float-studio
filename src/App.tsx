@@ -216,6 +216,9 @@ export default function App() {
   }
 
   if (currentPath === '/sign-in' || currentPath === '/signin' || currentPath === '/login') {
+    if (!user) {
+      return <SignUpPage initialMode="signin" />;
+    }
     return <Dashboard initialTab="new-chat" />;
   }
 

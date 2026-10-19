@@ -15,6 +15,7 @@ import { TestimonialsSection } from './TestimonialsSection';
 
 export function LandingPage() {
   const { settings, toggleTheme, updateSettings } = useIDEStore();
+  const { user } = useAuthStore();
   const { t } = useTranslation();
 
   const handleStart = (mode: 'signup' | 'signin' | React.MouseEvent = 'signup') => {
@@ -68,10 +69,18 @@ export function LandingPage() {
           </button>
 
           <button
-            onClick={() => handleStart('signin')}
-            className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors hidden sm:block cursor-pointer px-2 py-1"
+            onClick={() => {
+              if (user) {
+                window.history.pushState({}, '', '/dashboard');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              } else {
+                handleStart('signin');
+              }
+            }}
+            aria-label={user ? t('nav.dashboard', 'Dashboard') : t('nav.signin', 'Sign in')}
+            className="px-3 py-1.5 text-sm font-medium text-slate-700 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/80 dark:hover:bg-white/10 rounded-full transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:focus-visible:ring-white/20 select-none hidden sm:block"
           >
-            {t('nav.signin', 'Sign in')}
+            {user ? t('nav.dashboard', 'Dashboard') : t('nav.signin', 'Sign in')}
           </button>
           <button
             onClick={() => {
