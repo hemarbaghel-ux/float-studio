@@ -3,23 +3,24 @@
  *
  * Exposes REST endpoints for:
  * - Rules (User, Project, Repository)
- * - Skills (Discovery & Custom)
- * - MCP (Servers, Tools, Resources, Execution)
- * - Terminal Sessions
- * - Memory (Project & Agent)
- * - Automated Code Review
- * - Automations
- * - Error Diagnostics
- * - Execution Policies
+ * - Skills (Discovery & Custom, scoped per user/project)
+ * - MCP (Servers, Tools, Resources, Execution, scoped per user/project)
+ * - Terminal Sessions (scoped per user/project)
+ * - Memory (Project & Agent, scoped per user/project)
+ * - Automated Code Review (scoped per user/project)
+ * - Automations (scoped per user/project)
+ * - Error Diagnostics (scoped per user/project)
+ * - Execution Policies (scoped per user)
  * - Browser Agent Environment & Actions
- * - Multi-Repo Workspaces
- * - Multi-Agent Coordinator
- * - Conversation Search
+ * - Multi-Repo Workspaces (scoped per user/project)
+ * - Multi-Agent Coordinator (scoped per user/project)
+ * - Conversation Search (scoped per user)
  */
 
 import { Router } from 'express';
 import { requireAuth } from './authMiddleware';
 import { asyncRoute } from './asyncRoute';
+import { requireProjectOwnership, verifyProjectOwnership } from './projectOwnership';
 import { RulesService } from './rules/rulesService';
 import { SkillsService } from './skills/skillsService';
 import { MCPService } from './mcp/mcpService';
@@ -35,6 +36,9 @@ import { MultiAgentCoordinator } from './agent/subagents';
 import { ConversationSearchService } from './conversation/conversationSearch';
 
 export const milestone9Router = Router();
+
+// Enforce authentication and server-side project ownership on all /projects/:projectId/* routes
+milestone9Router.use('/projects/:projectId', requireAuth, asyncRoute(requireProjectOwnership()));
 
 // ==========================================
 // 1. RULES API
@@ -64,7 +68,7 @@ milestone9Router.delete('/rules/user/:ruleId', requireAuth, (req: any, res) => {
 });
 
 milestone9Router.get('/projects/:projectId/rules', requireAuth, (req: any, res) => {
-  const projectRules = RulesService.getProjectRules(req.params.projectId);
+  const projectRules = RulesService.getProjectRules(req.params.projectId, req.user.uid);
   res.json({ rules: projectRules });
 });
 
@@ -73,86 +77,201 @@ milestone9Router.post('/projects/:projectId/rules', requireAuth, (req: any, res)
   if (!name || !content) {
     return res.status(400).json({ error: 'Name and content are required.' });
   }
-  const rule = RulesService.setProjectRule(req.params.projectId, {
-    id: id || `proj-rule-${Date.now()}`,
-    name,
-    content,
-    priority: priority || 3,
-    enabled: enabled !== false
-  });
-  res.json({ rule });
+  try {
+    const rule = RulesService.setProjectRule(
+      req.params.projectId,
+      {
+        id: id || `proj-rule-${Date.now()}`,
+        name,
+        content,
+        priority: priority || 3,
+        enabled: enabled !== false,
+        userId: req.user.uid
+      },
+      req.user.uid
+    );
+    res.json({ rule });
+  } catch (err: any) {
+    return res.status(403).json({ error: err.message || 'Forbidden' });
+  }
 });
 
 milestone9Router.delete('/projects/:projectId/rules/:ruleId', requireAuth, (req: any, res) => {
-  const deleted = RulesService.deleteProjectRule(req.params.projectId, req.params.ruleId);
+  const deleted = RulesService.deleteProjectRule(req.params.projectId, req.params.ruleId, req.user.uid);
   res.json({ success: deleted });
 });
 
 // ==========================================
 // 2. SKILLS API
 // ==========================================
-milestone9Router.get('/skills', (_req, res) => {
-  res.json({ skills: SkillsService.getAllSkills() });
-});
+milestone9Router.get('/skills', requireAuth, asyncRoute(async (req: any, res) => {
+  const projectId = req.query?.projectId ? String(req.query.projectId) : undefined;
+  if (projectId) {
+    const check = await verifyProjectOwnership(projectId, req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
+  res.json({ skills: SkillsService.getAllSkills(req.user.uid, projectId) });
+}));
 
-milestone9Router.post('/skills', requireAuth, (req: any, res) => {
+milestone9Router.post('/skills', requireAuth, asyncRoute(async (req: any, res) => {
   const skill = req.body;
   if (!skill?.name || !skill?.instructions) {
     return res.status(400).json({ error: 'Skill name and instructions are required.' });
   }
-  SkillsService.registerSkill({
-    ...skill,
-    id: skill.id || `custom-skill-${Date.now()}`,
-    scope: 'user',
-    enabled: skill.enabled !== false,
-    keywords: Array.isArray(skill.keywords) ? skill.keywords : [],
-    allowedTools: Array.isArray(skill.allowedTools) ? skill.allowedTools : [],
-    permissionsRequired: Array.isArray(skill.permissionsRequired) ? skill.permissionsRequired : ['read']
-  });
-  res.json({ success: true, skill });
+  const skillId = String(skill.id || `custom-skill-${Date.now()}`).trim();
+  if (SkillsService.isBuiltInSkillId(skillId)) {
+    return res.status(403).json({ error: `Cannot overwrite built-in system skill "${skillId}".` });
+  }
+  if (skill.projectId) {
+    const check = await verifyProjectOwnership(String(skill.projectId), req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
+  try {
+    const registered = SkillsService.registerSkill(
+      {
+        ...skill,
+        id: skillId,
+        scope: skill.projectId ? 'project' : 'user',
+        userId: req.user.uid,
+        projectId: skill.projectId ? String(skill.projectId) : undefined,
+        enabled: skill.enabled !== false,
+        keywords: Array.isArray(skill.keywords) ? skill.keywords : [],
+        allowedTools: Array.isArray(skill.allowedTools) ? skill.allowedTools : [],
+        permissionsRequired: Array.isArray(skill.permissionsRequired) ? skill.permissionsRequired : ['read']
+      },
+      req.user.uid
+    );
+    res.json({ success: true, skill: registered });
+  } catch (err: any) {
+    res.status(403).json({ error: err.message || 'Could not register skill.' });
+  }
+}));
+
+milestone9Router.delete('/skills/:skillId', requireAuth, (req: any, res) => {
+  if (SkillsService.isBuiltInSkillId(req.params.skillId)) {
+    return res.status(403).json({ error: 'Cannot delete built-in system skill.' });
+  }
+  const deleted = SkillsService.deleteSkill(req.params.skillId, req.user.uid);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Custom skill not found.' });
+  }
+  res.json({ success: true });
 });
 
 // ==========================================
 // 3. MCP API
 // ==========================================
-milestone9Router.get('/mcp/servers', requireAuth, (_req, res) => {
-  res.json({ servers: MCPService.listServers(true) });
-});
+milestone9Router.get('/mcp/servers', requireAuth, asyncRoute(async (req: any, res) => {
+  const projectId = req.query?.projectId ? String(req.query.projectId) : undefined;
+  if (projectId) {
+    const check = await verifyProjectOwnership(projectId, req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
+  res.json({ servers: MCPService.listServers(true, req.user.uid, projectId) });
+}));
 
-milestone9Router.post('/mcp/servers', requireAuth, (req: any, res) => {
+milestone9Router.post('/mcp/servers', requireAuth, asyncRoute(async (req: any, res) => {
   const config = req.body;
   if (!config?.name || !config?.transport) {
     return res.status(400).json({ error: 'Server name and transport (http/stdio) are required.' });
   }
-  MCPService.registerServer({
-    ...config,
-    id: config.id || `mcp-srv-${Date.now()}`,
-    createdAt: Date.now()
-  });
-  res.json({ success: true, server: config });
-});
+  const projectId = config.projectId ? String(config.projectId).trim() : undefined;
+  if (projectId) {
+    const check = await verifyProjectOwnership(projectId, req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
+  try {
+    const registered = MCPService.registerServer(
+      {
+        ...config,
+        id: config.id || `mcp-srv-${Date.now()}`,
+        userId: req.user.uid,
+        projectId,
+        createdAt: Date.now()
+      },
+      req.user.uid
+    );
+    const sanitized =
+      MCPService.listServers(true, req.user.uid, registered.projectId).find(s => s.id === registered.id) ||
+      registered;
+    res.json({ success: true, server: sanitized });
+  } catch (err: any) {
+    res.status(403).json({ error: err.message || 'Forbidden' });
+  }
+}));
 
-milestone9Router.delete('/mcp/servers/:serverId', requireAuth, (req: any, res) => {
-  const deleted = MCPService.deleteServer(req.params.serverId);
-  res.json({ success: deleted });
-});
+milestone9Router.delete('/mcp/servers/:serverId', requireAuth, asyncRoute(async (req: any, res) => {
+  const projectId = req.query?.projectId
+    ? String(req.query.projectId)
+    : req.body?.projectId
+      ? String(req.body.projectId)
+      : undefined;
+  if (projectId) {
+    const check = await verifyProjectOwnership(projectId, req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
+  const deleted = MCPService.deleteServer(req.params.serverId, req.user.uid, projectId);
+  if (!deleted) {
+    return res.status(404).json({ error: 'MCP server not found or access denied.' });
+  }
+  res.json({ success: true });
+}));
 
-milestone9Router.get('/mcp/tools', requireAuth, (req: any, res) => {
+milestone9Router.get('/mcp/tools', requireAuth, asyncRoute(async (req: any, res) => {
   const serverId = req.query.serverId ? String(req.query.serverId) : undefined;
-  res.json({ tools: MCPService.getDiscoveredTools(serverId) });
-});
+  const projectId = req.query.projectId ? String(req.query.projectId) : undefined;
+  if (projectId) {
+    const check = await verifyProjectOwnership(projectId, req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
+  res.json({ tools: MCPService.getDiscoveredTools(serverId, req.user.uid, projectId) });
+}));
 
-milestone9Router.get('/mcp/resources', requireAuth, (req: any, res) => {
+milestone9Router.get('/mcp/resources', requireAuth, asyncRoute(async (req: any, res) => {
   const serverId = req.query.serverId ? String(req.query.serverId) : undefined;
-  res.json({ resources: MCPService.getDiscoveredResources(serverId) });
-});
+  const projectId = req.query.projectId ? String(req.query.projectId) : undefined;
+  if (projectId) {
+    const check = await verifyProjectOwnership(projectId, req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
+  res.json({ resources: MCPService.getDiscoveredResources(serverId, req.user.uid, projectId) });
+}));
 
 milestone9Router.post('/mcp/execute', requireAuth, asyncRoute(async (req: any, res) => {
-  const { serverId, toolName, args, userApproved } = req.body || {};
+  const { serverId, toolName, args, userApproved, projectId: rawProjectId } = req.body || {};
   if (!serverId || !toolName) {
     return res.status(400).json({ error: 'serverId and toolName are required.' });
   }
-  const result = await MCPService.executeTool(serverId, toolName, args || {}, { userApproved });
+  const projectId = rawProjectId ? String(rawProjectId) : undefined;
+  if (projectId) {
+    const check = await verifyProjectOwnership(projectId, req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
+  const srv = MCPService.getServer(serverId, req.user.uid, projectId);
+  if (!srv) {
+    return res.status(404).json({ error: 'MCP server not found or access denied.' });
+  }
+  const result = await MCPService.executeTool(serverId, toolName, args || {}, {
+    userApproved,
+    userId: req.user.uid,
+    projectId
+  });
   res.json(result);
 }));
 
@@ -186,7 +305,9 @@ milestone9Router.post('/projects/:projectId/terminals/:terminalId/command', requ
     stderr || '',
     typeof exitCode === 'number' ? exitCode : 0
   );
-  if (!updated) return res.status(404).json({ error: 'Terminal session not found.' });
+  if (!updated || updated.projectId !== req.params.projectId) {
+    return res.status(404).json({ error: 'Terminal session not found.' });
+  }
   res.json({ terminal: updated });
 });
 
@@ -230,19 +351,30 @@ milestone9Router.post('/projects/:projectId/review', requireAuth, (req: any, res
   const report = CodeReviewService.analyzeDiff(
     req.params.projectId,
     diffText || '',
-    Array.isArray(files) ? files : []
+    Array.isArray(files) ? files : [],
+    req.user.uid
   );
   res.json({ report });
 });
 
+milestone9Router.get('/projects/:projectId/reviews', requireAuth, (req: any, res) => {
+  res.json({ reports: CodeReviewService.listReports(req.params.projectId, req.user.uid) });
+});
+
 milestone9Router.get('/projects/:projectId/review/:reportId', requireAuth, (req: any, res) => {
-  const report = CodeReviewService.getReport(req.params.reportId);
+  const report = CodeReviewService.getReport(req.params.reportId, req.params.projectId, req.user.uid);
   if (!report) return res.status(404).json({ error: 'Review report not found.' });
   res.json({ report });
 });
 
 milestone9Router.post('/projects/:projectId/review/:reportId/dismiss/:findingId', requireAuth, (req: any, res) => {
-  const dismissed = CodeReviewService.dismissFinding(req.params.reportId, req.params.findingId);
+  const dismissed = CodeReviewService.dismissFinding(
+    req.params.reportId,
+    req.params.findingId,
+    req.params.projectId,
+    req.user.uid
+  );
+  if (!dismissed) return res.status(404).json({ error: 'Review report or finding not found.' });
   res.json({ success: dismissed });
 });
 
@@ -272,21 +404,40 @@ milestone9Router.post('/projects/:projectId/automations', requireAuth, (req: any
 });
 
 milestone9Router.delete('/projects/:projectId/automations/:automationId', requireAuth, (req: any, res) => {
-  const deleted = AutomationService.deleteAutomation(req.params.automationId, req.user.uid);
+  const deleted = AutomationService.deleteAutomation(
+    req.params.automationId,
+    req.user.uid,
+    req.params.projectId
+  );
+  if (!deleted) return res.status(404).json({ error: 'Automation not found.' });
   res.json({ success: deleted });
 });
 
 milestone9Router.post('/projects/:projectId/automations/:automationId/trigger', requireAuth, asyncRoute(async (req: any, res) => {
-  const result = await AutomationService.trigger(req.params.automationId, {
-    triggerType: req.body?.triggerType || 'manual',
-    payload: req.body?.payload,
-    userId: req.user.uid
-  });
-  res.json(result);
+  const auto = AutomationService.getAutomation(req.params.automationId, req.user.uid, req.params.projectId);
+  if (!auto) {
+    return res.status(404).json({ error: 'Automation not found or access denied.' });
+  }
+  try {
+    const result = await AutomationService.trigger(req.params.automationId, {
+      triggerType: req.body?.triggerType || 'manual',
+      payload: req.body?.payload,
+      userId: req.user.uid,
+      projectId: req.params.projectId
+    });
+    res.json(result);
+  } catch (err: any) {
+    const status = /forbidden/i.test(err.message || '') ? 403 : 400;
+    res.status(status).json({ error: err.message || 'Automation trigger failed.' });
+  }
 }));
 
 milestone9Router.get('/projects/:projectId/automations/:automationId/logs', requireAuth, (req: any, res) => {
-  res.json({ logs: AutomationService.getRunLogs(req.params.automationId) });
+  const auto = AutomationService.getAutomation(req.params.automationId, req.user.uid, req.params.projectId);
+  if (!auto) {
+    return res.status(404).json({ error: 'Automation not found or access denied.' });
+  }
+  res.json({ logs: AutomationService.getRunLogs(req.params.automationId, req.user.uid, req.params.projectId) });
 });
 
 // ==========================================
@@ -294,7 +445,9 @@ milestone9Router.get('/projects/:projectId/automations/:automationId/logs', requ
 // ==========================================
 milestone9Router.get('/projects/:projectId/diagnostics', requireAuth, (req: any, res) => {
   const source = req.query.source ? String(req.query.source) : undefined;
-  res.json({ diagnostics: DiagnosticsService.getDiagnostics(req.params.projectId, source as any) });
+  res.json({
+    diagnostics: DiagnosticsService.getDiagnostics(req.params.projectId, source as any, req.user.uid)
+  });
 });
 
 milestone9Router.post('/projects/:projectId/diagnostics', requireAuth, (req: any, res) => {
@@ -302,21 +455,31 @@ milestone9Router.post('/projects/:projectId/diagnostics', requireAuth, (req: any
   if (!source || !message) {
     return res.status(400).json({ error: 'Diagnostic source and message are required.' });
   }
-  const diagnostic = DiagnosticsService.addDiagnostic(req.params.projectId, {
-    source,
-    severity: severity || 'error',
-    filePath,
-    line,
-    column,
-    message,
-    code
-  });
-  res.json({ diagnostic });
+  try {
+    const diagnostic = DiagnosticsService.addDiagnostic(
+      req.params.projectId,
+      {
+        source,
+        severity: severity || 'error',
+        filePath,
+        line,
+        column,
+        message,
+        code,
+        userId: req.user.uid
+      },
+      req.user.uid
+    );
+    res.json({ diagnostic });
+  } catch (err: any) {
+    res.status(403).json({ error: err.message || 'Forbidden' });
+  }
 });
 
 milestone9Router.delete('/projects/:projectId/diagnostics', requireAuth, (req: any, res) => {
   const source = req.query.source ? String(req.query.source) : undefined;
-  DiagnosticsService.clearDiagnostics(req.params.projectId, source as any);
+  const cleared = DiagnosticsService.clearDiagnostics(req.params.projectId, source as any, req.user.uid);
+  if (!cleared) return res.status(403).json({ error: 'Forbidden' });
   res.json({ success: true });
 });
 
@@ -339,7 +502,7 @@ milestone9Router.post('/policy', requireAuth, (req: any, res) => {
 // ==========================================
 // 10. BROWSER AGENT STATUS & ACTION API
 // ==========================================
-milestone9Router.get('/browser/status', (_req, res) => {
+milestone9Router.get('/browser/status', requireAuth, (_req, res) => {
   res.json({ status: BrowserAgentService.detectEnvironment() });
 });
 
@@ -400,12 +563,19 @@ milestone9Router.post('/projects/:projectId/coordinate', requireAuth, asyncRoute
 // ==========================================
 // 13. CONVERSATION SEARCH API
 // ==========================================
-milestone9Router.get('/conversations/search', requireAuth, (req: any, res) => {
+milestone9Router.get('/conversations/search', requireAuth, asyncRoute(async (req: any, res) => {
   const q = String(req.query.q || '');
   const projectId = req.query.projectId ? String(req.query.projectId) : undefined;
   const modelId = req.query.modelId ? String(req.query.modelId) : undefined;
   const limit = req.query.limit ? Number(req.query.limit) : 20;
   const offset = req.query.offset ? Number(req.query.offset) : 0;
+
+  if (projectId) {
+    const check = await verifyProjectOwnership(projectId, req.user.uid);
+    if (!check.allowed) {
+      return res.status(check.status).json({ error: check.error });
+    }
+  }
 
   const result = ConversationSearchService.search(req.user.uid, {
     queryText: q,
@@ -415,4 +585,4 @@ milestone9Router.get('/conversations/search', requireAuth, (req: any, res) => {
     offset
   });
   res.json(result);
-});
+}));

@@ -1,0 +1,65 @@
+name: FLOAT AI Studio CI
+
+on:
+  push:
+    branches: [main, "phase-*", "feat/*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Typecheck, Security Regressions, Agent Suite & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript static typecheck
+        run: npm run lint
+
+      - name: Phase A & A.1 HTTP Security Regression Suite
+        run: npx tsx scripts/testPhaseASecurityRegression.ts
+
+      - name: Security & Tenant Isolation Suites
+        run: |
+          npx tsx scripts/testSecurityAudit.ts
+          npx tsx scripts/testTenantIsolationSecurity.ts
+          npx tsx scripts/testMasterAuditRegression.ts
+
+      - name: Model Routing, Agent Loop & Workspace Suites
+        run: |
+          npx tsx scripts/testOpenAIIntegration.ts
+          npx tsx scripts/testFloatBasicModel.ts
+          npx tsx scripts/testModelSelectorPanel.ts
+          npx tsx scripts/testStageBChatReliability.ts
+          npx tsx scripts/testCursorAgentLoop.ts
+          npx tsx scripts/testServerAgentLoop.ts
+          npx tsx scripts/testPortableAgentRunner.ts
+          npx tsx scripts/testAgentOrchestratorValidation.ts
+          npx tsx scripts/testAgentGitWorktree.ts
+          npx tsx scripts/testCodebaseSearch.ts
+          npx tsx scripts/testProjectExecution.ts
+          npx tsx scripts/testPhase5Proposal.ts
+          npx tsx scripts/testPhase6Validation.ts
+          npx tsx scripts/testPhase7FinalIntegration.ts
+
+      - name: Production Build & Secret Leak Scan
+        env:
+          GEMINI_API_KEY: "AIzaSy_CI_CANARY_DO_NOT_BUNDLE"
+        run: |
+          npm run build
+          if grep -rn "AIzaSy_CI_CANARY_DO_NOT_BUNDLE" dist/assets/ 2>/dev/null; then
+            echo "ERROR: Server GEMINI_API_KEY leaked into client bundle!"
+            exit 1
+          fi

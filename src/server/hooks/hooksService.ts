@@ -126,10 +126,11 @@ export class HooksService {
 
       const timeoutMs = Math.min(hook.timeoutMs || 3000, 5000);
 
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const timeoutPromise = new Promise<HookResult>((_, reject) =>
-          setTimeout(() => reject(new Error(`Hook "${hook.name}" timed out after ${timeoutMs}ms`)), timeoutMs)
-        );
+        const timeoutPromise = new Promise<HookResult>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Hook "${hook.name}" timed out after ${timeoutMs}ms`)), timeoutMs);
+        });
 
         const execPromise = hook.handler(currentPayload, context);
         const result = await Promise.race([execPromise, timeoutPromise]);
@@ -154,6 +155,8 @@ export class HooksService {
             abortReason: `Admin security hook failed: ${err.message}`
           };
         }
+      } finally {
+        if (timer) clearTimeout(timer);
       }
     }
 

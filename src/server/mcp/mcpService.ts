@@ -1,11 +1,11 @@
 /**
  * FLOAT AI - Model Context Protocol (MCP) Service (Milestone 9)
  *
- * Implements genuine MCP client architecture conforming to the JSON-RPC specification:
- * - Server configuration (HTTP & stdio transports)
+ * Implements MCP client configuration and governance:
+ * - Server configuration (HTTP & stdio transports) scoped by userId and optional projectId
  * - Tool discovery (tools/list)
  * - Resource discovery (resources/list)
- * - Strict authorization layer (allowlist / approval policies)
+ * - Strict authorization layer (tenant ownership + exact projectId match for project-scoped servers)
  * - Execution sandboxing & output bounding (max chars truncation)
  * - Server-side secret storage (credentials never returned to client)
  */
@@ -24,6 +24,8 @@ export interface MCPServerConfig {
   allowedTools?: string[]; // if defined, only these tools can be invoked
   requiresApproval?: boolean; // if true, each tool call requires user confirmation
   createdAt: number;
+  userId?: string;
+  projectId?: string;
 }
 
 export interface MCPToolParameterSchema {
@@ -65,29 +67,100 @@ export class MCPService {
   private static resourceCache = new Map<string, MCPDiscoveredResource[]>();
 
   /**
-   * Registers or updates an MCP server configuration.
-   * Credentials and env secrets remain on the server and are scrubbed when listing.
+   * Enforces user and project isolation for MCP servers:
+   * 1. A project-scoped MCP server (`Boolean(srv.projectId)`) is ONLY accessible when:
+   *    - The authenticated `userId` is present and matches `srv.userId`, AND
+   *    - The supplied `projectId` is present and exactly matches `srv.projectId`.
+   *    Missing project context (`projectId === undefined` or `''`) never exposes project-scoped servers.
+   * 2. An explicitly user-scoped MCP server (`!srv.projectId`) is accessible when the authenticated
+   *    `userId` matches `srv.userId` (preserving user-scoped MCP behavior across the user's workspace).
    */
-  static registerServer(config: MCPServerConfig): void {
-    this.servers.set(config.id, {
+  private static canAccessServer(
+    srv: MCPServerConfig | undefined,
+    userId?: string,
+    projectId?: string
+  ): srv is MCPServerConfig {
+    if (!srv) return false;
+
+    const serverProjectId = typeof srv.projectId === 'string' ? srv.projectId.trim() : '';
+    const requestedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+
+    if (serverProjectId) {
+      if (!userId || !srv.userId || srv.userId !== userId) {
+        return false;
+      }
+      if (!requestedProjectId || requestedProjectId !== serverProjectId) {
+        return false;
+      }
+      return true;
+    }
+
+    if (userId !== undefined) {
+      if (!srv.userId || srv.userId !== userId) {
+        return false;
+      }
+      return true;
+    }
+
+    // Unscoped local unit-test fallback: never expose any user-owned or project-owned server
+    if (srv.userId !== undefined) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Registers or updates an MCP server configuration scoped to a tenant userId (and optional projectId).
+   * Prevents one user from overwriting another user's server ID or changing a project server's project scope.
+   */
+  static registerServer(config: MCPServerConfig, userId?: string): MCPServerConfig {
+    const ownerId = userId ?? config.userId;
+    const normalizedProjectId =
+      typeof config.projectId === 'string' && config.projectId.trim()
+        ? config.projectId.trim()
+        : undefined;
+
+    if (normalizedProjectId && !ownerId) {
+      throw new Error('Forbidden: Project-scoped MCP servers require an authenticated owner userId.');
+    }
+
+    const existing = this.servers.get(config.id);
+    if (existing) {
+      if (existing.userId && existing.userId !== ownerId) {
+        throw new Error('Forbidden: Cannot overwrite an MCP server owned by another user.');
+      }
+      if (existing.projectId && existing.projectId !== normalizedProjectId) {
+        throw new Error('Forbidden: Cannot change the projectId of an existing project-scoped MCP server.');
+      }
+    }
+
+    const stored: MCPServerConfig = {
       ...config,
+      userId: ownerId,
+      projectId: normalizedProjectId,
       enabled: config.enabled !== false,
       createdAt: config.createdAt || Date.now()
-    });
+    };
+    this.servers.set(stored.id, stored);
+    return stored;
   }
 
-  static getServer(id: string): MCPServerConfig | undefined {
-    return this.servers.get(id);
+  static getServer(id: string, userId?: string, projectId?: string): MCPServerConfig | undefined {
+    const srv = this.servers.get(id);
+    if (!this.canAccessServer(srv, userId, projectId)) return undefined;
+    return srv;
   }
 
-  static deleteServer(id: string): boolean {
+  static deleteServer(id: string, userId?: string, projectId?: string): boolean {
+    const srv = this.servers.get(id);
+    if (!this.canAccessServer(srv, userId, projectId)) return false;
     this.toolCache.delete(id);
     this.resourceCache.delete(id);
     return this.servers.delete(id);
   }
 
-  static listServers(sanitizeSecrets = true): MCPServerConfig[] {
-    const list = Array.from(this.servers.values());
+  static listServers(sanitizeSecrets = true, userId?: string, projectId?: string): MCPServerConfig[] {
+    const list = Array.from(this.servers.values()).filter(srv => this.canAccessServer(srv, userId, projectId));
     if (!sanitizeSecrets) return list;
 
     // Scrub environment secrets and auth tokens before returning to client/UI
@@ -106,8 +179,13 @@ export class MCPService {
   /**
    * Registers discovered tools for a server (e.g. from JSON-RPC tools/list).
    */
-  static setDiscoveredTools(serverId: string, tools: Omit<MCPDiscoveredTool, 'serverId' | 'serverName' | 'isAllowed'>[]): void {
-    const srv = this.servers.get(serverId);
+  static setDiscoveredTools(
+    serverId: string,
+    tools: Omit<MCPDiscoveredTool, 'serverId' | 'serverName' | 'isAllowed'>[],
+    userId?: string,
+    projectId?: string
+  ): void {
+    const srv = this.getServer(serverId, userId, projectId);
     if (!srv) return;
 
     const fullTools: MCPDiscoveredTool[] = tools.map(t => {
@@ -123,13 +201,18 @@ export class MCPService {
     this.toolCache.set(serverId, fullTools);
   }
 
-  static getDiscoveredTools(serverId?: string): MCPDiscoveredTool[] {
+  static getDiscoveredTools(serverId?: string, userId?: string, projectId?: string): MCPDiscoveredTool[] {
     if (serverId) {
+      const srv = this.getServer(serverId, userId, projectId);
+      if (!srv) return [];
       return this.toolCache.get(serverId) || [];
     }
     const all: MCPDiscoveredTool[] = [];
-    for (const tools of this.toolCache.values()) {
-      all.push(...tools);
+    for (const [id, tools] of this.toolCache.entries()) {
+      const srv = this.servers.get(id);
+      if (this.canAccessServer(srv, userId, projectId)) {
+        all.push(...tools);
+      }
     }
     return all;
   }
@@ -137,8 +220,13 @@ export class MCPService {
   /**
    * Registers discovered resources for a server (from JSON-RPC resources/list).
    */
-  static setDiscoveredResources(serverId: string, resources: Omit<MCPDiscoveredResource, 'serverId' | 'serverName'>[]): void {
-    const srv = this.servers.get(serverId);
+  static setDiscoveredResources(
+    serverId: string,
+    resources: Omit<MCPDiscoveredResource, 'serverId' | 'serverName'>[],
+    userId?: string,
+    projectId?: string
+  ): void {
+    const srv = this.getServer(serverId, userId, projectId);
     if (!srv) return;
 
     const fullResources: MCPDiscoveredResource[] = resources.map(r => ({
@@ -150,13 +238,18 @@ export class MCPService {
     this.resourceCache.set(serverId, fullResources);
   }
 
-  static getDiscoveredResources(serverId?: string): MCPDiscoveredResource[] {
+  static getDiscoveredResources(serverId?: string, userId?: string, projectId?: string): MCPDiscoveredResource[] {
     if (serverId) {
+      const srv = this.getServer(serverId, userId, projectId);
+      if (!srv) return [];
       return this.resourceCache.get(serverId) || [];
     }
     const all: MCPDiscoveredResource[] = [];
-    for (const resList of this.resourceCache.values()) {
-      all.push(...resList);
+    for (const [id, resList] of this.resourceCache.entries()) {
+      const srv = this.servers.get(id);
+      if (this.canAccessServer(srv, userId, projectId)) {
+        all.push(...resList);
+      }
     }
     return all;
   }
@@ -168,14 +261,14 @@ export class MCPService {
     serverId: string,
     toolName: string,
     args: Record<string, any>,
-    options?: { userApproved?: boolean }
+    options?: { userApproved?: boolean; userId?: string; projectId?: string }
   ): Promise<MCPToolExecutionResult> {
-    const srv = this.servers.get(serverId);
+    const srv = this.getServer(serverId, options?.userId, options?.projectId);
     if (!srv) {
       return {
         success: false,
         isError: true,
-        content: [{ type: 'text', text: `MCP server "${serverId}" not found.` }]
+        content: [{ type: 'text', text: `MCP server "${serverId}" not found or access denied.` }]
       };
     }
 
@@ -205,7 +298,6 @@ export class MCPService {
       };
     }
 
-    // Execute tool simulation or real dispatcher
     try {
       let rawOutput = `Executed MCP tool ${toolName} on server ${srv.name} successfully with parameters: ${JSON.stringify(args)}`;
       let truncated = false;

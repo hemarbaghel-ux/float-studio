@@ -37,7 +37,7 @@ function safeFiles(files: unknown[]): Map<string, { path: string; name: string; 
 }
 
 function systemPrompt(specialist?: string): string {
-  const base = `You are FLOAT AI's autonomous software engineering agent. Inspect and reason about the supplied project using safe read-only tools. Never directly write, delete, or overwrite project files. For code changes, call propose_changes with complete file contents so the user can review a diff before applying. Inspect the codebase before proposing changes. Explain what you changed and why.`;
+  const base = `You are FLOAT AI's autonomous software engineering agent. Inspect and reason about the supplied project using safe read-only tools. Never directly write, delete, or overwrite project files. For code changes, use edit_file or propose_changes so the user can review a diff before applying. You may edit multiple files across steps and run run_validation or run_command to verify and repair your changes before finishing. Explain what you changed and why.`;
   return specialist?.trim() ? `${base}\n\nSpecialization (does not override safety or review requirements):\n${specialist.trim()}` : base;
 }
 
@@ -102,7 +102,6 @@ async function providerTurn(provider: Provider, model: string, key: string, inst
     }
   }
 
-  // Preview Cloud Agent: Upstream fallback to gpt-4o if gpt-6 preview endpoint returns 404, 429, 50x or is unreachable
   const isCloudPreview = model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1';
   if (!response.ok && isCloudPreview && (response.status === 404 || response.status === 429 || response.status >= 500 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect/i.test(data.error?.message || ''))) {
     const fallbackKey = process.env.OPENAI_API_KEY || key;
@@ -131,11 +130,17 @@ export class PortableAgentRunner {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     const controller = new AbortController();
     res.on('close', () => { if (!res.writableEnded) controller.abort(); });
+    const initialFiles = safeFiles(Array.isArray(virtualFiles) ? virtualFiles : []);
+    const baselineFiles = new Map<string, { path: string; name?: string; content?: string; type: string } | null>();
+    for (const [k, v] of initialFiles.entries()) {
+      baselineFiles.set(k, { ...v });
+    }
     const context: ToolExecutionContext = {
       userId: req.user?.uid || 'user',
       projectId: typeof req.body?.projectId === 'string' ? req.body.projectId : 'default-project',
       projectName: typeof req.body?.projectName === 'string' ? req.body.projectName : 'Workspace',
-      virtualFiles: safeFiles(Array.isArray(virtualFiles) ? virtualFiles : []),
+      virtualFiles: initialFiles,
+      baselineFiles,
       signal: controller.signal,
     };
     const instruction = systemPrompt(typeof req.body?.systemInstruction === 'string' ? req.body.systemInstruction.slice(0, 8_000) : undefined);
@@ -152,7 +157,13 @@ export class PortableAgentRunner {
       for (let round = 1; round <= MAX_ROUNDS; round++) {
         if (controller.signal.aborted) break;
         if (Date.now() - startedAt > MAX_RUNTIME_MS) throw new Error('Agent execution exceeded the 60 second limit.');
-        if (toolCallsCount >= MAX_TOOL_CALLS) throw new Error(`Agent reached the ${MAX_TOOL_CALLS} tool call limit.`);
+        if (toolCallsCount >= MAX_TOOL_CALLS) {
+          if (changeSet) {
+            finished = true;
+            break;
+          }
+          throw new Error(`Agent reached the ${MAX_TOOL_CALLS} tool call limit.`);
+        }
         send(res, 'event', { type: 'thinking', action: toolCallsCount ? 'Synthesizing' : 'Thinking', message: `Reasoning about request and codebase (round ${round}/${MAX_ROUNDS}).` });
         const turn = await providerTurn(provider, model, apiKey, instruction, history, controller.signal);
         if (turn.text) {
@@ -181,7 +192,7 @@ export class PortableAgentRunner {
             : (call.name === 'search_code' || call.name === 'search_project') ? 'Searching'
             : (call.name === 'read_file' || call.name === 'read_project_file') ? 'Reading'
             : (call.name === 'list_files' || call.name === 'list_project_files') ? 'Exploring'
-            : (call.name === 'run_command') ? 'Running command'
+            : (call.name === 'run_command' || call.name === 'run_validation') ? 'Running command'
             : 'Thinking';
           send(res, 'event', {
             type: result.success ? 'tool_completed' : 'tool_failed',
@@ -192,8 +203,15 @@ export class PortableAgentRunner {
             outputSummary: result.output ? JSON.stringify(result.output).slice(0, 180) : undefined,
           });
           if ((call.name === 'propose_changes' || call.name === 'edit_file') && result.success) {
-            changeSet = changeSetFrom(result, context);
-            if (changeSet) send(res, 'event', { type: 'review_ready', action: 'Generating proposal', message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).` });
+            const latestChangeSet = changeSetFrom(result, context);
+            if (latestChangeSet) {
+              changeSet = latestChangeSet;
+              send(res, 'event', {
+                type: 'review_ready',
+                action: 'Generating proposal',
+                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).`
+              });
+            }
           }
           toolResults.push({ id: call.id, name: call.name, result });
         }
@@ -201,11 +219,13 @@ export class PortableAgentRunner {
         for (const { id, name, result } of toolResults) {
           history.push({ role: 'tool', tool_call_id: id, name, content: JSON.stringify(result.success ? { result: result.output } : { error: result.error }) });
         }
-        if (changeSet) {
-          if (!finalText) finalText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s). Review the diffs before applying them.`;
-          finished = true;
-          break;
-        }
+      }
+
+      if (changeSet && !finished && !controller.signal.aborted) {
+        finished = true;
+      }
+      if (changeSet && !finalText) {
+        finalText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s). Review the diffs before applying them.`;
       }
       if (!controller.signal.aborted && !finished) {
         send(res, 'event', { type: 'failed', message: `Agent did not reach a final answer within ${MAX_ROUNDS} reasoning rounds.` });

@@ -1,6 +1,7 @@
 /**
  * Float Python Execution Service
- * Runs Python in-browser using Pyodide WebAssembly with virtual filesystem integration.
+ * Runs Python in-browser using Pyodide WebAssembly with virtual filesystem integration,
+ * Web Worker timeout isolation (`worker.terminate()`), and safe fallback execution.
  */
 
 export interface VirtualFile {
@@ -15,26 +16,22 @@ export interface PythonExecutionResult {
   executionTimeMs: number;
 }
 
-// Global Pyodide singleton promise to ensure single initialization
+const DEFAULT_PYTHON_TIMEOUT_MS = 5000;
+const PYODIDE_CDN_URL = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
+
 let pyodidePromise: Promise<any> | null = null;
 let pyodideInstance: any = null;
 
-const PYODIDE_CDN_URL = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
-
-/**
- * Loads Pyodide script dynamically from CDN into the browser runtime
- */
 async function loadPyodideScript(): Promise<void> {
-  if ((window as any).loadPyodide) {
+  if (typeof window === 'undefined' || (window as any).loadPyodide) {
     return;
   }
 
   return new Promise((resolve, reject) => {
-    // Check if script tag already exists
     const existingScript = document.querySelector(`script[src="${PYODIDE_CDN_URL}"]`);
     if (existingScript) {
       existingScript.addEventListener('load', () => resolve());
-      existingScript.addEventListener('error', (e) => reject(new Error('Failed to load Pyodide script from CDN.')));
+      existingScript.addEventListener('error', () => reject(new Error('Failed to load Pyodide script from CDN.')));
       return;
     }
 
@@ -47,9 +44,6 @@ async function loadPyodideScript(): Promise<void> {
   });
 }
 
-/**
- * Initializes and caches the Pyodide instance
- */
 async function getPyodide(onStatus?: (status: string) => void): Promise<any> {
   if (pyodideInstance) {
     return pyodideInstance;
@@ -60,7 +54,7 @@ async function getPyodide(onStatus?: (status: string) => void): Promise<any> {
       onStatus?.('Loading Python WebAssembly runtime...');
       await loadPyodideScript();
 
-      if (!(window as any).loadPyodide) {
+      if (typeof window === 'undefined' || !(window as any).loadPyodide) {
         throw new Error('Pyodide runtime script loaded but loadPyodide is not defined.');
       }
 
@@ -78,9 +72,6 @@ async function getPyodide(onStatus?: (status: string) => void): Promise<any> {
   return pyodidePromise;
 }
 
-/**
- * Fallback lightweight Python execution engine in case CDN / WebAssembly is blocked
- */
 function evaluateFallbackValue(expression: string, variables: Record<string, any>): any {
   const value = expression.trim();
   if (Object.prototype.hasOwnProperty.call(variables, value)) return variables[value];
@@ -92,7 +83,6 @@ function evaluateFallbackValue(expression: string, variables: Record<string, any
   }
   if (/^'[\s\S]*'$/.test(value)) return value.slice(1, -1).replace(/\\(['\\])/g, '$1');
 
-  // Parse a deliberately small arithmetic grammar; never execute fallback input as JS.
   if (value.replace(/\d+(?:\.\d+)?|[()+\-*/%]|\s/g, '')) return undefined;
   const tokens = value.match(/\d+(?:\.\d+)?|[()+\-*/%]/g) || [];
   let position = 0;
@@ -147,6 +137,11 @@ function fallbackPythonExecution(
   let fullError: string | null = null;
 
   try {
+    // Guard against obvious unbounded infinite loops in fallback mode
+    if (/^\s*while\s+(True|1)\s*:/m.test(code) && !/\bbreak\b/.test(code)) {
+      throw new Error('TimeoutError: Python execution exceeded the 5000ms execution time limit (unbounded while loop detected).');
+    }
+
     const lines = code.split('\n');
     const localVars: Record<string, any> = {};
 
@@ -154,7 +149,6 @@ function fallbackPythonExecution(
       const line = rawLine.trim();
       if (!line || line.startsWith('#')) continue;
 
-      // Handle simple print(...)
       if (line.startsWith('print(') && line.endsWith(')')) {
         const inner = line.slice(6, -1);
         const parsed = evaluateFallbackValue(inner, localVars);
@@ -166,7 +160,6 @@ function fallbackPythonExecution(
         continue;
       }
 
-      // Simple assignment: var = val
       if (line.includes('=') && !line.includes('==') && !line.startsWith('def ') && !line.startsWith('if ')) {
         const [k, ...v] = line.split('=');
         const key = k.trim();
@@ -196,7 +189,118 @@ function fallbackPythonExecution(
 }
 
 /**
- * Executes Python code with real Pyodide WebAssembly runtime,
+ * Executes Python code in a dedicated Web Worker when available in the browser
+ * so runaway loops (`while True: pass`) can be pre-emptively terminated via `worker.terminate()`.
+ */
+async function runPyodideInWebWorker(
+  code: string,
+  virtualFiles: VirtualFile[],
+  timeoutMs: number,
+  onStdout?: (text: string) => void,
+  onStderr?: (text: string) => void,
+  onStatus?: (status: string) => void
+): Promise<PythonExecutionResult> {
+  const startTime = performance.now();
+  const workerSource = `
+    importScripts('${PYODIDE_CDN_URL}');
+    let pyodideReadyPromise = null;
+    async function ensurePyodide() {
+      if (!pyodideReadyPromise) {
+        pyodideReadyPromise = self.loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/' });
+      }
+      return pyodideReadyPromise;
+    }
+    self.onmessage = async (event) => {
+      const { code, virtualFiles } = event.data || {};
+      try {
+        self.postMessage({ type: 'status', text: 'Initializing Python WebAssembly Worker...' });
+        const pyodide = await ensurePyodide();
+        for (const file of (virtualFiles || [])) {
+          if (file && file.path && file.content !== undefined) {
+            const parts = String(file.path).split('/');
+            if (parts.length > 1) {
+              let currentPath = '';
+              for (let i = 0; i < parts.length - 1; i++) {
+                currentPath += (i === 0 ? '' : '/') + parts[i];
+                try { pyodide.FS.mkdir(currentPath); } catch {}
+              }
+            }
+            pyodide.FS.writeFile(file.path, file.content, { encoding: 'utf8' });
+          }
+        }
+        pyodide.setStdout({ batched: (msg) => self.postMessage({ type: 'stdout', text: msg + '\\n' }) });
+        pyodide.setStderr({ batched: (msg) => self.postMessage({ type: 'stderr', text: msg + '\\n' }) });
+        self.postMessage({ type: 'status', text: 'Running Python code in isolated worker...' });
+        await pyodide.runPythonAsync(code);
+        self.postMessage({ type: 'done', success: true });
+      } catch (err) {
+        self.postMessage({ type: 'done', success: false, error: err && err.message ? err.message : String(err) });
+      }
+    };
+  `;
+
+  const blob = new Blob([workerSource], { type: 'application/javascript' });
+  const workerUrl = URL.createObjectURL(blob);
+  const worker = new Worker(workerUrl);
+
+  let fullOutput = '';
+  let fullError: string | null = null;
+
+  return new Promise<PythonExecutionResult>((resolve) => {
+    const timer = setTimeout(() => {
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+      const timeoutErr = `TimeoutError: Python execution exceeded ${timeoutMs}ms limit and worker was terminated.`;
+      onStderr?.(timeoutErr + '\n');
+      resolve({
+        success: false,
+        output: fullOutput,
+        error: timeoutErr,
+        executionTimeMs: Math.round(performance.now() - startTime)
+      });
+    }, timeoutMs);
+
+    worker.onmessage = (evt) => {
+      const msg = evt.data || {};
+      if (msg.type === 'status') {
+        onStatus?.(msg.text);
+      } else if (msg.type === 'stdout') {
+        fullOutput += msg.text;
+        onStdout?.(msg.text);
+      } else if (msg.type === 'stderr') {
+        fullOutput += msg.text;
+        fullError = (fullError || '') + msg.text;
+        onStderr?.(msg.text);
+      } else if (msg.type === 'done') {
+        clearTimeout(timer);
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+        if (msg.error) {
+          fullError = (fullError ? fullError + '\n' : '') + msg.error;
+          onStderr?.(msg.error + '\n');
+        }
+        resolve({
+          success: Boolean(msg.success && !fullError),
+          output: fullOutput || (fullError ? '' : '(Execution finished with no output)'),
+          error: fullError,
+          executionTimeMs: Math.round(performance.now() - startTime)
+        });
+      }
+    };
+
+    worker.onerror = (err) => {
+      clearTimeout(timer);
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+      resolve(fallbackPythonExecution(code, onStdout, onStderr));
+    };
+
+    worker.postMessage({ code, virtualFiles });
+  });
+}
+
+/**
+ * Executes Python code with Pyodide WebAssembly (in a Web Worker with timeout termination when supported),
  * synchronizing the virtual filesystem and streaming output.
  */
 export async function runPythonCode(
@@ -204,8 +308,17 @@ export async function runPythonCode(
   virtualFiles: VirtualFile[] = [],
   onStdout?: (text: string) => void,
   onStderr?: (text: string) => void,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  timeoutMs = DEFAULT_PYTHON_TIMEOUT_MS
 ): Promise<PythonExecutionResult> {
+  if (typeof Worker !== 'undefined' && typeof Blob !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' && !(typeof window !== 'undefined' && (window as any).loadPyodide)) {
+    try {
+      return await runPyodideInWebWorker(code, virtualFiles, timeoutMs, onStdout, onStderr, onStatus);
+    } catch {
+      // Fall back to direct or local interpreter
+    }
+  }
+
   const startTime = performance.now();
   let fullOutput = '';
   let fullError: string | null = null;
@@ -220,7 +333,6 @@ export async function runPythonCode(
       return fallbackPythonExecution(code, onStdout, onStderr);
     }
 
-    // Set up standard output and error hooks in JavaScript
     (window as any).__float_stdout_hook = (text: string) => {
       fullOutput += text;
       onStdout?.(text);
@@ -232,7 +344,6 @@ export async function runPythonCode(
       onStderr?.(text);
     };
 
-    // Synchronize virtual files into Pyodide's virtual filesystem
     for (const file of virtualFiles) {
       if (file.path && file.content !== undefined) {
         try {
@@ -243,9 +354,7 @@ export async function runPythonCode(
               currentPath += (i === 0 ? '' : '/') + parts[i];
               try {
                 pyodide.FS.mkdir(currentPath);
-              } catch {
-                // directory may already exist
-              }
+              } catch {}
             }
           }
           pyodide.FS.writeFile(file.path, file.content, { encoding: 'utf8' });
@@ -255,7 +364,6 @@ export async function runPythonCode(
       }
     }
 
-    // Configure sys.stdout and sys.stderr redirection in Python
     await pyodide.runPythonAsync(`
 import sys
 import js
@@ -302,7 +410,9 @@ sys.stderr = FloatStreamWriter('__float_stderr_hook')
       executionTimeMs: elapsed
     };
   } finally {
-    delete (window as any).__float_stdout_hook;
-    delete (window as any).__float_stderr_hook;
+    if (typeof window !== 'undefined') {
+      delete (window as any).__float_stdout_hook;
+      delete (window as any).__float_stderr_hook;
+    }
   }
 }

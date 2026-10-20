@@ -1,3 +1,4 @@
+import { apiFetch } from '../../services/api';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   BarChart3, Upload, FileSpreadsheet, Sparkles, Send,
@@ -49,7 +50,7 @@ export function DataAnalystWorkspace() {
     setLoadingProfile(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/analyst/profile', {
+      const res = await apiFetch('/api/analyst/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, csvData }),
@@ -126,7 +127,7 @@ export function DataAnalystWorkspace() {
       setLoadingProfile(true);
       setErrorMsg(null);
       const text = await file.text();
-      const res = await fetch('/api/analyst/profile', {
+      const res = await apiFetch('/api/analyst/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: file.name, csvData: text }),
@@ -225,7 +226,7 @@ export function DataAnalystWorkspace() {
     }, 900);
 
     try {
-      const response = await fetch('/api/analyst/query', {
+      const response = await apiFetch('/api/analyst/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

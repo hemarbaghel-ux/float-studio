@@ -1,23 +1,8 @@
 /**
  * FLOAT AI - Event & Scheduled Automations Engine (Milestone 9)
  *
- * Supports triggers:
- * - schedule (cron interval)
- * - github_pr (PR opened / updated)
- * - github_issue (issue created)
- * - webhook (external authenticated webhook)
- * - manual (user invoked)
- *
- * Supports actions:
- * - run_agent
- * - review_pr
- * - run_tests
- * - create_report
- * - notify_user
- *
- * Enforces permission scoping:
- * - Automations cannot exceed the owner's assigned permissions
- * - Detailed execution history and failure tracking
+ * Enforces strict tenant and project ownership on creation, listing, deletion,
+ * triggering, and run log inspection.
  */
 
 export type AutomationTriggerType = 'schedule' | 'github_pr' | 'github_issue' | 'webhook' | 'manual';
@@ -75,9 +60,10 @@ export class AutomationService {
     return record;
   }
 
-  static getAutomation(id: string, userId: string): FloatAutomation | undefined {
+  static getAutomation(id: string, userId: string, projectId?: string): FloatAutomation | undefined {
     const auto = this.automations.get(id);
     if (!auto || auto.userId !== userId) return undefined;
+    if (projectId && auto.projectId !== projectId) return undefined;
     return auto;
   }
 
@@ -87,23 +73,31 @@ export class AutomationService {
     );
   }
 
-  static deleteAutomation(id: string, userId: string): boolean {
-    const auto = this.automations.get(id);
-    if (!auto || auto.userId !== userId) return false;
+  static deleteAutomation(id: string, userId: string, projectId?: string): boolean {
+    const auto = this.getAutomation(id, userId, projectId);
+    if (!auto) return false;
     this.runLogs.delete(id);
     return this.automations.delete(id);
   }
 
   /**
-   * Triggers an automation execution with permission checks and durable history.
+   * Triggers an automation execution with strict owner and project verification.
    */
   static async trigger(
     automationId: string,
-    triggerContext: { triggerType: AutomationTriggerType; payload?: any; userId: string }
+    triggerContext: { triggerType: AutomationTriggerType; payload?: any; userId: string; projectId?: string }
   ): Promise<{ runId: string; status: 'success' | 'failed'; summary: string }> {
     const auto = this.automations.get(automationId);
     if (!auto) {
       throw new Error(`Automation "${automationId}" not found.`);
+    }
+
+    if (!triggerContext?.userId || auto.userId !== triggerContext.userId) {
+      throw new Error('Forbidden: You do not own this automation.');
+    }
+
+    if (triggerContext.projectId && auto.projectId !== triggerContext.projectId) {
+      throw new Error('Forbidden: Automation does not belong to the specified project.');
     }
 
     if (!auto.enabled) {
@@ -163,7 +157,15 @@ export class AutomationService {
     }
   }
 
-  static getRunLogs(automationId: string): AutomationRunLog[] {
+  static getRunLogs(automationId: string, userId?: string, projectId?: string): AutomationRunLog[] {
+    const auto = this.automations.get(automationId);
+    if (!auto) return [];
+    if (userId !== undefined && auto.userId !== userId) {
+      return [];
+    }
+    if (projectId !== undefined && auto.projectId !== projectId) {
+      return [];
+    }
     return this.runLogs.get(automationId) || [];
   }
 

@@ -5,7 +5,7 @@
  * 2. GPT-6 Astra (sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01)
  *
  * Automatically and seamlessly falls back to Google Gemini (@google/genai, model gemini-2.5-flash)
- * using process.env.GEMINI_API_KEY whenever OpenAI returns a billing/quota error or takes
+ * using the authenticated server Gemini proxy whenever OpenAI returns a billing/quota error or takes
  * longer than 3 seconds without streaming tokens, ensuring 100% free, real, live AI responses.
  */
 
@@ -197,7 +197,7 @@ function recordTokenUsage(params: {
 
 /**
  * Stream real AI responses live into the FLOAT chat interface using Google Gemini API
- * (@google/genai via process.env.GEMINI_API_KEY).
+ * (via authenticated server proxy).
  *
  * Model selection:
  * - GPT-6 Astra -> gemini-3.8-flash (instant, lightning-fast code generation)

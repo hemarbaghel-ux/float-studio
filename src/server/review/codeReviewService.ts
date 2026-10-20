@@ -1,17 +1,7 @@
 /**
  * FLOAT AI - Automated Code Review & PR Review Service (Milestone 9)
  *
- * Implements code review analysis:
- * - Correctness & runtime error analysis
- * - Security flaws (hardcoded credentials, path traversal, injection)
- * - Regressions and breaking API signatures
- * - Performance issues (unbounded loops, memory leaks)
- * - Maintainability & dead code
- *
- * Findings have:
- * - severity ('critical' | 'high' | 'medium' | 'low' | 'info')
- * - file, line, finding, explanation, suggestedFix, confidence (0.0-1.0)
- * - dismissable status
+ * Implements code review analysis scoped to verified project and user ownership.
  */
 
 export type ReviewSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
@@ -32,6 +22,7 @@ export interface CodeReviewFinding {
 export interface ReviewReport {
   id: string;
   projectId: string;
+  userId?: string;
   targetBranch?: string;
   pullRequestNumber?: number;
   timestamp: number;
@@ -48,26 +39,36 @@ export interface ReviewReport {
 export class CodeReviewService {
   private static reports = new Map<string, ReviewReport>();
 
+  private static canAccessReport(
+    report: ReviewReport | undefined,
+    projectId?: string,
+    userId?: string
+  ): report is ReviewReport {
+    if (!report) return false;
+    if (projectId !== undefined && report.projectId !== projectId) return false;
+    if (userId !== undefined && report.userId && report.userId !== userId) return false;
+    if (userId === undefined && report.userId !== undefined) return false;
+    return true;
+  }
+
   /**
    * Analyzes changed files or unified diff for concrete issues.
    */
   static analyzeDiff(
     projectId: string,
     diffText: string,
-    files: Array<{ path: string; content: string }>
+    files: Array<{ path: string; content: string }>,
+    userId?: string
   ): ReviewReport {
     const findings: CodeReviewFinding[] = [];
     const reportId = `rev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-    // 1. Security scan: credentials / tokens
     const credRegex = /(?:ghp_[a-zA-Z0-9]{36}|sk-[a-zA-Z0-9]{48}|AIzaSy[a-zA-Z0-9_-]{33}|password\s*[:=]\s*['"][^'"]{4,}['"])/i;
-    // 2. Path traversal patterns
     const traversalRegex = /\.\.\/|\.\.\\/;
-    // 3. Debugging / console leaks
     const consoleRegex = /console\.(?:log|debug)\s*\(/;
 
     for (const f of files) {
-      const lines = f.content.split('\n');
+      const lines = (f.content || '').split('\n');
       for (let i = 0; i < lines.length; i++) {
         const lineText = lines[i];
 
@@ -121,6 +122,7 @@ export class CodeReviewService {
     const report: ReviewReport = {
       id: reportId,
       projectId,
+      userId,
       timestamp: Date.now(),
       findings,
       summary: {
@@ -136,12 +138,18 @@ export class CodeReviewService {
     return report;
   }
 
-  static getReport(id: string): ReviewReport | undefined {
-    return this.reports.get(id);
+  static getReport(id: string, projectId?: string, userId?: string): ReviewReport | undefined {
+    const report = this.reports.get(id);
+    if (!this.canAccessReport(report, projectId, userId)) return undefined;
+    return report;
   }
 
-  static dismissFinding(reportId: string, findingId: string): boolean {
-    const report = this.reports.get(reportId);
+  static listReports(projectId: string, userId?: string): ReviewReport[] {
+    return Array.from(this.reports.values()).filter(r => this.canAccessReport(r, projectId, userId));
+  }
+
+  static dismissFinding(reportId: string, findingId: string, projectId?: string, userId?: string): boolean {
+    const report = this.getReport(reportId, projectId, userId);
     if (!report) return false;
     const item = report.findings.find(f => f.id === findingId);
     if (!item) return false;

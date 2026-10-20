@@ -1,12 +1,12 @@
 /**
- * Google Gemini Service (@google/genai)
+ * Google Gemini Service (Authenticated Server Proxy Client)
  *
- * Provides enterprise-grade access to Google Gemini models (gemini-2.5-flash, gemini-2.5-pro)
- * with exponential backoff retry logic, resilient multi-transport streaming (server-side SSE proxy
- * and direct SDK fallback), and response processing for FLOAT AI and floatAgent.
+ * Routes Gemini streaming and non-streaming requests exclusively through the
+ * authenticated backend `/api/ai/gemini-stream` route. Never accesses server-only
+ * privileged server credentials or direct provider SDKs directly in the browser.
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { auth } from '../lib/firebase';
 import { getUserApiKeys } from './apiKeyService';
 
 export type GeminiModelId = 'gemini-3.8-flash' | 'gemini-3.1-pro-preview' | 'gemini-2.5-flash' | 'gemini-2.5-pro' | string;
@@ -119,7 +119,6 @@ async function withRetry<T>(
       }
 
       if (attempt < maxRetries && isTransientError(err)) {
-        // Exponential backoff with random jitter: delay * 2^attempt + jitter
         const jitter = Math.random() * 200;
         const delay = initialDelayMs * Math.pow(2, attempt) + jitter;
         onRetry?.(attempt + 1, delay, err);
@@ -134,7 +133,7 @@ async function withRetry<T>(
 }
 
 /**
- * Format conversation history into valid @google/genai contents.
+ * Format conversation history into valid Gemini message contents.
  */
 export function formatGeminiContents(
   prompt: string,
@@ -158,9 +157,20 @@ export function formatGeminiContents(
   return contents;
 }
 
+async function buildAuthHeaders(extraHeaders: Record<string, string> = {}): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { ...extraHeaders };
+  const user = auth?.currentUser;
+  if (user && typeof user.getIdToken === 'function') {
+    const token = await user.getIdToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
 /**
- * Stream real-time AI responses using Google Gemini.
- * Attempts server-side proxy route first, with fallback to direct client-side SDK.
+ * Stream real-time AI responses using the authenticated server-side Gemini proxy.
  */
 export async function streamGeminiContent(options: GeminiStreamOptions): Promise<string> {
   const {
@@ -185,7 +195,6 @@ export async function streamGeminiContent(options: GeminiStreamOptions): Promise
     isFallback: false,
   });
 
-  // Attempt 1: Server-side SSE streaming proxy (/api/ai/gemini-stream) with retry
   try {
     const text = await withRetry(
       async (attempt) => {
@@ -226,42 +235,10 @@ export async function streamGeminiContent(options: GeminiStreamOptions): Promise
     }
   } catch (serverErr: any) {
     if (signal?.aborted) throw serverErr;
-    console.warn('[GeminiService] Server proxy stream failed, falling back to direct SDK:', serverErr.message);
+    console.warn('[GeminiService] Authenticated server proxy stream failed:', serverErr.message);
   }
 
-  // Attempt 2: Direct client-side @google/genai SDK with model fallback
-  onStatus?.({
-    stage: 'streaming',
-    message: `Connecting to ${agentBadge}...`,
-    detail: 'Direct Gemini SDK stream',
-    isFallback: true,
-  });
-
-  try {
-    const text = await streamViaClientSDK({
-      prompt,
-      conversationHistory,
-      model,
-      systemInstruction,
-      agentBadge,
-      onChunk,
-      onStatus,
-      signal,
-    });
-
-    if (text.trim()) {
-      onStatus?.({
-        stage: 'completed',
-        message: `${agentBadge} response completed.`,
-      });
-      return text;
-    }
-  } catch (sdkErr: any) {
-    if (signal?.aborted) throw sdkErr;
-    console.warn('[GeminiService] Direct SDK stream failed:', sdkErr.message);
-  }
-
-  // Graceful fallback response if all streams yield empty text
+  // Fallback response if stream yields empty text
   const fallbackMessage =
     `I am **${agentBadge}**, your active FLOAT AI development agent.\n\n` +
     `I received your prompt:\n` +
@@ -277,7 +254,7 @@ export async function streamGeminiContent(options: GeminiStreamOptions): Promise
 }
 
 /**
- * Stream events from the server-side /api/ai/gemini-stream proxy.
+ * Stream events from the authenticated server-side /api/ai/gemini-stream proxy.
  */
 async function streamViaServerProxy(options: {
   prompt: string;
@@ -291,13 +268,15 @@ async function streamViaServerProxy(options: {
 }): Promise<string> {
   const { prompt, conversationHistory, model, systemInstruction, agentBadge, onChunk, onStatus, signal } = options;
 
+  const headers = await buildAuthHeaders({
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  });
+
   const response = await fetch('/api/ai/gemini-stream', {
     method: 'POST',
     signal,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
+    headers,
     body: JSON.stringify({
       prompt,
       conversationHistory,
@@ -364,67 +343,7 @@ async function streamViaServerProxy(options: {
 }
 
 /**
- * Stream using direct client-side @google/genai SDK with model downgrade on error.
- */
-async function streamViaClientSDK(options: {
-  prompt: string;
-  conversationHistory: GeminiChatMessage[];
-  model: GeminiModelId;
-  systemInstruction: string;
-  agentBadge: string;
-  onChunk: (chunk: string, fullText: string) => void;
-  onStatus?: (status: GeminiStreamStatus) => void;
-  signal?: AbortSignal;
-}): Promise<string> {
-  const { prompt, conversationHistory, model, systemInstruction, agentBadge, onChunk, onStatus, signal } = options;
-
-  const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || '';
-  const ai = apiKey ? new GoogleGenAI({ apiKey }) : new GoogleGenAI();
-  const contents = formatGeminiContents(prompt, conversationHistory);
-  const targetModel = resolveGeminiModel(model);
-
-  let streamResult;
-  try {
-    streamResult = await ai.models.generateContentStream({
-      model: targetModel,
-      contents,
-      config: { systemInstruction },
-    });
-  } catch (primaryErr: any) {
-    // If primary model encountered rate limits or failures, gracefully fall back to gemini-3.8-flash
-    if (targetModel !== 'gemini-3.8-flash') {
-      console.warn(`[GeminiService] Primary model ${targetModel} failed, falling back to gemini-3.8-flash:`, primaryErr?.message);
-      streamResult = await ai.models.generateContentStream({
-        model: 'gemini-3.8-flash',
-        contents,
-        config: { systemInstruction },
-      });
-    } else {
-      throw primaryErr;
-    }
-  }
-
-  onStatus?.({
-    stage: 'streaming',
-    message: `Connected to ${agentBadge}. Streaming response...`,
-    detail: 'Gemini SDK active',
-  });
-
-  let accumulatedText = '';
-  for await (const chunk of streamResult) {
-    if (signal?.aborted) break;
-    const text = chunk.text || '';
-    if (text) {
-      accumulatedText += text;
-      onChunk(text, accumulatedText);
-    }
-  }
-
-  return accumulatedText;
-}
-
-/**
- * Non-streaming content generation with Gemini SDK.
+ * Non-streaming content generation routed through the authenticated backend proxy.
  */
 export async function generateGeminiContent(options: GeminiGenerateOptions): Promise<string> {
   const {
@@ -440,17 +359,19 @@ export async function generateGeminiContent(options: GeminiGenerateOptions): Pro
 
   return await withRetry(
     async () => {
-      const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || '';
-      const ai = apiKey ? new GoogleGenAI({ apiKey }) : new GoogleGenAI();
-      const contents = formatGeminiContents(prompt, conversationHistory);
-
-      const response = await ai.models.generateContent({
+      let fullText = '';
+      await streamViaServerProxy({
+        prompt,
+        conversationHistory,
         model: targetModel,
-        contents,
-        config: { systemInstruction },
+        systemInstruction,
+        agentBadge: 'FLOAT AI',
+        onChunk: (_delta, accumulated) => {
+          fullText = accumulated;
+        },
+        signal,
       });
-
-      return response.text || '';
+      return fullText;
     },
     { maxRetries, signal }
   );

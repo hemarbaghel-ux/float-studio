@@ -6,7 +6,6 @@ import {
   AIProviderError,
   ProviderHealthCheckResult
 } from './base';
-import { AgentRunner } from '../agent/agentRunner';
 import { PortableAgentRunner } from '../agent/portableAgentRunner';
 import { GPT6_ASTRA_CLOUD_CONFIG } from './cloudAgentConfig';
 
@@ -169,7 +168,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-6.1-sol'
+        defaultModel: 'gpt-4o'
       };
     }
 
@@ -184,7 +183,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: true,
         modelAvailable: hasOperationalModel || models.data.length > 0,
-        defaultModel: 'gpt-6.1-sol',
+        defaultModel: 'gpt-4o',
         accessibleModelIds
       };
     } catch (err: any) {
@@ -194,7 +193,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-6.1-sol',
+        defaultModel: 'gpt-4o',
         error: normalized.message
       };
     }
@@ -203,12 +202,13 @@ export class OpenAIAdapter implements AIProviderAdapter {
   private resolveApiModel(model: string): string {
     const mapping: Record<string, string> = {
       auto: 'gpt-4o',
+      'float-basic': 'gpt-4o-mini',
+      'gpt-6-astra': 'gpt-4o',
       'gpt-6.1-sol': 'gpt-4o',
       'gpt-6.1': 'gpt-4o',
-      'gpt-6-sol': 'gpt-4o',
-      'gpt-6-astra': 'gpt-4o'
+      'gpt-6-sol': 'gpt-4o'
     };
-    return mapping[model] || 'gpt-4o';
+    return mapping[model] || model || 'gpt-4o';
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
@@ -261,8 +261,9 @@ export class OpenAIAdapter implements AIProviderAdapter {
   }
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
-    const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
-    const client = this.getClient(effectiveModel);
+    const requestedModel = request.apiModelId || request.model;
+    const effectiveModel = this.resolveApiModel(requestedModel);
+    const client = this.getClient(requestedModel);
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -330,8 +331,9 @@ export class OpenAIAdapter implements AIProviderAdapter {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
-    const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
-    const client = this.getClient(effectiveModel);
+    const requestedModel = request.apiModelId || request.model;
+    const effectiveModel = this.resolveApiModel(requestedModel);
+    const client = this.getClient(requestedModel);
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {

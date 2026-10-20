@@ -2,14 +2,14 @@
  * FLOAT AI - Authoritative Rules System (Milestone 9)
  *
  * Supports layered rules:
- * 1. User Rules: Global preferences applied across all projects
- * 2. Project Rules: Configured per-project in workspace settings
+ * 1. User Rules: Global preferences applied across all projects owned by that user
+ * 2. Project Rules: Configured per-project and bound to the project owner
  * 3. Repository Rules: Discovered from `.float/rules/*.md` or `.float/rules/*.json`
  *
  * Enforces security boundaries:
  * - Content length is bounded per rule and in aggregate
  * - Traversal and sensitive patterns are excluded
- * - Untrusted repository rules cannot override platform security policies
+ * - Project rules enforce tenant ownership when userId is provided
  */
 
 import { normalizeWorkspacePath } from '../../services/indexing/fileFilter';
@@ -34,6 +34,7 @@ const MAX_TOTAL_RULES_LENGTH = 6000;
 export class RulesService {
   private static userRules = new Map<string, FloatRule[]>(); // userId -> rules
   private static projectRules = new Map<string, FloatRule[]>(); // projectId -> rules
+  private static projectRuleOwners = new Map<string, string>(); // projectId -> owner userId
 
   /**
    * Registers or updates a user-scoped rule.
@@ -73,9 +74,22 @@ export class RulesService {
   }
 
   /**
-   * Registers or updates a project-scoped rule.
+   * Registers or updates a project-scoped rule with tenant ownership enforcement.
    */
-  static setProjectRule(projectId: string, rule: Omit<FloatRule, 'scope' | 'projectId'>): FloatRule {
+  static setProjectRule(
+    projectId: string,
+    rule: Omit<FloatRule, 'scope' | 'projectId'>,
+    userId?: string
+  ): FloatRule {
+    const recordedOwner = this.projectRuleOwners.get(projectId);
+    const effectiveUserId = userId ?? rule.userId;
+    if (recordedOwner && effectiveUserId && recordedOwner !== effectiveUserId) {
+      throw new Error('Forbidden: Cannot modify rules for a project owned by another user.');
+    }
+    if (effectiveUserId && !recordedOwner) {
+      this.projectRuleOwners.set(projectId, effectiveUserId);
+    }
+
     const list = this.projectRules.get(projectId) || [];
     const sanitizedContent = (rule.content || '').slice(0, MAX_RULE_LENGTH).trim();
     const existingIdx = list.findIndex(r => r.id === rule.id);
@@ -85,6 +99,7 @@ export class RulesService {
       content: sanitizedContent,
       scope: 'project',
       projectId,
+      userId: effectiveUserId,
       priority: rule.priority || 3,
       enabled: rule.enabled !== false
     };
@@ -98,15 +113,37 @@ export class RulesService {
     return fullRule;
   }
 
-  static getProjectRules(projectId: string): FloatRule[] {
-    return this.projectRules.get(projectId) || [];
+  static getProjectRules(projectId: string, userId?: string): FloatRule[] {
+    const recordedOwner = this.projectRuleOwners.get(projectId);
+    if (recordedOwner && userId && recordedOwner !== userId) {
+      return [];
+    }
+    const list = this.projectRules.get(projectId) || [];
+    if (userId) {
+      return list.filter(r => !r.userId || r.userId === userId);
+    }
+    return list;
   }
 
-  static deleteProjectRule(projectId: string, ruleId: string): boolean {
+  static deleteProjectRule(projectId: string, ruleId: string, userId?: string): boolean {
+    const recordedOwner = this.projectRuleOwners.get(projectId);
+    if (recordedOwner && userId && recordedOwner !== userId) {
+      return false;
+    }
     const list = this.projectRules.get(projectId) || [];
-    const filtered = list.filter(r => r.id !== ruleId);
+    const filtered = list.filter(r => {
+      if (r.id !== ruleId) return true;
+      if (userId && r.userId && r.userId !== userId) return true;
+      return false;
+    });
     this.projectRules.set(projectId, filtered);
     return filtered.length < list.length;
+  }
+
+  static clear(): void {
+    this.userRules.clear();
+    this.projectRules.clear();
+    this.projectRuleOwners.clear();
   }
 
   /**
@@ -122,7 +159,6 @@ export class RulesService {
       const rawPath = f.path || f.name || '';
       const norm = normalizeWorkspacePath(rawPath);
 
-      // Support FLOAT and Cursor workspace rule files in workspace root
       if (norm === '.cursorrules' || norm === '.floatrules') {
         const rawContent = (f.content || '').trim();
         if (rawContent) {
@@ -178,7 +214,6 @@ export class RulesService {
           // JSON parse failure ignored gracefully
         }
       } else {
-        // Markdown / Plain text rule
         repoRules.push({
           id: `repo-${baseName}`,
           name: baseName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '),
@@ -195,10 +230,6 @@ export class RulesService {
 
   /**
    * Collects, prioritizes, and bounds all active rules for the given user, project, and file tree.
-   * Priority ordering:
-   * 1. Repository rules (.float/rules/)
-   * 2. Project rules
-   * 3. User global rules
    */
   static getEffectiveRules(options: {
     userId?: string;
@@ -208,28 +239,23 @@ export class RulesService {
   }): FloatRule[] {
     const allRules: FloatRule[] = [];
 
-    // 1. Repository rules
     if (options.files && options.files.length > 0) {
       const repoRules = this.discoverRepositoryRules(options.files);
       allRules.push(...repoRules.filter(r => r.enabled));
     }
 
-    // 2. Project rules
     if (options.projectId) {
-      const pRules = this.getProjectRules(options.projectId);
+      const pRules = this.getProjectRules(options.projectId, options.userId);
       allRules.push(...pRules.filter(r => r.enabled));
     }
 
-    // 3. User rules
     if (options.userId) {
       const uRules = this.getUserRules(options.userId);
       allRules.push(...uRules.filter(r => r.enabled));
     }
 
-    // Sort by priority ascending (1 = highest), then scope
     allRules.sort((a, b) => a.priority - b.priority);
 
-    // Filter rules by file patterns (globs) if defined
     const applicableRules = allRules.filter(rule => {
       if (!rule.globs || rule.globs.length === 0) return true;
       if (options.targetFilePath) {
@@ -243,7 +269,6 @@ export class RulesService {
         });
         if (matches) return true;
       }
-      // If no targetFilePath provided, check if any workspace files match the pattern
       if (!options.targetFilePath && options.files && options.files.length > 0) {
         return options.files.some(f => {
           const p = (f.path || f.name || '').toLowerCase().replace(/\\/g, '/');
@@ -258,7 +283,6 @@ export class RulesService {
       return !options.targetFilePath;
     });
 
-    // Apply strict budget limit
     const boundedRules: FloatRule[] = [];
     let currentLength = 0;
 

@@ -1,8 +1,37 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { DatasetProfile, DatasetColumn, ExecutiveReport, AgentProgressStep } from '../features/analyst/types';
+import { requireAuth } from './authMiddleware';
 
 export const analystRouter = express.Router();
+
+// Per-user sliding window rate limiter for Data Analyst endpoints
+const analystRateLimits = new Map<string, number[]>();
+const MAX_ANALYST_RATE_LIMIT_USERS = 5_000;
+
+export function checkAnalystRateLimit(userId: string, maxRequests = 20, windowMs = 60_000): boolean {
+  if (!userId) return false;
+  const now = Date.now();
+  const timestamps = (analystRateLimits.get(userId) || []).filter((t) => now - t < windowMs);
+  if (timestamps.length >= maxRequests) {
+    return false;
+  }
+  timestamps.push(now);
+  analystRateLimits.delete(userId);
+  if (!analystRateLimits.has(userId) && analystRateLimits.size >= MAX_ANALYST_RATE_LIMIT_USERS) {
+    const oldest = analystRateLimits.keys().next().value;
+    if (oldest) analystRateLimits.delete(oldest);
+  }
+  analystRateLimits.set(userId, timestamps);
+  return true;
+}
+
+export function resetAnalystRateLimitsForTests(): void {
+  analystRateLimits.clear();
+}
+
+// Enforce verified authentication on all Data Analyst routes
+analystRouter.use(requireAuth);
 
 /**
  * Robust CSV parser supporting quotes, commas, and linebreaks.
@@ -115,7 +144,7 @@ function profileDataset(name: string, csvText: string): DatasetProfile {
 /**
  * Safe simulated Python Sandbox Runner for data aggregations and statistical calculations.
  */
-function runSandboxPython(code: string, rows: Record<string, any>[]): { stdout: string; summaryStats: Record<string, any> } {
+function runSandboxPython(_code: string, rows: Record<string, any>[]): { stdout: string; summaryStats: Record<string, any> } {
   const stdoutLines: string[] = [
     `[OpenAI Sandbox Python 3.11 Environment]`,
     `>>> import pandas as pd`,
@@ -127,7 +156,6 @@ function runSandboxPython(code: string, rows: Record<string, any>[]): { stdout: 
     rowCount: rows.length,
   };
 
-  // Compute aggregations across numeric columns
   if (rows.length > 0) {
     const keys = Object.keys(rows[0]);
     keys.forEach((key) => {
@@ -157,7 +185,10 @@ function runSandboxPython(code: string, rows: Record<string, any>[]): { stdout: 
 }
 
 // 1. Ingest & Profile CSV
-analystRouter.post('/profile', express.json({ limit: '15mb' }), (req, res) => {
+analystRouter.post('/profile', requireAuth, express.json({ limit: '15mb' }), (req: any, res) => {
+  if (!checkAnalystRateLimit(req.user?.uid, 30, 60_000)) {
+    return res.status(429).json({ error: 'Rate limit exceeded for dataset profiling. Please wait a moment.' });
+  }
   const { name = 'dataset.csv', csvData } = req.body || {};
   if (!csvData || typeof csvData !== 'string') {
     return res.status(400).json({ error: 'csvData string is required' });
@@ -172,13 +203,15 @@ analystRouter.post('/profile', express.json({ limit: '15mb' }), (req, res) => {
 });
 
 // 2. Query Agent & Execute Sandbox
-analystRouter.post('/query', express.json({ limit: '15mb' }), async (req, res) => {
+analystRouter.post('/query', requireAuth, express.json({ limit: '15mb' }), async (req: any, res) => {
+  if (!checkAnalystRateLimit(req.user?.uid, 20, 60_000)) {
+    return res.status(429).json({ error: 'Rate limit exceeded for analyst queries. Please wait a moment.' });
+  }
   const {
     csvData,
     query,
     datasetName = 'dataset.csv',
     model = 'gpt-6-astra',
-    conversationHistory = [],
   } = req.body || {};
 
   if (!csvData || !query) {
@@ -188,7 +221,6 @@ analystRouter.post('/query', express.json({ limit: '15mb' }), async (req, res) =
   const { rows, headers } = parseCsv(csvData);
   const modelName = model === 'gpt-6.1-sol' ? 'GPT-6.1 Sol' : 'GPT-6 Astra';
 
-  // 1. Progress Steps
   const steps: AgentProgressStep[] = [
     {
       id: 'step-1',
@@ -200,7 +232,7 @@ analystRouter.post('/query', express.json({ limit: '15mb' }), async (req, res) =
     {
       id: 'step-2',
       title: 'Formulate Statistical Hypothesis',
-      description: `Mapped query intent: "${query.slice(0, 60)}..."`,
+      description: `Mapped query intent: "${String(query).slice(0, 60)}..."`,
       status: 'completed',
       durationMs: 280,
     },
@@ -227,7 +259,6 @@ analystRouter.post('/query', express.json({ limit: '15mb' }), async (req, res) =
     },
   ];
 
-  // 2. Run Python sandbox simulation
   const generatedPythonCode =
 `import pandas as pd
 import numpy as np
@@ -236,7 +267,7 @@ import numpy as np
 df = pd.read_csv('${datasetName}')
 print(f"Shape: {df.shape}")
 
-# Statistical aggregations for query: ${query.replace(/'/g, "\\'")}
+# Statistical aggregations for query: ${String(query).replace(/'/g, "\\'")}
 summary = df.describe(include='all')
 print(summary)
 
@@ -250,7 +281,6 @@ if len(numeric_cols) >= 2:
 
   const sandboxRes = runSandboxPython(generatedPythonCode, rows);
 
-  // 3. Formulate charts from dataset
   const charts: any[] = [];
   const numericKeys = headers.filter((h) => {
     const vals = rows.map((r) => r[h]).filter((v) => typeof v === 'number');
@@ -263,7 +293,6 @@ if len(numeric_cols) >= 2:
   const secondaryNumeric = numericKeys[1];
 
   if (primaryCategory && primaryNumeric) {
-    // Aggregate by category
     const grouped: Record<string, { count: number; sum: number; sum2: number }> = {};
     rows.forEach((r) => {
       const cat = String(r[primaryCategory] || 'Other');
@@ -297,7 +326,6 @@ if len(numeric_cols) >= 2:
       data: chartData,
     });
 
-    // Add distribution / donut chart
     const distributionData = Object.entries(grouped)
       .slice(0, 6)
       .map(([cat, stats]) => ({
@@ -316,7 +344,6 @@ if len(numeric_cols) >= 2:
     });
   }
 
-  // 4. Build AI Prompt for executive findings and caveats
   let aiSummary = '';
   let aiCaveats: string[] = [
     `Sample size of ${rows.length} records provides directional statistical guidance; broader cohorts recommended for formal confidence intervals.`,
@@ -372,7 +399,6 @@ if len(numeric_cols) >= 2:
       `demonstrating statistically significant concentration in upper performance tiers. Review the interactive visualizations and Python sandbox outputs below for detailed distributions.`;
   }
 
-  // 5. Build key metrics
   const keyMetrics = [
     {
       label: 'Sample Rows',
@@ -410,7 +436,7 @@ if len(numeric_cols) >= 2:
 
   const report: ExecutiveReport = {
     id: `rep_${Date.now()}`,
-    title: `Analytical Report: ${query.slice(0, 45)}`,
+    title: `Analytical Report: ${String(query).slice(0, 45)}`,
     summary: aiSummary,
     keyMetrics,
     charts,

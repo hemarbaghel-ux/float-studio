@@ -6,6 +6,8 @@
  *
  * Security & Budget guarantees:
  * - Skills are selectively matched against prompt intent/keywords (never dumped wholesale)
+ * - Custom skills are strictly partitioned by userId (and optional projectId) so tenants
+ *   cannot poison global built-in skills or other users' prompt contexts
  * - Tools assigned to skills cannot bypass tool authorization or execution policies
  * - Skills cannot read or leak sensitive credentials
  */
@@ -20,10 +22,12 @@ export interface FloatSkill {
   enabled: boolean;
   keywords: string[];
   permissionsRequired: Array<'read' | 'write' | 'network' | 'git'>;
+  userId?: string;
+  projectId?: string;
 }
 
-export const BUILT_IN_SKILLS: FloatSkill[] = [
-  {
+export const BUILT_IN_SKILLS: ReadonlyArray<FloatSkill> = Object.freeze([
+  Object.freeze({
     id: 'skill-react-patterns',
     name: 'React 19 & Architecture',
     description: 'Best practices for React components, hooks, suspense, and rendering performance.',
@@ -37,8 +41,8 @@ export const BUILT_IN_SKILLS: FloatSkill[] = [
     enabled: true,
     keywords: ['react', 'component', 'jsx', 'tsx', 'hook', 'useeffect', 'usestate', 'zustand'],
     permissionsRequired: ['read']
-  },
-  {
+  }),
+  Object.freeze({
     id: 'skill-firebase-debugging',
     name: 'Firebase & Firestore Governance',
     description: 'Patterns for Firebase auth, Firestore security rules, and admin SDK safety.',
@@ -52,8 +56,8 @@ export const BUILT_IN_SKILLS: FloatSkill[] = [
     enabled: true,
     keywords: ['firebase', 'firestore', 'auth', 'rules', 'security rules', 'collection', 'document', 'tenant'],
     permissionsRequired: ['read']
-  },
-  {
+  }),
+  Object.freeze({
     id: 'skill-testing-practices',
     name: 'Automated Testing & Verification',
     description: 'Patterns for unit tests, assertion libraries, and reproducible test suites.',
@@ -67,8 +71,8 @@ export const BUILT_IN_SKILLS: FloatSkill[] = [
     enabled: true,
     keywords: ['test', 'spec', 'unit test', 'assertion', 'assert', 'mock', 'coverage', 'verify', 'regression'],
     permissionsRequired: ['read']
-  },
-  {
+  }),
+  Object.freeze({
     id: 'skill-git-workflow',
     name: 'Git & GitHub Developer Workflow',
     description: 'Safe branching, commit message formatting, and pull request hygiene.',
@@ -82,8 +86,8 @@ export const BUILT_IN_SKILLS: FloatSkill[] = [
     enabled: true,
     keywords: ['git', 'github', 'commit', 'branch', 'pr', 'pull request', 'merge', 'diff', 'stash'],
     permissionsRequired: ['git', 'read']
-  },
-  {
+  }),
+  Object.freeze({
     id: 'skill-api-design',
     name: 'Express & REST API Security',
     description: 'Secure API routing, parameter validation, rate limiting, and status codes.',
@@ -97,8 +101,8 @@ export const BUILT_IN_SKILLS: FloatSkill[] = [
     enabled: true,
     keywords: ['api', 'endpoint', 'express', 'router', 'route', 'req', 'res', 'middleware', 'status', 'rest'],
     permissionsRequired: ['read']
-  },
-  {
+  }),
+  Object.freeze({
     id: 'skill-ui-accessibility',
     name: 'UI Accessibility & ARIA',
     description: 'Keyboard navigation, screen reader accessibility, and color contrast.',
@@ -112,40 +116,93 @@ export const BUILT_IN_SKILLS: FloatSkill[] = [
     enabled: true,
     keywords: ['accessibility', 'a11y', 'aria', 'contrast', 'keyboard', 'focus', 'screen reader'],
     permissionsRequired: ['read']
-  }
-];
+  })
+]);
+
+const BUILT_IN_SKILL_IDS = new Set(BUILT_IN_SKILLS.map(s => s.id));
+const DEFAULT_TEST_NAMESPACE = '__unscoped_test__';
 
 export class SkillsService {
-  private static customSkills = new Map<string, FloatSkill>(); // skillId -> Skill
+  // userId -> (skillId -> FloatSkill)
+  private static customSkillsByUser = new Map<string, Map<string, FloatSkill>>();
 
-  static registerSkill(skill: FloatSkill): void {
-    this.customSkills.set(skill.id, skill);
+  static isBuiltInSkillId(id: string): boolean {
+    return BUILT_IN_SKILL_IDS.has(id);
   }
 
-  static getSkill(id: string): FloatSkill | undefined {
-    return this.customSkills.get(id) || BUILT_IN_SKILLS.find(s => s.id === id);
+  static registerSkill(skill: FloatSkill, userId?: string): FloatSkill {
+    if (!skill || !skill.id) {
+      throw new Error('Skill id is required.');
+    }
+    if (BUILT_IN_SKILL_IDS.has(skill.id)) {
+      throw new Error(`Cannot overwrite built-in system skill "${skill.id}".`);
+    }
+    const ownerKey = (userId || skill.userId || DEFAULT_TEST_NAMESPACE).trim();
+    let bucket = this.customSkillsByUser.get(ownerKey);
+    if (!bucket) {
+      bucket = new Map<string, FloatSkill>();
+      this.customSkillsByUser.set(ownerKey, bucket);
+    }
+    const stored: FloatSkill = {
+      ...skill,
+      scope: skill.projectId ? 'project' : 'user',
+      userId: ownerKey === DEFAULT_TEST_NAMESPACE ? undefined : ownerKey,
+      enabled: skill.enabled !== false
+    };
+    bucket.set(stored.id, stored);
+    return stored;
   }
 
-  static getAllSkills(): FloatSkill[] {
-    const list = [...BUILT_IN_SKILLS];
-    for (const custom of this.customSkills.values()) {
-      const idx = list.findIndex(s => s.id === custom.id);
-      if (idx >= 0) list[idx] = custom;
-      else list.push(custom);
+  static getSkill(id: string, userId?: string, projectId?: string): FloatSkill | undefined {
+    const builtIn = BUILT_IN_SKILLS.find(s => s.id === id);
+    if (builtIn) return builtIn;
+
+    const ownerKey = (userId || DEFAULT_TEST_NAMESPACE).trim();
+    const bucket = this.customSkillsByUser.get(ownerKey);
+    const custom = bucket?.get(id);
+    if (!custom) return undefined;
+    if (custom.projectId && projectId && custom.projectId !== projectId) {
+      return undefined;
+    }
+    return custom;
+  }
+
+  static deleteSkill(id: string, userId: string): boolean {
+    if (!userId || BUILT_IN_SKILL_IDS.has(id)) return false;
+    const bucket = this.customSkillsByUser.get(userId.trim());
+    if (!bucket) return false;
+    return bucket.delete(id);
+  }
+
+  static getAllSkills(userId?: string, projectId?: string): FloatSkill[] {
+    const list: FloatSkill[] = [...BUILT_IN_SKILLS];
+    const ownerKey = (userId || DEFAULT_TEST_NAMESPACE).trim();
+    const bucket = this.customSkillsByUser.get(ownerKey);
+    if (!bucket) return list;
+
+    for (const custom of bucket.values()) {
+      if (custom.projectId && projectId && custom.projectId !== projectId) {
+        continue;
+      }
+      if (custom.projectId && !projectId && userId) {
+        // Project-scoped skills are only returned when matching projectId is supplied
+        continue;
+      }
+      list.push(custom);
     }
     return list;
   }
 
   /**
-   * Selectively identifies relevant skills based on prompt tokens and intent.
-   * Never injects more than maxSkills (default 2) to prevent context pollution.
+   * Selectively identifies relevant skills based on prompt tokens and intent,
+   * strictly scoped to the requesting userId and projectId.
    */
-  static selectRelevantSkills(prompt: string, maxSkills = 2): FloatSkill[] {
+  static selectRelevantSkills(prompt: string, maxSkills = 2, userId?: string, projectId?: string): FloatSkill[] {
     const norm = prompt.toLowerCase();
     const promptWords = new Set(
       prompt.toLowerCase().split(/[^\p{L}\p{N}_$]+/u).filter(w => w.length > 0)
     );
-    const skills = this.getAllSkills().filter(s => s.enabled);
+    const skills = this.getAllSkills(userId, projectId).filter(s => s.enabled);
 
     const scored: Array<{ skill: FloatSkill; score: number }> = [];
 
@@ -179,5 +236,9 @@ export class SkillsService {
       lines.push(skill.instructions);
     }
     return lines.join('\n');
+  }
+
+  static clear(): void {
+    this.customSkillsByUser.clear();
   }
 }

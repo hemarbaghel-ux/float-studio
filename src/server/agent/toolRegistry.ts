@@ -1,10 +1,11 @@
 import { ToolDefinition, ToolResult, ToolExecutionContext } from './types';
 import { searchCodebase } from '../../services/codebaseSearch';
-import { ProposalService } from './proposalService';
+import { ProposalService, computeDiffStats } from './proposalService';
 import { applyAgentChangesToWorktree } from './agentGitWorktree';
 import { workspaceIndexManager } from '../../services/indexing/workspaceIndexManager';
 import { DiagnosticsService } from '../diagnostics/diagnosticsService';
 import { ValidationService } from '../validation/validationService';
+import { projectProcessManager } from '../execution/processManager';
 
 // Patterns to exclude from file listings and reads
 const SENSITIVE_SEGMENT = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.))/i;
@@ -199,7 +200,6 @@ const searchProjectTool: ToolDefinition = {
 
     const maxResults = Math.min(Math.max(1, Number(args.maxResults) || 8), 15);
 
-    // Convert map to FileNode[] format for searchCodebase
     const fileNodes: any[] = [];
     for (const [path, file] of context.virtualFiles.entries()) {
       if (isSensitivePath(path)) continue;
@@ -264,7 +264,6 @@ const getProjectContextTool: ToolDefinition = {
       const ext = path.includes('.') ? path.split('.').pop() || 'unknown' : 'no_ext';
       fileSummary[ext] = (fileSummary[ext] || 0) + 1;
 
-      // Identify key manifests or entrypoints
       if (/package\.json$|tsconfig\.json$|main\.py$|server\.ts$|README\.md$/i.test(path)) {
         keyFiles.push(path);
       }
@@ -312,7 +311,7 @@ const proposeChangesTool: ToolDefinition = {
     if (typeof rawChanges === 'string') {
       try {
         rawChanges = JSON.parse(rawChanges);
-      } catch (e) {
+      } catch {
         return { success: false, error: 'Invalid JSON format for "changes" parameter.' };
       }
     }
@@ -321,13 +320,28 @@ const proposeChangesTool: ToolDefinition = {
       return { success: false, error: '"changes" must be a non-empty array of file change objects.' };
     }
 
+    // Build baseline map using any prior untouched snapshots from context.baselineFiles
+    const baselineVirtualFiles = new Map<string, { path: string; name?: string; content?: string; type: string }>();
+    for (const [k, v] of context.virtualFiles.entries()) {
+      baselineVirtualFiles.set(k, { ...v });
+    }
+    if (context.baselineFiles) {
+      for (const [k, orig] of context.baselineFiles.entries()) {
+        if (orig === null) {
+          baselineVirtualFiles.delete(k);
+        } else {
+          baselineVirtualFiles.set(k, { ...orig });
+        }
+      }
+    }
+
     const proposalResult = await ProposalService.createProposalDurable({
       ownerId: context.userId,
       projectId: context.projectId,
       agentTaskId: context.agentTaskId,
       description,
       rawChanges,
-      virtualFiles: context.virtualFiles
+      virtualFiles: baselineVirtualFiles
     });
 
     if (proposalResult.error || !proposalResult.proposal) {
@@ -452,7 +466,7 @@ const readDiagnosticsTool: ToolDefinition = {
   maxOutputChars: 14000,
   handler: async (args: Record<string, any>, context: ToolExecutionContext): Promise<ToolResult> => {
     const sourceFilter = args.source ? String(args.source).trim().toLowerCase() as any : undefined;
-    const items = DiagnosticsService.getDiagnostics(context.projectId, sourceFilter);
+    const items = DiagnosticsService.getDiagnostics(context.projectId, sourceFilter, context.userId);
 
     // If no stored runtime diagnostics, perform a quick syntax check on virtual files
     if (items.length === 0) {
@@ -500,11 +514,11 @@ const readDiagnosticsTool: ToolDefinition = {
 };
 
 /**
- * 8. get_git_diff: Inspects working tree diffs or uncommitted changes
+ * 8. get_git_diff: Inspects working tree diffs or uncommitted changes against baselineFiles
  */
 const getGitDiffTool: ToolDefinition = {
   name: 'get_git_diff',
-  description: 'Inspects uncommitted file modifications, working tree status, or differences against the project base.',
+  description: 'Inspects uncommitted file modifications, working tree status, or differences against the untouched project baseline.',
   parameters: {
     type: 'object',
     properties: {
@@ -518,26 +532,90 @@ const getGitDiffTool: ToolDefinition = {
   timeoutMs: 6000,
   maxOutputChars: 16000,
   handler: async (args: Record<string, any>, context: ToolExecutionContext): Promise<ToolResult> => {
-    const filterPath = args.path ? sanitizePath(args.path).safePath : '';
-    const diffs: Array<{ path: string; status: 'modified' | 'added' | 'deleted'; summary: string }> = [];
+    let filterPath = '';
+    if (args.path !== undefined && args.path !== null && String(args.path).trim() !== '') {
+      const sanitized = sanitizePath(String(args.path));
+      if (sanitized.error) {
+        return { success: false, error: sanitized.error };
+      }
+      filterPath = sanitized.safePath;
+    }
 
-    for (const [path, file] of context.virtualFiles.entries()) {
-      if (filterPath && path !== filterPath) continue;
-      if (isSensitivePath(path)) continue;
-      if (file.type !== 'file') continue;
+    const diffs: Array<{
+      path: string;
+      status: 'modified' | 'added' | 'deleted';
+      additions: number;
+      deletions: number;
+      summary: string;
+    }> = [];
+    let filesChecked = 0;
 
-      diffs.push({
-        path,
-        status: 'modified',
-        summary: `File in active workspace (${(file.content || '').split('\n').length} lines)`
-      });
+    const baselineMap = context.baselineFiles;
+    const allPaths = Array.from(
+      new Set<string>([
+        ...context.virtualFiles.keys(),
+        ...(baselineMap ? baselineMap.keys() : [])
+      ])
+    ).sort();
+
+    for (const filePath of allPaths) {
+      if (filterPath && filePath !== filterPath) continue;
+      if (isSensitivePath(filePath)) continue;
+
+      const currRaw = context.virtualFiles.get(filePath);
+      const curr = currRaw && currRaw.type === 'file' ? currRaw : null;
+
+      // If baselineMap was captured, use it as authoritative untouched baseline; otherwise file is unchanged against itself
+      const baseRaw = baselineMap ? baselineMap.get(filePath) : curr;
+      const base = baseRaw && baseRaw.type === 'file' ? baseRaw : null;
+
+      if (!curr && !base) continue;
+      filesChecked++;
+
+      if (!base && curr) {
+        const stats = computeDiffStats('', curr.content || '');
+        diffs.push({
+          path: filePath,
+          status: 'added',
+          additions: stats.additions,
+          deletions: 0,
+          summary: `Added file (+${stats.additions} lines)`
+        });
+      } else if (base && !curr) {
+        const stats = computeDiffStats(base.content || '', '');
+        diffs.push({
+          path: filePath,
+          status: 'deleted',
+          additions: 0,
+          deletions: stats.deletions,
+          summary: `Deleted file (-${stats.deletions} lines)`
+        });
+      } else if (base && curr) {
+        const normBase = (base.content || '').replace(/\r\n/g, '\n');
+        const normCurr = (curr.content || '').replace(/\r\n/g, '\n');
+        if (normBase !== normCurr) {
+          const stats = computeDiffStats(base.content || '', curr.content || '');
+          diffs.push({
+            path: filePath,
+            status: 'modified',
+            additions: stats.additions,
+            deletions: stats.deletions,
+            summary: `Modified file (+${stats.additions} / -${stats.deletions} lines)`
+          });
+        }
+      }
     }
 
     return {
       success: true,
       output: {
-        filesChecked: diffs.length,
-        diffs: diffs.slice(0, 20)
+        filesChecked,
+        hasChanges: diffs.length > 0,
+        totalModified: diffs.length,
+        addedCount: diffs.filter(d => d.status === 'added').length,
+        modifiedCount: diffs.filter(d => d.status === 'modified').length,
+        deletedCount: diffs.filter(d => d.status === 'deleted').length,
+        diffs: diffs.slice(0, 50)
       }
     };
   }
@@ -595,7 +673,7 @@ const runValidationTool: ToolDefinition = {
 };
 
 /**
- * 10. edit_file: Cursor-like targeted file replacement with uniqueness check and proposal generation
+ * 10. edit_file: Cursor-like targeted file replacement with uniqueness check, baseline preservation, and multi-file accumulation
  */
 const editFileTool: ToolDefinition = {
   name: 'edit_file',
@@ -613,7 +691,7 @@ const editFileTool: ToolDefinition = {
       },
       new_str: {
         type: 'string',
-        description: 'The replacement string to substitute in place of old_str.'
+        description: 'The replacement string to substitute in place of old_str (may be empty string "" to delete old_str).'
       }
     },
     required: ['path', 'old_str', 'new_str']
@@ -655,29 +733,101 @@ const editFileTool: ToolDefinition = {
 
     const updatedContent = currentContent.replace(oldStr, newStr);
 
-    // Create durable proposal for user review and approval (Approval flow)
+    // Record untouched baseline snapshot before first edit to this file in the session
+    if (!context.baselineFiles) {
+      context.baselineFiles = new Map();
+    }
+    if (!context.baselineFiles.has(safePath)) {
+      context.baselineFiles.set(safePath, { ...file });
+    }
+
+    // Update working overlay in context.virtualFiles so subsequent read_file / edit_file / run_validation calls see the edit
+    context.virtualFiles.set(safePath, {
+      ...file,
+      content: updatedContent
+    });
+
+    // Build consolidated rawChanges across all edited files in context.baselineFiles against untouched baseline
+    const baselineVirtualFiles = new Map<string, { path: string; name?: string; content?: string; type: string }>();
+    for (const [k, v] of context.virtualFiles.entries()) {
+      baselineVirtualFiles.set(k, { ...v });
+    }
+    const consolidatedRawChanges: Array<{ path: string; operation: 'create' | 'modify' | 'delete'; proposedContent?: string }> = [];
+
+    const allSessionPaths = new Set<string>([
+      ...context.baselineFiles.keys(),
+      ...context.virtualFiles.keys()
+    ]);
+    for (const candidatePath of allSessionPaths) {
+      if (isSensitivePath(candidatePath)) continue;
+      const baselineEntry = context.baselineFiles.has(candidatePath) ? context.baselineFiles.get(candidatePath) ?? null : null;
+      if (baselineEntry === null) {
+        baselineVirtualFiles.delete(candidatePath);
+      } else {
+        baselineVirtualFiles.set(candidatePath, { ...baselineEntry });
+      }
+      const latestEntry = context.virtualFiles.get(candidatePath);
+      if (!baselineEntry && latestEntry && latestEntry.type === 'file') {
+        consolidatedRawChanges.push({
+          path: candidatePath,
+          operation: 'create',
+          proposedContent: latestEntry.content || ''
+        });
+      } else if (baselineEntry && baselineEntry.type === 'file' && !latestEntry) {
+        consolidatedRawChanges.push({
+          path: candidatePath,
+          operation: 'delete'
+        });
+      } else if (baselineEntry && latestEntry && (baselineEntry.content || '') !== (latestEntry.content || '')) {
+        consolidatedRawChanges.push({
+          path: candidatePath,
+          operation: 'modify',
+          proposedContent: latestEntry.content || ''
+        });
+      }
+    }
+
+    // Fallback if edit resulted in identical content as original baseline
+    if (consolidatedRawChanges.length === 0) {
+      consolidatedRawChanges.push({
+        path: safePath,
+        operation: 'modify',
+        proposedContent: updatedContent
+      });
+    }
+
+    const editedFilesList = consolidatedRawChanges.map(c => c.path);
+    const description =
+      editedFilesList.length === 1
+        ? `Edit ${safePath}: replace target code block`
+        : `Edit ${editedFilesList.length} files (${editedFilesList.join(', ')})`;
+
     const proposalResult = await ProposalService.createProposalDurable({
       ownerId: context.userId,
       projectId: context.projectId,
       agentTaskId: context.agentTaskId,
-      description: `Edit ${safePath}: replace target code block`,
-      rawChanges: [{
-        path: safePath,
-        operation: 'modify',
-        proposedContent: updatedContent
-      }],
-      virtualFiles: context.virtualFiles
+      description,
+      rawChanges: consolidatedRawChanges,
+      virtualFiles: baselineVirtualFiles
     });
 
     if (proposalResult.error || !proposalResult.proposal) {
       return { success: false, error: proposalResult.error || 'Failed to create code modification proposal.' };
     }
 
-    // Update in-memory file for subsequent agent inspection in this session
-    context.virtualFiles.set(safePath, {
-      ...file,
-      content: updatedContent
-    });
+    const proposal = proposalResult.proposal;
+    if (context.agentTaskId) {
+      try {
+        const worktree = await applyAgentChangesToWorktree(context.agentTaskId, context.userId, proposal.changes, context.signal);
+        proposal.agentTaskId = context.agentTaskId;
+        proposal.agentBranch = worktree.branch;
+        proposal.agentBaseCommit = worktree.baseCommit;
+        proposal.agentDiff = worktree.diff;
+        await ProposalService.persistProposalMetadata(proposal);
+      } catch {
+        // Non-fatal if worktree session was not initialized for this context
+      }
+    }
 
     return {
       success: true,
@@ -685,26 +835,37 @@ const editFileTool: ToolDefinition = {
         status: 'staged_for_review',
         path: safePath,
         message: `Successfully staged edit for "${safePath}". A visual diff has been generated for developer review and approval.`,
-        proposalId: proposalResult.proposal.id,
-        proposal: proposalResult.proposal,
-        changes: proposalResult.proposal.changes
+        proposalId: proposal.id,
+        proposal,
+        changes: proposal.changes
       }
     };
   }
 };
 
 /**
- * 11. run_command: Workspace command runner / validation check
+ * 11. run_command: Workspace command runner / validation check (Sandboxed)
  */
+const APPROVED_SANDBOX_COMMANDS = /^(?:npm\s+(?:test|run\s+(?:test|lint|build|check|typecheck))(?:\s+--.*)?|npx\s+tsc(?:\s+--noEmit)?|tsc(?:\s+--noEmit)?|pytest(?:\s+[\w./-]+)?|node\s+--check\s+[\w./-]+|python3?\s+-m\s+py_compile\s+[\w./-]+)$/i;
+const LIGHTWEIGHT_SYNTAX_COMMANDS = /^(?:syntax-check|validate-syntax|ast-syntax-check)$/i;
+
 const runCommandTool: ToolDefinition = {
   name: 'run_command',
-  description: 'Run a project validation, test, or build command in the workspace.',
+  description: 'Run a project validation, test, or build command in the isolated workspace sandbox. Never executes raw commands on the host shell.',
   parameters: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
-        description: 'The shell command to run (e.g. "npm test", "npm run lint", "tsc --noEmit")'
+        description: 'The command to run (e.g. "npm test", "npm run lint", "tsc --noEmit", "npm run build", or "syntax-check" for lightweight AST syntax validation only)'
+      },
+      mode: {
+        type: 'string',
+        description: 'Optional execution mode: "sandbox" (default, requires isolated sandbox) or "syntax_only" (runs lightweight syntax check only)'
+      },
+      approved: {
+        type: 'string',
+        description: 'Set to "true" when developer has explicitly approved a command requiring confirmation'
       }
     },
     required: ['command']
@@ -718,45 +879,85 @@ const runCommandTool: ToolDefinition = {
       return { success: false, error: 'Parameter "command" cannot be empty.' };
     }
 
-    // Reject dangerous or destructive commands
-    if (/(^|[;&|])\s*(rm\s+-rf|\/etc|chmod\s+777|curl|wget|mkfs|dd\s+if=)/i.test(rawCmd)) {
-      return { success: false, error: `Command "${rawCmd}" rejected: direct execution of destructive commands is prohibited in agent workflow.` };
+    // Reject dangerous, destructive, or shell-chained commands immediately
+    if (/(^|[;&|`])\s*(rm\s+-rf|\/etc|chmod\s+777|curl|wget|mkfs|dd\s+if=|sudo\s+)/i.test(rawCmd) || /[;&|`]|\$\(/.test(rawCmd)) {
+      return {
+        success: false,
+        error: `Command "${rawCmd}" rejected: destructive or chained shell commands are prohibited in agent workflow.`
+      };
     }
 
-    // Syntax, typecheck, or lint command execution
-    if (/(tsc|lint|validate|check|typecheck)/i.test(rawCmd)) {
+    // Outcome 3: Explicit lightweight syntax validation only (never masquerades as tsc, eslint, npm test, or npm run build)
+    if (LIGHTWEIGHT_SYNTAX_COMMANDS.test(rawCmd) || String(args.mode || '').toLowerCase() === 'syntax_only') {
       const filesToCheck: Array<{ path: string; content?: string }> = [];
       for (const [p, file] of context.virtualFiles.entries()) {
         if (isSensitivePath(p)) continue;
-        if (/\.(ts|tsx|js|jsx|json)$/i.test(p)) {
+        if (/\.(ts|tsx|js|jsx|json|py)$/i.test(p)) {
           filesToCheck.push({ path: p, content: file.content });
         }
       }
       const validation = ValidationService.validateSyntax(filesToCheck);
       const passed = validation.diagnostics.length === 0;
-      const output = passed
-        ? `Validation passed: 0 errors detected across ${filesToCheck.length} project files.`
-        : `Validation failed with ${validation.diagnostics.length} error(s):\n` +
+      const summary = passed
+        ? `Lightweight syntax validation only (full command "${rawCmd}" did NOT execute): 0 syntax errors across ${filesToCheck.length} file(s).`
+        : `Lightweight syntax validation only (full command "${rawCmd}" did NOT execute): ${validation.diagnostics.length} syntax error(s) detected:\n` +
           validation.diagnostics.slice(0, 10).map(d => `${d.filePath}:${d.line}:${d.column}: ${d.message}`).join('\n');
 
       return {
-        success: true,
+        success: passed,
+        ...(passed ? {} : { error: summary }),
         output: {
           command: rawCmd,
-          status: passed ? 'succeeded' : 'failed',
-          exitCode: passed ? 0 : 1,
-          output
+          outcome: 'syntax_validation_only',
+          status: 'syntax_validation_only',
+          executed: false,
+          sandboxExecuted: false,
+          syntaxValidationOnly: true,
+          syntaxPassed: passed,
+          exitCode: null,
+          output: summary,
+          diagnostics: validation.diagnostics.slice(0, 10)
         }
       };
     }
 
-    // Check if isolated Docker process manager is available
-    try {
-      const { ProjectProcessManager } = await import('../execution/processManager');
-      const manager = new ProjectProcessManager();
-      if (manager.available) {
-        const fileList = Array.from(context.virtualFiles.entries()).map(([p, f]) => ({ path: p, content: f.content }));
-        const result = await manager.execute({
+    // Outcome 5: Command requires developer approval (either policy is "ask" / requireCommandApproval, or command is not on pre-approved allowlist)
+    const isApproved = String(args.approved || '').toLowerCase() === 'true';
+    const isAllowlisted = APPROVED_SANDBOX_COMMANDS.test(rawCmd);
+    if ((context.requireCommandApproval || context.executionPolicy === 'ask' || !isAllowlisted) && !isApproved) {
+      const approvalReason = !isAllowlisted
+        ? `Command "${rawCmd}" is not in the pre-approved verification allowlist and requires explicit developer approval.`
+        : `Command "${rawCmd}" requires developer approval under the active execution policy.`;
+      return {
+        success: false,
+        error: approvalReason,
+        output: {
+          command: rawCmd,
+          outcome: 'requires_approval',
+          status: 'requires_approval',
+          executed: false,
+          sandboxExecuted: false,
+          syntaxValidationOnly: false,
+          exitCode: null,
+          output: approvalReason
+        }
+      };
+    }
+
+    // Outcomes 1 & 2: Actual command execution in isolated ProjectProcessManager sandbox (never raw host shell)
+    const sandboxAuthorized = process.env.FLOAT_ENABLE_AGENT_COMMAND_EXECUTION === 'true' || context.enableSandboxExecution === true;
+    const hasCustomSandboxExecutor = typeof context.sandboxExecutor === 'function';
+    const sandboxAvailable = hasCustomSandboxExecutor || projectProcessManager.available;
+
+    if (sandboxAuthorized && sandboxAvailable) {
+      try {
+        const fileList = Array.from(context.virtualFiles.entries())
+          .filter(([p, f]) => f.type === 'file' && !isSensitivePath(p))
+          .map(([p, f]) => ({ path: p, content: f.content || '' }));
+        const execFn = context.sandboxExecutor
+          ? context.sandboxExecutor
+          : (req: any) => projectProcessManager.execute(req);
+        const result = await execFn({
           ownerId: context.userId,
           projectId: context.projectId,
           command: rawCmd,
@@ -764,29 +965,83 @@ const runCommandTool: ToolDefinition = {
           timeoutMs: 10000,
           signal: context.signal
         });
+
+        const passed = result.status === 'succeeded' && result.exitCode === 0;
+        if (passed) {
+          // Outcome 1: Actual command executed in isolated sandbox and passed
+          return {
+            success: true,
+            output: {
+              command: rawCmd,
+              outcome: 'sandbox_passed',
+              status: 'succeeded',
+              executed: true,
+              sandboxExecuted: true,
+              syntaxValidationOnly: false,
+              exitCode: 0,
+              stdout: result.stdout,
+              stderr: result.stderr,
+              output: result.stdout || result.stderr || `Command "${rawCmd}" executed in isolated sandbox and passed.`,
+              durationMs: result.durationMs
+            }
+          };
+        }
+
+        // Outcome 2: Actual command executed in isolated sandbox and failed
+        const failMsg = result.error || result.stderr || result.stdout || `Command "${rawCmd}" failed in isolated sandbox with exit code ${result.exitCode ?? 1}.`;
         return {
-          success: result.status === 'succeeded',
+          success: false,
+          error: failMsg,
           output: {
             command: rawCmd,
-            status: result.status,
-            exitCode: result.exitCode,
+            outcome: 'sandbox_failed',
+            status: result.status === 'timed_out' ? 'timed_out' : result.status === 'cancelled' ? 'cancelled' : 'failed',
+            executed: true,
+            sandboxExecuted: true,
+            syntaxValidationOnly: false,
+            exitCode: result.exitCode ?? 1,
             stdout: result.stdout,
             stderr: result.stderr,
+            output: failMsg,
             durationMs: result.durationMs
           }
         };
+      } catch (err: any) {
+        return {
+          success: false,
+          error: err?.message || 'Isolated sandbox command execution failed.',
+          output: {
+            command: rawCmd,
+            outcome: 'sandbox_failed',
+            status: 'failed',
+            executed: true,
+            sandboxExecuted: true,
+            syntaxValidationOnly: false,
+            exitCode: 1,
+            output: err?.message || 'Isolated sandbox command execution failed.'
+          }
+        };
       }
-    } catch {
-      // Fall through to staged notice
     }
 
+    // Outcome 4: Command unavailable because sandboxing or dependencies are missing
+    const unavailableReason = !sandboxAuthorized
+      ? 'FLOAT_ENABLE_AGENT_COMMAND_EXECUTION is disabled by default for host safety.'
+      : 'Isolated Docker sandbox runtime (FLOAT_DOCKER_BIN, FLOAT_EXECUTION_IMAGE, TLS runner) or project dependencies are not configured.';
+
     return {
-      success: true,
+      success: false,
+      error: `Command "${rawCmd}" could not be executed because isolated sandboxing or dependencies are unavailable: ${unavailableReason} Use "run_validation" (or run_command with mode="syntax_only") for lightweight AST syntax validation.`,
       output: {
         command: rawCmd,
-        status: 'queued_for_approval',
-        exitCode: 0,
-        output: `Command "${rawCmd}" queued for terminal execution. Automated shell execution requires developer confirmation in the terminal.`
+        outcome: 'command_unavailable',
+        status: 'command_unavailable',
+        executed: false,
+        sandboxExecuted: false,
+        syntaxValidationOnly: false,
+        exitCode: null,
+        reason: unavailableReason,
+        output: `Command "${rawCmd}" did NOT execute (${unavailableReason}).`
       }
     };
   }
@@ -819,7 +1074,6 @@ export class ToolRegistry {
   }
 
   static getAllTools(): ToolDefinition[] {
-    // Return primary tools (deduplicating aliases)
     const primary = [
       listProjectFilesTool,
       readProjectFileTool,
@@ -854,6 +1108,16 @@ export class ToolRegistry {
     }
     if (!context.userId) {
       context.userId = 'user';
+    }
+
+    // Capture untouched baseline snapshot automatically on first tool call in this context if not already initialized
+    if (!context.baselineFiles) {
+      context.baselineFiles = new Map();
+      for (const [k, v] of context.virtualFiles.entries()) {
+        if (v && v.type === 'file' && !isSensitivePath(k)) {
+          context.baselineFiles.set(k, { ...v });
+        }
+      }
     }
 
     // 2. Intercept prohibited direct-modification tools
@@ -911,12 +1175,14 @@ export class ToolRegistry {
     }
 
     // 5. Tool argument schema validation
+    // Note: For edit_file, `new_str` may legitimately be the empty string "" when deleting lines of code.
     if (tool.parameters.required && Array.isArray(tool.parameters.required)) {
       for (const reqKey of tool.parameters.required) {
+        const allowEmptyString = name === 'edit_file' && reqKey === 'new_str';
         if (
           args[reqKey] === undefined || 
           args[reqKey] === null || 
-          (typeof args[reqKey] === 'string' && !args[reqKey].trim())
+          (!allowEmptyString && typeof args[reqKey] === 'string' && !args[reqKey].trim())
         ) {
           if (name === 'edit_file') {
             return {
@@ -971,15 +1237,18 @@ export class ToolRegistry {
     }
 
     try {
-      // Execute with timeout safeguard
       const timeoutMs = tool.timeoutMs || 8000;
-      const timeoutPromise = new Promise<ToolResult>((_, reject) => {
-        setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`)), timeoutMs);
-      });
-
-      const execPromise = tool.handler(args, context);
-      const result = await Promise.race([execPromise, timeoutPromise]);
-      return result;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeoutPromise = new Promise<ToolResult>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`)), timeoutMs);
+        });
+        const execPromise = tool.handler(args, context);
+        const result = await Promise.race([execPromise, timeoutPromise]);
+        return result;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     } catch (err: any) {
       return {
         success: false,
