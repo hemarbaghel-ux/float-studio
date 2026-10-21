@@ -16,8 +16,12 @@ export const ANIMATION_DURATIONS = {
   moderate: 300,
   /** 500ms - Slow transitions for modals, sidebars, expanded panels */
   slow: 500,
-  /** 850ms - Specialized full 360° emblem spin & aura glow cycle */
-  logoSpin: 850,
+  /** 600ms - Subtle 360-degree rotation animation for FLOAT emblem on hover and active state */
+  logoRotate360: 600,
+  /** 600ms - Refined hover animation duration for FLOAT emblem */
+  logoHover: 600,
+  /** 600ms - Spin duration for FLOAT logo */
+  logoSpin: 600,
 } as const;
 
 export type AnimationDurationKey = keyof typeof ANIMATION_DURATIONS;
@@ -26,10 +30,14 @@ export type AnimationDurationKey = keyof typeof ANIMATION_DURATIONS;
  * Standard cubic-bezier easing curves
  */
 export const ANIMATION_EASINGS = {
+  /** Fast attack with smooth settling curve (ideal for micro-interactions and 3D tilts) */
+  settle: 'cubic-bezier(0.16, 1, 0.3, 1)',
+  /** 3D elevation and tilt easing curve with soft natural damping */
+  tilt: 'cubic-bezier(0.16, 1, 0.3, 1)',
+  /** Gentle decelerating rotation curve for subtle 360-degree logo spin */
+  rotate: 'cubic-bezier(0.22, 1, 0.36, 1)',
   /** Standard smooth ease-in-out curve for natural, balanced motion */
   smooth: 'cubic-bezier(0.4, 0, 0.2, 1)',
-  /** Fast attack with smooth settling curve (ideal for micro-interactions <= 200ms) */
-  settle: 'cubic-bezier(0.16, 1, 0.3, 1)',
   /** Decelerating exponential exit / smooth drawer arrival */
   outExpo: 'cubic-bezier(0.19, 1, 0.22, 1)',
   /** Standard symmetrical ease-in-out */
@@ -44,11 +52,23 @@ export type AnimationEasingKey = keyof typeof ANIMATION_EASINGS;
  * Curated animation presets combining duration and easing
  */
 export const ANIMATION_PRESETS = {
+  logoRotate360: {
+    duration: 600,
+    durationMs: '600ms',
+    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+    css: '600ms cubic-bezier(0.22, 1, 0.36, 1)',
+  },
+  logoHoverTilt: {
+    duration: 380,
+    durationMs: '380ms',
+    easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+    css: '380ms cubic-bezier(0.16, 1, 0.3, 1)',
+  },
   logoHoverSpin: {
-    duration: ANIMATION_DURATIONS.logoSpin,
-    durationMs: `${ANIMATION_DURATIONS.logoSpin}ms`,
-    easing: ANIMATION_EASINGS.smooth,
-    css: `${ANIMATION_DURATIONS.logoSpin}ms ${ANIMATION_EASINGS.smooth}`,
+    duration: 600,
+    durationMs: '600ms',
+    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+    css: '600ms cubic-bezier(0.22, 1, 0.36, 1)',
   },
   microInteraction: {
     duration: ANIMATION_DURATIONS.fast,
@@ -80,9 +100,12 @@ export const MOTION_CSS_VARS = {
   durationModerate: 'var(--float-duration-moderate)',
   durationSlow: 'var(--float-duration-slow)',
   durationLogoSpin: 'var(--float-duration-logo-spin)',
+  durationLogoRotate: 'var(--float-duration-logo-rotate)',
 
   easeSmooth: 'var(--float-ease-smooth)',
   easeSettle: 'var(--float-ease-settle)',
+  easeTilt: 'var(--float-ease-tilt)',
+  easeRotate: 'var(--float-ease-rotate)',
   easeOutExpo: 'var(--float-ease-out-expo)',
   easeInOut: 'var(--float-ease-in-out)',
 } as const;

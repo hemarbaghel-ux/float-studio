@@ -105,11 +105,19 @@ export function UsageAnalyticsView() {
   // Fetch Model Provider Status from /api/ai/models/status
   const fetchProviderStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/ai/models/status');
+      const res = await fetch('/api/ai/models/status', {
+        headers: { Accept: 'application/json' },
+      });
       if (res.ok) {
-        const data = await res.json();
-        if (data?.providers) {
-          setProviders(data.providers);
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const text = await res.text();
+          try {
+            const data = JSON.parse(text);
+            if (data?.providers) {
+              setProviders(data.providers);
+            }
+          } catch {}
         }
       }
     } catch (err) {

@@ -120,10 +120,24 @@ export const useModelIntelligenceStore = create<ModelIntelligenceState>((set, ge
   fetchProviderStatus: async () => {
     set({ isLoadingStatus: true });
     try {
-      const res = await fetch('/api/ai/models/status');
+      const res = await fetch('/api/ai/models/status', {
+        headers: { Accept: 'application/json' },
+      });
       if (res.ok) {
-        const data = await res.json();
-        const providers: Record<string, ProviderServerStatus> = data.providers || {};
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          set({ isLoadingStatus: false });
+          return;
+        }
+        const text = await res.text();
+        let data: any;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          set({ isLoadingStatus: false });
+          return;
+        }
+        const providers: Record<string, ProviderServerStatus> = data?.providers || {};
         
         // Dynamically update model availability statuses based on server provider status
         const updatedModels = get().models.map(model => {

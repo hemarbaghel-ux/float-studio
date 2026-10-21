@@ -258,9 +258,10 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   // Model Intelligence & Availability Routes
-  app.get('/api/ai/models/status', (_req, res) => {
+  app.get(['/api/ai/models/status', '/api/ai/models/status/'], (_req, res) => {
     try {
       const providerStatus = modelRouter.getProviderStatus();
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.json({
         success: true,
         providers: providerStatus,

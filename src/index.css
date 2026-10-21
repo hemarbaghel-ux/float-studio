@@ -30,56 +30,81 @@ body {
   --float-duration-normal: 200ms;
   --float-duration-moderate: 300ms;
   --float-duration-slow: 500ms;
-  --float-duration-logo-spin: 850ms;
+  --float-duration-logo-hover: 600ms;
+  --float-duration-logo-spin: 600ms;
+  --float-duration-logo-rotate: 600ms;
 
   --float-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
   --float-ease-settle: cubic-bezier(0.16, 1, 0.3, 1);
+  --float-ease-tilt: cubic-bezier(0.16, 1, 0.3, 1);
+  --float-ease-rotate: cubic-bezier(0.22, 1, 0.36, 1);
   --float-ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
   --float-ease-in-out: cubic-bezier(0.42, 0, 0.58, 1);
 }
 
-/* FLOAT Logo Premium Hover Animation */
-@keyframes floatLogoEmblemSpin {
+/* FLOAT Logo Subtle 360-Degree Rotation Animation for Active & Hover State */
+@keyframes floatLogoRotate360 {
   0% {
-    transform: rotate(0deg);
-    filter: drop-shadow(0 0 0px rgba(59, 130, 246, 0));
-  }
-  20% {
-    filter: drop-shadow(0 0 7px rgba(147, 197, 253, 0.75)) drop-shadow(0 0 14px rgba(59, 130, 246, 0.45));
+    transform: perspective(400px) rotate(0deg) scale(1);
+    filter: drop-shadow(0 0 0px rgba(0, 0, 0, 0));
   }
   50% {
-    transform: rotate(180deg);
-    filter: drop-shadow(0 0 10px rgba(147, 197, 253, 0.9)) drop-shadow(0 0 20px rgba(59, 130, 246, 0.6));
-  }
-  80% {
-    filter: drop-shadow(0 0 5px rgba(147, 197, 253, 0.45)) drop-shadow(0 0 10px rgba(59, 130, 246, 0.25));
+    transform: perspective(400px) rotate(180deg) scale(1.05);
+    filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.25)) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
   }
   100% {
-    transform: rotate(360deg);
-    filter: drop-shadow(0 0 0px rgba(59, 130, 246, 0));
+    transform: perspective(400px) rotate(360deg) scale(1);
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.12));
   }
 }
 
-@keyframes floatLogoAuraPulse {
+/* FLOAT Logo Refined 3D Tilt & Floating Elevation */
+@keyframes floatLogoTiltElevate {
   0% {
-    opacity: 0;
-    transform: scale(0.8);
-  }
-  25% {
-    opacity: 0.75;
-    transform: scale(1.15);
+    transform: perspective(400px) rotateX(0deg) rotateY(0deg) translateY(0) scale(1);
+    filter: drop-shadow(0 0 0px rgba(0, 0, 0, 0));
   }
   50% {
-    opacity: 0.9;
-    transform: scale(1.22);
-  }
-  75% {
-    opacity: 0.4;
-    transform: scale(1.08);
+    transform: perspective(400px) rotateX(-8deg) rotateY(12deg) translateY(-3px) scale(1.05);
+    filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.28)) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.16));
   }
   100% {
+    transform: perspective(400px) rotateX(-5deg) rotateY(8deg) translateY(-2px) scale(1.04);
+    filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.22)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12));
+  }
+}
+
+/* FLOAT Logo Monochrome Glass Sheen Sweep */
+@keyframes floatLogoSheen {
+  0% {
+    transform: translateX(-150%) skewX(-25deg);
     opacity: 0;
-    transform: scale(0.9);
+  }
+  20% {
+    opacity: 0.65;
+  }
+  80% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: translateX(150%) skewX(-25deg);
+    opacity: 0;
+  }
+}
+
+/* Soft Monochromatic Elevation Aura */
+@keyframes floatLogoElevationAura {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 0.45;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 0.25;
+    transform: scale(1.06);
   }
 }
 
@@ -99,14 +124,46 @@ body {
   animation: floatAuthAmbientPulse 7s ease-in-out infinite;
 }
 
-.float-logo-emblem-spin {
-  animation: floatLogoEmblemSpin var(--float-duration-logo-spin) var(--float-ease-smooth) 1 forwards;
+/* Subtle 360-degree rotation animation triggered on active state, hover, or focus */
+.float-logo-rotate-360,
+.float-logo-emblem-spin,
+.float-logo-active .float-logo-emblem,
+.float-logo-interactive.is-active .float-logo-emblem,
+.float-logo-interactive[data-active="true"] .float-logo-emblem,
+.float-logo-container:hover .float-logo-emblem,
+.float-logo-interactive:hover .float-logo-emblem,
+.group:hover .float-logo-interactive .float-logo-emblem,
+.group:hover .float-logo-emblem,
+.float-logo-emblem.is-active,
+.float-logo-emblem:active,
+.float-logo-tilt-elevate {
+  animation: floatLogoRotate360 var(--float-duration-logo-rotate) var(--float-ease-rotate) 1 forwards;
   transform-origin: center center;
   will-change: transform, filter;
 }
 
+.float-logo-sheen,
+.float-logo-active .float-logo-sheen-sweep,
+.float-logo-interactive.is-active .float-logo-sheen-sweep,
+.float-logo-interactive[data-active="true"] .float-logo-sheen-sweep,
+.float-logo-container:hover .float-logo-sheen-sweep,
+.float-logo-interactive:hover .float-logo-sheen-sweep,
+.group:hover .float-logo-interactive .float-logo-sheen-sweep,
+.group:hover .float-logo-sheen-sweep {
+  animation: floatLogoSheen var(--float-duration-logo-rotate) var(--float-ease-rotate) 1 forwards;
+  will-change: transform, opacity;
+}
+
+.float-logo-elevation-aura,
+.float-logo-active .float-logo-aura-sweep,
+.float-logo-interactive.is-active .float-logo-aura-sweep,
+.float-logo-interactive[data-active="true"] .float-logo-aura-sweep,
+.float-logo-container:hover .float-logo-aura-sweep,
+.float-logo-interactive:hover .float-logo-aura-sweep,
+.group:hover .float-logo-interactive .float-logo-aura-sweep,
+.group:hover .float-logo-aura-sweep,
 .float-logo-aura-pulse {
-  animation: floatLogoAuraPulse var(--float-duration-logo-spin) var(--float-ease-smooth) 1 forwards;
+  animation: floatLogoElevationAura var(--float-duration-logo-rotate) var(--float-ease-rotate) 1 forwards;
   will-change: opacity, transform;
 }
 
@@ -148,7 +205,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .float-logo-tilt-elevate,
   .float-logo-emblem-spin,
+  .float-logo-sheen,
   .float-auth-ambient-pulse,
   .float-marquee-track,
   .float-marquee-track-reverse {
@@ -156,6 +215,7 @@ body {
     transform: none !important;
     filter: none !important;
   }
+  .float-logo-elevation-aura,
   .float-logo-aura-pulse {
     animation: none !important;
     opacity: 0 !important;
@@ -163,7 +223,9 @@ body {
 }
 
 @media (hover: none) {
-  .float-logo-aura-pulse {
+  .float-logo-elevation-aura,
+  .float-logo-aura-pulse,
+  .float-logo-sheen {
     display: none !important;
   }
 }

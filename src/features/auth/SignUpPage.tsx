@@ -245,7 +245,7 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false, r
             className="flex items-center gap-2.5 opacity-90 hover:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-white/20 rounded cursor-pointer"
             aria-label="FLOAT Home"
           >
-            <FloatLogo className="w-6 h-6" animated trigger={brandHovered} />
+            <FloatLogo className="w-6 h-6" animated trigger={brandHovered} active={brandHovered} />
             <FloatWordmark className="h-4 text-white" />
           </a>
 

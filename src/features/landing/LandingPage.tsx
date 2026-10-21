@@ -17,6 +17,7 @@ export function LandingPage() {
   const { settings, toggleTheme, updateSettings } = useIDEStore();
   const { user } = useAuthStore();
   const { t } = useTranslation();
+  const [brandHovered, setBrandHovered] = React.useState(false);
 
   const handleStart = (mode: 'signup' | 'signin' | React.MouseEvent = 'signup') => {
     const finalMode = typeof mode === 'string' && mode === 'signin' ? 'signin' : 'signup';
@@ -32,7 +33,11 @@ export function LandingPage() {
         <div className="flex items-center gap-8">
           <a
             href="/"
-            className="flex items-center gap-2.5 cursor-pointer"
+            className="group flex items-center gap-2.5 cursor-pointer select-none"
+            onMouseEnter={() => setBrandHovered(true)}
+            onMouseLeave={() => setBrandHovered(false)}
+            onFocus={() => setBrandHovered(true)}
+            onBlur={() => setBrandHovered(false)}
             onClick={(e) => {
               e.preventDefault();
               if (window.location.pathname !== '/') {
@@ -43,8 +48,13 @@ export function LandingPage() {
               }
             }}
           >
-            <FloatLogo size={38} className="w-[38px] h-[38px]" />
-            <span className="flex items-center text-slate-900 dark:text-white">
+            <FloatLogo 
+              size={38} 
+              className="w-[38px] h-[38px]" 
+              trigger={brandHovered} 
+              active={brandHovered} 
+            />
+            <span className="flex items-center text-slate-900 dark:text-white transition-opacity group-hover:opacity-90">
               <FloatWordmark className="h-5 w-auto" />
             </span>
           </a>

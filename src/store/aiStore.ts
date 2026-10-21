@@ -190,10 +190,23 @@ export const useAIStore = create<AIStore>((set) => ({
   })),
   syncProviderStatus: async () => {
     try {
-      const res = await fetch('/api/ai/models/status');
+      const res = await fetch('/api/ai/models/status', {
+        headers: { Accept: 'application/json' },
+      });
       if (res.ok) {
-        const data = await res.json();
-        if (data.providers) {
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          // Non-JSON response (e.g. HTML gateway page during dev startup); safely ignore
+          return;
+        }
+        const text = await res.text();
+        let data: any;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return;
+        }
+        if (data && data.providers) {
           set((state) => {
             const updatedProviders = { ...state.providers };
             for (const [key, val] of Object.entries(data.providers as Record<string, { name: string; configured: boolean }>)) {
@@ -222,7 +235,7 @@ export const useAIStore = create<AIStore>((set) => ({
         }
       }
     } catch (err) {
-      console.error('Failed to sync provider status:', err);
+      console.warn('Failed to sync provider status:', err);
     }
   }
 }));
