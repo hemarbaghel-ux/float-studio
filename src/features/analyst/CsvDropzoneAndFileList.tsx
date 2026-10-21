@@ -1,3 +1,4 @@
+import { apiFetch } from '../../services/api';
 import React, { useState, useRef, useCallback } from 'react';
 import {
   UploadCloud,
@@ -109,7 +110,7 @@ export function CsvDropzoneAndFileList({
         stage: 'profiling',
       }));
 
-      const response = await fetch('/api/analyst/profile', {
+      const response = await apiFetch('/api/analyst/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

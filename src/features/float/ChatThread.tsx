@@ -294,12 +294,8 @@ export function ChatThread({ chatId }: { chatId: string }) {
 
       const patch = (p: Partial<ThreadMessage>) => setMessages((prev) => prev.map((m) => (m.id === modelMsg.id ? { ...m, ...p } : m)));
 
-      // Connect to live OpenAI Agent Session flow for gpt-6.1-sol / float-agent
-      const isAgentSession =
-        selectedModel === 'gpt-6.1-sol' ||
-        selectedModel.startsWith('gpt-6') ||
-        selectedModel.includes('sol') ||
-        selectedAgent === 'float-agent';
+      // Only use direct client fallback session when explicitly using float-agent without a signed-in user
+      const isAgentSession = selectedAgent === 'float-agent' && !user;
 
       if (isAgentSession) {
         abortRef.current = new AbortController();

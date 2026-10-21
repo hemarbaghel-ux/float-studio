@@ -38,7 +38,7 @@ import {
 } from './evalPersistence';
 
 // Globally supported models for evaluations in FLOAT AI
-export const SUPPORTED_EVAL_MODELS = new Set<string>(['gpt-6-astra', 'gpt-6.1-sol']);
+export const SUPPORTED_EVAL_MODELS = new Set<string>(['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1', 'o1-mini', 'gpt-4.5-preview', 'gpt-4-turbo', 'chatgpt-4o-latest', 'auto', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol']);
 
 // Built-in standard evaluation tasks for coding, debugging, refactoring, and agentic workflows
 const INITIAL_TASKS: EvalTask[] = [
@@ -648,16 +648,31 @@ export class EvalEngine {
       tests: [],
       security: notRun(task.securityChecks?.[0])
     };
+    const expectedFilesFound = !task.expectedFiles || task.expectedFiles.length === 0 || task.expectedFiles.every((exp) =>
+      changeSet.changes.some((c) => c.path === exp || c.path.endsWith(`/${exp}`))
+    );
+    const taskCompleted = Boolean(outputText && outputText.trim().length > 0 && run.patchValid);
+    const scoreBreakdown = ScoringEngine.calculateScore({
+      taskCompleted,
+      patchValid: run.patchValid,
+      expectedFilesFound,
+      forbiddenFilesTouched,
+      syntaxValid: patchSyntaxValid,
+      agentSteps: run.agentSteps || 1,
+      toolCalls: run.toolCalls || 0,
+      toolErrors: 0
+    });
+
     run.testCount = 0;
     run.testsPassed = undefined;
     run.buildPassed = undefined;
     run.typecheckPassed = undefined;
     run.lintPassed = undefined;
-    run.securityPassed = undefined;
-    run.score = undefined;
-    run.automatedScore = undefined;
-    run.finalScore = undefined;
-    run.scoreBreakdown = undefined;
+    run.securityPassed = !forbiddenFilesTouched;
+    run.scoreBreakdown = scoreBreakdown;
+    run.automatedScore = scoreBreakdown.finalScore;
+    run.score = scoreBreakdown.finalScore;
+    run.finalScore = scoreBreakdown.finalScore;
     run.status = 'completed';
 
     run.completedAt = Date.now();
@@ -665,7 +680,7 @@ export class EvalEngine {
     run.duration = Math.round(run.durationMs / 1000);
     run.activity?.push({ 
       type: 'success',
-      message: `Model generation completed in ${run.duration}s. Project checks were not run and no benchmark score was assigned.`,
+      message: `Model generation completed in ${run.duration}s (automated syntax/patch score: ${run.finalScore}/100; sandboxed build/typecheck/test commands were not executed).`,
       timestamp: Date.now() 
     });
 

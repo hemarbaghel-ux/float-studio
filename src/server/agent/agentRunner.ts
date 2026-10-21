@@ -16,6 +16,8 @@ export interface AgentRunnerOptions {
   userId?: string;
   agentTaskId?: string;
   systemInstruction?: string;
+  /** Optional pre-execution permission gate enforced before ToolRegistry.execute */
+  canExecuteTool?: (toolName: string) => { allowed: boolean; error?: string };
   onEvent: (event: AgentProgressEvent) => void;
   onDelta?: (text: string) => void;
   signal?: AbortSignal;
@@ -145,6 +147,7 @@ export class AgentRunner {
       projectName = 'Workspace',
       projectId = 'default-workspace',
       userId = 'user',
+      canExecuteTool,
       onEvent,
       onDelta,
       signal
@@ -154,7 +157,6 @@ export class AgentRunner {
       throw new Error('Agent prompt is required and cannot be empty.');
     }
 
-    // Enforce provider
     if (options.provider && (options.provider as string) !== 'openai') {
       throw new AIProviderError(
         `Unsupported provider "${options.provider}". FLOAT AI supports OpenAI models exclusively.`,
@@ -163,7 +165,6 @@ export class AgentRunner {
         400
       );
     }
-    const provider = 'openai';
 
     onEvent({
       type: 'task_started',
@@ -171,8 +172,8 @@ export class AgentRunner {
       message: 'Agent initialized task and workspace context...'
     });
 
-    // 1. Strict Project Context Validation & Sanitization
     const fileMap = new Map<string, { path: string; name?: string; content?: string; type: string }>();
+    const baselineFiles = new Map<string, { path: string; name?: string; content?: string; type: string } | null>();
     let ignoredCount = 0;
 
     if (Array.isArray(virtualFiles)) {
@@ -183,26 +184,28 @@ export class AgentRunner {
         const normalizedPath = f.path.trim().replace(/^\/+/, '');
         if (normalizedPath.includes('../') || normalizedPath.includes('..\\') || normalizedPath.includes('\0')) {
           ignoredCount++;
-          continue; // Path traversal rejection
+          continue;
         }
         if (isSensitivePath(normalizedPath)) {
           ignoredCount++;
-          continue; // Secrets exclusion
+          continue;
         }
         if (fileMap.size >= MAX_INDEXED_FILES) {
-          break; // Capacity protection
+          break;
         }
 
         const content = typeof f.content === 'string'
           ? (f.content.length > MAX_FILE_SIZE_BYTES ? f.content.slice(0, MAX_FILE_SIZE_BYTES) : f.content)
           : '';
 
-        fileMap.set(normalizedPath, {
+        const entry = {
           path: normalizedPath,
           name: f.name || normalizedPath.split('/').pop() || normalizedPath,
           content,
           type: f.type || 'file'
-        });
+        };
+        fileMap.set(normalizedPath, entry);
+        baselineFiles.set(normalizedPath, { ...entry });
       }
     }
 
@@ -211,6 +214,7 @@ export class AgentRunner {
       projectId: projectId || 'default-workspace',
       projectName: projectName || 'Workspace',
       virtualFiles: fileMap,
+      baselineFiles,
       ...(agentTaskId ? { agentTaskId } : {}),
       signal
     };
@@ -228,7 +232,7 @@ Your objective is to inspect, reason about, and assist with coding tasks using s
 
 CRITICAL WORKFLOW CONSTRAINTS:
 1. Strict Review-First Architecture: You MUST NEVER attempt or claim to directly modify, write, delete, or overwrite project files. Any tools attempting direct disk or memory modifications are strictly prohibited.
-2. Code Changes via Proposals: When creating or modifying code, you MUST invoke the "propose_changes" tool. Provide the complete, production-grade proposed file content and a concise description of the changes.
+2. Code Changes via Proposals: When creating or modifying code, invoke "propose_changes" or "edit_file" to stage changes for review. You may run "run_validation" after staging changes to verify syntax and repair any issues before completing.
 3. Inspect First: Always inspect the codebase first using "search_project", "read_project_file", or "list_project_files" before proposing modifications. Ground all changes in existing code patterns.
 4. User Review: Code proposals will be reviewed by the developer in a visual diff reviewer before being applied to the project. Provide a clear, professional explanation of the rationale for each proposed change.
 5. Efficiency: If the user request is a general question or doesn't require inspecting files, answer directly without unnecessary tool calls.`;
@@ -264,9 +268,6 @@ CRITICAL WORKFLOW CONSTRAINTS:
       message: 'Analyzing project and planning steps...'
     });
 
-    // ==========================================
-    // ROUTE EXECUTION (OPENAI EXCLUSIVE)
-    // ==========================================
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey || !apiKey.trim()) {
       throw new AIProviderError(
@@ -278,8 +279,8 @@ CRITICAL WORKFLOW CONSTRAINTS:
     }
 
     let effectiveModel = model;
-    if (!model || model === 'auto' || model === 'gpt-6.1-sol' || model === 'gpt-6-astra') {
-      effectiveModel = 'gpt-4o';
+    if (!model || model === 'auto' || model === 'gpt-6.1-sol' || model === 'gpt-6-astra' || model === 'float-basic') {
+      effectiveModel = model === 'float-basic' ? 'gpt-4o-mini' : 'gpt-4o';
     }
 
     const client = new OpenAI({
@@ -287,217 +288,243 @@ CRITICAL WORKFLOW CONSTRAINTS:
     });
 
     const openAITools: OpenAI.Chat.Completions.ChatCompletionTool[] = registeredTools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: {
-            type: 'object',
-            properties: t.parameters.properties,
-            required: t.parameters.required || []
-          }
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: {
+          type: 'object',
+          properties: t.parameters.properties,
+          required: t.parameters.required || []
         }
-      }));
+      }
+    }));
 
-      const openAIMessages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: prompt }
-      ];
+    const openAIMessages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = [
+      { role: 'system', content: systemInstruction },
+      { role: 'user', content: prompt }
+    ];
 
-      while (rounds < MAX_ROUNDS) {
-        if (signal?.aborted) {
-          onEvent({ type: 'cancelled', message: 'Agent execution was stopped by user.' });
+    while (rounds < MAX_ROUNDS) {
+      if (signal?.aborted) {
+        onEvent({ type: 'cancelled', message: 'Agent execution was stopped by user.' });
+        break;
+      }
+
+      if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+        terminalError = `Execution exceeded time limit of ${MAX_EXECUTION_TIME_MS / 1000}s.`;
+        failureReported = true;
+        onEvent({ type: 'failed', message: terminalError });
+        break;
+      }
+
+      if (totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
+        if (changeSet) {
+          reachedCompletion = true;
           break;
         }
+        terminalError = `Reached maximum tool call limit (${MAX_TOTAL_TOOL_CALLS}).`;
+        failureReported = true;
+        onEvent({ type: 'failed', message: terminalError });
+        break;
+      }
 
-        if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
-          onEvent({ type: 'failed', message: `Execution exceeded time limit of ${MAX_EXECUTION_TIME_MS / 1000}s.` });
-          break;
+      rounds++;
+      const isPostToolSynthesis = totalToolCalls > 0;
+      onEvent({
+        type: 'thinking',
+        action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
+        message: isPostToolSynthesis
+          ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...`
+          : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...`
+      });
+
+      let completion: OpenAI.Chat.Completions.ChatCompletion;
+      try {
+        completion = await client.chat.completions.create({
+          model: effectiveModel,
+          messages: openAIMessages,
+          tools: openAITools,
+          tool_choice: 'auto'
+        }, { signal });
+      } catch (err: any) {
+        throw normalizeOpenAIError(err);
+      }
+
+      const choice = completion.choices[0];
+      const assistantMsg = choice?.message;
+      if (!assistantMsg) break;
+
+      openAIMessages.push(assistantMsg);
+
+      if (assistantMsg.content) {
+        finalResponseText = finalResponseText ? `${finalResponseText}\n\n${assistantMsg.content}` : assistantMsg.content;
+        if (onDelta) {
+          onDelta(assistantMsg.content);
         }
+      }
 
-        if (totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
-          onEvent({ type: 'failed', message: `Reached maximum tool call limit (${MAX_TOTAL_TOOL_CALLS}).` });
-          break;
-        }
-
-        rounds++;
-        const isPostToolSynthesis = totalToolCalls > 0;
+      const toolCalls = assistantMsg.tool_calls || [];
+      if (!toolCalls || toolCalls.length === 0) {
+        reachedCompletion = true;
         onEvent({
-          type: 'thinking',
-          action: isPostToolSynthesis ? 'Synthesizing' : 'Thinking',
-          message: isPostToolSynthesis
-            ? `Evaluating results and synthesizing solution (Round ${rounds}/${MAX_ROUNDS})...`
-            : `Reasoning about request and codebase (Round ${rounds}/${MAX_ROUNDS})...`
+          type: 'completed',
+          action: 'Synthesizing',
+          message: 'Agent completed task.'
+        });
+        break;
+      }
+
+      for (const call of toolCalls) {
+        if (signal?.aborted) break;
+
+        const fn = 'function' in call ? call.function : (call as any).function;
+        const name = fn.name;
+        let toolArgs: Record<string, any> = {};
+        try {
+          toolArgs = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments || {};
+        } catch {
+          toolArgs = {};
+        }
+        totalToolCalls++;
+
+        const signature = `${name}:${JSON.stringify(toolArgs)}`;
+        const count = (callCounts.get(signature) || 0) + 1;
+        callCounts.set(signature, count);
+
+        if (count > 2) {
+          onEvent({
+            type: 'tool_failed',
+            action: 'Thinking',
+            tool: name,
+            message: `Tool "${name}" was called with identical arguments multiple times. Moving forward.`
+          });
+          openAIMessages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify({ error: `Tool "${name}" was already executed with identical arguments. Please synthesize your answer with the information obtained.` })
+          });
+          continue;
+        }
+
+        const { action, startMessage } = getToolActionMetadata(name, toolArgs);
+
+        onEvent({
+          type: 'tool_started',
+          action,
+          tool: name,
+          args: toolArgs,
+          message: startMessage
         });
 
-        let completion: OpenAI.Chat.Completions.ChatCompletion;
-        try {
-          completion = await client.chat.completions.create({
-            model: effectiveModel,
-            messages: openAIMessages,
-            tools: openAITools,
-            tool_choice: 'auto'
-          }, { signal });
-        } catch (err: any) {
-          throw normalizeOpenAIError(err);
-        }
-
-        const choice = completion.choices[0];
-        const assistantMsg = choice?.message;
-        if (!assistantMsg) break;
-
-        openAIMessages.push(assistantMsg);
-
-        if (assistantMsg.content) {
-          finalResponseText = finalResponseText ? `${finalResponseText}\n\n${assistantMsg.content}` : assistantMsg.content;
-          if (onDelta) {
-            onDelta(assistantMsg.content);
-          }
-        }
-
-        const toolCalls = assistantMsg.tool_calls || [];
-        if (!toolCalls || toolCalls.length === 0) {
-          reachedCompletion = true;
-          onEvent({
-            type: 'completed',
-            action: 'Synthesizing',
-            message: 'Agent completed task.'
-          });
-          break;
-        }
-
-        for (const call of toolCalls) {
-          if (signal?.aborted) break;
-
-          const fn = 'function' in call ? call.function : (call as any).function;
-          const name = fn.name;
-          let toolArgs: Record<string, any> = {};
-          try {
-            toolArgs = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments || {};
-          } catch {
-            toolArgs = {};
-          }
-          totalToolCalls++;
-
-          const signature = `${name}:${JSON.stringify(toolArgs)}`;
-          const count = (callCounts.get(signature) || 0) + 1;
-          callCounts.set(signature, count);
-
-          if (count > 2) {
+        // Enforce role/task tool permission gate BEFORE executing any tool
+        if (canExecuteTool) {
+          const perm = canExecuteTool(name);
+          if (!perm.allowed) {
             onEvent({
               type: 'tool_failed',
               action: 'Thinking',
               tool: name,
-              message: `Tool "${name}" was called with identical arguments multiple times. Moving forward.`
+              message: perm.error || `Tool "${name}" is not permitted for this agent role.`
             });
             openAIMessages.push({
               role: 'tool',
               tool_call_id: call.id,
-              content: JSON.stringify({ error: `Tool "${name}" was already executed with identical arguments. Please synthesize your answer with the information obtained.` })
+              content: JSON.stringify({ error: perm.error || `Tool permission denied for "${name}".` })
             });
             continue;
           }
+        }
 
-          const { action, startMessage } = getToolActionMetadata(name, toolArgs);
+        const loopReminder = checkToolLoop(name, toolArgs);
+        const result = await ToolRegistry.execute(name, toolArgs, context);
+        if (loopReminder && result.output && typeof result.output === 'object') {
+          result.output._system_loop_reminder = loopReminder;
+        }
+
+        if (result.success) {
+          let completionMsg = `Completed "${name}" successfully.`;
+          if (name === 'search_project' || name === 'search_codebase' || name === 'search_code') {
+            completionMsg = `Found ${result.output?.matchesFound ?? 0} match(es) in codebase.`;
+          } else if (name === 'read_project_file' || name === 'read_file') {
+            completionMsg = `Read ${toolArgs.path} (${result.output?.totalLines || 0} lines).`;
+          } else if (name === 'list_project_files' || name === 'list_files') {
+            completionMsg = `Found ${result.output?.totalFound ?? 0} project file(s).`;
+          } else if (name === 'get_project_context') {
+            completionMsg = `Inspected project structure (${result.output?.totalFiles ?? 0} files).`;
+          } else if (name === 'find_symbol') {
+            completionMsg = `Found ${result.output?.matchesFound ?? 0} symbol declaration(s).`;
+          } else if (name === 'read_diagnostics') {
+            completionMsg = `Read ${result.output?.totalDiagnostics ?? 0} diagnostic item(s).`;
+          } else if (name === 'get_git_diff') {
+            completionMsg = `Inspected ${result.output?.filesChecked ?? 0} workspace file diff(s).`;
+          } else if (name === 'run_validation') {
+            completionMsg = result.output?.passed ? 'Validation passed: 0 errors.' : `Validation detected ${result.output?.errorCount ?? 0} error(s).`;
+          }
 
           onEvent({
-            type: 'tool_started',
+            type: 'tool_completed',
             action,
             tool: name,
-            args: toolArgs,
-            message: startMessage
+            message: completionMsg,
+            outputSummary: result.output ? JSON.stringify(result.output).slice(0, 150) : undefined
           });
 
-          const loopReminder = checkToolLoop(name, toolArgs);
-          const result = await ToolRegistry.execute(name, toolArgs, context);
-          if (loopReminder && result.output && typeof result.output === 'object') {
-            result.output._system_loop_reminder = loopReminder;
-          }
-
-          if (result.success) {
-            let completionMsg = `Completed "${name}" successfully.`;
-            if (name === 'search_project' || name === 'search_codebase') {
-              completionMsg = `Found ${result.output?.matchesFound ?? 0} match(es) in codebase.`;
-            } else if (name === 'read_project_file' || name === 'read_file') {
-              completionMsg = `Read ${toolArgs.path} (${result.output?.totalLines || 0} lines).`;
-            } else if (name === 'list_project_files' || name === 'list_files') {
-              completionMsg = `Found ${result.output?.totalFound ?? 0} project file(s).`;
-            } else if (name === 'get_project_context') {
-              completionMsg = `Inspected project structure (${result.output?.totalFiles ?? 0} files).`;
-            } else if (name === 'find_symbol') {
-              completionMsg = `Found ${result.output?.matchesFound ?? 0} symbol declaration(s).`;
-            } else if (name === 'read_diagnostics') {
-              completionMsg = `Read ${result.output?.totalDiagnostics ?? 0} diagnostic item(s).`;
-            } else if (name === 'get_git_diff') {
-              completionMsg = `Inspected ${result.output?.filesChecked ?? 0} workspace file diff(s).`;
-            } else if (name === 'run_validation') {
-              completionMsg = result.output?.passed ? 'Validation passed: 0 errors.' : `Validation detected ${result.output?.errorCount ?? 0} error(s).`;
-            }
-
+          if ((name === 'propose_changes' || name === 'edit_file') && (result.output?.changes || result.output?.proposal)) {
+            const proposal = result.output.proposal;
+            changeSet = {
+              id: result.output.proposalId || Math.random().toString(36).substring(7),
+              proposalId: result.output.proposalId,
+              projectId: context.projectId,
+              ownerId: context.userId,
+              description: result.output.description || proposal?.description || 'Proposed Code Changes',
+              status: 'pending',
+              changes: (proposal?.changes || result.output.changes || []).map((c: any) => ({
+                path: c.path,
+                operation: c.operation,
+                originalContent: c.originalContent,
+                proposedContent: c.proposedContent,
+                originalHash: c.originalHash,
+                proposedHash: c.proposedHash,
+                diffStats: c.diffStats,
+                status: c.status || 'pending'
+              }))
+            };
             onEvent({
-              type: 'tool_completed',
-              action,
-              tool: name,
-              message: completionMsg,
-              outputSummary: result.output ? JSON.stringify(result.output).slice(0, 150) : undefined
-            });
-
-            if ((name === 'propose_changes' || name === 'edit_file') && (result.output?.changes || result.output?.proposal)) {
-              const proposal = result.output.proposal;
-              changeSet = {
-                id: result.output.proposalId || Math.random().toString(36).substring(7),
-                proposalId: result.output.proposalId,
-                projectId: context.projectId,
-                ownerId: context.userId,
-                description: result.output.description || 'Proposed Code Changes',
-                status: 'pending',
-                changes: (proposal?.changes || result.output.changes || []).map((c: any) => ({
-                  path: c.path,
-                  operation: c.operation,
-                  originalContent: c.originalContent,
-                  proposedContent: c.proposedContent,
-                  originalHash: c.originalHash,
-                  proposedHash: c.proposedHash,
-                  diffStats: c.diffStats,
-                  status: c.status || 'pending'
-                }))
-              };
-              onEvent({
-                type: 'review_ready',
-                action: 'Generating proposal',
-                message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).`
-              });
-            }
-
-            openAIMessages.push({
-              role: 'tool',
-              tool_call_id: call.id,
-              content: JSON.stringify(result.output || { success: true })
-            });
-          } else {
-            onEvent({
-              type: 'tool_failed',
-              action: 'Thinking',
-              tool: name,
-              message: `Tool "${name}" failed: ${result.error}`
-            });
-
-            openAIMessages.push({
-              role: 'tool',
-              tool_call_id: call.id,
-              content: JSON.stringify({ error: result.error || 'Tool execution failed' })
+              type: 'review_ready',
+              action: 'Generating proposal',
+              message: `Code changes proposed: "${changeSet.description}" (${changeSet.changes.length} file(s) ready for review).`
             });
           }
-        }
 
-        if (changeSet) {
-          reachedCompletion = true;
-          if (!finalResponseText) {
-            finalResponseText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s).\n\nPlease review the diffs using the **Review Diffs** button to inspect additions, deletions, and approve applying them to your workspace.`;
-          }
-          break;
+          openAIMessages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify(result.output || { success: true })
+          });
+        } else {
+          onEvent({
+            type: 'tool_failed',
+            action: 'Thinking',
+            tool: name,
+            message: `Tool "${name}" failed: ${result.error}`
+          });
+
+          openAIMessages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify({ error: result.error || 'Tool execution failed' })
+          });
         }
       }
+    }
+
+    if (changeSet && !signal?.aborted) {
+      reachedCompletion = true;
+      if (!finalResponseText) {
+        finalResponseText = `I have generated a code proposal: **${changeSet.description}** with ${changeSet.changes.length} file change(s).\n\nPlease review the diffs using the **Review Diffs** button to inspect additions, deletions, and approve applying them to your workspace.`;
+      }
+    }
 
     const status: AgentRunnerResult['status'] = signal?.aborted ? 'cancelled' : reachedCompletion ? 'completed' : 'failed';
     if (status === 'failed' && !terminalError) terminalError = `Agent did not finish within ${MAX_ROUNDS} reasoning rounds.`;

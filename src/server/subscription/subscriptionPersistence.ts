@@ -137,6 +137,8 @@ export async function recordProcessedWebhookEvent(eventId: string, eventType: st
 
 // Reset memory state (useful for isolated unit tests)
 export function resetSubscriptionMemoryState(): void {
-  memorySubscriptions.clear;
+  memorySubscriptions.clear();
   memoryProcessedEvents.clear();
 }
+
+export const clearSubscriptionCache = resetSubscriptionMemoryState;

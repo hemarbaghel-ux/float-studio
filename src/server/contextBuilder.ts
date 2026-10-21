@@ -585,7 +585,7 @@ export class ContextBuilder {
 
     // Auto-attach relevant skills if not specified
     if (!mergedOptions.skills) {
-      const matchedSkills = SkillsService.selectRelevantSkills(userMessage, 2);
+      const matchedSkills = SkillsService.selectRelevantSkills(userMessage, 2, options.userId, projectId);
       if (matchedSkills.length > 0) {
         mergedOptions.skills = matchedSkills.map(s => `• Skill: ${s.name}\n${s.instructions}`);
       }
@@ -601,7 +601,7 @@ export class ContextBuilder {
 
     // Auto-attach diagnostics if not specified
     if (!mergedOptions.diagnostics && projectId) {
-      const diagPrompt = DiagnosticsService.formatDiagnosticsPrompt(projectId);
+      const diagPrompt = DiagnosticsService.formatDiagnosticsPrompt(projectId, options.userId);
       if (diagPrompt) {
         mergedOptions.diagnostics = diagPrompt;
       }

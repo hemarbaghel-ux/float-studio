@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useIDEStore } from '../../store';
-import { ChevronRight, ChevronDown, File, Folder, FileJson, FileCode2, Image, Plus, FolderPlus, Trash, Check, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, File, Folder, FileJson, FileCode2, Image, Plus, FolderPlus, Trash, Check, X, Edit2 } from 'lucide-react';
 import { FileNode } from '../../types';
 import { cn } from '../../lib/utils';
 import { v4 as uuidv4 } from 'uuid';
@@ -15,7 +15,7 @@ export function FileExplorer() {
 
   const handleCreateItem = (type: 'file' | 'folder') => {
     const trimmed = newItemName.trim();
-    if (trimmed) {
+    if (trimmed && !trimmed.includes('..') && !trimmed.startsWith('/')) {
       if (type === 'file') {
         const defaultContent = trimmed.endsWith('.py')
           ? `# ${trimmed}\ndef main():\n    print("Hello from ${trimmed}!")\n\nif __name__ == "__main__":\n    main()\n`
@@ -39,6 +39,7 @@ export function FileExplorer() {
             onClick={() => { setIsCreatingFile(true); setIsCreatingFolder(false); setNewItemName(''); }} 
             className="p-1 text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#1C1C1C] transition-colors" 
             title="New File"
+            aria-label="New File"
           >
             <Plus size={14} />
           </button>
@@ -46,6 +47,7 @@ export function FileExplorer() {
             onClick={() => { setIsCreatingFolder(true); setIsCreatingFile(false); setNewItemName(''); }} 
             className="p-1 text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#1C1C1C] transition-colors" 
             title="New Folder"
+            aria-label="New Folder"
           >
             <FolderPlus size={14} />
           </button>
@@ -71,12 +73,14 @@ export function FileExplorer() {
           <button 
             onClick={() => handleCreateItem(isCreatingFolder ? 'folder' : 'file')}
             className="text-slate-700 hover:text-slate-900 dark:text-white p-0.5"
+            aria-label="Confirm create"
           >
             <Check size={13} />
           </button>
           <button 
             onClick={() => { setIsCreatingFile(false); setIsCreatingFolder(false); }}
             className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-0.5"
+            aria-label="Cancel create"
           >
             <X size={13} />
           </button>
@@ -95,11 +99,16 @@ export function FileExplorer() {
 function FileTreeNode({ node, level, onFileClick }: { node: FileNode, level: number, onFileClick: (id: string) => void }) {
   const { activeFileId } = useIDEStore();
   const deleteFile = useIDEStore(state => state.deleteFile);
+  const renameFile = useIDEStore(state => state.renameFile);
   const [isOpen, setIsOpen] = React.useState(node.isOpen ?? true);
+  const [isRenaming, setIsRenaming] = React.useState(false);
+  const [renameValue, setRenameValue] = React.useState(node.name);
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false);
   const isFolder = node.type === 'folder';
   const isActive = activeFileId === node.id;
 
   const handleClick = () => {
+    if (isRenaming || confirmingDelete) return;
     if (isFolder) {
       setIsOpen(!isOpen);
     } else {
@@ -107,9 +116,32 @@ function FileTreeNode({ node, level, onFileClick }: { node: FileNode, level: num
     }
   };
 
-  const handleDelete = (e: React.MouseEvent) => {
+  const handleStartRename = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenameValue(node.name);
+    setIsRenaming(true);
+    setConfirmingDelete(false);
+  };
+
+  const handleCommitRename = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== node.name && !trimmed.includes('/') && !trimmed.includes('..')) {
+      renameFile?.(node.id, trimmed);
+    }
+    setIsRenaming(false);
+  };
+
+  const handleDeleteRequest = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmingDelete(true);
+    setIsRenaming(false);
+  };
+
+  const handleConfirmDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
     deleteFile(node.id);
+    setConfirmingDelete(false);
   };
 
   const paddingLeft = `${(level * 12) + 16}px`;
@@ -125,6 +157,7 @@ function FileTreeNode({ node, level, onFileClick }: { node: FileNode, level: num
         )}
         style={{ paddingLeft }}
         onClick={handleClick}
+        onDoubleClick={handleStartRename}
       >
         <div className="w-4 h-4 flex items-center justify-center mr-1 text-slate-400 dark:text-[#8B949E] shrink-0">
           {isFolder ? (
@@ -132,14 +165,61 @@ function FileTreeNode({ node, level, onFileClick }: { node: FileNode, level: num
           ) : null}
         </div>
         <FileIcon name={node.name} isFolder={isFolder} isOpen={isOpen} />
-        <span className="ml-1.5 truncate flex-1">{node.name}</span>
-        <button 
-          onClick={handleDelete}
-          title={`Delete ${node.name}`}
-          className="p-1 opacity-0 group-hover/node:opacity-100 text-slate-400 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white transition-opacity"
-        >
-          <Trash size={12} />
-        </button>
+        {isRenaming ? (
+          <div className="ml-1.5 flex items-center gap-1 flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+            <input
+              autoFocus
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCommitRename();
+                if (e.key === 'Escape') setIsRenaming(false);
+              }}
+              className="flex-1 min-w-0 bg-white dark:bg-[#141414] border border-slate-300 dark:border-[#3A3A3A] rounded px-1 py-0.5 text-xs text-slate-900 dark:text-white outline-none"
+            />
+            <button onClick={handleCommitRename} title="Save name" aria-label="Save name" className="p-0.5 text-emerald-600 dark:text-emerald-400">
+              <Check size={12} />
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); setIsRenaming(false); }} title="Cancel rename" aria-label="Cancel rename" className="p-0.5 text-slate-400 hover:text-slate-600">
+              <X size={12} />
+            </button>
+          </div>
+        ) : confirmingDelete ? (
+          <div className="ml-1.5 flex items-center justify-between gap-1 flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+            <span className="truncate text-rose-600 dark:text-rose-400 font-medium">Delete {node.name}?</span>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button onClick={handleConfirmDelete} title="Confirm delete" aria-label={`Confirm delete ${node.name}`} className="p-0.5 text-rose-600 dark:text-rose-400 hover:underline">
+                <Check size={12} />
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); setConfirmingDelete(false); }} title="Cancel delete" aria-label="Cancel delete" className="p-0.5 text-slate-400 hover:text-slate-600">
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <span className="ml-1.5 truncate flex-1">{node.name}</span>
+            <div className="flex items-center gap-0.5 opacity-0 group-hover/node:opacity-100 transition-opacity">
+              <button 
+                onClick={handleStartRename}
+                title={`Rename ${node.name}`}
+                aria-label={`Rename ${node.name}`}
+                className="p-1 text-slate-400 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white"
+              >
+                <Edit2 size={11} />
+              </button>
+              <button 
+                onClick={handleDeleteRequest}
+                title={`Delete ${node.name}`}
+                aria-label={`Delete ${node.name}`}
+                className="p-1 text-slate-400 dark:text-[#8B949E] hover:text-rose-600 dark:hover:text-rose-400"
+              >
+                <Trash size={12} />
+              </button>
+            </div>
+          </>
+        )}
       </div>
       
       {isFolder && isOpen && node.children && (

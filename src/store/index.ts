@@ -101,6 +101,7 @@ interface IDEState {
   saveProject: () => Promise<void>;
   updateFileContent: (id: string, content: string) => void;
   addFile: (parentId: string | null, file: FileNode) => void;
+  renameFile: (id: string, newName: string) => void;
   deleteFile: (id: string) => void;
   applyExecutionChanges: (changedFiles: Array<{ path: string; content?: string }>, deletedFiles: string[]) => void;
   
@@ -485,12 +486,70 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     return { files: newFiles, openTabs: newTabs, activeFileId: newActiveId };
   }),
 
+  renameFile: (id, newName) => set((state) => {
+    const trimmed = (newName || "").trim();
+    if (!trimmed || trimmed === "." || trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..") || trimmed.includes("\0")) {
+      return {};
+    }
+    const newFiles = JSON.parse(JSON.stringify(state.files)) as FileNode[];
+    const oldFlat = flattenFileTree(state.files);
+    const targetOld = oldFlat.find(f => f.id === id);
+    const targetNode = findFile(newFiles, id);
+    if (!targetNode) return {};
+    targetNode.name = trimmed;
+    const newFlat = flattenFileTree(newFiles);
+    if (state.projectId) {
+      try {
+        const idx = workspaceIndexManager.getIndex(state.projectId);
+        if (targetOld?.path) {
+          for (const oldEntry of oldFlat) {
+            if (oldEntry.path && (oldEntry.path === targetOld.path || oldEntry.path.startsWith(`${targetOld.path}/`))) {
+              idx.removeFile(oldEntry.path);
+            }
+          }
+        }
+        for (const f of newFlat) {
+          if (f.type === "file" && f.path) {
+            idx.updateFile(f.path, f.content || "");
+          }
+        }
+      } catch {}
+    }
+    if (state.projectId && state.projectName) {
+      saveStoredProject({
+        projectId: state.projectId,
+        projectName: state.projectName,
+        files: newFiles,
+        openTabs: state.openTabs,
+        activeFileId: state.activeFileId
+      });
+    }
+    return { files: newFiles };
+  }),
+
   deleteFile: (id) => set((state) => {
     const target = findFile(state.files, id);
+    const removedIds = new Set<string>([id]);
+    const collectDescendantIds = (node: FileNode | null) => {
+      if (!node) return;
+      removedIds.add(node.id);
+      if (node.children) {
+        for (const child of node.children) {
+          collectDescendantIds(child);
+        }
+      }
+    };
+    collectDescendantIds(target);
+
     if (target && state.projectId) {
       try {
-        const targetPath = flattenFileTree(state.files).find(f => f.id === id)?.path || target.name;
-        workspaceIndexManager.getIndex(state.projectId).removeFile(targetPath);
+        const flatBefore = flattenFileTree(state.files);
+        const idx = workspaceIndexManager.getIndex(state.projectId);
+        for (const entry of flatBefore) {
+          if (removedIds.has(entry.id) && entry.path) {
+            idx.removeFile(entry.path);
+          }
+        }
       } catch {}
     }
 
@@ -501,8 +560,8 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       }));
     };
     const newFiles = filterFiles(state.files);
-    const newTabs = state.openTabs.filter(t => t.fileId !== id);
-    const newActiveId = state.activeFileId === id 
+    const newTabs = state.openTabs.filter(t => !removedIds.has(t.fileId));
+    const newActiveId = (state.activeFileId && removedIds.has(state.activeFileId))
       ? (newTabs.length > 0 ? newTabs[newTabs.length - 1].fileId : null)
       : state.activeFileId;
 

@@ -164,17 +164,20 @@ export const useCloudSession = create<CloudSessionState>()(
   ),
 );
 
-// Synchronize with server active session endpoint on startup
-if (typeof window !== 'undefined') {
+// Synchronize with server active session endpoint when an authenticated user is present
+export async function syncCloudSessionWithServer(getToken?: () => Promise<string | null>): Promise<void> {
+  if (typeof window === 'undefined') return;
   try {
-    fetch('/api/session/current')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.sessionId) {
-          useCloudSession.getState().connect(data.sessionId, data.environmentId);
-        }
-      })
-      .catch(() => {});
+    const token = getToken ? await getToken() : null;
+    if (!token) return;
+    const res = await fetch('/api/session/current', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data?.sessionId) {
+      useCloudSession.getState().connect(data.sessionId, data.environmentId);
+    }
   } catch {}
 }
 

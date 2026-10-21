@@ -69,6 +69,19 @@ process.on('uncaughtException', (err: any) => {
   originalConsoleError('Uncaught Exception:', err);
 });
 
+let isShuttingDown = false;
+function handleGracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n  🛑 Received ${signal}. Shutting down FLOAT AI Studio gracefully...`);
+  setTimeout(() => {
+    process.exit(0);
+  }, 250).unref();
+}
+
+process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+
 async function bootstrap() {
   console.log('\n  🚀 Starting FLOAT AI Studio...');
   const distBundle = path.join(process.cwd(), 'dist', 'server.cjs');

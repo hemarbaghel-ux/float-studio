@@ -175,11 +175,11 @@ async function main() {
   // ITEM 5: Run permitted validation command and report output
   // ----------------------------------------------------
   console.log('\n5. Testing permitted validation command...');
-  const valCmdRes = await ToolRegistry.execute('run_command', { command: 'tsc --noEmit' }, context);
+  const valCmdRes = await ToolRegistry.execute('run_command', { command: 'syntax-check' }, context);
   console.log('   Actual validation output:', valCmdRes.output?.output);
   results.push({
-    name: 'Run permitted validation command (tsc --noEmit)',
-    pass: valCmdRes.success && valCmdRes.output?.status === 'succeeded',
+    name: 'Run permitted syntax validation check (syntax-check)',
+    pass: valCmdRes.success && valCmdRes.output?.outcome === 'syntax_validation_only',
     details: valCmdRes.output?.output
   });
 

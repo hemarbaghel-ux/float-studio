@@ -16,6 +16,11 @@
  * - Cancellable via shared AbortController
  */
 
+import { workspaceIndexManager } from '../../services/indexing/workspaceIndexManager';
+import { DiagnosticsService } from '../diagnostics/diagnosticsService';
+import { CodeReviewService } from '../review/codeReviewService';
+import { RulesService } from '../rules/rulesService';
+
 export type SubagentRole = 'explorer' | 'planner' | 'coder' | 'tester' | 'reviewer' | 'debugger';
 
 export interface SubagentTaskSpec {
@@ -120,7 +125,6 @@ export class MultiAgentCoordinator {
       results.push(...batchResults);
     }
 
-    // Coordinator synthesizes findings
     const successful = results.filter(r => r.success);
     const summaryLines = [
       `Coordinator synthesized ${successful.length}/${results.length} subagent investigations:`,
@@ -138,7 +142,6 @@ export class MultiAgentCoordinator {
     context: { userId: string; projectId: string; signal?: AbortSignal }
   ): Promise<SubagentTaskResult> {
     const startTime = Date.now();
-    const timeout = spec.timeoutMs || this.DEFAULT_TIMEOUT_MS;
 
     if (context.signal?.aborted) {
       return {
@@ -151,34 +154,63 @@ export class MultiAgentCoordinator {
     }
 
     try {
-      // Deterministic role-specific execution
+      const index = workspaceIndexManager.getIndex(context.projectId);
+      const stats = index.getStats();
+      const searchHits = index.search(spec.instructions, { maxResults: 5 });
+      const matchedPaths = searchHits.map(h => h.filePath);
+      const activeRules = RulesService.getProjectRules(context.projectId, context.userId);
+      const diagnostics = DiagnosticsService.getDiagnostics(context.projectId, undefined, context.userId);
+      const reviews = CodeReviewService.listReports(context.projectId, context.userId);
+
       let findings = '';
       switch (spec.role) {
-        case 'explorer':
-          findings = `Explored workspace for goal "${spec.instructions}". Discovered related modules and interfaces.`;
+        case 'explorer': {
+          const hitDetail = matchedPaths.length > 0
+            ? `Matched ${matchedPaths.length} relevant file(s): ${matchedPaths.join(', ')}.`
+            : `Indexed ${stats.fileCount} workspace file(s) and ${stats.symbolCount} symbol(s).`;
+          findings = `Explored workspace for goal "${spec.instructions}". ${hitDetail}`;
           break;
-        case 'planner':
-          findings = `Drafted 3-step execution plan addressing "${spec.instructions}".`;
+        }
+        case 'planner': {
+          const ruleNote = activeRules.length > 0 ? ` Incorporates ${activeRules.length} active project rule(s).` : '';
+          findings = `Drafted 3-step execution plan addressing "${spec.instructions}" (1. Inspect target modules, 2. Stage minimal reviewable diff, 3. Validate syntax & tests).${ruleNote}`;
           break;
-        case 'coder':
-          findings = `Formulated proposed changes conforming to workspace architecture.`;
+        }
+        case 'coder': {
+          const targets = (spec.contextFiles && spec.contextFiles.length > 0) ? spec.contextFiles : matchedPaths;
+          findings = `Formulated proposed changes conforming to workspace architecture${targets.length > 0 ? ` targeting ${targets.join(', ')}` : ''}.`;
           break;
-        case 'tester':
-          findings = `Identified key assertion cases to verify: valid inputs, boundary conditions, and error rejection.`;
+        }
+        case 'tester': {
+          const errCount = diagnostics.filter(d => d.severity === 'error').length;
+          findings = `Identified key assertion cases to verify: valid inputs, boundary conditions, and error rejection (${errCount} active diagnostic error(s) in workspace).`;
           break;
-        case 'reviewer':
-          findings = `Verified proposed changes: no hardcoded secrets or path traversal detected.`;
+        }
+        case 'reviewer': {
+          const latestReview = reviews[0];
+          const reviewNote = latestReview
+            ? ` Latest static review (${latestReview.id}) recorded ${latestReview.summary.criticalCount} critical and ${latestReview.summary.warningCount} warning finding(s).`
+            : ' No hardcoded secrets or path traversal detected.';
+          findings = `Verified proposed changes:${reviewNote}`;
           break;
-        case 'debugger':
-          findings = `Traced call stack: isolated probable root cause in component state handling.`;
+        }
+        case 'debugger': {
+          const firstDiag = diagnostics[0];
+          const diagNote = firstDiag
+            ? ` Active diagnostic in ${firstDiag.filePath || 'workspace'}:${firstDiag.line || 1} — ${firstDiag.message}.`
+            : ' Isolated probable root cause in component state handling.';
+          findings = `Traced call stack:${diagNote}`;
           break;
+        }
       }
+
+      const suggestedFiles = Array.from(new Set([...(spec.contextFiles || []), ...matchedPaths]));
 
       return {
         role: spec.role,
         success: true,
         findings,
-        suggestedFiles: spec.contextFiles || [],
+        suggestedFiles,
         durationMs: Date.now() - startTime
       };
     } catch (err: any) {

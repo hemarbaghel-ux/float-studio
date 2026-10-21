@@ -54,9 +54,7 @@ export async function runAgentLoop(
   // Set the environment variable for Google Gemini Adapter since it reads from process.env
   // or we could pass it in. If we receive it from req, we temporarily set it (not ideal for concurrent)
   // But wait! AI Studio injects process.env.GEMINI_API_KEY. So we just use that.
-  if (apiKey && !process.env.GEMINI_API_KEY) {
-     process.env.GEMINI_API_KEY = apiKey;
-  }
+  // Never mutate global process.env.GEMINI_API_KEY from caller arguments.
 
   sendEvent('event', { type: 'planning', message: 'Planning approach...' });
   

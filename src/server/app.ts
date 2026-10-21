@@ -22,12 +22,16 @@ import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './agent/proposalService';
 import { PlanService } from './agent/planService';
 import { ValidationService } from './validation/validationService';
-import { db } from '../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
-import { GPT6_ASTRA_CLOUD_CONFIG, KNOWN_CLOUD_SESSIONS } from './providers/cloudAgentConfig';
+import {
+  GPT6_ASTRA_CLOUD_CONFIG,
+  KNOWN_CLOUD_SESSIONS,
+  getUserCloudSessionConfig,
+  updateUserCloudSessionConfig
+} from './providers/cloudAgentConfig';
 import { GoogleGenAI } from '@google/genai';
 import { analystRouter } from './analystRouter';
 
@@ -56,9 +60,43 @@ function resolvePort(): number {
   return 3000;
 }
 
-export async function startServer() {
+const endpointRateLimits = new Map<string, number[]>();
+const MAX_RATE_LIMIT_KEYS = 15_000;
+
+export function checkEndpointRateLimit(
+  bucket: string,
+  userId: string,
+  maxRequests = 45,
+  windowMs = 60_000
+): boolean {
+  if (!userId) return false;
+  const key = `${bucket}:${userId}`;
+  const now = Date.now();
+  const timestamps = (endpointRateLimits.get(key) || []).filter((t) => now - t < windowMs);
+  if (timestamps.length >= maxRequests) {
+    return false;
+  }
+  timestamps.push(now);
+  endpointRateLimits.delete(key);
+  if (!endpointRateLimits.has(key) && endpointRateLimits.size >= MAX_RATE_LIMIT_KEYS) {
+    const oldestKey = endpointRateLimits.keys().next().value;
+    if (oldestKey) endpointRateLimits.delete(oldestKey);
+  }
+  endpointRateLimits.set(key, timestamps);
+  return true;
+}
+
+export function resetEndpointRateLimitsForTests(): void {
+  endpointRateLimits.clear();
+}
+
+export interface CreateAppOptions {
+  skipVite?: boolean;
+  modelRouterOverride?: ModelRouter;
+}
+
+export async function createApp(options: CreateAppOptions = {}) {
   const app = express();
-  const PORT = resolvePort();
 
   // Keep ordinary JSON endpoints small. Authenticated AI routes install a larger
   // parser after authentication because repository context can be several MB.
@@ -75,43 +113,49 @@ export async function startServer() {
   // Subscription & Checkout Routes
   app.use('/api/subscription', subscriptionRouter);
 
-  // Data Analyst Agent & Python Sandbox Routes
-  app.use('/api/analyst', analystRouter);
+  // Data Analyst Agent & Python Sandbox Routes (Authenticated & Rate-Limited)
+  app.use('/api/analyst', requireAuth, analystRouter);
 
   // Health check endpoint for Cloud Run and monitoring
   app.get('/api/health', (_req, res) => {
     res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
   });
 
-  // Cloud agent session status and connection configuration
-  app.get(['/api/session/current', '/api/session/status', '/api/session'], (_req, res) => {
+  // Cloud agent session status and connection configuration (Authenticated, Per-User Scoped, Rate-Limited)
+  app.get(['/api/session/current', '/api/session/status', '/api/session'], requireAuth, (req: any, res) => {
+    if (!checkEndpointRateLimit('session', req.user.uid, 60, 60_000)) {
+      return res.status(429).json({ error: 'Session status rate limit exceeded. Please wait a moment.' });
+    }
+    const userConfig = getUserCloudSessionConfig(req.user.uid);
     res.status(200).json({
       connected: true,
       active: true,
-      status: 'connected',
-      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-      modelAttached: GPT6_ASTRA_CLOUD_CONFIG.modelId,
-      remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
-      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand,
+      status: userConfig.sessionStatus,
+      sessionId: userConfig.sessionId,
+      environmentId: userConfig.environmentId,
+      modelAttached: userConfig.modelId,
+      remoteUrl: userConfig.remoteUrl,
+      execServerCommand: userConfig.execServerCommand,
       knownSessions: KNOWN_CLOUD_SESSIONS
     });
   });
 
-  app.post(['/api/session/connect', '/api/session/reconnect'], (req, res) => {
+  app.post(['/api/session/connect', '/api/session/reconnect'], requireAuth, (req: any, res) => {
+    if (!checkEndpointRateLimit('session_connect', req.user.uid, 20, 60_000)) {
+      return res.status(429).json({ error: 'Session connection rate limit exceeded. Please wait a moment.' });
+    }
     const { sessionId, environmentId } = req.body || {};
-    if (sessionId) (GPT6_ASTRA_CLOUD_CONFIG as any).sessionId = sessionId;
-    if (environmentId) {
-      (GPT6_ASTRA_CLOUD_CONFIG as any).environmentId = environmentId;
-      (GPT6_ASTRA_CLOUD_CONFIG as any).execServerCommand = `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${environmentId}'`;
+    const updateRes = updateUserCloudSessionConfig(req.user.uid, { sessionId, environmentId });
+    if (!updateRes.ok) {
+      return res.status(400).json({ error: updateRes.error });
     }
     res.status(200).json({
       success: true,
       connected: true,
-      status: 'connected',
-      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand
+      status: updateRes.config.sessionStatus,
+      sessionId: updateRes.config.sessionId,
+      environmentId: updateRes.config.environmentId,
+      execServerCommand: updateRes.config.execServerCommand
     });
   });
 
@@ -129,7 +173,7 @@ export async function startServer() {
     }
   });
 
-  const modelRouter = new ModelRouter();
+  const modelRouter = options.modelRouterOverride || new ModelRouter();
 
   // Agent Orchestrator Routes
   setupAgentOrchestratorRoutes(app);
@@ -140,13 +184,16 @@ export async function startServer() {
   app.use('/api', milestone9Router);
 
   // Project commands run only in the constrained Docker sandbox. Requiring a
-  // persisted owned project prevents callers from using the runner as a generic
-  // remote shell with an arbitrary workspace.
+  // persisted owned project (`allowMissing: false`) prevents callers from using
+  // the runner as a generic remote shell with an arbitrary unsaved workspace.
   const authorizeExecutionProject = async (projectId: string, userId: string) => {
-    const projectRef = doc(db, 'projects', projectId);
-    const snapshot = await getDoc(projectRef);
-    if (!snapshot.exists()) return { status: 404, error: 'Save this workspace to your account before running server commands.' };
-    if (snapshot.data().ownerId !== userId) return { status: 403, error: 'You do not own this project workspace.' };
+    const check = await verifyProjectOwnership(projectId, userId, {
+      allowMissing: false,
+      notFoundMessage: 'Save this workspace to your account before running server commands.'
+    });
+    if (!check.allowed) {
+      return { status: check.status, error: check.error || 'Unauthorized project access.' };
+    }
     return null;
   };
 
@@ -252,26 +299,13 @@ export async function startServer() {
   });
 
   // In-memory sliding window rate limiter per authenticated user
-  const chatRateLimits = new Map<string, number[]>();
-  const MAX_RATE_LIMIT_USERS = 10_000;
   const checkChatRateLimit = (userId: string, maxRequests = 45, windowMs = 60000): boolean => {
-    const now = Date.now();
-    const timestamps = (chatRateLimits.get(userId) || []).filter(t => now - t < windowMs);
-    if (timestamps.length >= maxRequests) {
-      return false;
-    }
-    timestamps.push(now);
-    // Keep the per-process fallback limiter bounded when many accounts make requests.
-    chatRateLimits.delete(userId);
-    if (!chatRateLimits.has(userId) && chatRateLimits.size >= MAX_RATE_LIMIT_USERS) {
-      const oldestUser = chatRateLimits.keys().next().value;
-      if (oldestUser) chatRateLimits.delete(oldestUser);
-    }
-    chatRateLimits.set(userId, timestamps);
-    return true;
+    return checkEndpointRateLimit('chat', userId, maxRequests, windowMs);
   };
 
-  // AI API Route - supports progressive SSE streaming and standard JSON
+  // AI API Route - supports progressive SSE streaming and standard JSON.
+  // Supports unsaved/ephemeral workspaces via `allowMissing: true` while still
+  // rejecting persisted projects owned by another user with 403.
   app.post('/api/ai/chat', requireAuth, express.json({ limit: '24mb' }), async (req: any, res: any) => {
     if (!checkChatRateLimit(req.user.uid)) {
       return res.status(429).json({
@@ -320,18 +354,17 @@ export async function startServer() {
       }
     }
 
-    // Verify project ownership if projectId is provided
-    if (projectId) {
-      try {
-        const projectRef = doc(db, 'projects', projectId);
-        const snap = await getDoc(projectRef);
-        if (snap.exists() && snap.data().ownerId !== req.user.uid) {
-          return res.status(403).json({ error: 'Unauthorized: You do not own this project workspace.' });
-        }
-      } catch (e) {
-        // A lookup error is not proof that this ID is an unsaved local project.
-        return res.status(503).json({ error: 'Could not verify project ownership. Retry when project storage is available.' });
+    // Verify project ownership if projectId is provided (including 'default-project').
+    // Unsaved local workspaces are permitted (`allowMissing: true`), but any persisted
+    // project belonging to another user is rejected with 403.
+    let ownership: ProjectOwnershipResult | null = null;
+    let effectiveProjectId: string | undefined = undefined;
+    if (projectId !== undefined && projectId !== null && String(projectId).trim() !== '') {
+      ownership = await verifyProjectOwnership(String(projectId), req.user.uid, { allowMissing: true });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
       }
+      effectiveProjectId = ownership.effectiveProjectId || String(projectId).trim();
     }
 
     // Process and assemble codebase context items if provided
@@ -349,10 +382,11 @@ export async function startServer() {
         userPromptText = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
       }
 
+      // Only query persisted Git link metadata when the project is confirmed persisted and owned
       let gitRepoInfo: { gitRepository?: string; gitBranch?: string } = {};
-      if (projectId) {
+      if (ownership?.persisted && !ownership.isEphemeral && effectiveProjectId) {
         try {
-          const linkSnap = await adminDb.collection('projectGitLinks').doc(projectId).get();
+          const linkSnap = await adminDb.collection('projectGitLinks').doc(effectiveProjectId).get();
           if (linkSnap.exists) {
             const linkData = linkSnap.data();
             if (linkData && linkData.ownerId === req.user.uid) {
@@ -372,7 +406,7 @@ export async function startServer() {
 
       const assembled = ContextBuilder.build(userPromptText, contextItems || [], {
         projectName,
-        projectId,
+        projectId: effectiveProjectId,
         userId: req.user.uid,
         modelId: model,
         workflowMode,
@@ -512,8 +546,11 @@ export async function startServer() {
     }
   });
 
-  // Google Gemini Free Streaming Fallback Endpoint (models gemini-2.5-flash / gemini-2.5-pro via @google/genai)
-  app.post('/api/ai/gemini-stream', async (req: any, res: any) => {
+  // Google Gemini Streaming Endpoint (Authenticated & Rate-Limited)
+  app.post('/api/ai/gemini-stream', requireAuth, async (req: any, res: any) => {
+    if (!checkEndpointRateLimit('gemini_stream', req.user.uid, 45, 60_000)) {
+      return res.status(429).json({ error: 'Rate limit exceeded. Please wait before sending another streaming request.' });
+    }
     const { prompt, conversationHistory = [], systemInstruction, geminiModel, model, customApiKey } = req.body || {};
     if (!prompt || typeof prompt !== 'string') {
       return res.status(400).json({ error: 'Prompt is required' });
@@ -605,8 +642,11 @@ export async function startServer() {
     }
   });
 
-  // Verify user-supplied provider API keys (OpenAI, Anthropic, Gemini, DeepSeek)
-  app.post('/api/ai/verify-key', express.json(), async (req: any, res: any) => {
+  // Verify user-supplied provider API keys (Authenticated & Rate-Limited)
+  app.post('/api/ai/verify-key', requireAuth, express.json(), async (req: any, res: any) => {
+    if (!checkEndpointRateLimit('verify_key', req.user.uid, 20, 60_000)) {
+      return res.status(429).json({ valid: false, error: 'Rate limit exceeded for API key verification. Please wait a moment.' });
+    }
     const { provider, key } = req.body || {};
     if (!provider || !key || typeof key !== 'string') {
       return res.status(400).json({ valid: false, message: 'Provider and API key are required.' });
@@ -799,7 +839,7 @@ ${selectedCode || fullCode}
     }
   });
 
-  // Codebase Search API Route with project ownership validation
+  // Codebase Search API Route with persisted project ownership validation (`allowMissing: false`)
   app.get('/api/projects/:projectId/search', requireAuth, async (req: any, res: any) => {
     try {
       const { projectId } = req.params;
@@ -808,19 +848,17 @@ ${selectedCode || fullCode}
         return res.json({ matches: [] });
       }
 
-      // Check project ownership
-      const projectRef = doc(db, 'projects', projectId);
-      const snap = await getDoc(projectRef);
-      if (!snap.exists()) {
-        return res.status(404).json({ error: 'Project not found' });
+      // Check project ownership via trusted server-side Firebase Admin
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, {
+        allowMissing: false,
+        notFoundMessage: 'Project not found'
+      });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
       }
 
-      const data = snap.data();
-      if (data.ownerId !== req.user.uid) {
-        return res.status(403).json({ error: 'Unauthorized: You do not own this project.' });
-      }
-
-      const files = JSON.parse(data.files || '[]');
+      const data = ownership.projectData || {};
+      const files = typeof data.files === 'string' ? JSON.parse(data.files || '[]') : (Array.isArray(data.files) ? data.files : []);
       const matches = searchCodebase(files, query);
       res.json({ matches });
     } catch (error: any) {
@@ -830,13 +868,30 @@ ${selectedCode || fullCode}
   });
 
   // AI Agent Route (SSE)
+  // Never bypasses `verifyProjectOwnership` for `projectId === 'default-project'`.
+  // Supports unsaved/ephemeral local workspaces (`allowMissing: true`) by isolating
+  // ephemeral IDs per user while rejecting persisted projects owned by another user with 403.
   app.post('/api/ai/agent', requireAuth, express.json({ limit: '24mb' }), async (req: any, res: any) => {
     if (!checkChatRateLimit(req.user.uid)) {
       return res.status(429).json({ error: 'Rate limit exceeded. Please wait before starting another agent task.' });
     }
 
     try {
-      const { prompt, virtualFiles, model = 'gpt-6-astra', conversationHistory } = req.body || {};
+      const { prompt, virtualFiles, model = 'gpt-6-astra', conversationHistory, projectId: rawProjectId } = req.body || {};
+
+      let effectiveProjectId = `ephemeral-${req.user.uid}-default-project`;
+      let isEphemeralWorkspace = true;
+      if (rawProjectId !== undefined && rawProjectId !== null && String(rawProjectId).trim() !== '') {
+        const ownership = await verifyProjectOwnership(String(rawProjectId), req.user.uid, { allowMissing: true });
+        if (!ownership.allowed) {
+          return res.status(ownership.status).json({ error: ownership.error });
+        }
+        effectiveProjectId = ownership.effectiveProjectId || String(rawProjectId).trim();
+        isEphemeralWorkspace = Boolean(ownership.isEphemeral);
+      }
+      req.body.projectId = effectiveProjectId;
+      req.body.isEphemeralWorkspace = isEphemeralWorkspace;
+
       if (typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Add a request before starting the agent.' });
       }
@@ -923,17 +978,31 @@ ${selectedCode || fullCode}
   });
 
   // Plan Mode Generation Route (Milestone 4)
+  // Never bypasses `verifyProjectOwnership` for `projectId === 'default-project'`.
+  // Supports unsaved/ephemeral local workspaces (`allowMissing: true`) by isolating
+  // ephemeral IDs per user while rejecting persisted projects owned by another user with 403.
   app.post('/api/ai/plan', requireAuth, express.json({ limit: '8mb' }), async (req: any, res: any) => {
     try {
-      const { prompt, virtualFiles, conversationId = 'default-conv', projectId = 'default-project', model = 'gpt-6-astra' } = req.body || {};
+      const { prompt, virtualFiles, conversationId = 'default-conv', projectId: rawProjectId, model = 'gpt-6-astra' } = req.body || {};
 
       if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Please enter a task request before generating a plan.' });
       }
 
+      let effectiveProjectId = `ephemeral-${req.user.uid}-default-project`;
+      let isEphemeralWorkspace = true;
+      if (rawProjectId !== undefined && rawProjectId !== null && String(rawProjectId).trim() !== '') {
+        const ownership = await verifyProjectOwnership(String(rawProjectId), req.user.uid, { allowMissing: true });
+        if (!ownership.allowed) {
+          return res.status(ownership.status).json({ error: ownership.error });
+        }
+        effectiveProjectId = ownership.effectiveProjectId || String(rawProjectId).trim();
+        isEphemeralWorkspace = Boolean(ownership.isEphemeral);
+      }
+
       const result = await PlanService.generatePlan({
         ownerId: req.user.uid,
-        projectId,
+        projectId: effectiveProjectId,
         conversationId,
         prompt: prompt.trim(),
         virtualFiles: Array.isArray(virtualFiles) ? virtualFiles : [],
@@ -944,29 +1013,23 @@ ${selectedCode || fullCode}
         return res.status(400).json({ error: result.error || 'Failed to generate implementation plan.' });
       }
 
-      res.status(201).json({ plan: result.plan });
+      res.status(201).json({ plan: result.plan, isEphemeralWorkspace });
     } catch (error: any) {
       console.error('Plan Generation Error:', error);
       res.status(500).json({ error: error.message || 'Failed to generate implementation plan.' });
     }
   });
 
-  // Code Proposal Routes (Phase 5)
+  // Code Proposal Routes (Phase 5) — Strictly require a persisted owned project (`allowMissing: false`)
   // 1. Create a proposed change set
   app.post('/api/projects/:projectId/proposals', requireAuth, async (req: any, res: any) => {
     try {
       const { projectId } = req.params;
       const { description, changes, virtualFiles = [] } = req.body;
 
-      // Verify project ownership if project exists in database
-      const projectRef = doc(db, 'projects', projectId);
-      try {
-        const snap = await getDoc(projectRef);
-        if (snap.exists() && snap.data().ownerId !== req.user.uid) {
-          return res.status(403).json({ error: 'Unauthorized: You do not own this project.' });
-        }
-      } catch (e) {
-        return res.status(503).json({ error: 'Could not verify project ownership. Retry when project storage is available.' });
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
       }
 
       const fileMap = new Map<string, { content?: string }>();
@@ -997,6 +1060,10 @@ ${selectedCode || fullCode}
   app.get('/api/projects/:projectId/proposals', requireAuth, async (req: any, res: any) => {
     try {
       const { projectId } = req.params;
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
+      }
       const proposals = await ProposalService.listProposalsDurable(projectId, req.user.uid);
       res.json({ proposals });
     } catch (error: any) {
@@ -1008,6 +1075,10 @@ ${selectedCode || fullCode}
   app.get('/api/projects/:projectId/proposals/:proposalId', requireAuth, async (req: any, res: any) => {
     try {
       const { projectId, proposalId } = req.params;
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
+      }
       const proposal = await ProposalService.getProposalDurable(proposalId, req.user.uid);
       if (!proposal || proposal.projectId !== projectId) {
         return res.status(404).json({ error: 'Proposal not found' });
@@ -1024,15 +1095,9 @@ ${selectedCode || fullCode}
       const { projectId, proposalId } = req.params;
       const { approvedPaths, currentFiles = [] } = req.body;
 
-      // Verify project ownership
-      const projectRef = doc(db, 'projects', projectId);
-      try {
-        const snap = await getDoc(projectRef);
-        if (snap.exists() && snap.data().ownerId !== req.user.uid) {
-          return res.status(403).json({ error: 'Unauthorized: You do not own this project.' });
-        }
-      } catch (e) {
-        return res.status(503).json({ error: 'Could not verify project ownership. Retry when project storage is available.' });
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
       }
 
       const proposal = await ProposalService.getProposalDurable(proposalId, req.user.uid);
@@ -1060,6 +1125,10 @@ ${selectedCode || fullCode}
   app.post('/api/projects/:projectId/proposals/:proposalId/reject', requireAuth, async (req: any, res: any) => {
     try {
       const { projectId, proposalId } = req.params;
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
+      }
       const proposal = await ProposalService.getProposalDurable(proposalId, req.user.uid);
       if (!proposal || proposal.projectId !== projectId) return res.status(404).json({ error: 'Proposal not found.' });
       const result = await ProposalService.rejectProposalDurable(proposalId, req.user.uid, req.user.uid);
@@ -1073,7 +1142,7 @@ ${selectedCode || fullCode}
     }
   });
 
-  // Validation & Error Analysis Routes (Phase 6)
+  // Validation & Error Analysis Routes (Phase 6) — Require persisted owned project via authorizeExecutionProject
   // 1. Run validation pipeline
   app.post('/api/projects/:projectId/validation/run', requireAuth, async (req: any, res: any) => {
     try {
@@ -1175,7 +1244,7 @@ ${selectedCode || fullCode}
       void runEvalRecovery();
     }, 30_000);
     evalRecoveryTimer.unref?.();
-  } else {
+  } else if (!options.skipVite) {
     console.warn('[EvalEngine] Firestore run persistence is unavailable; configure Application Default Credentials.');
   }
 
@@ -1303,43 +1372,45 @@ ${selectedCode || fullCode}
     res.status(404).json({ error: 'API endpoint not found.' });
   });
 
-  // Static files or Vite dev middleware
-  const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
-  const distPath = path.join(process.cwd(), 'dist');
-  const distIndexHtml = path.join(distPath, 'index.html');
-  const rootIndexHtml = path.join(process.cwd(), 'index.html');
-  const isProduction = process.env.NODE_ENV === 'production' || (!isRunningWithTsx && fs.existsSync(distIndexHtml));
+  if (!options.skipVite) {
+    // Static files or Vite dev middleware
+    const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
+    const distPath = path.join(process.cwd(), 'dist');
+    const distIndexHtml = path.join(distPath, 'index.html');
+    const rootIndexHtml = path.join(process.cwd(), 'index.html');
+    const isProduction = process.env.NODE_ENV === 'production' || (!isRunningWithTsx && fs.existsSync(distIndexHtml));
 
-  if (isProduction) {
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-    }
-
-    app.get('*', (_req, res, next) => {
-      if (fs.existsSync(distIndexHtml)) {
-        res.sendFile(distIndexHtml, (err) => {
-          if (err) next(err);
-        });
-      } else if (fs.existsSync(rootIndexHtml)) {
-        res.sendFile(rootIndexHtml, (err) => {
-          if (err) next(err);
-        });
-      } else {
-        res.status(503).send('Application is starting, please reload shortly.');
+    if (isProduction) {
+      if (fs.existsSync(distPath)) {
+        app.use(express.static(distPath));
       }
-    });
-  } else {
-    console.log('  ⚡ Initializing Vite development server...');
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: false, // Prevents independent WebSocket collisions on port 24678
-      },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-    console.log('  ✓ Vite development middleware ready');
+
+      app.get('*', (_req, res, next) => {
+        if (fs.existsSync(distIndexHtml)) {
+          res.sendFile(distIndexHtml, (err) => {
+            if (err) next(err);
+          });
+        } else if (fs.existsSync(rootIndexHtml)) {
+          res.sendFile(rootIndexHtml, (err) => {
+            if (err) next(err);
+          });
+        } else {
+          res.status(503).send('Application is starting, please reload shortly.');
+        }
+      });
+    } else {
+      console.log('  ⚡ Initializing Vite development server...');
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: {
+          middlewareMode: true,
+          hmr: false, // Prevents independent WebSocket collisions on port 24678
+        },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+      console.log('  ✓ Vite development middleware ready');
+    }
   }
 
   // Centralized error handling: keep API failures machine-readable and never
@@ -1370,6 +1441,13 @@ ${selectedCode || fullCode}
     console.error('Unhandled server error:', err?.message || 'Unknown server error');
     return res.status(500).json({ error: 'Internal Server Error' });
   });
+
+  return app;
+}
+
+export async function startServer() {
+  const app = await createApp();
+  const PORT = resolvePort();
 
   let retryCount = 0;
   const server = app.listen(PORT, '0.0.0.0', () => {

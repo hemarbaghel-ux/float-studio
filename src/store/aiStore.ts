@@ -28,19 +28,35 @@ interface AIStore {
 
 export const defaultAgents: Agent[] = INITIAL_AGENTS;
 
-const VALID_FLOAT_MODELS = ['gpt-6.1-sol', 'gpt-6-astra'] as const;
+export const VALID_FLOAT_MODELS = Array.from(
+  new Set([
+    ...INITIAL_MODELS.map(m => m.id),
+    'gpt-4o',
+    'o3-mini',
+    'gpt-4o-mini',
+    'o1',
+    'o1-mini',
+    'gpt-4.5-preview',
+    'gpt-4-turbo',
+    'chatgpt-4o-latest',
+    'auto',
+    'float-basic',
+    'gpt-6.1-sol',
+    'gpt-6-astra'
+  ])
+);
 
 const getInitialSelectedModel = () => {
   if (typeof window !== 'undefined') {
     try {
       const saved = localStorage.getItem('float_selected_model');
-      if (saved && VALID_FLOAT_MODELS.includes(saved as any)) {
+      if (saved && VALID_FLOAT_MODELS.includes(saved)) {
         return saved;
       }
-      localStorage.setItem('float_selected_model', 'gpt-6-astra');
+      localStorage.setItem('float_selected_model', 'gpt-4o');
     } catch {}
   }
-  return 'gpt-6-astra';
+  return 'gpt-4o';
 };
 
 const getInitialEffort = (): ReasoningEffortLevel => {
@@ -62,13 +78,13 @@ const getInitialFavorites = (): string[] => {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const filtered = parsed.filter(m => VALID_FLOAT_MODELS.includes(m as any));
+          const filtered = parsed.filter(m => VALID_FLOAT_MODELS.includes(m));
           if (filtered.length > 0) return filtered;
         }
       }
     } catch {}
   }
-  return ['gpt-6.1-sol', 'gpt-6-astra'];
+  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'float-basic'];
 };
 
 const getInitialRecents = (): string[] => {
@@ -78,13 +94,13 @@ const getInitialRecents = (): string[] => {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const filtered = parsed.filter(m => VALID_FLOAT_MODELS.includes(m as any));
+          const filtered = parsed.filter(m => VALID_FLOAT_MODELS.includes(m));
           if (filtered.length > 0) return filtered;
         }
       }
     } catch {}
   }
-  return ['gpt-6.1-sol', 'gpt-6-astra'];
+  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini'];
 };
 
 export const useAIStore = create<AIStore>((set) => ({
@@ -96,12 +112,12 @@ export const useAIStore = create<AIStore>((set) => ({
   favoriteModels: getInitialFavorites(),
   recentModels: getInitialRecents(),
   providers: {
-    openai: { enabled: true, configured: false, defaultModel: 'gpt-6.1-sol' },
-    auto: { enabled: true, configured: false, defaultModel: 'gpt-6.1-sol' }
+    openai: { enabled: true, configured: false, defaultModel: 'gpt-4o' },
+    auto: { enabled: true, configured: false, defaultModel: 'gpt-4o' }
   },
   preferences: {
-    preferredModel: 'gpt-6.1-sol',
-    fallbackModel: 'gpt-6-astra',
+    preferredModel: 'gpt-4o',
+    fallbackModel: 'gpt-4o-mini',
     speedPreference: 'fast',
     qualityPreference: 'high'
   },
@@ -116,14 +132,14 @@ export const useAIStore = create<AIStore>((set) => ({
   },
   setAgents: (agents) => set({ agents }),
   setSelectedModel: (selectedModel) => {
-    const validModel = VALID_FLOAT_MODELS.includes(selectedModel as any) ? selectedModel : 'gpt-6.1-sol';
+    const validModel = VALID_FLOAT_MODELS.includes(selectedModel) ? selectedModel : 'gpt-4o';
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('float_selected_model', validModel);
       } catch {}
     }
     set((state) => {
-      const updatedRecents = [validModel, ...state.recentModels.filter(id => id !== validModel && VALID_FLOAT_MODELS.includes(id as any))].slice(0, 5);
+      const updatedRecents = [validModel, ...state.recentModels.filter(id => id !== validModel && VALID_FLOAT_MODELS.includes(id))].slice(0, 5);
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('float_recent_models', JSON.stringify(updatedRecents));

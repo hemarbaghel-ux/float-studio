@@ -198,39 +198,75 @@ export interface AgentRoleConfig {
   canProposeChanges: boolean;
 }
 
+const READ_INSPECTION_TOOLS = [
+  'list_project_files',
+  'list_files',
+  'read_project_file',
+  'read_file',
+  'search_project',
+  'search_code',
+  'search_codebase',
+  'get_project_context',
+  'find_symbol',
+  'read_diagnostics',
+  'get_git_diff',
+  'run_validation'
+];
+
 export const AGENT_ROLES: Record<string, AgentRoleConfig> = {
   'main-agent': {
     id: 'main-agent',
     name: 'Main Orchestrator Agent',
-    allowedTools: ['list_project_files', 'read_project_file', 'search_project', 'get_project_context', 'propose_changes'],
+    allowedTools: [...READ_INSPECTION_TOOLS, 'propose_changes'],
+    permissionLevel: 'propose',
+    canProposeChanges: true
+  },
+  'coder-agent': {
+    id: 'coder-agent',
+    name: 'Coder Agent',
+    allowedTools: [...READ_INSPECTION_TOOLS, 'propose_changes'],
     permissionLevel: 'propose',
     canProposeChanges: true
   },
   'ui-agent': {
     id: 'ui-agent',
     name: 'UI / Frontend Specialist',
-    allowedTools: ['list_project_files', 'read_project_file', 'search_project', 'get_project_context', 'propose_changes'],
+    allowedTools: [...READ_INSPECTION_TOOLS, 'propose_changes'],
     permissionLevel: 'propose',
     canProposeChanges: true
   },
   'backend-agent': {
     id: 'backend-agent',
     name: 'Backend / API Specialist',
-    allowedTools: ['list_project_files', 'read_project_file', 'search_project', 'get_project_context', 'propose_changes'],
+    allowedTools: [...READ_INSPECTION_TOOLS, 'propose_changes'],
     permissionLevel: 'propose',
     canProposeChanges: true
   },
   'reviewer-agent': {
     id: 'reviewer-agent',
     name: 'Code Reviewer Agent',
-    allowedTools: ['list_project_files', 'read_project_file', 'search_project', 'get_project_context'],
+    allowedTools: [...READ_INSPECTION_TOOLS],
     permissionLevel: 'read',
     canProposeChanges: false // Read-only! Cannot propose changes
+  },
+  'planner-agent': {
+    id: 'planner-agent',
+    name: 'Architecture Planner Agent',
+    allowedTools: [...READ_INSPECTION_TOOLS],
+    permissionLevel: 'read',
+    canProposeChanges: false
+  },
+  'explorer-agent': {
+    id: 'explorer-agent',
+    name: 'Codebase Explorer Agent',
+    allowedTools: [...READ_INSPECTION_TOOLS],
+    permissionLevel: 'read',
+    canProposeChanges: false
   },
   'debugger-agent': {
     id: 'debugger-agent',
     name: 'Diagnostics & Debugging Agent',
-    allowedTools: ['list_project_files', 'read_project_file', 'search_project', 'get_project_context', 'propose_changes'],
+    allowedTools: [...READ_INSPECTION_TOOLS, 'propose_changes'],
     permissionLevel: 'propose',
     canProposeChanges: true
   }
@@ -567,6 +603,7 @@ export class AgentOrchestrator {
         virtualFiles: safeFiles, projectName: task.context?.sourceProjectName || task.name,
         projectId: task.projectId, userId: task.ownerId, agentTaskId: task.id, signal: controller.signal,
         systemInstruction: `${roleConfig.name}.${gitRepoContext} Return a reviewable FLOAT code proposal for requested code changes.`,
+        canExecuteTool: (toolName: string) => validateToolPermission(task.assignedAgentId, toolName),
         onEvent: event => {
           if (event.type === 'tool_started' && event.tool) {
             const permission = validateToolPermission(task.assignedAgentId, event.tool);

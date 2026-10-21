@@ -11,6 +11,10 @@ import { ServerPrivacyGuard } from '../privacyGuard';
 export interface ModelRouteDefinition {
   provider: 'openai';
   apiModelId: string;
+  /** True when the route ID is a FLOAT-defined internal alias rather than a literal upstream OpenAI model ID. */
+  isInternalAlias?: boolean;
+  /** The verified upstream OpenAI model ID executed by the adapter (or fallback target for preview cloud agents). */
+  upstreamModelId?: string;
 }
 
 export class ModelRouter {
@@ -19,16 +23,28 @@ export class ModelRouter {
   // Explicit provider/model allowlist. Entries are supported route candidates, not
   // proof that a model is enabled for the current account; upstream errors remain visible.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Auto / Default: maps to GPT-6.1 Sol
-    'auto': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    // Internal Dynamic Router Alias -> OpenAI gpt-4o
+    'auto': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
 
-    // GPT-6.1 Sol Preview / Frontier Reasoning
-    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
-    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol' },
+    // Core Verified Upstream OpenAI Models (isInternalAlias: false)
+    'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: false, upstreamModelId: 'gpt-4o' },
+    'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: false, upstreamModelId: 'gpt-4o-mini' },
+    'o1': { provider: 'openai', apiModelId: 'o1', isInternalAlias: false, upstreamModelId: 'o1' },
+    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini', isInternalAlias: false, upstreamModelId: 'o1-mini' },
+    'o3-mini': { provider: 'openai', apiModelId: 'o3-mini', isInternalAlias: false, upstreamModelId: 'o3-mini' },
+    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview', isInternalAlias: false, upstreamModelId: 'gpt-4.5-preview' },
+    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo', isInternalAlias: false, upstreamModelId: 'gpt-4-turbo' },
+    'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest', isInternalAlias: false, upstreamModelId: 'chatgpt-4o-latest' },
+    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo', isInternalAlias: false, upstreamModelId: 'gpt-3.5-turbo' },
 
-    // GPT-6 Astra Preview / Cloud Agent
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' }
+    // Internal FLOAT Free-Tier Alias -> OpenAI gpt-4o-mini
+    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: true, upstreamModelId: 'gpt-4o-mini' },
+
+    // Internal Preview Cloud Agent Aliases -> OpenAI gpt-4o upstream fallback
+    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: true, upstreamModelId: 'gpt-4o' }
   };
 
   constructor() {
@@ -83,7 +99,7 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gpt-6.1-sol';
+      return 'gpt-4o';
     }
     return modelId;
   }
@@ -249,7 +265,6 @@ export class ModelRouter {
       }, onChunk, signal);
     }
 
-    // Fallback if adapter doesn't support streaming: call generateContent and stream whole text
     const result = await adapter.generateContent({
       ...request,
       model: request.model,

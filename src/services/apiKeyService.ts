@@ -2,8 +2,10 @@
  * Centralized User API Key Service (Cursor-style BYOK)
  *
  * Manages user-provided API keys for multiple providers (OpenAI, Anthropic, Gemini, DeepSeek)
- * stored securely in the browser and passed to backend routes when available.
+ * stored in the browser and passed to authenticated backend routes when available.
  */
+
+import { apiFetch } from './api';
 
 export interface UserApiKeys {
   openai?: string;
@@ -70,7 +72,7 @@ export function isProviderConfigured(provider: 'openai' | 'anthropic' | 'deepsee
 }
 
 /**
- * Verify a key via the server-side verification proxy.
+ * Verify a key via the authenticated server-side verification proxy.
  */
 export async function verifyApiKey(provider: string, key: string): Promise<KeyVerificationResult> {
   if (!key.trim()) {
@@ -78,17 +80,24 @@ export async function verifyApiKey(provider: string, key: string): Promise<KeyVe
   }
 
   try {
-    const response = await fetch('/api/ai/verify-key', {
+    const response = await apiFetch('/api/ai/verify-key', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider, key: key.trim() }),
     });
 
     const data = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 429) {
+      return {
+        valid: false,
+        message: data.error || data.message || `Verification rejected (${response.status})`,
+        provider
+      };
+    }
     if (data.valid) {
       return { valid: true, message: data.message || `${provider} key verified successfully!`, provider };
     }
-    return { valid: false, message: data.message || `Verification failed (${response.status})`, provider };
+    return { valid: false, message: data.message || data.error || `Verification failed (${response.status})`, provider };
   } catch (err: any) {
     return { valid: false, message: err.message || 'Network error during verification', provider };
   }

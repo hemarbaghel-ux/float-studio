@@ -1,13 +1,21 @@
-import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
+import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import fs from 'fs';
 import path from 'path';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 let adminCredentialsDisabled = false;
+let adminCredentialsTestOverride: boolean | null = null;
 
 export function markAdminCredentialsUnavailable(_reason?: unknown): void {
   adminCredentialsDisabled = true;
+}
+
+export function setAdminCredentialsOverrideForTests(override: boolean | null): void {
+  adminCredentialsTestOverride = override;
+  if (override !== false) {
+    adminCredentialsDisabled = false;
+  }
 }
 
 export function isPermissionDeniedError(err: any): boolean {
@@ -17,10 +25,28 @@ export function isPermissionDeniedError(err: any): boolean {
   return code === 7 || code === 16 || /permission[-_ ]?denied|missing or insufficient permissions|unauthenticated/i.test(msg);
 }
 
+function parseServiceAccountFromEnv(): Record<string, any> | null {
+  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  if (!rawJson || !rawJson.trim()) return null;
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (parsed && typeof parsed === 'object' && parsed.client_email && parsed.private_key) {
+      return parsed;
+    }
+  } catch {
+    // Ignore malformed service account JSON and fail closed
+  }
+  return null;
+}
+
 export function hasAdminCredentials(): boolean {
+  if (adminCredentialsTestOverride !== null) {
+    return adminCredentialsTestOverride && !adminCredentialsDisabled;
+  }
   if (adminCredentialsDisabled) return false;
   // In Google AI Studio development sandboxes, K_SERVICE is prefixed with "ais-dev-" and lacks Firestore IAM access
   if (process.env.K_SERVICE?.startsWith('ais-dev-')) return false;
+  if (parseServiceAccountFromEnv()) return true;
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     try {
       return fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS);
@@ -44,12 +70,16 @@ export function hasAdminCredentials(): boolean {
 }
 
 // Cloud Run uses its attached service account through Application Default
-// Credentials. Local development can use GOOGLE_APPLICATION_CREDENTIALS.
+// Credentials. Local or containerized deployments can use GOOGLE_APPLICATION_CREDENTIALS
+// or FIREBASE_SERVICE_ACCOUNT_JSON.
 const existing = getApps().find((app) => app.name === 'float-admin');
+const serviceAccount = parseServiceAccountFromEnv();
 const adminApp = existing || initializeApp(
-  hasAdminCredentials()
-    ? { credential: applicationDefault(), projectId: firebaseConfig.projectId }
-    : { projectId: firebaseConfig.projectId },
+  serviceAccount
+    ? { credential: cert(serviceAccount as any), projectId: firebaseConfig.projectId }
+    : hasAdminCredentials()
+      ? { credential: applicationDefault(), projectId: firebaseConfig.projectId }
+      : { projectId: firebaseConfig.projectId },
   'float-admin'
 );
 
