@@ -46,6 +46,7 @@ export interface AIProviderRequest {
   tools?: ToolCallDefinition[];
   dataSharingConsent?: boolean;
   dataSharingAllowed?: boolean;
+  allowFallback?: boolean;
 }
 
 export interface AIProviderResponse {

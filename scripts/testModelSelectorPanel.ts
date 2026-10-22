@@ -24,44 +24,28 @@ function assert(condition: boolean, message: string) {
 
 console.log('=== Testing FLOAT AI Model Selector & Hover Information Panel ===\n');
 
-// 1. Verify 10 models in order
-assert(DASHBOARD_MODELS.length === 10, `DASHBOARD_MODELS contains exactly 10 models (found ${DASHBOARD_MODELS.length})`);
+// 1. Verify dual-model focus in DASHBOARD_MODELS (GPT-6 Astra & GPT-6.1 Sol)
+assert(DASHBOARD_MODELS.length === 2, `DASHBOARD_MODELS contains exactly 2 models (found ${DASHBOARD_MODELS.length})`);
 
-const expectedNames = [
-  'GPT-4o Flagship Balanced',
-  'o3-mini Reasoning High Fast',
-  'GPT-4o mini Fast Fast',
-  'o1 Deep Reasoning High',
-  'o1-mini Fast Reasoning',
-  'GPT-4.5 Preview Flagship',
-  'GPT-4 Turbo Medium',
-  'ChatGPT-4o Latest Fast',
-  'Auto Dynamic Balanced',
-  'FLOAT Basic'
-];
+const astra = DASHBOARD_MODELS.find(m => m.id === 'gpt-6-astra')!;
+assert(Boolean(astra), 'GPT-6 Astra is present in DASHBOARD_MODELS');
+assert(astra?.displayName.includes('GPT-6 Astra'), 'Model 1 is "GPT-6 Astra Flagship Coding"');
+assert(astra?.id === 'gpt-6-astra', 'Model 1 id is gpt-6-astra');
+assert(astra?.reasoningLevel === 'Balanced', 'GPT-6 Astra reasoningLevel is "Balanced"');
+assert(astra?.version === 'preview-rt_7k2m', 'GPT-6 Astra version is preview-rt_7k2m');
+assert(formatContextWindow(astra?.contextWindow) === '1M context window', `GPT-6 Astra context window formatted as 1M context window (got: ${formatContextWindow(astra?.contextWindow)})`);
+assert(astra?.provider === 'OpenAI', 'GPT-6 Astra provider is OpenAI');
 
-expectedNames.forEach((expected, i) => {
-  assert(DASHBOARD_MODELS[i]?.displayName === expected || DASHBOARD_MODELS[i]?.displayName.startsWith('FLOAT Basic'), `Model ${i + 1} is "${expected}"`);
-});
+const sol = DASHBOARD_MODELS.find(m => m.id === 'gpt-6.1-sol')!;
+assert(Boolean(sol), 'GPT-6.1 Sol is present in DASHBOARD_MODELS');
+assert(sol?.isNew === true, 'GPT-6.1 Sol has isNew: true');
+assert(sol?.reasoningLevel === 'High', 'GPT-6.1 Sol reasoningLevel is "High"');
+assert(sol?.version === 'preview-sol-2025', 'GPT-6.1 Sol version is preview-sol-2025');
+assert(formatContextWindow(sol?.contextWindow) === '1M context window', `GPT-6.1 Sol context window formatted as 1M context window (got: ${formatContextWindow(sol?.contextWindow)})`);
+assert(sol?.provider === 'OpenAI', 'GPT-6.1 Sol provider is OpenAI');
 
-// 2. GPT-4o metadata matching Cursor-class workspace reference
-const gpt4o = DASHBOARD_MODELS[0];
-assert(gpt4o.id === 'gpt-4o', 'Model 1 id is gpt-4o');
-assert(gpt4o.reasoningLevel === 'Balanced', 'GPT-4o reasoningLevel is "Balanced"');
-assert(gpt4o.version === '2024-11-20', 'GPT-4o version is "2024-11-20"');
-assert(formatContextWindow(gpt4o.contextWindow) === '128k context window', `GPT-4o context window formatted as 128k context window (got: ${formatContextWindow(gpt4o.contextWindow)})`);
-assert(gpt4o.provider === 'OpenAI', 'GPT-4o provider is OpenAI');
-
-// 3. o3-mini NEW badge & reasoning metadata
-const o3mini = DASHBOARD_MODELS[1];
-assert(o3mini.isNew === true, 'o3-mini has isNew: true');
-assert(o3mini.reasoningLevel === 'High Fast', 'o3-mini reasoningLevel is "High Fast"');
-assert(o3mini.version === 'high effort', 'o3-mini version is "high effort"');
-assert(formatContextWindow(o3mini.contextWindow) === '200k context window', `o3-mini context window formatted as 200k context window (got: ${formatContextWindow(o3mini.contextWindow)})`);
-assert(o3mini.provider === 'OpenAI', 'o3-mini provider is OpenAI');
-
-// 4. Metadata presence across all models in registry
-INITIAL_MODELS.slice(0, 10).forEach(m => {
+// 4. Metadata presence across models in registry
+INITIAL_MODELS.forEach(m => {
   assert(Boolean(m.id), `${m.displayName} has id`);
   assert(Boolean(m.displayName), `${m.displayName} has displayName`);
   assert(Boolean(m.description), `${m.displayName} has description`);
@@ -78,27 +62,27 @@ assert(formatContextWindow(1048576) === '1M context window', 'formatContextWindo
 assert(formatContextWindow(undefined) === 'Information unavailable', 'formatContextWindow returns Information unavailable for undefined');
 
 // 6. Test getVersionOrEffort helper
-assert(getVersionOrEffort(gpt4o) === 'Version: 2024-11-20', 'getVersionOrEffort extracts version');
+assert(getVersionOrEffort(astra) === 'Version: preview-rt_7k2m', 'getVersionOrEffort extracts version');
 assert(getVersionOrEffort({} as any) === 'Information unavailable', 'getVersionOrEffort returns Information unavailable for empty model');
 
 // 7. Test getModelCapabilitiesList helper
-const gpt4oCaps = getModelCapabilitiesList(gpt4o);
-assert(gpt4oCaps.includes('Coding'), 'GPT-4o capabilities includes Coding');
-assert(gpt4oCaps.includes('Reasoning'), 'GPT-4o capabilities includes Reasoning');
-assert(gpt4oCaps.includes('Tool use'), 'GPT-4o capabilities includes Tool use');
-assert(gpt4oCaps.includes('Vision'), 'GPT-4o capabilities includes Vision');
+const astraCaps = getModelCapabilitiesList(astra);
+assert(astraCaps.includes('Coding'), 'GPT-6 Astra capabilities includes Coding');
+assert(astraCaps.includes('Reasoning'), 'GPT-6 Astra capabilities includes Reasoning');
+assert(astraCaps.includes('Tool use'), 'GPT-6 Astra capabilities includes Tool use');
+assert(astraCaps.includes('Vision'), 'GPT-6 Astra capabilities includes Vision');
 
 // 8. Test getAvailabilityDisplay helper
-const gpt4oAvail = getAvailabilityDisplay(gpt4o);
-assert(gpt4oAvail.label === 'Available', 'GPT-4o availability label is Available');
-assert(gpt4oAvail.color === 'green', 'GPT-4o availability color is green');
+const astraAvail = getAvailabilityDisplay(astra);
+assert(astraAvail.label === 'Available', 'GPT-6 Astra availability label is Available');
+assert(astraAvail.color === 'green', 'GPT-6 Astra availability color is green');
 
 // 9. Test clean model name helper
 assert(getCleanModelName('Auto Dynamic Balanced', 'Auto') === 'Auto', 'getCleanModelName strips Router suffix');
 assert(getCleanModelName('OpenAI GPT-4o', 'GPT-4o') === 'GPT-4o', 'getCleanModelName strips OpenAI prefix');
 
 // 10. Model provider display name
-assert(getModelProviderName(gpt4o) === 'OpenAI', 'getModelProviderName returns OpenAI');
+assert(getModelProviderName(astra) === 'OpenAI', 'getModelProviderName returns OpenAI');
 
 console.log(`\n======================================================`);
 console.log(`Model Selector Panel Test Results: ${passed} passed, ${failed} failed.`);

@@ -167,7 +167,7 @@ export class MultiAgentCoordinator {
         case 'explorer': {
           const hitDetail = matchedPaths.length > 0
             ? `Matched ${matchedPaths.length} relevant file(s): ${matchedPaths.join(', ')}.`
-            : `Indexed ${stats.fileCount} workspace file(s) and ${stats.symbolCount} symbol(s).`;
+            : `Indexed ${stats.totalFiles} workspace file(s) and ${stats.totalSymbols} symbol(s).`;
           findings = `Explored workspace for goal "${spec.instructions}". ${hitDetail}`;
           break;
         }
@@ -189,7 +189,7 @@ export class MultiAgentCoordinator {
         case 'reviewer': {
           const latestReview = reviews[0];
           const reviewNote = latestReview
-            ? ` Latest static review (${latestReview.id}) recorded ${latestReview.summary.criticalCount} critical and ${latestReview.summary.warningCount} warning finding(s).`
+            ? ` Latest static review (${latestReview.id}) recorded ${latestReview.summary.criticalCount} critical and ${latestReview.summary.highCount + latestReview.summary.mediumCount} warning finding(s).`
             : ' No hardcoded secrets or path traversal detected.';
           findings = `Verified proposed changes:${reviewNote}`;
           break;

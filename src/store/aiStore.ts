@@ -31,18 +31,8 @@ export const defaultAgents: Agent[] = INITIAL_AGENTS;
 export const VALID_FLOAT_MODELS = Array.from(
   new Set([
     ...INITIAL_MODELS.map(m => m.id),
-    'gpt-4o',
-    'o3-mini',
-    'gpt-4o-mini',
-    'o1',
-    'o1-mini',
-    'gpt-4.5-preview',
-    'gpt-4-turbo',
-    'chatgpt-4o-latest',
-    'auto',
-    'float-basic',
-    'gpt-6.1-sol',
-    'gpt-6-astra'
+    'gpt-6-astra',
+    'gpt-6.1-sol'
   ])
 );
 
@@ -53,10 +43,10 @@ const getInitialSelectedModel = () => {
       if (saved && VALID_FLOAT_MODELS.includes(saved)) {
         return saved;
       }
-      localStorage.setItem('float_selected_model', 'gpt-4o');
+      localStorage.setItem('float_selected_model', 'gpt-6-astra');
     } catch {}
   }
-  return 'gpt-4o';
+  return 'gpt-6-astra';
 };
 
 const getInitialEffort = (): ReasoningEffortLevel => {
@@ -68,7 +58,7 @@ const getInitialEffort = (): ReasoningEffortLevel => {
       }
     } catch {}
   }
-  return 'medium';
+  return 'high';
 };
 
 const getInitialFavorites = (): string[] => {
@@ -84,7 +74,7 @@ const getInitialFavorites = (): string[] => {
       }
     } catch {}
   }
-  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'float-basic'];
+  return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
 const getInitialRecents = (): string[] => {
@@ -100,7 +90,7 @@ const getInitialRecents = (): string[] => {
       }
     } catch {}
   }
-  return ['gpt-4o', 'o3-mini', 'gpt-4o-mini'];
+  return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
 
 export const useAIStore = create<AIStore>((set) => ({
@@ -112,12 +102,12 @@ export const useAIStore = create<AIStore>((set) => ({
   favoriteModels: getInitialFavorites(),
   recentModels: getInitialRecents(),
   providers: {
-    openai: { enabled: true, configured: false, defaultModel: 'gpt-4o' },
-    auto: { enabled: true, configured: false, defaultModel: 'gpt-4o' }
+    openai: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' },
+    auto: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' }
   },
   preferences: {
-    preferredModel: 'gpt-4o',
-    fallbackModel: 'gpt-4o-mini',
+    preferredModel: 'gpt-6-astra',
+    fallbackModel: 'gpt-6.1-sol',
     speedPreference: 'fast',
     qualityPreference: 'high'
   },
@@ -132,7 +122,7 @@ export const useAIStore = create<AIStore>((set) => ({
   },
   setAgents: (agents) => set({ agents }),
   setSelectedModel: (selectedModel) => {
-    const validModel = VALID_FLOAT_MODELS.includes(selectedModel) ? selectedModel : 'gpt-4o';
+    const validModel = VALID_FLOAT_MODELS.includes(selectedModel) ? selectedModel : 'gpt-6-astra';
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('float_selected_model', validModel);

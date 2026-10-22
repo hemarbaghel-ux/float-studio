@@ -147,7 +147,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     const { sessionId, environmentId } = req.body || {};
     const updateRes = updateUserCloudSessionConfig(req.user.uid, { sessionId, environmentId });
     if (!updateRes.ok) {
-      return res.status(400).json({ error: updateRes.error });
+      return res.status(400).json({ error: (updateRes as { ok: false; error: string }).error });
     }
     res.status(200).json({
       success: true,
