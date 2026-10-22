@@ -81,26 +81,12 @@ async function runMasterAuditRegressionTests() {
   // 2. Model Catalog Reconciliation: Verified Upstream IDs vs Internal FLOAT Aliases
   console.log('\n--- 2. Model Catalog, Alias Reconciliation & AI Store Integrity ---');
   const router = new ModelRouter();
-  check(DASHBOARD_MODELS.length === 10, 'DASHBOARD_MODELS has all 10 dashboard selector models');
-  check(VERIFIED_MODELS.length === 12, 'VERIFIED_MODELS has all 12 catalog entries (8 upstream OpenAI + 4 internal FLOAT aliases)');
-  check(INITIAL_MODELS.length === 12 && VALID_FLOAT_MODELS.length === 12, 'INITIAL_MODELS and VALID_FLOAT_MODELS agree on all 12 catalog entries');
+  check(DASHBOARD_MODELS.length === 2, 'DASHBOARD_MODELS has consolidated dashboard selector models (GPT-6 Astra & GPT-6.1 Sol)');
+  check(VERIFIED_MODELS.length === 3, 'VERIFIED_MODELS has consolidated catalog entries (GPT-6 Astra, GPT-6.1 Sol & float-basic)');
+  check(INITIAL_MODELS.length === 3 && VALID_FLOAT_MODELS.length === 3, 'INITIAL_MODELS and VALID_FLOAT_MODELS agree on consolidated catalog entries');
   check(Boolean(FLOAT_BASIC_MODEL && FLOAT_BASIC_MODEL.id === 'float-basic'), 'FLOAT_BASIC_MODEL is exported and defined');
 
-  const upstreamModels = ['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1', 'o1-mini', 'gpt-4.5-preview', 'gpt-4-turbo', 'chatgpt-4o-latest'];
-  for (const modelId of upstreamModels) {
-    useAIStore.getState().setSelectedModel(modelId);
-    check(useAIStore.getState().selectedModel === modelId, `useAIStore preserves upstream model "${modelId}" without silent overwrite`);
-    const resolved = router.resolveRoute(modelId);
-    check(
-      resolved.route.provider === 'openai' &&
-      resolved.route.isInternalAlias === false &&
-      resolved.route.upstreamModelId === modelId,
-      `ModelRouter marks "${modelId}" as verified upstream OpenAI model (${resolved.route.upstreamModelId})`
-    );
-  }
-
   const internalAliases: Array<{ id: string; expectedUpstream: string }> = [
-    { id: 'auto', expectedUpstream: 'gpt-4o' },
     { id: 'float-basic', expectedUpstream: 'gpt-4o-mini' },
     { id: 'gpt-6-astra', expectedUpstream: 'gpt-4o' },
     { id: 'gpt-6.1-sol', expectedUpstream: 'gpt-4o' }

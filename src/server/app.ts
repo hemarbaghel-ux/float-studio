@@ -26,6 +26,7 @@ import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnersh
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
+import { brainRouter } from './brain';
 import {
   GPT6_ASTRA_CLOUD_CONFIG,
   KNOWN_CLOUD_SESSIONS,
@@ -182,6 +183,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/projects/:projectId/git', gitRouter);
   app.use('/api', milestone9Router);
+  app.use('/api', brainRouter);
 
   // Project commands run only in the constrained Docker sandbox. Requiring a
   // persisted owned project (`allowMissing: false`) prevents callers from using
@@ -385,7 +387,7 @@ export async function createApp(options: CreateAppOptions = {}) {
 
       // Only query persisted Git link metadata when the project is confirmed persisted and owned
       let gitRepoInfo: { gitRepository?: string; gitBranch?: string } = {};
-      if (ownership?.persisted && !ownership.isEphemeral && effectiveProjectId) {
+      if (hasAdminCredentials() && ownership?.persisted && !ownership.isEphemeral && effectiveProjectId) {
         try {
           const linkSnap = await adminDb.collection('projectGitLinks').doc(effectiveProjectId).get();
           if (linkSnap.exists) {

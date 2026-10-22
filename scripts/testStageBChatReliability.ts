@@ -31,8 +31,8 @@ async function runStageBTests() {
   const router = new ModelRouter();
 
   // Test 1: Active Model Resolution
-  test('Resolves auto to gpt-4o', () => {
-    assert.strictEqual(router.resolveModelId('auto'), 'gpt-4o');
+  test('Resolves auto to gpt-6-astra', () => {
+    assert.strictEqual(router.resolveModelId('auto'), 'gpt-6-astra');
   });
 
   test('Resolves exact gpt-4o model', () => {

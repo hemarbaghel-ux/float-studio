@@ -216,6 +216,25 @@ function extractTypeScriptSymbols(
       continue;
     }
 
+    // 8b. Constants, Stores, Objects
+    // e.g. [export] const useUserStore = create(...) or export const myConfig = { ... }
+    const constVarMatch = trimmed.match(/^(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*(?::\s*[^=]+)?\s*=\s*(.+)/);
+    if (constVarMatch) {
+      const varName = constVarMatch[1];
+      if (!['if', 'for', 'while', 'return', 'import', 'export'].includes(varName)) {
+        const isStore = /^(?:use[A-Z0-9]\w*Store|.*Store)$/.test(varName) || /create(?:<[^>]+>)?\s*\(/.test(trimmed);
+        symbols.push({
+          name: varName,
+          kind: isStore ? 'store' as any : 'variable',
+          line: lineNum,
+          signature: trimmed.slice(0, 120)
+        });
+        if (trimmed.startsWith('export')) exports.push(varName);
+        currentBraceDepth += (openBraces - closeBraces);
+        continue;
+      }
+    }
+
     // 9. Class Methods
     // e.g. static foo(...) or async foo(...) or foo(...)
     if (currentClass && currentBraceDepth > classBraceDepth) {

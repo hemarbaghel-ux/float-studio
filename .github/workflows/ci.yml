@@ -37,6 +37,11 @@ jobs:
           npx tsx scripts/testTenantIsolationSecurity.ts
           npx tsx scripts/testMasterAuditRegression.ts
 
+      - name: Unified FLOAT Brain & AI Behavior Integrity Suites
+        run: |
+          npx tsx scripts/testFloatBrain.ts
+          npx tsx scripts/testSimulatedAIBehaviorRemoval.ts
+
       - name: Model Routing, Agent Loop & Workspace Suites
         run: |
           npx tsx scripts/testOpenAIIntegration.ts
