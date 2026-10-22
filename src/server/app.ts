@@ -462,7 +462,8 @@ export async function createApp(options: CreateAppOptions = {}) {
             reasoningEffort: resolvedEffort,
             speed,
             dataSharingConsent: dataSharingAllowed,
-            dataSharingAllowed
+            dataSharingAllowed,
+            demoMode: Boolean(req.body?.demoMode)
           },
           (delta: string) => {
             if (!abortController.signal.aborted && !res.destroyed && !res.writableEnded) {
@@ -472,7 +473,7 @@ export async function createApp(options: CreateAppOptions = {}) {
           abortController.signal
         );
 
-        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage, contextExplanation })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage, isSimulated: result.isSimulated, contextExplanation })}\n\n`);
         res.end();
       } catch (error: any) {
         const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
@@ -512,10 +513,11 @@ export async function createApp(options: CreateAppOptions = {}) {
         reasoningEffort: resolvedEffort,
         speed,
         dataSharingConsent: dataSharingAllowed,
-        dataSharingAllowed
+        dataSharingAllowed,
+        demoMode: Boolean(req.body?.demoMode)
       });
 
-      res.json({ text: response.text, usage: response.usage });
+      res.json({ text: response.text, usage: response.usage, isSimulated: response.isSimulated });
     } catch (error: any) {
       const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
       const isCancelled =

@@ -33,6 +33,7 @@ export interface AIMessage {
   latency?: number;
   status?: 'sending' | 'streaming' | 'completed' | 'error' | 'cancelled';
   error?: string;
+  isSimulated?: boolean;
   conversationId?: string;
   checkpoint?: FileNode[];
   changes?: Record<string, { status: 'pending' | 'accepted' | 'rejected'; before?: string | null }>;

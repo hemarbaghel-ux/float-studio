@@ -88,8 +88,9 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
     pricing: { inputCostPer1M: 3.00, outputCostPer1M: 12.00, cachedInputCostPer1M: 1.50, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2025-03-01', sourceUrl: 'https://openai.com/api/pricing/' },
     limitations: [
-      'Preview cloud agent with upstream fallback when remote agent connection is unreachable.',
-      'Supports server-side OPENAI_API_KEY, CODEX_API_KEY, or intelligent local resilient engine.'
+      'Internal FLOAT alias routed upstream to OpenAI gpt-4o (or Codex preview agent server when configured).',
+      'Native upstream OpenAI model context window is 128k tokens; extended context is indexed by FLOAT workspace engine.',
+      'Requires server-side OPENAI_API_KEY for live execution.'
     ],
     intendedUseCases: [
       'Autonomous developer workflows with OpenAI Codex execution server',
@@ -131,8 +132,9 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
     pricing: { inputCostPer1M: 3.50, outputCostPer1M: 14.00, cachedInputCostPer1M: 1.75, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2025-04-01', sourceUrl: 'https://openai.com/api/pricing/' },
     limitations: [
-      'Frontier model with extended reasoning phases for rigorous logical proof.',
-      'Supports server-side OPENAI_API_KEY, CODEX_API_KEY, or intelligent local resilient engine.'
+      'Internal FLOAT alias routed upstream to OpenAI (gpt-4o / o1 reasoning targets).',
+      'Extended workspace context handled via FLOAT repository indexing; direct upstream window is 128k/200k tokens.',
+      'Requires server-side OPENAI_API_KEY for live execution.'
     ],
     intendedUseCases: [
       'Frontier code synthesis and system architecture planning',

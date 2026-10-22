@@ -260,7 +260,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
     }));
   }
 
-  private async streamSimulatedTokens(
+  private async streamDemoTokens(
     text: string,
     onChunk: (delta: string) => void,
     signal?: AbortSignal
@@ -278,15 +278,16 @@ export class OpenAIAdapter implements AIProviderAdapter {
     }
   }
 
-  private synthesizeRealModelResponse(
+  private synthesizeDemoResponse(
     model: string,
     messages: any[],
     systemInstruction?: string
   ): string {
     const isSol = model.includes('sol') || model.includes('6.1');
-    const badge = isSol
-      ? '### [GPT-6.1 Sol — Deep Architectural Reasoning]'
-      : '### [GPT-6 Astra — Flagship Coding Agent]';
+    const demoBanner = `> **[SIMULATED DEMO RESPONSE]**\n> This response was generated locally in offline demo mode. No genuine AI provider execution occurred.\n\n`;
+    const badge = demoBanner + (isSol
+      ? '### [GPT-6.1 Sol — Deep Architectural Reasoning (Demo Mode)]'
+      : '### [GPT-6 Astra — Flagship Coding Agent (Demo Mode)]');
 
     let userPrompt = '';
     if (Array.isArray(messages)) {
@@ -539,15 +540,22 @@ Let me know what specific module, file, or integration you would like to impleme
     const requestedModel = request.apiModelId || request.model;
     const effectiveModel = this.resolveApiModel(requestedModel);
 
-    // If no key is configured and fallback is allowed or interactive chat is executing
+    // If demo mode is explicitly requested, generate a visibly identified offline simulation
+    if (request.demoMode) {
+      const text = this.synthesizeDemoResponse(requestedModel, request.messages, request.systemInstruction);
+      return {
+        text,
+        isSimulated: true
+      };
+    }
+
     if (!this.isConfigured()) {
-      if (request.allowFallback || (request as any).dataSharingAllowed !== undefined) {
-        const text = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-        return {
-          text,
-          usage: { inputTokens: 350, outputTokens: Math.ceil(text.length / 4) }
-        };
-      }
+      throw new AIProviderError(
+        "OpenAI is not configured on the FLOAT server. To use OpenAI models, configure OPENAI_API_KEY in the server environment.",
+        'AUTH_ERROR',
+        'OpenAI',
+        401
+      );
     }
 
     const client = this.getClient(requestedModel);
@@ -572,21 +580,8 @@ Let me know what specific module, file, or integration you would like to impleme
         response = await client.chat.completions.create(params);
       } catch (callErr: any) {
         if ((effectiveModel === 'gpt-6-astra' || effectiveModel.startsWith('gpt-6')) && (callErr?.status === 404 || /not[- ]?found|does not exist/i.test(callErr?.message))) {
-          try {
-            response = await client.chat.completions.create({ ...params, model: 'gpt-4o' });
-          } catch (fallbackErr: any) {
-            const text = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-            return {
-              text,
-              usage: { inputTokens: 420, outputTokens: Math.ceil(text.length / 4) }
-            };
-          }
-        } else if (callErr?.status === 401 || callErr?.statusCode === 401 || callErr?.status === 429) {
-          const text = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-          return {
-            text,
-            usage: { inputTokens: 420, outputTokens: Math.ceil(text.length / 4) }
-          };
+          // Preview alias fallback to upstream gpt-4o
+          response = await client.chat.completions.create({ ...params, model: 'gpt-4o' });
         } else {
           throw callErr;
         }
@@ -623,13 +618,6 @@ Let me know what specific module, file, or integration you would like to impleme
         usage
       };
     } catch (err: any) {
-      if ((err?.status === 401 || err?.statusCode === 401 || err?.code === 'AUTH_ERROR') && request.allowFallback) {
-        const text = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-        return {
-          text,
-          usage: { inputTokens: 350, outputTokens: Math.ceil(text.length / 4) }
-        };
-      }
       throw normalizeOpenAIError(err);
     }
   }
@@ -642,28 +630,26 @@ Let me know what specific module, file, or integration you would like to impleme
     const requestedModel = request.apiModelId || request.model;
     const effectiveModel = this.resolveApiModel(requestedModel);
 
-    // If credentials are missing, stream resilient real model response immediately
+    // If demo mode is explicitly requested, stream visibly identified offline simulation
+    if (request.demoMode) {
+      const demoText = this.synthesizeDemoResponse(requestedModel, request.messages, request.systemInstruction);
+      await this.streamDemoTokens(demoText, onChunk, signal);
+      return {
+        text: demoText,
+        isSimulated: true
+      };
+    }
+
     if (!this.isConfigured()) {
-      const fallbackText = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-      await this.streamSimulatedTokens(fallbackText, onChunk, signal);
-      return {
-        text: fallbackText,
-        usage: { inputTokens: 380, outputTokens: Math.ceil(fallbackText.length / 4) }
-      };
+      throw new AIProviderError(
+        "OpenAI is not configured on the FLOAT server. To use OpenAI models, configure OPENAI_API_KEY in the server environment.",
+        'AUTH_ERROR',
+        'OpenAI',
+        401
+      );
     }
 
-    let client: OpenAI;
-    try {
-      client = this.getClient(requestedModel);
-    } catch {
-      const fallbackText = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-      await this.streamSimulatedTokens(fallbackText, onChunk, signal);
-      return {
-        text: fallbackText,
-        usage: { inputTokens: 380, outputTokens: Math.ceil(fallbackText.length / 4) }
-      };
-    }
-
+    const client = this.getClient(requestedModel);
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -687,24 +673,8 @@ Let me know what specific module, file, or integration you would like to impleme
         stream = await client.chat.completions.create(params, { signal });
       } catch (callErr: any) {
         if ((effectiveModel === 'gpt-6-astra' || effectiveModel.startsWith('gpt-6')) && (callErr?.status === 404 || /not[- ]?found|does not exist/i.test(callErr?.message))) {
-          try {
-            stream = await client.chat.completions.create({ ...params, model: 'gpt-4o' }, { signal });
-          } catch (fallbackCallErr: any) {
-            const fallbackText = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-            await this.streamSimulatedTokens(fallbackText, onChunk, signal);
-            return {
-              text: fallbackText,
-              usage: { inputTokens: 420, outputTokens: Math.ceil(fallbackText.length / 4) }
-            };
-          }
-        } else if (callErr?.status === 401 || callErr?.statusCode === 401 || callErr?.status === 429) {
-          // Upstream credential/quota error: stream authentic resilient coding response
-          const fallbackText = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-          await this.streamSimulatedTokens(fallbackText, onChunk, signal);
-          return {
-            text: fallbackText,
-            usage: { inputTokens: 420, outputTokens: Math.ceil(fallbackText.length / 4) }
-          };
+          // Preview alias fallback to upstream gpt-4o
+          stream = await client.chat.completions.create({ ...params, model: 'gpt-4o' }, { signal });
         } else {
           throw callErr;
         }
@@ -736,16 +706,7 @@ Let me know what specific module, file, or integration you would like to impleme
         usage
       };
     } catch (err: any) {
-      if (err?.name === 'AbortError' || err?.type === 'cancelation') {
-        throw normalizeOpenAIError(err);
-      }
-      // Graceful resilient stream on any unexpected upstream connection error
-      const fallbackText = this.synthesizeRealModelResponse(requestedModel, request.messages, request.systemInstruction);
-      await this.streamSimulatedTokens(fallbackText, onChunk, signal);
-      return {
-        text: fallbackText,
-        usage: { inputTokens: 420, outputTokens: Math.ceil(fallbackText.length / 4) }
-      };
+      throw normalizeOpenAIError(err);
     }
   }
 

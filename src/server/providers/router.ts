@@ -158,16 +158,7 @@ export class ModelRouter {
     return { route, adapter };
   }
 
-  async generateContent(request: {
-    model: string;
-    messages: any[];
-    systemInstruction?: string;
-    reasoningEffort?: 'low' | 'medium' | 'high';
-    speed?: 'fast' | 'balanced' | 'slow';
-    tools?: any[];
-    dataSharingConsent?: boolean;
-    dataSharingAllowed?: boolean;
-  }): Promise<AIProviderResponse> {
+  async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
 
     const dataSharingAllowed = request.dataSharingAllowed !== undefined
@@ -182,7 +173,7 @@ export class ModelRouter {
       dataSharingAllowed
     });
 
-    if (!adapter.isConfigured()) {
+    if (!adapter.isConfigured() && !request.demoMode) {
       throw new AIProviderError(
         `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure the server-side API key.`,
         'AUTH_ERROR',
@@ -216,16 +207,7 @@ export class ModelRouter {
   }
 
   async generateContentStream(
-    request: {
-      model: string;
-      messages: any[];
-      systemInstruction?: string;
-      reasoningEffort?: 'low' | 'medium' | 'high';
-      speed?: 'fast' | 'balanced' | 'slow';
-      tools?: any[];
-      dataSharingConsent?: boolean;
-      dataSharingAllowed?: boolean;
-    },
+    request: AIProviderRequest,
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
@@ -243,7 +225,7 @@ export class ModelRouter {
       dataSharingAllowed
     });
 
-    if (!adapter.isConfigured()) {
+    if (!adapter.isConfigured() && !request.demoMode) {
       throw new AIProviderError(
         `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure the server-side API key.`,
         'AUTH_ERROR',
