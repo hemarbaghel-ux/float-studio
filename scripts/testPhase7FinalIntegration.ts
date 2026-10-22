@@ -31,7 +31,7 @@ async function runPhase7Tests() {
     const gpt4oMiniAdapter = router.getAdapterForModel('gpt-4o-mini');
     assert(gpt4oMiniAdapter.id === 'openai', 'Resolves gpt-4o-mini to openai provider adapter');
 
-    assert(router.resolveModelId('auto') === 'gpt-4o', 'Resolves auto model to gpt-4o');
+    assert(router.resolveModelId('auto') === 'gpt-6-astra', 'Resolves auto model to gpt-6-astra');
   } catch (e: any) {
     assert(false, `Failed resolving active OpenAI models: ${e.message}`);
   }

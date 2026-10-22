@@ -46,6 +46,8 @@ export interface AIProviderRequest {
   tools?: ToolCallDefinition[];
   dataSharingConsent?: boolean;
   dataSharingAllowed?: boolean;
+  allowFallback?: boolean;
+  demoMode?: boolean;
 }
 
 export interface AIProviderResponse {
@@ -55,6 +57,7 @@ export interface AIProviderResponse {
     inputTokens: number;
     outputTokens: number;
   };
+  isSimulated?: boolean;
 }
 
 export interface ProviderHealthCheckResult {

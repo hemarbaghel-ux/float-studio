@@ -20,6 +20,7 @@ import { workspaceIndexManager } from '../../services/indexing/workspaceIndexMan
 import { DiagnosticsService } from '../diagnostics/diagnosticsService';
 import { CodeReviewService } from '../review/codeReviewService';
 import { RulesService } from '../rules/rulesService';
+import { floatBrainManager, StructuredFinding } from '../brain';
 
 export type SubagentRole = 'explorer' | 'planner' | 'coder' | 'tester' | 'reviewer' | 'debugger';
 
@@ -36,6 +37,7 @@ export interface SubagentTaskResult {
   success: boolean;
   findings: string;
   suggestedFiles?: string[];
+  structuredFinding?: StructuredFinding;
   durationMs: number;
   error?: string;
 }
@@ -154,7 +156,9 @@ export class MultiAgentCoordinator {
     }
 
     try {
-      const index = workspaceIndexManager.getIndex(context.projectId);
+      const brain = floatBrainManager.getBrain(context.projectId, context.userId);
+      const index = brain.workspaceIndex;
+      const graph = brain.graph;
       const stats = index.getStats();
       const searchHits = index.search(spec.instructions, { maxResults: 5 });
       const matchedPaths = searchHits.map(h => h.filePath);
@@ -163,35 +167,103 @@ export class MultiAgentCoordinator {
       const reviews = CodeReviewService.listReports(context.projectId, context.userId);
 
       let findings = '';
+      let structuredFinding: StructuredFinding | undefined;
+      const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
       switch (spec.role) {
         case 'explorer': {
           const hitDetail = matchedPaths.length > 0
             ? `Matched ${matchedPaths.length} relevant file(s): ${matchedPaths.join(', ')}.`
-            : `Indexed ${stats.fileCount} workspace file(s) and ${stats.symbolCount} symbol(s).`;
+            : `Indexed ${stats.totalFiles} workspace file(s) and ${stats.totalSymbols} symbol(s).`;
           findings = `Explored workspace for goal "${spec.instructions}". ${hitDetail}`;
+          structuredFinding = {
+            taskId,
+            subagentRole: 'explorer',
+            summary: findings,
+            targetFiles: matchedPaths,
+            nodesExamined: searchHits.map(h => `file:${h.filePath}`),
+            evidence: searchHits.map(h => ({
+              filePath: h.filePath,
+              line: h.startLine,
+              snippet: h.contentExcerpt.slice(0, 150),
+              relevance: 'Keyword and symbol match from workspace index'
+            })),
+            dependencies: [],
+            confidence: matchedPaths.length > 0 ? 0.9 : 0.7
+          };
           break;
         }
         case 'planner': {
+          const target = spec.contextFiles?.[0] || matchedPaths[0] || '';
+          const impact = target ? graph.getImpactedFiles(target) : undefined;
+          const blastRadiusNote = impact && impact.totalImpactCount > 0
+            ? ` Impact analysis: ${impact.directImporters.length} direct importers, ${impact.affectedTests.length} affected tests.`
+            : '';
           const ruleNote = activeRules.length > 0 ? ` Incorporates ${activeRules.length} active project rule(s).` : '';
-          findings = `Drafted 3-step execution plan addressing "${spec.instructions}" (1. Inspect target modules, 2. Stage minimal reviewable diff, 3. Validate syntax & tests).${ruleNote}`;
+          findings = `Drafted 3-step execution plan addressing "${spec.instructions}" (1. Inspect target modules, 2. Stage minimal reviewable diff, 3. Validate syntax & tests).${blastRadiusNote}${ruleNote}`;
+          structuredFinding = {
+            taskId,
+            subagentRole: 'planner',
+            summary: findings,
+            targetFiles: impact ? [target, ...impact.directImporters.slice(0, 3)] : matchedPaths,
+            nodesExamined: target ? [`file:${target}`] : [],
+            evidence: impact ? impact.affectedTests.map(t => ({ filePath: t, relevance: 'Affected regression test suite' })) : [],
+            proposedChangesSummary: 'Step 1: Inspect targets. Step 2: Stage minimal reviewable diff. Step 3: Run validation.',
+            dependencies: impact ? impact.directImporters : [],
+            confidence: 0.95
+          };
           break;
         }
         case 'coder': {
           const targets = (spec.contextFiles && spec.contextFiles.length > 0) ? spec.contextFiles : matchedPaths;
           findings = `Formulated proposed changes conforming to workspace architecture${targets.length > 0 ? ` targeting ${targets.join(', ')}` : ''}.`;
+          structuredFinding = {
+            taskId,
+            subagentRole: 'coder',
+            summary: findings,
+            targetFiles: targets,
+            nodesExamined: targets.map(t => `file:${t}`),
+            evidence: targets.map(t => ({ filePath: t, relevance: 'Target file for proposed edits' })),
+            dependencies: targets,
+            confidence: 0.9
+          };
           break;
         }
         case 'tester': {
+          const target = spec.contextFiles?.[0] || matchedPaths[0] || '';
+          const relatedTests = target ? graph.getRelatedTests(target) : [];
+          const testFiles = relatedTests.map(t => t.filePath).filter((f): f is string => Boolean(f));
           const errCount = diagnostics.filter(d => d.severity === 'error').length;
-          findings = `Identified key assertion cases to verify: valid inputs, boundary conditions, and error rejection (${errCount} active diagnostic error(s) in workspace).`;
+          const testNote = testFiles.length > 0 ? ` Identified ${testFiles.length} related test suite(s): ${testFiles.join(', ')}.` : '';
+          findings = `Identified key assertion cases to verify: valid inputs, boundary conditions, and error rejection (${errCount} active diagnostic error(s) in workspace).${testNote}`;
+          structuredFinding = {
+            taskId,
+            subagentRole: 'tester',
+            summary: findings,
+            targetFiles: testFiles.length > 0 ? testFiles : matchedPaths,
+            nodesExamined: relatedTests.map(t => t.id),
+            evidence: diagnostics.map(d => ({ filePath: d.filePath || '', line: d.line, snippet: d.message, relevance: 'Active diagnostic' })),
+            dependencies: [],
+            confidence: 0.9
+          };
           break;
         }
         case 'reviewer': {
           const latestReview = reviews[0];
           const reviewNote = latestReview
-            ? ` Latest static review (${latestReview.id}) recorded ${latestReview.summary.criticalCount} critical and ${latestReview.summary.warningCount} warning finding(s).`
+            ? ` Latest static review (${latestReview.id}) recorded ${latestReview.summary.criticalCount} critical and ${latestReview.summary.highCount + latestReview.summary.mediumCount} warning finding(s).`
             : ' No hardcoded secrets or path traversal detected.';
           findings = `Verified proposed changes:${reviewNote}`;
+          structuredFinding = {
+            taskId,
+            subagentRole: 'reviewer',
+            summary: findings,
+            targetFiles: spec.contextFiles || matchedPaths,
+            nodesExamined: [],
+            evidence: [],
+            dependencies: [],
+            confidence: 0.92
+          };
           break;
         }
         case 'debugger': {
@@ -200,6 +272,16 @@ export class MultiAgentCoordinator {
             ? ` Active diagnostic in ${firstDiag.filePath || 'workspace'}:${firstDiag.line || 1} — ${firstDiag.message}.`
             : ' Isolated probable root cause in component state handling.';
           findings = `Traced call stack:${diagNote}`;
+          structuredFinding = {
+            taskId,
+            subagentRole: 'debugger',
+            summary: findings,
+            targetFiles: firstDiag?.filePath ? [firstDiag.filePath] : matchedPaths,
+            nodesExamined: firstDiag?.filePath ? [`file:${firstDiag.filePath}`] : [],
+            evidence: diagnostics.map(d => ({ filePath: d.filePath || '', line: d.line, snippet: d.message, relevance: 'Error diagnostic' })),
+            dependencies: [],
+            confidence: 0.88
+          };
           break;
         }
       }
@@ -211,6 +293,7 @@ export class MultiAgentCoordinator {
         success: true,
         findings,
         suggestedFiles,
+        structuredFinding,
         durationMs: Date.now() - startTime
       };
     } catch (err: any) {

@@ -38,6 +38,7 @@ import { RulesService } from './rules/rulesService';
 import { SkillsService } from './skills/skillsService';
 import { MemoryService } from './memory/memoryService';
 import { DiagnosticsService } from './diagnostics/diagnosticsService';
+import { floatBrainManager, BrainMemoryService } from './brain';
 
 export interface ContextBuilderOptions {
   projectName?: string;
@@ -570,6 +571,28 @@ export class ContextBuilder {
             }
           }
         }
+
+        // 4. Knowledge Graph Impact & Related Tests
+        const brain = floatBrainManager.getBrain(projectId, options.userId);
+        brain.syncFiles(files);
+        const impact = brain.graph.getImpactedFiles(activeNorm);
+        for (const testPath of impact.affectedTests.slice(0, 2)) {
+          if (!explicitPaths.has(testPath)) {
+            const testDoc = index.getFileDocument(testPath);
+            if (testDoc && testDoc.content) {
+              const testExcerpt = testDoc.lines.slice(0, 35).map((l, i) => `${i + 1}: ${l}`).join('\n');
+              combinedItems.push({
+                id: `test-${testPath}`,
+                type: 'search_match',
+                name: `${testPath} [related test]`,
+                path: testPath,
+                content: testExcerpt,
+                sizeBytes: testExcerpt.length
+              });
+              explicitPaths.add(testPath);
+            }
+          }
+        }
       }
     }
 
@@ -594,8 +617,16 @@ export class ContextBuilder {
     // Auto-attach project memories if not specified and userId is provided
     if (!mergedOptions.memories && options.userId) {
       const mems = MemoryService.getProjectMemories(projectId, options.userId);
+      const brainMems = BrainMemoryService.queryMemories(projectId, options.userId, userMessage);
+      const combinedMems: string[] = [];
       if (mems.length > 0) {
-        mergedOptions.memories = mems.map(m => `• [${m.category.toUpperCase()}]: ${m.key} => ${m.value}`);
+        combinedMems.push(...mems.map(m => `• [${m.category.toUpperCase()}]: ${m.key} => ${m.value}`));
+      }
+      if (brainMems.length > 0) {
+        combinedMems.push(...brainMems.map(m => `• [${m.category.toUpperCase()}] ${m.key}: ${m.value}${m.verified ? ' [VERIFIED]' : ''}`));
+      }
+      if (combinedMems.length > 0) {
+        mergedOptions.memories = combinedMems;
       }
     }
 

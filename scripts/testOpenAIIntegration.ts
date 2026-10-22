@@ -240,7 +240,7 @@ async function runOpenAIIntegrationTests() {
 
   // Test Suite 8: GPT-6 Astra Preview / Cloud Agent Verification
   console.log('\n--- Test Suite 8: GPT-6 Astra Preview / Cloud Agent Verification ---');
-  assert(GPT6_ASTRA_CLOUD_CONFIG.modelId === 'gpt-6-astra' || GPT6_ASTRA_CLOUD_CONFIG.modelId.startsWith('gpt-6'), 'GPT-6 Astra config has modelId');
+  assert(GPT6_ASTRA_CLOUD_CONFIG.modelId === 'gpt-6-astra', 'GPT-6 Astra config has modelId');
   assert(GPT6_ASTRA_CLOUD_CONFIG.fallbackModel === 'gpt-4o', 'GPT-6 Astra specifies upstream fallback to gpt-4o');
   assert(GPT6_ASTRA_CLOUD_CONFIG.remoteUrl.includes('agents/api/connect'), 'GPT-6 Astra has remote connect URL');
   assert(GPT6_ASTRA_CLOUD_CONFIG.environmentId.startsWith('ccarenv_b64_'), 'GPT-6 Astra has environment ID');

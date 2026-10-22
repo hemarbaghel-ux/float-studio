@@ -26,6 +26,7 @@ import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnersh
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
+import { brainRouter } from './brain';
 import {
   GPT6_ASTRA_CLOUD_CONFIG,
   KNOWN_CLOUD_SESSIONS,
@@ -147,7 +148,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     const { sessionId, environmentId } = req.body || {};
     const updateRes = updateUserCloudSessionConfig(req.user.uid, { sessionId, environmentId });
     if (!updateRes.ok) {
-      return res.status(400).json({ error: updateRes.error });
+      return res.status(400).json({ error: (updateRes as { ok: false; error: string }).error });
     }
     res.status(200).json({
       success: true,
@@ -182,6 +183,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/projects/:projectId/git', gitRouter);
   app.use('/api', milestone9Router);
+  app.use('/api', brainRouter);
 
   // Project commands run only in the constrained Docker sandbox. Requiring a
   // persisted owned project (`allowMissing: false`) prevents callers from using
@@ -385,7 +387,7 @@ export async function createApp(options: CreateAppOptions = {}) {
 
       // Only query persisted Git link metadata when the project is confirmed persisted and owned
       let gitRepoInfo: { gitRepository?: string; gitBranch?: string } = {};
-      if (ownership?.persisted && !ownership.isEphemeral && effectiveProjectId) {
+      if (hasAdminCredentials() && ownership?.persisted && !ownership.isEphemeral && effectiveProjectId) {
         try {
           const linkSnap = await adminDb.collection('projectGitLinks').doc(effectiveProjectId).get();
           if (linkSnap.exists) {
@@ -462,7 +464,8 @@ export async function createApp(options: CreateAppOptions = {}) {
             reasoningEffort: resolvedEffort,
             speed,
             dataSharingConsent: dataSharingAllowed,
-            dataSharingAllowed
+            dataSharingAllowed,
+            demoMode: Boolean(req.body?.demoMode)
           },
           (delta: string) => {
             if (!abortController.signal.aborted && !res.destroyed && !res.writableEnded) {
@@ -472,7 +475,7 @@ export async function createApp(options: CreateAppOptions = {}) {
           abortController.signal
         );
 
-        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage, contextExplanation })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage, isSimulated: result.isSimulated, contextExplanation })}\n\n`);
         res.end();
       } catch (error: any) {
         const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
@@ -512,10 +515,11 @@ export async function createApp(options: CreateAppOptions = {}) {
         reasoningEffort: resolvedEffort,
         speed,
         dataSharingConsent: dataSharingAllowed,
-        dataSharingAllowed
+        dataSharingAllowed,
+        demoMode: Boolean(req.body?.demoMode)
       });
 
-      res.json({ text: response.text, usage: response.usage });
+      res.json({ text: response.text, usage: response.usage, isSimulated: response.isSimulated });
     } catch (error: any) {
       const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
       const isCancelled =

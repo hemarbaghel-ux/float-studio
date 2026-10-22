@@ -843,9 +843,11 @@ export function AIPanel() {
               contextExplanation: finalExplanation
             });
           } else {
+            const isSimulated = Boolean(data.isSimulated || accumulatedText.includes('[SIMULATED DEMO RESPONSE]'));
             updateAiMessage(modelMsgId, {
               content: accumulatedText,
               status: 'completed',
+              isSimulated,
               latency: Date.now() - startTime,
               contextExplanation: finalExplanation
             });
@@ -1878,6 +1880,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             const isUser = msg.role === 'user';
             const isStreaming = msg.status === 'streaming';
             const isError = msg.status === 'error' || (msg.content && msg.content.startsWith('**Error**:'));
+            const isSimulated = msg.isSimulated || (msg.content && msg.content.includes('[SIMULATED DEMO RESPONSE]'));
 
             return (
               <div
@@ -1902,6 +1905,11 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                     {isStreaming && (
                       <span className="inline-flex items-center gap-1 text-purple-600 dark:text-purple-400 text-[10px] font-medium animate-pulse">
                         <span className="w-1.5 h-1.5 rounded-full bg-purple-500" /> streaming
+                      </span>
+                    )}
+                    {isSimulated && (
+                      <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800/50 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                        Simulated Demo
                       </span>
                     )}
                   </div>

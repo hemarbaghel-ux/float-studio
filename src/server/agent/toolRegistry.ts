@@ -6,6 +6,7 @@ import { workspaceIndexManager } from '../../services/indexing/workspaceIndexMan
 import { DiagnosticsService } from '../diagnostics/diagnosticsService';
 import { ValidationService } from '../validation/validationService';
 import { projectProcessManager } from '../execution/processManager';
+import { floatBrainManager } from '../brain';
 
 // Patterns to exclude from file listings and reads
 const SENSITIVE_SEGMENT = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.))/i;
@@ -1048,6 +1049,198 @@ const runCommandTool: ToolDefinition = {
 };
 
 /**
+ * 12. query_codebase_graph: Queries symbols, callers, callees, components, stores, and tests in Knowledge Graph
+ */
+const queryCodebaseGraphTool: ToolDefinition = {
+  name: 'query_codebase_graph',
+  description: 'Queries the FLOAT Brain Knowledge Graph for relationships, callers, callees, components, stores, API routes, or related tests.',
+  parameters: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Symbol, component, store name, or endpoint path to query'
+      },
+      relation: {
+        type: 'string',
+        description: 'Optional relationship filter: "callers", "callees", "dependents", "tests", "api_routes", "neighborhood"'
+      }
+    },
+    required: ['query']
+  },
+  permissionRequired: 'read',
+  timeoutMs: 5000,
+  maxOutputChars: 14000,
+  handler: async (args: Record<string, any>, context: ToolExecutionContext): Promise<ToolResult> => {
+    const rawQuery = String(args.query || '').trim();
+    if (!rawQuery) {
+      return { success: false, error: 'Query parameter is required.' };
+    }
+
+    const brain = floatBrainManager.getBrain(context.projectId, context.userId);
+    if (context.virtualFiles && context.virtualFiles.size > 0 && brain.graph.getStats().totalFiles === 0) {
+      const files: any[] = [];
+      for (const [p, f] of context.virtualFiles.entries()) {
+        if (!isSensitivePath(p)) {
+          files.push({ path: p, name: f.name || p.split('/').pop() || p, content: f.content, type: f.type });
+        }
+      }
+      await brain.syncFiles(files);
+    }
+
+    const rel = (args.relation ? String(args.relation).toLowerCase() : '');
+
+    if (rel === 'tests') {
+      const tests = brain.graph.getRelatedTests(rawQuery);
+      return {
+        success: true,
+        output: { query: rawQuery, relation: 'tests', totalFound: tests.length, tests }
+      };
+    }
+
+    if (rel === 'dependents') {
+      const dependents = brain.graph.getStoreDependents(rawQuery);
+      return {
+        success: true,
+        output: { query: rawQuery, relation: 'dependents', totalFound: dependents.length, dependents }
+      };
+    }
+
+    const callGraph = brain.graph.getSymbolCallers(rawQuery);
+    return {
+      success: true,
+      output: {
+        query: rawQuery,
+        relation: rel || 'call_graph',
+        callGraph
+      }
+    };
+  }
+};
+
+/**
+ * 13. get_impacted_files: Computes blast radius of proposed file changes
+ */
+const getImpactedFilesTool: ToolDefinition = {
+  name: 'get_impacted_files',
+  description: 'Calculates the complete blast radius, direct and indirect importers, calling symbols, and affected tests for a given file.',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'The relative file path to analyze for impact (e.g. "src/server/contextBuilder.ts")'
+      }
+    },
+    required: ['path']
+  },
+  permissionRequired: 'read',
+  timeoutMs: 5000,
+  maxOutputChars: 12000,
+  handler: async (args: Record<string, any>, context: ToolExecutionContext): Promise<ToolResult> => {
+    const rawPath = String(args.path || '').trim();
+    if (!rawPath) {
+      return { success: false, error: 'File path is required.' };
+    }
+
+    const brain = floatBrainManager.getBrain(context.projectId, context.userId);
+    if (context.virtualFiles && context.virtualFiles.size > 0 && brain.graph.getStats().totalFiles === 0) {
+      const files: any[] = [];
+      for (const [p, f] of context.virtualFiles.entries()) {
+        if (!isSensitivePath(p)) {
+          files.push({ path: p, name: f.name || p.split('/').pop() || p, content: f.content, type: f.type });
+        }
+      }
+      await brain.syncFiles(files);
+    }
+
+    const impact = brain.graph.getImpactedFiles(rawPath);
+    return {
+      success: true,
+      output: {
+        targetFile: impact.targetFile,
+        directImporters: impact.directImporters,
+        indirectImporters: impact.indirectImporters,
+        callingSymbols: impact.callingSymbols,
+        dependentComponents: impact.dependentComponents,
+        affectedTests: impact.affectedTests,
+        totalImpactCount: impact.totalImpactCount
+      }
+    };
+  }
+};
+
+/**
+ * 14. get_symbol_relationships: Symbol definitions, inbound callers, outbound callees
+ */
+const getSymbolRelationshipsTool: ToolDefinition = {
+  name: 'get_symbol_relationships',
+  description: 'Retrieves comprehensive inbound and outbound symbol relationships, callers, callees, and implementations.',
+  parameters: {
+    type: 'object',
+    properties: {
+      name: {
+        type: 'string',
+        description: 'Symbol name to inspect'
+      }
+    },
+    required: ['name']
+  },
+  permissionRequired: 'read',
+  timeoutMs: 5000,
+  maxOutputChars: 12000,
+  handler: async (args: Record<string, any>, context: ToolExecutionContext): Promise<ToolResult> => {
+    const name = String(args.name || '').trim();
+    if (!name) {
+      return { success: false, error: 'Symbol name is required.' };
+    }
+
+    const brain = floatBrainManager.getBrain(context.projectId, context.userId);
+    if (context.virtualFiles && context.virtualFiles.size > 0 && brain.graph.getStats().totalFiles === 0) {
+      const files: any[] = [];
+      for (const [p, f] of context.virtualFiles.entries()) {
+        if (!isSensitivePath(p)) {
+          files.push({ path: p, name: f.name || p.split('/').pop() || p, content: f.content, type: f.type });
+        }
+      }
+      await brain.syncFiles(files);
+    }
+
+    const callGraph = brain.graph.getSymbolCallers(name);
+    return {
+      success: true,
+      output: {
+        symbolName: name,
+        definition: callGraph.definition,
+        callers: callGraph.callers,
+        callees: callGraph.callees
+      }
+    };
+  }
+};
+
+/**
+ * 15. inspect_project_brain: Observability report on graph nodes, edges, search mode, and index revision
+ */
+const inspectProjectBrainTool: ToolDefinition = {
+  name: 'inspect_project_brain',
+  description: 'Returns the FLOAT Brain observability report, including index status, revision hash, search mode, and node/edge statistics.',
+  parameters: {
+    type: 'object',
+    properties: {}
+  },
+  permissionRequired: 'read',
+  timeoutMs: 3000,
+  handler: async (_args: Record<string, any>, context: ToolExecutionContext): Promise<ToolResult> => {
+    const brain = floatBrainManager.getBrain(context.projectId, context.userId);
+    return {
+      success: true,
+      output: brain.getObservabilityReport()
+    };
+  }
+};
+
+/**
  * Central Tool Registry
  */
 export class ToolRegistry {
@@ -1066,7 +1259,11 @@ export class ToolRegistry {
     ['get_git_diff', getGitDiffTool],
     ['run_validation', runValidationTool],
     ['propose_changes', proposeChangesTool],
-    ['search_codebase', searchProjectTool]
+    ['search_codebase', searchProjectTool],
+    ['query_codebase_graph', queryCodebaseGraphTool],
+    ['get_impacted_files', getImpactedFilesTool],
+    ['get_symbol_relationships', getSymbolRelationshipsTool],
+    ['inspect_project_brain', inspectProjectBrainTool]
   ]);
 
   static getTool(name: string): ToolDefinition | undefined {
@@ -1085,7 +1282,11 @@ export class ToolRegistry {
       getGitDiffTool,
       runValidationTool,
       getProjectContextTool,
-      proposeChangesTool
+      proposeChangesTool,
+      queryCodebaseGraphTool,
+      getImpactedFilesTool,
+      getSymbolRelationshipsTool,
+      inspectProjectBrainTool
     ];
     return primary;
   }

@@ -12,6 +12,8 @@
  * - Skills cannot read or leak sensitive credentials
  */
 
+export type FloatSkillPermission = 'read' | 'write' | 'network' | 'git';
+
 export interface FloatSkill {
   id: string;
   name: string;
@@ -21,7 +23,7 @@ export interface FloatSkill {
   scope: 'built-in' | 'project' | 'user';
   enabled: boolean;
   keywords: string[];
-  permissionsRequired: Array<'read' | 'write' | 'network' | 'git'>;
+  permissionsRequired: FloatSkillPermission[];
   userId?: string;
   projectId?: string;
 }
@@ -40,7 +42,7 @@ export const BUILT_IN_SKILLS: ReadonlyArray<FloatSkill> = Object.freeze([
     scope: 'built-in',
     enabled: true,
     keywords: ['react', 'component', 'jsx', 'tsx', 'hook', 'useeffect', 'usestate', 'zustand'],
-    permissionsRequired: ['read']
+    permissionsRequired: ['read'] as FloatSkillPermission[]
   }),
   Object.freeze({
     id: 'skill-firebase-debugging',
@@ -55,7 +57,7 @@ export const BUILT_IN_SKILLS: ReadonlyArray<FloatSkill> = Object.freeze([
     scope: 'built-in',
     enabled: true,
     keywords: ['firebase', 'firestore', 'auth', 'rules', 'security rules', 'collection', 'document', 'tenant'],
-    permissionsRequired: ['read']
+    permissionsRequired: ['read'] as FloatSkillPermission[]
   }),
   Object.freeze({
     id: 'skill-testing-practices',
@@ -70,7 +72,7 @@ export const BUILT_IN_SKILLS: ReadonlyArray<FloatSkill> = Object.freeze([
     scope: 'built-in',
     enabled: true,
     keywords: ['test', 'spec', 'unit test', 'assertion', 'assert', 'mock', 'coverage', 'verify', 'regression'],
-    permissionsRequired: ['read']
+    permissionsRequired: ['read'] as FloatSkillPermission[]
   }),
   Object.freeze({
     id: 'skill-git-workflow',
@@ -85,7 +87,7 @@ export const BUILT_IN_SKILLS: ReadonlyArray<FloatSkill> = Object.freeze([
     scope: 'built-in',
     enabled: true,
     keywords: ['git', 'github', 'commit', 'branch', 'pr', 'pull request', 'merge', 'diff', 'stash'],
-    permissionsRequired: ['git', 'read']
+    permissionsRequired: ['git', 'read'] as FloatSkillPermission[]
   }),
   Object.freeze({
     id: 'skill-api-design',
@@ -100,7 +102,7 @@ export const BUILT_IN_SKILLS: ReadonlyArray<FloatSkill> = Object.freeze([
     scope: 'built-in',
     enabled: true,
     keywords: ['api', 'endpoint', 'express', 'router', 'route', 'req', 'res', 'middleware', 'status', 'rest'],
-    permissionsRequired: ['read']
+    permissionsRequired: ['read'] as FloatSkillPermission[]
   }),
   Object.freeze({
     id: 'skill-ui-accessibility',
@@ -115,7 +117,7 @@ export const BUILT_IN_SKILLS: ReadonlyArray<FloatSkill> = Object.freeze([
     scope: 'built-in',
     enabled: true,
     keywords: ['accessibility', 'a11y', 'aria', 'contrast', 'keyboard', 'focus', 'screen reader'],
-    permissionsRequired: ['read']
+    permissionsRequired: ['read'] as FloatSkillPermission[]
   })
 ]);
 

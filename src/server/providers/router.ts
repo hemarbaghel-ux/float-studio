@@ -20,13 +20,18 @@ export interface ModelRouteDefinition {
 export class ModelRouter {
   private adapters: Map<string, AIProviderAdapter> = new Map();
 
-  // Explicit provider/model allowlist. Entries are supported route candidates, not
-  // proof that a model is enabled for the current account; upstream errors remain visible.
+  // Explicit provider/model allowlist. GPT-6 Astra & Sol are the flagship primary models.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Internal Dynamic Router Alias -> OpenAI gpt-4o
-    'auto': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    // Flagship Primary Models (Exclusive Focus)
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
 
-    // Core Verified Upstream OpenAI Models (isInternalAlias: false)
+    // Dynamic router aliases mapped to Astra & Sol
+    'auto': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+
+    // Legacy / Fallback Backend Routes
     'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: false, upstreamModelId: 'gpt-4o' },
     'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: false, upstreamModelId: 'gpt-4o-mini' },
     'o1': { provider: 'openai', apiModelId: 'o1', isInternalAlias: false, upstreamModelId: 'o1' },
@@ -36,15 +41,7 @@ export class ModelRouter {
     'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo', isInternalAlias: false, upstreamModelId: 'gpt-4-turbo' },
     'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest', isInternalAlias: false, upstreamModelId: 'chatgpt-4o-latest' },
     'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo', isInternalAlias: false, upstreamModelId: 'gpt-3.5-turbo' },
-
-    // Internal FLOAT Free-Tier Alias -> OpenAI gpt-4o-mini
-    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: true, upstreamModelId: 'gpt-4o-mini' },
-
-    // Internal Preview Cloud Agent Aliases -> OpenAI gpt-4o upstream fallback
-    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
-    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: true, upstreamModelId: 'gpt-4o' }
+    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: true, upstreamModelId: 'gpt-4o-mini' }
   };
 
   constructor() {
@@ -99,7 +96,7 @@ export class ModelRouter {
 
   resolveModelId(modelId: string): string {
     if (modelId === 'auto' || !modelId) {
-      return 'gpt-4o';
+      return 'gpt-6-astra';
     }
     return modelId;
   }
@@ -161,16 +158,7 @@ export class ModelRouter {
     return { route, adapter };
   }
 
-  async generateContent(request: {
-    model: string;
-    messages: any[];
-    systemInstruction?: string;
-    reasoningEffort?: 'low' | 'medium' | 'high';
-    speed?: 'fast' | 'balanced' | 'slow';
-    tools?: any[];
-    dataSharingConsent?: boolean;
-    dataSharingAllowed?: boolean;
-  }): Promise<AIProviderResponse> {
+  async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
 
     const dataSharingAllowed = request.dataSharingAllowed !== undefined
@@ -185,7 +173,7 @@ export class ModelRouter {
       dataSharingAllowed
     });
 
-    if (!adapter.isConfigured()) {
+    if (!adapter.isConfigured() && !request.demoMode) {
       throw new AIProviderError(
         `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure the server-side API key.`,
         'AUTH_ERROR',
@@ -219,16 +207,7 @@ export class ModelRouter {
   }
 
   async generateContentStream(
-    request: {
-      model: string;
-      messages: any[];
-      systemInstruction?: string;
-      reasoningEffort?: 'low' | 'medium' | 'high';
-      speed?: 'fast' | 'balanced' | 'slow';
-      tools?: any[];
-      dataSharingConsent?: boolean;
-      dataSharingAllowed?: boolean;
-    },
+    request: AIProviderRequest,
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
@@ -246,7 +225,7 @@ export class ModelRouter {
       dataSharingAllowed
     });
 
-    if (!adapter.isConfigured()) {
+    if (!adapter.isConfigured() && !request.demoMode) {
       throw new AIProviderError(
         `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure the server-side API key.`,
         'AUTH_ERROR',
