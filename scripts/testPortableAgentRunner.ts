@@ -1,4 +1,5 @@
 import { PortableAgentRunner } from '../src/server/agent/portableAgentRunner';
+import { OpenAIAdapter } from '../src/server/providers/openai';
 
 class TestResponse {
   destroyed = false;
@@ -17,8 +18,35 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-function json(body: unknown) {
-  return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+async function testProviderFailureDoesNotSwitchModels() {
+  const response = new TestResponse();
+  const originalFetch = globalThis.fetch;
+  const requestedModels: string[] = [];
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestedModels.push(JSON.parse(String(init?.body || '{}')).model);
+    return json({ error: { message: 'Model not found' } }, 404);
+  }) as typeof fetch;
+
+  try {
+    await PortableAgentRunner.run('openai', { user: { uid: 'test-user' }, body: {} }, response, 'gpt-6-astra', 'Hello', [], 'test-key');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert(requestedModels.length === 1, 'provider failure does not trigger a second request to a different model');
+  assert(requestedModels[0] === 'gpt-6-astra', 'portable agent sends the requested model ID unchanged');
+  assert(response.events().some((event) => event.type === 'event' && event.data.type === 'failed' && event.data.message === 'Model not found'), 'provider error is surfaced to the agent stream');
+}
+
+function testChatModelResolutionPreservesSelectedModel() {
+  const adapter = new OpenAIAdapter() as any;
+  assert(adapter.resolveApiModel('gpt-6-astra') === 'gpt-6-astra', 'chat adapter preserves the selected GPT-6 model ID');
+  assert(adapter.resolveApiModel('gpt-6.1-sol') === 'gpt-6.1-sol', 'chat adapter preserves the selected GPT-6.1 model ID');
+  assert(adapter.resolveApiModel('auto') === 'gpt-6-astra', 'Auto continues to resolve to its documented route');
 }
 
 async function testOpenAI() {
@@ -51,6 +79,8 @@ async function testOpenAI() {
 
 async function main() {
   await testOpenAI();
+  await testProviderFailureDoesNotSwitchModels();
+  testChatModelResolutionPreservesSelectedModel();
   console.log('Portable provider agent loops: assertions passed.');
 }
 

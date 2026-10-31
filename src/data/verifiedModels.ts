@@ -72,8 +72,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
   {
     id: 'gpt-6-astra',
     exactModelId: 'gpt-6-astra',
-    isInternalAlias: true,
-    upstreamModelId: 'gpt-4o',
+    isInternalAlias: false,
+    upstreamModelId: 'gpt-6-astra',
     displayName: 'GPT-6 Astra Flagship Coding',
     providerId: 'openai',
     family: 'codex',
@@ -116,8 +116,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
   {
     id: 'gpt-6.1-sol',
     exactModelId: 'gpt-6.1-sol',
-    isInternalAlias: true,
-    upstreamModelId: 'gpt-4o',
+    isInternalAlias: false,
+    upstreamModelId: 'gpt-6.1-sol',
     displayName: 'GPT-6.1 Sol Deep Reasoning',
     providerId: 'openai',
     family: 'codex',

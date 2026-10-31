@@ -88,8 +88,8 @@ async function runMasterAuditRegressionTests() {
 
   const internalAliases: Array<{ id: string; expectedUpstream: string }> = [
     { id: 'float-basic', expectedUpstream: 'gpt-4o-mini' },
-    { id: 'gpt-6-astra', expectedUpstream: 'gpt-4o' },
-    { id: 'gpt-6.1-sol', expectedUpstream: 'gpt-4o' }
+    { id: 'gpt-6-astra', expectedUpstream: 'gpt-6-astra' },
+    { id: 'gpt-6.1-sol', expectedUpstream: 'gpt-6.1-sol' }
   ];
   for (const { id, expectedUpstream } of internalAliases) {
     useAIStore.getState().setSelectedModel(id);
@@ -97,11 +97,11 @@ async function runMasterAuditRegressionTests() {
     const resolved = router.resolveRoute(id);
     const vmEntry = VERIFIED_MODELS.find(m => m.id === id);
     check(
-      resolved.route.isInternalAlias === true &&
+      resolved.route.isInternalAlias === (id === 'float-basic') &&
       resolved.route.upstreamModelId === expectedUpstream &&
-      vmEntry?.isInternalAlias === true &&
+      vmEntry?.isInternalAlias === (id === 'float-basic') &&
       vmEntry?.upstreamModelId === expectedUpstream,
-      `Alias "${id}" is explicitly marked isInternalAlias=true with upstreamModelId="${expectedUpstream}" in Router and VERIFIED_MODELS`
+      `Model "${id}" has truthful alias metadata and upstreamModelId="${expectedUpstream}" in Router and VERIFIED_MODELS`
     );
   }
 
@@ -112,8 +112,8 @@ async function runMasterAuditRegressionTests() {
   check((adapter as any).resolveApiModel('o3-mini') === 'o3-mini', 'OpenAIAdapter preserves o3-mini model ID');
   check((adapter as any).resolveApiModel('gpt-4o-mini') === 'gpt-4o-mini', 'OpenAIAdapter preserves gpt-4o-mini model ID');
   check((adapter as any).resolveApiModel('float-basic') === 'gpt-4o-mini', 'OpenAIAdapter maps float-basic alias to gpt-4o-mini');
-  check((adapter as any).resolveApiModel('gpt-6-astra') === 'gpt-4o', 'OpenAIAdapter maps gpt-6-astra preview alias to gpt-4o');
-  check((adapter as any).resolveApiModel('gpt-6.1-sol') === 'gpt-4o', 'OpenAIAdapter maps gpt-6.1-sol preview alias to gpt-4o');
+  check((adapter as any).resolveApiModel('gpt-6-astra') === 'gpt-6-astra', 'OpenAIAdapter preserves gpt-6-astra model ID');
+  check((adapter as any).resolveApiModel('gpt-6.1-sol') === 'gpt-6.1-sol', 'OpenAIAdapter preserves gpt-6.1-sol model ID');
 
   // 4. IDE Store File & Folder Lifecycle (Create, Update, Rename, Delete, Tab Sync)
   console.log('\n--- 4. IDE Store File & Folder Lifecycle & Editor State Sync ---');

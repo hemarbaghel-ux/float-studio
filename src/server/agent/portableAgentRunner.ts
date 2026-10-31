@@ -87,29 +87,8 @@ async function providerTurn(provider: Provider, model: string, key: string, inst
     tool_choice: 'auto',
   };
 
-  let response: any;
-  let data: any;
-  try {
-    response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
-    data = await response.json().catch(() => ({}));
-  } catch (netErr: any) {
-    if (model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1') {
-      console.warn(`[PortableAgentRunner] ${model} unreachable (${netErr?.message}). Falling back to gpt-4o.`);
-      response = { ok: false, status: 503 };
-      data = { error: { message: netErr?.message || 'Remote agent unreachable' } };
-    } else {
-      throw netErr;
-    }
-  }
-
-  const isCloudPreview = model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1';
-  if (!response.ok && isCloudPreview && (response.status === 404 || response.status === 429 || response.status >= 500 || /not found|does not exist|quota|billing|unauthorized|unreachable|connect/i.test(data.error?.message || ''))) {
-    const fallbackKey = process.env.OPENAI_API_KEY || key;
-    const fallbackHeaders = { ...headers, Authorization: `Bearer ${fallbackKey}` };
-    const fallbackBody = { ...body, model: 'gpt-4o' };
-    response = await fetch(url, { method: 'POST', headers: fallbackHeaders, body: JSON.stringify(fallbackBody), signal });
-    data = await response.json().catch(() => ({}));
-  }
+  const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) throw new Error(data.error?.message || data.message || `OpenAI API returned status ${response.status}`);
 

@@ -278,10 +278,9 @@ CRITICAL WORKFLOW CONSTRAINTS:
       );
     }
 
-    let effectiveModel = model;
-    if (!model || model === 'auto' || model === 'gpt-6.1-sol' || model === 'gpt-6-astra' || model === 'float-basic') {
-      effectiveModel = model === 'float-basic' ? 'gpt-4o-mini' : 'gpt-4o';
-    }
+    // The caller resolves product aliases before execution. Preserve the routed
+    // upstream model here so provider failures cannot silently change models.
+    const effectiveModel = model || 'gpt-6-astra';
 
     const client = new OpenAI({
       apiKey

@@ -201,12 +201,8 @@ export class OpenAIAdapter implements AIProviderAdapter {
 
   private resolveApiModel(model: string): string {
     const mapping: Record<string, string> = {
-      auto: 'gpt-4o',
-      'float-basic': 'gpt-4o-mini',
-      'gpt-6-astra': 'gpt-4o',
-      'gpt-6.1-sol': 'gpt-4o',
-      'gpt-6.1': 'gpt-4o',
-      'gpt-6-sol': 'gpt-4o'
+      auto: 'gpt-6-astra',
+      'float-basic': 'gpt-4o-mini'
     };
     return mapping[model] || model || 'gpt-4o';
   }
@@ -575,17 +571,7 @@ Let me know what specific module, file, or integration you would like to impleme
         (params as any).reasoning_effort = request.reasoningEffort;
       }
 
-      let response: OpenAI.Chat.Completions.ChatCompletion;
-      try {
-        response = await client.chat.completions.create(params);
-      } catch (callErr: any) {
-        if ((effectiveModel === 'gpt-6-astra' || effectiveModel.startsWith('gpt-6')) && (callErr?.status === 404 || /not[- ]?found|does not exist/i.test(callErr?.message))) {
-          // Preview alias fallback to upstream gpt-4o
-          response = await client.chat.completions.create({ ...params, model: 'gpt-4o' });
-        } else {
-          throw callErr;
-        }
-      }
+      const response = await client.chat.completions.create(params);
 
       const choice = response.choices[0];
       const text = choice?.message?.content || '';
@@ -668,17 +654,7 @@ Let me know what specific module, file, or integration you would like to impleme
         (params as any).reasoning_effort = request.reasoningEffort;
       }
 
-      let stream: any;
-      try {
-        stream = await client.chat.completions.create(params, { signal });
-      } catch (callErr: any) {
-        if ((effectiveModel === 'gpt-6-astra' || effectiveModel.startsWith('gpt-6')) && (callErr?.status === 404 || /not[- ]?found|does not exist/i.test(callErr?.message))) {
-          // Preview alias fallback to upstream gpt-4o
-          stream = await client.chat.completions.create({ ...params, model: 'gpt-4o' }, { signal });
-        } else {
-          throw callErr;
-        }
-      }
+      const stream = await client.chat.completions.create(params, { signal });
 
       let fullText = '';
       let inputTokens: number | undefined = undefined;

@@ -23,13 +23,13 @@ export class ModelRouter {
   // Explicit provider/model allowlist. GPT-6 Astra & Sol are the flagship primary models.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
     // Flagship Primary Models (Exclusive Focus)
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
-    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: false, upstreamModelId: 'gpt-6-astra' },
+    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: false, upstreamModelId: 'gpt-6.1-sol' },
 
     // Dynamic router aliases mapped to Astra & Sol
-    'auto': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
-    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-4o' },
+    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: true, upstreamModelId: 'gpt-6-astra' },
+    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-6.1-sol' },
+    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-6.1-sol' },
 
     // Legacy / Fallback Backend Routes
     'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: false, upstreamModelId: 'gpt-4o' },
