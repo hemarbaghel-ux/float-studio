@@ -56,6 +56,9 @@ export interface ContextBuilderOptions {
   conversationHistory?: ConversationTurnSummary[];
   workflowMode?: FloatAgentWorkflowMode;
   rules?: string[];
+  appliedRules?: Array<{ id: string; name: string; scope: string; sourceFile?: string; priority?: number }>;
+  workspaceFiles?: Array<{ path?: string; name?: string; content?: string }>;
+  includeWorkspaceRules?: boolean;
   skills?: string[];
   memories?: string[];
   diagnostics?: string;
@@ -84,13 +87,19 @@ export interface AssembledContext {
   intent: TaskIntent;
   includedItems: ContextExplanationItem[];
   excludedItems: ContextExclusionItem[];
+  appliedRules: Array<{ id: string; name: string; scope: string; sourceFile?: string; priority?: number }>;
   budgetRemaining: number;
 }
 
 // Model-specific context window budgets in characters
 const MODEL_BUDGET_MAP: Record<string, number> = {
-  'gpt-6.1-sol': 96000,
-  'gpt-6-astra': 96000
+  'gemini-4-argon': 120000,
+  'gpt-6-sol': 96000,
+  'gpt-6-astra': 96000,
+  'gpt-6-luna': 64000,
+  'claude-sonnet-5-5': 96000,
+  'claude-opus-5-5': 96000,
+  'claude-haiku-5-5': 64000
 };
 
 const DEFAULT_MAX_TOTAL_CHARS = 28000;
@@ -430,7 +439,42 @@ export class ContextBuilder {
       }
     }
 
-    if (includedBlocks.length === 0) {
+    let effectiveRuleStrings: string[] = options.rules ? [...options.rules] : [];
+    let appliedRulesMeta: Array<{ id: string; name: string; scope: string; sourceFile?: string; priority?: number }> =
+      options.appliedRules ? [...options.appliedRules] : [];
+
+    if (options.includeWorkspaceRules !== false && effectiveRuleStrings.length === 0) {
+      const candidateRuleFiles =
+        options.workspaceFiles && options.workspaceFiles.length > 0
+          ? options.workspaceFiles
+          : (contextItems || []).map((c) => ({ path: c.path || c.name, name: c.name, content: c.content }));
+
+      const discoveredRules = RulesService.getEffectiveRules({
+        userId: options.userId,
+        projectId: options.projectId,
+        files: candidateRuleFiles,
+        targetFilePath: options.activeEditor?.filePath || options.activeFilePath
+      });
+
+      if (discoveredRules.length > 0) {
+        effectiveRuleStrings = discoveredRules.map((r) => `• [${r.scope.toUpperCase()}: ${r.name}] ${r.content}`);
+        appliedRulesMeta = discoveredRules.map((r) => ({
+          id: r.id,
+          name: r.name,
+          scope: r.scope,
+          sourceFile: r.sourceFile,
+          priority: r.priority
+        }));
+      }
+    } else if (effectiveRuleStrings.length > 0 && appliedRulesMeta.length === 0) {
+      appliedRulesMeta = effectiveRuleStrings.map((line, i) => ({
+        id: `rule-${i + 1}`,
+        name: line.slice(0, 48),
+        scope: 'repository'
+      }));
+    }
+
+    if (includedBlocks.length === 0 && effectiveRuleStrings.length === 0) {
       return {
         formattedPrompt: userMessage,
         includedCount: 0,
@@ -440,6 +484,7 @@ export class ContextBuilder {
         intent,
         includedItems: [],
         excludedItems,
+        appliedRules: [],
         budgetRemaining: maxTotal
       };
     }
@@ -456,12 +501,12 @@ export class ContextBuilder {
     const intentTag = ` [Intent: ${intent.toUpperCase()}]`;
 
     const modeSection = options.workflowMode ? `${getWorkflowModeInstructions(options.workflowMode)}\n\n` : '';
-    const rulesSection = options.rules && options.rules.length > 0 ? `[Workspace & Coding Rules]\n${options.rules.join('\n')}\n\n` : '';
+    const rulesSection = effectiveRuleStrings.length > 0 ? `[Workspace & Coding Rules]\n${effectiveRuleStrings.join('\n')}\n\n` : '';
     const skillsSection = options.skills && options.skills.length > 0 ? `[Active Domain Skills]\n${options.skills.join('\n')}\n\n` : '';
     const memorySection = options.memories && options.memories.length > 0 ? `[Project Architectural Memory]\n${options.memories.join('\n')}\n\n` : '';
     const diagSection = options.diagnostics ? `${options.diagnostics}\n\n` : '';
     const projectHeader = `[Project Context: ${projectName}${gitInfo}${intentTag}]\n\n`;
-    const contextBody = `[Codebase & Attached Context]\n${includedBlocks.join('\n\n')}\n\n`;
+    const contextBody = includedBlocks.length > 0 ? `[Codebase & Attached Context]\n${includedBlocks.join('\n\n')}\n\n` : '';
     const userPromptSection = `[User Request]\n${userMessage}`;
 
     const formattedPrompt = `${modeSection}${warningSection}${rulesSection}${skillsSection}${memorySection}${diagSection}${projectHeader}${contextBody}${userPromptSection}`;
@@ -475,6 +520,7 @@ export class ContextBuilder {
       intent,
       includedItems,
       excludedItems,
+      appliedRules: appliedRulesMeta,
       budgetRemaining: Math.max(0, maxTotal - currentContextChars)
     };
   }
@@ -599,10 +645,17 @@ export class ContextBuilder {
     const mergedOptions: ContextBuilderOptions = { ...options };
 
     // Auto-attach effective rules if not specified
-    if (!mergedOptions.rules && files.length > 0) {
+    if (mergedOptions.includeWorkspaceRules !== false && !mergedOptions.rules && files.length > 0) {
       const effRules = RulesService.getEffectiveRules({ userId: options.userId, projectId, files });
       if (effRules.length > 0) {
         mergedOptions.rules = effRules.map(r => `• [${r.scope.toUpperCase()}: ${r.name}] ${r.content}`);
+        mergedOptions.appliedRules = effRules.map(r => ({
+          id: r.id,
+          name: r.name,
+          scope: r.scope,
+          sourceFile: r.sourceFile,
+          priority: r.priority
+        }));
       }
     }
 

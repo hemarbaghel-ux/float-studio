@@ -36,7 +36,7 @@ async function runAgentLoopTestSuite() {
   // Missing or invalid context handling
   const nullContextResult = await ToolRegistry.execute('list_project_files', {}, null as any);
   assert(!nullContextResult.success, 'Rejects null tool execution context');
-  assert(nullContextResult.error?.includes('Invalid project context'), 'Reports invalid context error clearly');
+  assert(Boolean(nullContextResult.error?.includes('Invalid project context')), 'Reports invalid context error clearly');
 
   const invalidFilesContext = await ToolRegistry.execute('list_project_files', {}, { ...validContext, virtualFiles: null as any });
   assert(!invalidFilesContext.success, 'Rejects context with null virtualFiles map');
@@ -52,17 +52,17 @@ async function runAgentLoopTestSuite() {
   // read_project_file missing required 'path' parameter
   const missingPathResult = await ToolRegistry.execute('read_project_file', {}, validContext);
   assert(!missingPathResult.success, 'Rejects read_project_file with missing required "path" argument');
-  assert(missingPathResult.error?.includes('Missing or empty required parameter "path"'), 'Explains missing "path" parameter');
+  assert(Boolean(missingPathResult.error?.includes('Missing or empty required parameter "path"')), 'Explains missing "path" parameter');
 
   // search_project missing required 'query' parameter
   const missingQueryResult = await ToolRegistry.execute('search_project', {}, validContext);
   assert(!missingQueryResult.success, 'Rejects search_project with missing required "query" argument');
-  assert(missingQueryResult.error?.includes('Missing or empty required parameter "query"'), 'Explains missing "query" parameter');
+  assert(Boolean(missingQueryResult.error?.includes('Missing or empty required parameter "query"')), 'Explains missing "query" parameter');
 
   // Path traversal guard
   const traversalRead = await ToolRegistry.execute('read_project_file', { path: '../../etc/shadow' }, validContext);
   assert(!traversalRead.success, 'Blocks path traversal in read_project_file');
-  assert(traversalRead.error?.includes('Path traversal'), 'Explains path traversal rejection');
+  assert(Boolean(traversalRead.error?.includes('Path traversal')), 'Explains path traversal rejection');
 
   // Null byte in path guard
   const nullByteRead = await ToolRegistry.execute('read_project_file', { path: 'src/index.ts\0.js' }, validContext);
@@ -71,7 +71,7 @@ async function runAgentLoopTestSuite() {
   // Sensitive file reading guard
   const secretRead = await ToolRegistry.execute('read_project_file', { path: '.env' }, validContext);
   assert(!secretRead.success, 'Blocks reading sensitive .env file');
-  assert(secretRead.error?.includes('Access to sensitive path'), 'Explains sensitive path restriction');
+  assert(Boolean(secretRead.error?.includes('Access to sensitive path')), 'Explains sensitive path restriction');
 
   const certRead = await ToolRegistry.execute('read_project_file', { path: 'src/secrets/cert.pem' }, validContext);
   assert(!certRead.success, 'Blocks reading sensitive .pem certificate file');
@@ -98,7 +98,7 @@ async function runAgentLoopTestSuite() {
   for (const toolName of directModTools) {
     const res = await ToolRegistry.execute(toolName, { path: 'src/index.ts', content: 'bad' }, validContext);
     assert(!res.success, `Blocks direct file modification via "${toolName}"`);
-    assert(res.error?.includes('propose_changes'), `Guides agent to use "propose_changes" when "${toolName}" is called`);
+    assert(Boolean(res.error?.includes('propose_changes')), `Guides agent to use "propose_changes" when "${toolName}" is called`);
   }
 
   // Direct command execution prohibition
@@ -106,7 +106,7 @@ async function runAgentLoopTestSuite() {
   for (const execTool of directExecTools) {
     const res = await ToolRegistry.execute(execTool, { command: 'rm -rf /' }, validContext);
     assert(!res.success, `Blocks command execution tool "${execTool}"`);
-    assert(res.error?.includes('prohibited in agent workflow'), `Explains "${execTool}" is prohibited in agent workflow`);
+    assert(Boolean(res.error?.includes('prohibited in agent workflow')), `Explains "${execTool}" is prohibited in agent workflow`);
   }
 
   // --- SECTION 4: Progress Indicator Action Tags & Meaningful Messages ---

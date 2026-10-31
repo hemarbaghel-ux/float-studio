@@ -3,7 +3,25 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { LanguageProvider } from './components/LanguageProvider';
 import './index.css';
+import loader from '@monaco-editor/loader';
 
+// Resilience patch: Ensure any cancelable promise returned by loader.init() handles benign cancellation
+try {
+  const originalLoaderInit = loader.init.bind(loader);
+  loader.init = () => {
+    const cancelable = originalLoaderInit();
+    cancelable.catch((err: any) => {
+      if (
+        err?.type === 'cancelation' ||
+        err?.msg === 'operation is manually canceled' ||
+        /cancel/i.test(err?.message || err?.msg || '')
+      ) {
+        return;
+      }
+    });
+    return cancelable;
+  };
+} catch (_) {}
 
 const LegacyCacheRecovery = lazy(() => import('./components/LegacyCacheRecovery').then((module) => ({ default: module.LegacyCacheRecovery })));
 
@@ -29,57 +47,63 @@ if (typeof window !== 'undefined') {
   };
 
   window.addEventListener('unhandledrejection', (event) => {
-    const reason = event.reason;
-    const reasonStr = typeof reason === 'string'
-      ? reason
-      : (reason?.message || reason?.msg || JSON.stringify(reason || ''));
+    try {
+      const reason = event.reason;
+      const reasonStr = typeof reason === 'string'
+        ? reason
+        : (reason?.message || reason?.msg || JSON.stringify(reason || ''));
 
-    const isCancellation =
-      reason?.type === 'cancelation' ||
-      reason?.type === 'cancelled' ||
-      reason?.name === 'AbortError' ||
-      reasonStr.includes('operation is manually canceled') ||
-      reasonStr.includes('cancelation') ||
-      /cancel/i.test(reasonStr);
+      const isCancellation =
+        reason?.type === 'cancelation' ||
+        reason?.msg === 'operation is manually canceled' ||
+        reason?.type === 'cancelled' ||
+        reason?.name === 'AbortError' ||
+        reasonStr.includes('operation is manually canceled') ||
+        reasonStr.includes('cancelation') ||
+        /cancel/i.test(reasonStr);
 
-    if (isCancellation) {
-      // Gracefully prevent unhandled rejection from bubbling to error monitors
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      return;
-    }
+      if (isCancellation) {
+        // Gracefully prevent unhandled rejection from bubbling to error monitors
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        return;
+      }
 
-    if (reasonStr === 'Script error.' || reasonStr.includes('Script error')) {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      return;
-    }
+      if (reasonStr === 'Script error.' || reasonStr.includes('Script error')) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        return;
+      }
+    } catch (_) {}
   }, true);
 
   window.addEventListener('error', (event) => {
-    const message = event.message || '';
-    const error = event.error;
-    const errorStr = typeof error === 'string'
-      ? error
-      : (error?.message || error?.msg || JSON.stringify(error || ''));
+    try {
+      const message = event.message || '';
+      const error = event.error;
+      const errorStr = typeof error === 'string'
+        ? error
+        : (error?.message || error?.msg || JSON.stringify(error || ''));
 
-    const isCancellation =
-      message === 'Script error.' ||
-      message.includes('Script error') ||
-      message.includes('operation is manually canceled') ||
-      message.includes('cancelation') ||
-      error?.type === 'cancelation' ||
-      error?.name === 'AbortError' ||
-      errorStr.includes('operation is manually canceled');
+      const isCancellation =
+        message === 'Script error.' ||
+        message.includes('Script error') ||
+        message.includes('operation is manually canceled') ||
+        message.includes('cancelation') ||
+        error?.type === 'cancelation' ||
+        error?.msg === 'operation is manually canceled' ||
+        error?.name === 'AbortError' ||
+        errorStr.includes('operation is manually canceled');
 
-    if (isCancellation) {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      return true;
-    }
+      if (isCancellation) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        return true;
+      }
+    } catch (_) {}
   }, true);
 }
 

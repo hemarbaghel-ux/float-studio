@@ -7,7 +7,7 @@ import {
   File as FileIcon, RotateCcw, AlertCircle, ChevronDown,
   Trash2, MessageSquare, Check, Sparkles, Upload, Search,
   FileCode, Layers, ChevronUp, Copy, Edit2, Link, ArrowRight,
-  PanelRightClose
+  PanelRightClose, History, Image as ImageIcon, ShieldCheck
 } from 'lucide-react';
 import { cn, flattenFileTree } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
@@ -21,6 +21,7 @@ import { ProjectFilePickerModal } from './ProjectFilePickerModal';
 import { CodebaseSearchModal } from './CodebaseSearchModal';
 import { SearchMatch } from '../../services/codebaseSearch';
 import { INITIAL_MODELS, INITIAL_AGENTS } from './registry';
+import { getPricingForModel } from '../../data/verifiedModels';
 import { ConsentService } from '../../services/consentService';
 import { TelemetryService } from '../../services/telemetryService';
 import { useUsageStore } from '../../store/usageStore';
@@ -259,6 +260,10 @@ export function AIPanel() {
   const [minimizedPlanIds, setMinimizedPlanIds] = useState<Set<string>>(new Set());
   const [removedPlanIds, setRemovedPlanIds] = useState<Set<string>>(new Set());
   const [navigatedMsgId, setNavigatedMsgId] = useState<string | null>(null);
+  const [includeWorkspaceRules, setIncludeWorkspaceRules] = useState<boolean>(true);
+  const [imageAttachments, setImageAttachments] = useState<Array<{ id: string; name: string; mimeType: string; data: string }>>([]);
+  const [restoringCheckpointId, setRestoringCheckpointId] = useState<string | null>(null);
+  const [restoredCheckpointIds, setRestoredCheckpointIds] = useState<Set<string>>(new Set());
   const [queuedMessages, setQueuedMessages] = useState<{
     id: string;
     text: string;
@@ -546,13 +551,41 @@ export function AIPanel() {
     }
   };
 
-  // Local File Upload Handling
+  // Local File & Image Upload Handling
   const handleLocalFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     setUploadError(null);
     const filesList = e.target.files;
     if (!filesList || filesList.length === 0) return;
 
     const file = filesList[0];
+    if (file.type.startsWith('image/')) {
+      const MAX_IMG_SIZE = 4 * 1024 * 1024; // 4 MB
+      if (file.size > MAX_IMG_SIZE) {
+        setUploadError(`Image "${file.name}" exceeds the 4MB attachment limit.`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (typeof dataUrl === 'string') {
+          const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+          if (match) {
+            setImageAttachments(prev => [...prev, {
+              id: uuidv4(),
+              name: file.name,
+              mimeType: match[1],
+              data: match[2]
+            }]);
+            setIsContextMenuOpen(false);
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     const MAX_SIZE = 120 * 1024; // 120 KB
 
     if (file.size > MAX_SIZE) {
@@ -565,9 +598,8 @@ export function AIPanel() {
     reader.onload = (event) => {
       const text = event.target?.result as string;
       if (typeof text === 'string') {
-        // Simple null-byte binary check
         if (text.includes('\0')) {
-          setUploadError(`"${file.name}" appears to be a binary file. Only plain-text source files are supported.`);
+          setUploadError(`"${file.name}" appears to be a binary file. Only plain-text source files and images are supported.`);
           return;
         }
 
@@ -587,6 +619,68 @@ export function AIPanel() {
     reader.readAsText(file);
 
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const blob = item.getAsFile();
+        if (blob) {
+          e.preventDefault();
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const dataUrl = ev.target?.result as string;
+            const match = typeof dataUrl === 'string' ? /^data:([^;]+);base64,(.+)$/.exec(dataUrl) : null;
+            if (match) {
+              setImageAttachments(prev => [...prev, {
+                id: uuidv4(),
+                name: blob.name || `pasted-image-${Date.now()}.png`,
+                mimeType: match[1],
+                data: match[2]
+              }]);
+            }
+          };
+          reader.readAsDataURL(blob);
+        }
+      }
+    }
+  };
+
+  const handleRestoreCheckpoint = async (checkpointId: string) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return;
+    setRestoringCheckpointId(checkpointId);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/checkpoints/${encodeURIComponent(checkpointId)}/restore`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to restore checkpoint.');
+      }
+      const data = await res.json();
+      const restoredFiles: Array<{ path: string; content: string }> = data.checkpoint?.files || [];
+      const currentFlat = flattenFileTree(useIDEStore.getState().files).filter(f => f.type === 'file');
+      const restoredPaths = new Set(restoredFiles.map(f => f.path));
+      const deletedFiles = currentFlat.filter(f => !restoredPaths.has(f.path)).map(f => f.path);
+      useIDEStore.getState().applyExecutionChanges(restoredFiles, deletedFiles);
+      setRestoredCheckpointIds(prev => {
+        const next = new Set(prev);
+        next.add(checkpointId);
+        return next;
+      });
+    } catch (err: any) {
+      setUploadError(err.message || 'Failed to restore checkpoint.');
+    } finally {
+      setRestoringCheckpointId(null);
+    }
   };
 
   // Submit message and start streaming
@@ -632,8 +726,10 @@ export function AIPanel() {
 
     // Capture current context items and clear for subsequent prompt turns
     const currentContext = [...aiContext];
+    const currentImages = [...imageAttachments];
     if (!isRetry) {
       clearAiContext();
+      setImageAttachments([]);
     }
 
     // Append user message only if this is NOT a retry/regeneration of an existing turn
@@ -645,7 +741,8 @@ export function AIPanel() {
         role: 'user',
         content: draftText,
         status: 'completed',
-        conversationId: targetConvId
+        conversationId: targetConvId,
+        imageAttachments: currentImages.length > 0 ? currentImages.map(img => ({ id: img.id, name: img.name, mimeType: img.mimeType, dataUrl: img.data, data: img.data })) : undefined
       });
     }
 
@@ -781,6 +878,9 @@ export function AIPanel() {
           agentId: selectedAgent,
           systemInstruction: effectiveSystemInstruction,
           contextItems: finalContext,
+          workspaceFiles: flatFiles.filter(f => f.type === 'file').map(f => ({ path: f.path, content: f.content })),
+          includeWorkspaceRules,
+          imageAttachments: currentImages.map(img => ({ name: img.name, mimeType: img.mimeType, data: img.data })),
           activeEditor: activeEd,
           projectName: projectName || 'Project Workspace',
           projectId: currentProjectId,
@@ -791,7 +891,11 @@ export function AIPanel() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: Failed to reach model provider.`);
+        const errObj = new Error(errorData.message || errorData.error || `HTTP ${response.status}: Failed to reach model provider.`);
+        (errObj as any).code = errorData.code || (response.status === 401 ? 'AUTH_ERROR' : response.status === 429 ? 'RATE_LIMITED' : 'PROVIDER_ERROR');
+        (errObj as any).provider = errorData.provider;
+        (errObj as any).setupStep = errorData.setupStep;
+        throw errObj;
       }
 
       if (!response.body) {
@@ -804,7 +908,8 @@ export function AIPanel() {
       let buffer = '';
       let receivedDone = false;
       let streamCancelled = false;
-      let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
+      let actualModelUsed = selectedModel;
+      let finalUsage = undefined as { inputTokens: number; outputTokens: number } | undefined;
       let finalExplanation: any = undefined;
 
       const processSseEvent = (rawEvent: string) => {
@@ -832,6 +937,7 @@ export function AIPanel() {
           updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
         } else if (data.type === 'done') {
           receivedDone = true;
+          if (data.modelUsed) actualModelUsed = data.modelUsed;
           if (typeof data.text === 'string') accumulatedText = data.text;
           finalUsage = data.usage;
           if (data.contextExplanation) finalExplanation = data.contextExplanation;
@@ -840,8 +946,10 @@ export function AIPanel() {
             updateAiMessage(modelMsgId, {
               content: accumulatedText ? `${accumulatedText} *(cancelled)*` : '*(Generation stopped)*',
               status: 'cancelled',
-              contextExplanation: finalExplanation
-            });
+              contextExplanation: finalExplanation,
+              modelId: actualModelUsed,
+              modelUsed: actualModelUsed
+            } as any);
           } else {
             const isSimulated = Boolean(data.isSimulated || accumulatedText.includes('[SIMULATED DEMO RESPONSE]'));
             updateAiMessage(modelMsgId, {
@@ -849,11 +957,22 @@ export function AIPanel() {
               status: 'completed',
               isSimulated,
               latency: Date.now() - startTime,
-              contextExplanation: finalExplanation
-            });
+              contextExplanation: finalExplanation,
+              modelId: actualModelUsed,
+              modelUsed: actualModelUsed
+            } as any);
           }
         } else if (data.type === 'error') {
-          throw new Error(typeof data.error === 'string' ? data.error : 'AI generation failed.');
+          const errMsg = typeof data.message === 'string'
+            ? data.message
+            : typeof data.error === 'string'
+            ? data.error
+            : 'AI generation failed.';
+          const streamErr = new Error(errMsg);
+          (streamErr as any).code = data.code || 'PROVIDER_ERROR';
+          (streamErr as any).provider = data.provider;
+          (streamErr as any).setupStep = data.setupStep;
+          throw streamErr;
         } else {
           throw new Error(`The AI server returned an unknown streaming event: ${String(data.type || 'missing type')}.`);
         }
@@ -890,18 +1009,37 @@ export function AIPanel() {
         );
       }
       const latency = Date.now() - startTime;
+      const pricing = getPricingForModel(actualModelUsed);
+      const hasPricing = typeof pricing.inputCostPer1M === 'number' && typeof pricing.outputCostPer1M === 'number';
+      const computedUsage = (finalUsage && typeof finalUsage.inputTokens === 'number' && typeof finalUsage.outputTokens === 'number')
+        ? {
+            inputTokens: finalUsage.inputTokens,
+            outputTokens: finalUsage.outputTokens,
+            totalTokens: finalUsage.inputTokens + finalUsage.outputTokens,
+            ...(hasPricing ? {
+              estimatedCostUsd: (
+                ((pricing.inputCostPer1M || 0) / 1_000_000) * finalUsage.inputTokens +
+                ((pricing.outputCostPer1M || 0) / 1_000_000) * finalUsage.outputTokens
+              )
+            } : {})
+          }
+        : undefined;
+
       if (!streamCancelled) {
         updateAiMessage(modelMsgId, {
           content: accumulatedText,
           status: 'completed',
-          latency
-        });
+          latency,
+          modelId: actualModelUsed,
+          modelUsed: actualModelUsed,
+          ...(computedUsage ? { usage: computedUsage } : {})
+        } as any);
       }
 
       // Record token analytics only when genuine usage is returned by upstream API
       if (finalUsage && typeof finalUsage.inputTokens === 'number' && typeof finalUsage.outputTokens === 'number') {
         try {
-          const activeModelObj = INITIAL_MODELS.find(m => m.id === selectedModel);
+          const activeModelObj = INITIAL_MODELS.find(m => m.id === actualModelUsed || m.apiModelId === actualModelUsed);
           const inToks = finalUsage.inputTokens;
           const outToks = finalUsage.outputTokens;
           const inCost = ((activeModelObj?.pricing?.inputCost || 0) / 1000000) * inToks;
@@ -910,7 +1048,7 @@ export function AIPanel() {
           useUsageStore.getState().addRecord({
             userId: auth.currentUser?.uid || 'user',
             provider: activeModelObj?.providerId || 'openai',
-            modelId: selectedModel,
+            modelId: actualModelUsed,
             agentId: selectedAgent,
             inputTokens: inToks,
             outputTokens: outToks,
@@ -938,11 +1076,10 @@ export function AIPanel() {
       });
       refreshConversations();
     } catch (error: any) {
-      const isCancellation =
-        error?.name === 'AbortError' ||
-        error?.type === 'cancelation' ||
-        error?.type === 'cancelled' ||
-        /cancel/i.test(error?.message || error?.msg || '');
+      const isCancellation = Boolean(
+        abortControllerRef.current?.signal.aborted ||
+        error?.name === 'AbortError'
+      );
 
       if (isCancellation) {
         updateAiMessage(modelMsgId, {
@@ -950,20 +1087,19 @@ export function AIPanel() {
           content: accumulatedText ? `${accumulatedText} *(cancelled)*` : '*(Generation stopped)*'
         });
       } else {
-        let errMsg = error.message || 'Could not connect to model provider.';
-        let errTitle = 'Provider Error';
-        if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
-          errTitle = 'Rate Limit / Quota Exceeded';
-        } else if (/auth|unauthorized|api_key|not configured|missing/i.test(errMsg)) {
-          errTitle = 'Authentication / Configuration Error';
-        } else if (/not recognized|not found/i.test(errMsg)) {
-          errTitle = 'Model Not Found';
-        }
+        setInput(prev => prev || draftText);
+        const errMsg = error?.message || 'Could not connect to model provider.';
+        const errCode = error?.code || 'PROVIDER_ERROR';
+        const errProvider = error?.provider;
+        const setupStep = error?.setupStep;
         updateAiMessage(modelMsgId, {
           status: 'error',
           error: errMsg,
-          content: `**${errTitle}**\n\n${errMsg}`
-        });
+          errorCode: errCode,
+          errorProvider: errProvider,
+          setupStep,
+          content: `**${errCode}**\n\n${errMsg}${setupStep ? `\n\n${setupStep}` : ''}`
+        } as any);
       }
     } finally {
       setIsLoading(false);
@@ -1223,6 +1359,8 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
       role: 'model',
       content: '',
       status: 'streaming',
+      modelId: selectedModel,
+      agentId: selectedAgent,
       events: [],
       conversationId: targetConvId
     });
@@ -1251,7 +1389,11 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: Agent service error`);
+        const errObj = new Error(errorData.message || errorData.error || `HTTP ${response.status}: Agent service error`);
+        (errObj as any).code = errorData.code || (response.status === 401 ? 'AUTH_ERROR' : response.status === 429 ? 'RATE_LIMITED' : 'PROVIDER_ERROR');
+        (errObj as any).provider = errorData.provider;
+        (errObj as any).setupStep = errorData.setupStep;
+        throw errObj;
       }
 
       if (!response.body) throw new Error('No response body received from agent stream');
@@ -1260,53 +1402,130 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
       const decoder = new TextDecoder();
 
       let events: any[] = [];
+      let buffer = '';
+      let receivedDone = false;
+      let streamCancelled = false;
+      let actualModelUsed = selectedModel;
       finalContent = '';
       let finalChangeSet = undefined;
+
+      const processAgentEvent = (rawBlock: string) => {
+        const dataLines = rawBlock
+          .split(/\r?\n/)
+          .filter(l => l.startsWith('data:'))
+          .map(l => l.slice(5).replace(/^ /, ''));
+        if (!dataLines.length) return;
+
+        let data: any;
+        try {
+          data = JSON.parse(dataLines.join('\n'));
+        } catch {
+          return;
+        }
+
+        if (data.type === 'event') {
+          events = [...events, data.data];
+          updateAiMessage(tempId, { events });
+          if (data.data?.type === 'failed') {
+            const failErr = new Error(data.data.message || 'Agent task failed.');
+            (failErr as any).code = data.data.code || data.code || 'PROVIDER_ERROR';
+            (failErr as any).provider = data.data.provider || data.provider;
+            (failErr as any).setupStep = data.data.setupStep || data.setupStep;
+            throw failErr;
+          }
+        } else if (data.type === 'delta') {
+          const deltaText = data.data?.text || data.text || '';
+          finalContent += deltaText;
+          updateAiMessage(tempId, { content: finalContent, status: 'streaming' });
+        } else if (data.type === 'result') {
+          receivedDone = true;
+          actualModelUsed = data.modelUsed || data.data?.modelUsed || actualModelUsed;
+          finalContent = data.data?.text || finalContent || 'Task completed.';
+          finalChangeSet = data.data?.changeSet;
+          const agentUsage = data.data?.usage;
+          const pricing = getPricingForModel(actualModelUsed);
+          const hasPricing = typeof pricing.inputCostPer1M === 'number' && typeof pricing.outputCostPer1M === 'number';
+          const computedUsage = (agentUsage && typeof agentUsage.inputTokens === 'number')
+            ? {
+                inputTokens: agentUsage.inputTokens,
+                outputTokens: agentUsage.outputTokens || 0,
+                totalTokens: agentUsage.inputTokens + (agentUsage.outputTokens || 0),
+                ...(hasPricing ? {
+                  estimatedCostUsd: (
+                    ((pricing.inputCostPer1M || 0) / 1_000_000) * agentUsage.inputTokens +
+                    ((pricing.outputCostPer1M || 0) / 1_000_000) * (agentUsage.outputTokens || 0)
+                  )
+                } : {})
+              }
+            : undefined;
+          updateAiMessage(tempId, {
+            content: finalContent,
+            changeSet: finalChangeSet,
+            checkpointId: data.data?.checkpointId,
+            modelId: actualModelUsed,
+            modelUsed: actualModelUsed,
+            ...(computedUsage ? { usage: computedUsage } : {}),
+            status: 'completed'
+          } as any);
+        } else if (data.type === 'done') {
+          receivedDone = true;
+          actualModelUsed = data.modelUsed || actualModelUsed;
+          if (typeof data.text === 'string' && data.text.length >= finalContent.length) {
+            finalContent = data.text;
+          }
+          if (data.cancelled) {
+            streamCancelled = true;
+            updateAiMessage(tempId, {
+              content: finalContent ? `${finalContent} *(cancelled)*` : '*(Agent task stopped)*',
+              status: 'cancelled',
+              modelId: actualModelUsed,
+              modelUsed: actualModelUsed
+            } as any);
+          } else {
+            updateAiMessage(tempId, {
+              content: finalContent || 'Task completed.',
+              status: 'completed',
+              modelId: actualModelUsed,
+              modelUsed: actualModelUsed
+            } as any);
+          }
+        } else if (data.type === 'error') {
+          const errMsg = typeof data.message === 'string'
+            ? data.message
+            : typeof data.error === 'string'
+            ? data.error
+            : 'Agent task failed.';
+          const streamErr = new Error(errMsg);
+          (streamErr as any).code = data.code || 'PROVIDER_ERROR';
+          (streamErr as any).provider = data.provider;
+          (streamErr as any).setupStep = data.setupStep;
+          throw streamErr;
+        }
+      };
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              if (data.type === 'event') {
-                events = [...events, data.data];
-                updateAiMessage(tempId, { events });
-                if (data.data?.type === 'failed') {
-                  const errorMsg = data.data.message || 'Agent task failed.';
-                  finalContent = finalContent
-                    ? `${finalContent}\n\n**Agent Execution Failed**: ${errorMsg}`
-                    : `**Agent Execution Failed**\n\n${errorMsg}`;
-                  updateAiMessage(tempId, {
-                    content: finalContent,
-                    status: 'error',
-                    error: errorMsg
-                  });
-                }
-              } else if (data.type === 'delta') {
-                const deltaText = data.data?.text || data.text || '';
-                finalContent += deltaText;
-                updateAiMessage(tempId, { content: finalContent, status: 'streaming' });
-              } else if (data.type === 'result') {
-                finalContent = data.data.text || finalContent || 'Task completed.';
-                finalChangeSet = data.data.changeSet;
-                updateAiMessage(tempId, {
-                  content: finalContent,
-                  changeSet: finalChangeSet,
-                  status: 'completed'
-                });
-              }
-            } catch (e) {
-              // Ignore boundary parse
-            }
-          }
+        buffer += decoder.decode(value, { stream: true });
+        let boundary: number;
+        while ((boundary = buffer.search(/\r?\n\r?\n/)) !== -1) {
+          const sep = buffer.match(/^.*?(\r?\n\r?\n)/s)?.[1] || '\n\n';
+          const block = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + sep.length);
+          processAgentEvent(block);
         }
+      }
+
+      buffer += decoder.decode();
+      if (buffer.trim()) processAgentEvent(buffer);
+
+      if (!receivedDone && !streamCancelled) {
+        throw new Error(
+          finalContent
+            ? 'The AI stream ended before completion was confirmed. Please retry.'
+            : 'The AI stream ended without a response. Check provider credentials, model access, and server logs.'
+        );
       }
 
       const latestMessages = useIDEStore.getState().aiMessages;
@@ -1322,11 +1541,10 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
       refreshConversations();
 
     } catch (error: any) {
-      const isCancellation =
-        error?.name === 'AbortError' ||
-        error?.type === 'cancelation' ||
-        error?.type === 'cancelled' ||
-        /cancel/i.test(error?.message || error?.msg || '');
+      const isCancellation = Boolean(
+        abortControllerRef.current?.signal.aborted ||
+        error?.name === 'AbortError'
+      );
 
       if (isCancellation) {
         updateAiMessage(tempId, {
@@ -1334,15 +1552,19 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           content: finalContent ? `${finalContent} *(cancelled)*` : '*(Agent task stopped)*'
         });
       } else {
-        let errMsg = error.message || 'Agent task failed.';
-        if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
-          errMsg = "Provider quota or rate limit exceeded. Please wait a moment before trying again, or select another available model in the model selector.";
-        }
+        setInput(prev => prev || userMessage);
+        const errMsg = error?.message || 'Agent task failed.';
+        const errCode = error?.code || 'PROVIDER_ERROR';
+        const errProvider = error?.provider;
+        const setupStep = error?.setupStep;
         updateAiMessage(tempId, {
           status: 'error',
           error: errMsg,
-          content: `**Rate Limit / Provider Error**\n\n${errMsg}`
-        });
+          errorCode: errCode,
+          errorProvider: errProvider,
+          setupStep,
+          content: `**${errCode}**\n\n${errMsg}${setupStep ? `\n\n${setupStep}` : ''}`
+        } as any);
       }
     } finally {
       setIsLoading(false);
@@ -1465,11 +1687,11 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col bg-slate-50 dark:bg-[#0A0A0A] overflow-hidden relative">
-      {/* Hidden File Input for local source upload */}
+      {/* Hidden File Input for local source or image upload */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".py,.ts,.tsx,.js,.jsx,.json,.md,.html,.css,.txt,.yaml,.yml,.toml,.sql,.sh,.env.example"
+        accept=".py,.ts,.tsx,.js,.jsx,.json,.md,.html,.css,.txt,.yaml,.yml,.toml,.sql,.sh,.env.example,image/png,image/jpeg,image/webp,image/gif"
         onChange={handleLocalFileUpload}
         className="hidden"
       />
@@ -1875,7 +2097,8 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </div>
         ) : (
           aiMessages.map((msg, idx) => {
-            const msgModel = models.find(m => m.id === msg.modelId);
+            const badgeModelId = (msg as any).modelUsed || msg.modelId;
+            const msgModel = models.find(m => m.id === badgeModelId || m.apiModelId === badgeModelId);
             const msgAgent = agents.find(a => a.id === msg.agentId);
             const isUser = msg.role === 'user';
             const isStreaming = msg.status === 'streaming';
@@ -1889,16 +2112,33 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 data-role={msg.role}
                 className={cn("text-sm flex flex-col group", isUser ? "items-end" : "items-start")}
               >
-                {!isUser && (msgModel || msgAgent || msg.latency) && (
-                  <div className="flex items-center gap-2 mb-1 px-1 text-[11px] text-slate-400 dark:text-[#7D8590]">
+                {!isUser && (badgeModelId || msgModel || msgAgent || msg.latency || msg.usage) && (
+                  <div className="flex items-center flex-wrap gap-2 mb-1 px-1 text-[11px] text-slate-400 dark:text-[#7D8590]">
                     {msgAgent && <span className="font-medium text-slate-600 dark:text-[#C9D1D9]">{msgAgent.name}</span>}
-                    {msgAgent && msgModel && <span>·</span>}
-                    {msgModel && <span>{msgModel.displayName}</span>}
+                    {msgAgent && (msgModel || badgeModelId) && <span>·</span>}
+                    {(msgModel || badgeModelId) && (
+                      <span data-testid="msg-model-badge" data-model-used={badgeModelId}>
+                        {msgModel?.displayName || badgeModelId}
+                      </span>
+                    )}
                     {msg.latency && (
                       <>
                         <span>·</span>
                         <span className="font-mono text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 rounded text-[10px]">
                           {msg.latency}ms ({(msg.latency / 1000).toFixed(2)}s)
+                        </span>
+                      </>
+                    )}
+                    {msg.usage && (
+                      <>
+                        <span>·</span>
+                        <span
+                          data-testid="msg-token-usage"
+                          className="font-mono text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded text-[10px]"
+                          title={`Input: ${msg.usage.inputTokens} tokens • Output: ${msg.usage.outputTokens} tokens`}
+                        >
+                          {(msg.usage.totalTokens ?? (msg.usage.inputTokens + msg.usage.outputTokens)).toLocaleString()} tok
+                          {typeof msg.usage.estimatedCostUsd === 'number' ? ` · $${msg.usage.estimatedCostUsd.toFixed(4)}` : ''}
                         </span>
                       </>
                     )}
@@ -1930,16 +2170,38 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                     : "bg-white dark:bg-[#111111] border border-slate-200/90 dark:border-[#2A2A2A] rounded-tl-sm text-slate-800 dark:text-[#C9D1D9] shadow-xs"
                 )}>
                   {isUser ? (
-                    <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                    <div className="flex flex-col gap-2">
+                      <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                      {msg.imageAttachments && msg.imageAttachments.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {msg.imageAttachments.map((img, i) => (
+                            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/10 dark:bg-black/10 text-[10px] font-mono">
+                              <ImageIcon size={10} />
+                              {img.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ) : isError ? (
                     <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 font-semibold text-xs">
+                      <div className="flex items-center flex-wrap gap-2 font-semibold text-xs">
                         <AlertCircle size={14} className="shrink-0" />
-                        <span>Request Failed</span>
+                        {(msg as any).errorCode && (
+                          <span className="px-1.5 py-0.5 rounded bg-red-500/20 font-mono text-[10px]">
+                            {(msg as any).errorCode}
+                          </span>
+                        )}
+                        <span>{(msg as any).errorProvider || 'Request Failed'}</span>
                       </div>
                       <p className="text-xs leading-relaxed opacity-90">
                         {msg.error || msg.content.replace('**Error**:', '').trim()}
                       </p>
+                      {(msg as any).setupStep && (
+                        <div className="pt-1.5 border-t border-red-500/20 text-[11px] opacity-90">
+                          {(msg as any).setupStep}
+                        </div>
+                      )}
                       <div className="flex flex-wrap items-center gap-2 mt-1">
                         <button
                           type="button"
@@ -1949,20 +2211,6 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           <RotateCcw size={12} />
                           <span>Retry</span>
                         </button>
-
-                        {/(retired|no longer available|high demand|quota|rate limit|not[- ]?found|spikes in demand)/i.test(msg.error || msg.content) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedModel(selectedModel === 'gpt-6.1-sol' ? 'gpt-6-astra' : 'gpt-6.1-sol');
-                              handleRetry(msg.id);
-                            }}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-md bg-purple-600 text-white hover:bg-purple-700 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-                          >
-                            <Sparkles size={12} />
-                            <span>Switch to {selectedModel === 'gpt-6.1-sol' ? 'GPT-6 Astra' : 'GPT-6.1 Sol'} & Retry</span>
-                          </button>
-                        )}
                       </div>
                     </div>
                   ) : (
@@ -1975,6 +2223,31 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                   )}
                 </div>
 
+                {/* Checkpoint Restore Action */}
+                {!isUser && msg.checkpointId && (
+                  <div className="mt-1 px-1 flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="restore-checkpoint-btn"
+                      disabled={restoringCheckpointId === msg.checkpointId}
+                      onClick={() => handleRestoreCheckpoint(msg.checkpointId!)}
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 hover:bg-slate-200 dark:bg-white/5 dark:hover:bg-white/10 text-slate-600 dark:text-[#C9D1D9] border border-slate-200 dark:border-white/10 transition-colors cursor-pointer disabled:opacity-50"
+                      title="Restore project files to the snapshot taken before this agent run"
+                    >
+                      {restoringCheckpointId === msg.checkpointId ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : restoredCheckpointIds.has(msg.checkpointId) ? (
+                        <Check size={10} className="text-emerald-500" />
+                      ) : (
+                        <History size={10} />
+                      )}
+                      <span>
+                        {restoredCheckpointIds.has(msg.checkpointId) ? 'Checkpoint Restored' : 'Restore Checkpoint'}
+                      </span>
+                    </button>
+                  </div>
+                )}
+
                 {/* Explainable Context Metadata Badge */}
                 {!isUser && msg.contextExplanation && (
                   <div className="mt-1 px-1">
@@ -1983,6 +2256,11 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block" />
                         <span className="font-medium">Context Used:</span>
                         <span>{msg.contextExplanation.includedCount || 0} items</span>
+                        {msg.contextExplanation.appliedRules && msg.contextExplanation.appliedRules.length > 0 && (
+                          <span className="px-1 py-0.2 rounded text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 font-semibold">
+                            {msg.contextExplanation.appliedRules.length} rule{msg.contextExplanation.appliedRules.length > 1 ? 's' : ''}
+                          </span>
+                        )}
                         {msg.contextExplanation.intent && (
                           <span className="px-1 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-white/5 uppercase font-mono font-semibold text-slate-600 dark:text-slate-400">
                             {msg.contextExplanation.intent}
@@ -2008,6 +2286,16 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           </div>
                         ) : (
                           <div className="text-[9px] text-slate-400">No external files included.</div>
+                        )}
+                        {msg.contextExplanation.appliedRules && msg.contextExplanation.appliedRules.length > 0 && (
+                          <div className="pt-1 border-t border-slate-200/60 dark:border-white/5 space-y-0.5">
+                            <span className="text-[9px] font-semibold text-emerald-700 dark:text-emerald-400">Applied Rules:</span>
+                            {msg.contextExplanation.appliedRules.map((rule, i) => (
+                              <div key={i} className="text-[9px] font-mono text-slate-600 dark:text-slate-400 truncate">
+                                • {(rule as any).title || rule.name} {rule.sourceFile ? `(${rule.sourceFile})` : `(${rule.scope})`}
+                              </div>
+                            ))}
+                          </div>
                         )}
                         {msg.contextExplanation.excludedItems && msg.contextExplanation.excludedItems.length > 0 && (
                           <div className="pt-1 border-t border-slate-200/60 dark:border-white/5 space-y-0.5">
@@ -2117,6 +2405,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           <button
                             type="button"
                             onClick={() => {
+                              if (!msg.plan) return;
                               const next = new Set(minimizedPlanIds);
                               next.delete(msg.plan.id);
                               setMinimizedPlanIds(next);
@@ -2128,6 +2417,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                           <button
                             type="button"
                             onClick={() => {
+                              if (!msg.plan) return;
                               const next = new Set(removedPlanIds);
                               next.add(msg.plan.id);
                               setRemovedPlanIds(next);
@@ -2147,6 +2437,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                         onRegenerate={(plan) => handleRegeneratePlan(plan)}
                         onUpdatePlan={(planId, updates) => handleUpdatePlan(planId, msg.id, updates)}
                         onMinimize={() => {
+                          if (!msg.plan) return;
                           const next = new Set(minimizedPlanIds);
                           next.add(msg.plan.id);
                           setMinimizedPlanIds(next);
@@ -2378,12 +2669,36 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
             </div>
           )}
 
+          {/* Image Attachments Preview */}
+          {imageAttachments.length > 0 && (
+            <div className="px-2.5 pt-2 flex flex-wrap gap-1.5 items-center">
+              {imageAttachments.map(img => (
+                <div
+                  key={img.id}
+                  className="flex items-center gap-1.5 px-2 py-1 bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-lg text-xs text-slate-700 dark:text-[#C9D1D9]"
+                >
+                  <ImageIcon size={12} className="text-cyan-500 shrink-0" />
+                  <span className="truncate max-w-[140px] font-mono text-[10px]">{img.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setImageAttachments(prev => prev.filter(i => i.id !== img.id))}
+                    className="text-slate-400 hover:text-red-500 p-0.5 cursor-pointer"
+                    title="Remove image"
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Multiline auto-resizing textarea */}
           <textarea
             ref={textareaRef}
             rows={1}
             value={input}
             onChange={handleTextareaInput}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -2418,7 +2733,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 ? "Describe the bug, error, or symptom to diagnose (Enter to debug)..."
                 : activeWorkflowMode === 'ask'
                 ? "Ask a question about the project or architecture (read-only)..."
-                : "Ask about your code (Enter to send, Shift+Enter for newline)..."
+                : "Ask about your code (Enter to send, Shift+Enter for newline, paste image)..."
             }
             className="w-full bg-transparent p-3 text-xs leading-relaxed text-slate-900 dark:text-[#E6EDF3] placeholder:text-slate-400 dark:placeholder:text-[#6E7681] outline-none resize-none min-h-[44px] max-h-[180px]"
           />
@@ -2562,6 +2877,23 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 placement="top"
                 variant="composer"
               />
+
+              {/* Workspace Rules Toggle */}
+              <button
+                type="button"
+                data-testid="toggle-workspace-rules-btn"
+                onClick={() => setIncludeWorkspaceRules(prev => !prev)}
+                className={cn(
+                  "px-2 py-1 rounded-lg transition-colors flex items-center gap-1 text-[10px] font-medium cursor-pointer border",
+                  includeWorkspaceRules
+                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                    : "bg-transparent border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                )}
+                title={includeWorkspaceRules ? "Workspace rules (AGENTS.md, .cursorrules) enabled" : "Workspace rules disabled"}
+              >
+                <ShieldCheck size={11} />
+                <span className="hidden sm:inline">Rules</span>
+              </button>
             </div>
 
             {/* Send / Stop Button */}

@@ -47,9 +47,12 @@ interface ThreadMessage {
   agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   error?: string;
   errorCode?: string;
+  errorProvider?: string;
+  setupStep?: string;
   cancelled?: boolean;
   latencyMs?: number;
   modelId?: string;
+  modelUsed?: string;
 }
 
 const MAX_CHECKPOINTS = 12;
@@ -334,7 +337,13 @@ export function ChatThread({ chatId }: { chatId: string }) {
           if (e?.name === 'AbortError') {
             patch({ cancelled: true });
           } else {
-            patch({ error: e?.message || String(e), errorCode: e?.code });
+            setInput((prev) => prev || prompt);
+            patch({
+              error: e?.message || String(e),
+              errorCode: e?.code,
+              errorProvider: e?.provider,
+              setupStep: e?.setupStep
+            });
           }
         } finally {
           if (activeChatIdRef.current === chatId) {
@@ -398,10 +407,12 @@ export function ChatThread({ chatId }: { chatId: string }) {
         });
         if (!res.ok || !res.body) {
           const err = await res.json().catch(() => ({}));
-          const errorMsg = err.error || `HTTP ${res.status}`;
+          const errorMsg = err.message || err.error || `HTTP ${res.status}`;
           const errCode = err.code || (res.status === 401 ? 'AUTH_ERROR' : res.status === 429 ? 'RATE_LIMITED' : 'PROVIDER_ERROR');
           const errorObj = new Error(errorMsg);
           (errorObj as any).code = errCode;
+          (errorObj as any).provider = err.provider;
+          (errorObj as any).setupStep = err.setupStep;
           throw errorObj;
         }
         const reader = res.body.getReader();
@@ -409,6 +420,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
         let buffer = '';
         let full = '';
         let receivedDone = false;
+        let actualModelUsed = selectedModel;
         const agentEvents: NonNullable<ThreadMessage['agentEvents']> = [];
         let finalChangeSet: ChangeSet | undefined;
 
@@ -427,28 +439,61 @@ export function ChatThread({ chatId }: { chatId: string }) {
           }
 
           const currentElapsed = Date.now() - startTime;
-          if (useToolAgent && data.type === 'event') {
+          if (data.type === 'context_info') {
+            return;
+          } else if (useToolAgent && data.type === 'event') {
             const event = data.data || {};
             agentEvents.push(event);
             patch({ agentEvents: [...agentEvents], latencyMs: currentElapsed });
-            if (event.type === 'failed') throw new Error(event.message || 'Agent execution failed.');
+            if (event.type === 'failed') {
+              const failErr = new Error(event.message || 'Agent execution failed.');
+              (failErr as any).code = event.code || data.code || 'PROVIDER_ERROR';
+              (failErr as any).provider = event.provider || data.provider;
+              (failErr as any).setupStep = event.setupStep || data.setupStep;
+              throw failErr;
+            }
           } else if (useToolAgent && data.type === 'delta') {
             full += data.data?.text || data.text || '';
             patch({ content: full, agentEvents: [...agentEvents], latencyMs: currentElapsed });
           } else if (useToolAgent && data.type === 'result') {
+            receivedDone = true;
+            actualModelUsed = data.modelUsed || data.data?.modelUsed || actualModelUsed;
             finalChangeSet = data.data?.changeSet;
             full = data.data?.text || full;
-            patch({ content: full, changeSet: finalChangeSet, agentEvents: [...agentEvents], latencyMs: currentElapsed });
+            patch({
+              content: full,
+              changeSet: finalChangeSet,
+              agentEvents: [...agentEvents],
+              latencyMs: currentElapsed,
+              modelUsed: actualModelUsed,
+              modelId: actualModelUsed
+            });
           } else if (data.type === 'delta') {
             if (typeof data.text !== 'string') throw new Error('FLOAT returned an invalid text chunk.');
             full += data.text;
             patch({ content: full, latencyMs: currentElapsed });
           } else if (data.type === 'done') {
             receivedDone = true;
+            actualModelUsed = data.modelUsed || actualModelUsed;
             if (typeof data.text === 'string' && data.text.length >= full.length) full = data.text;
-            patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
+            patch({
+              content: full,
+              cancelled: !!data.cancelled,
+              latencyMs: currentElapsed,
+              modelUsed: actualModelUsed,
+              modelId: actualModelUsed
+            });
           } else if (data.type === 'error') {
-            throw new Error(typeof data.error === 'string' ? data.error : 'Generation failed.');
+            const errMsg = typeof data.message === 'string'
+              ? data.message
+              : typeof data.error === 'string'
+              ? data.error
+              : 'Generation failed.';
+            const streamErr = new Error(errMsg);
+            (streamErr as any).code = data.code || 'PROVIDER_ERROR';
+            (streamErr as any).provider = data.provider;
+            (streamErr as any).setupStep = data.setupStep;
+            throw streamErr;
           } else {
             throw new Error(`FLOAT returned an unknown streaming event: ${String(data.type || 'missing type')}.`);
           }
@@ -481,13 +526,27 @@ export function ChatThread({ chatId }: { chatId: string }) {
         }
         const pending: Record<string, { status: ChangeStatus }> = {};
         for (const seg of parseSegments(full)) if (seg.kind !== 'text') pending[seg.path] = { status: 'pending' };
-        patch({ content: full, changes: pending, changeSet: finalChangeSet, agentEvents: agentEvents.length ? agentEvents : undefined });
+        patch({
+          content: full,
+          changes: pending,
+          changeSet: finalChangeSet,
+          agentEvents: agentEvents.length ? agentEvents : undefined,
+          latencyMs: totalElapsed,
+          modelUsed: actualModelUsed,
+          modelId: actualModelUsed
+        });
       } catch (e: any) {
         if (activeChatIdRef.current !== chatId) return;
         if (e?.name === 'AbortError') {
           patch({ cancelled: true });
         } else {
-          patch({ error: e?.message || String(e), errorCode: e?.code });
+          setInput((prev) => prev || prompt);
+          patch({
+            error: e?.message || String(e),
+            errorCode: e?.code,
+            errorProvider: e?.provider,
+            setupStep: e?.setupStep
+          });
         }
       } finally {
         if (activeChatIdRef.current === chatId) {
@@ -851,18 +910,23 @@ function AssistantMessage({
   const edits = segments.filter((s) => s.kind !== 'text') as Exclude<Segment, { kind: 'text' }>[];
   const pending = edits.filter((s) => (msg.changes?.[s.path]?.status ?? 'pending') === 'pending' && (s.kind === 'delete' || s.complete));
 
+  const badgeModelId = msg.modelUsed || msg.modelId;
+  const matchedModel = badgeModelId
+    ? models.find((m) => m.id === badgeModelId || m.apiModelId === badgeModelId)
+    : undefined;
+
   return (
     <div className="flex flex-col gap-2.5">
-      {(msg.modelId || (msg.latencyMs !== undefined && msg.latencyMs > 0)) && (
+      {(badgeModelId || (msg.latencyMs !== undefined && msg.latencyMs > 0)) && (
         <div className="flex items-center gap-2 px-0.5 text-[11px] text-slate-500 dark:text-[#8B949E]">
-          {msg.modelId && (
-            <span className="font-semibold text-slate-700 dark:text-[#C9D1D9] inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10">
+          {badgeModelId && (
+            <span
+              data-testid="msg-model-badge"
+              data-model-used={badgeModelId}
+              className="font-semibold text-slate-700 dark:text-[#C9D1D9] inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10"
+            >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-              {msg.modelId === 'gpt-6-astra'
-                ? 'GPT-6 Astra'
-                : msg.modelId === 'gpt-6.1-sol'
-                ? 'GPT-6.1 Sol'
-                : (models.find((m) => m.id === msg.modelId)?.shortName || models.find((m) => m.id === msg.modelId)?.displayName || msg.modelId)}
+              {matchedModel?.shortName || matchedModel?.displayName || badgeModelId}
             </span>
           )}
           {msg.latencyMs !== undefined && msg.latencyMs > 0 && (
@@ -944,21 +1008,25 @@ function AssistantMessage({
         <div className="rounded-xl border border-rose-200 dark:border-rose-500/20 bg-rose-50/80 dark:bg-rose-950/20 p-3.5 text-xs text-rose-800 dark:text-rose-300 flex flex-col gap-2">
           <div className="flex items-start gap-2">
             <AlertCircle size={15} className="shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
-            <div className="flex-1 font-medium leading-relaxed">{msg.error}</div>
+            <div className="flex-1 flex flex-col gap-1">
+              <div className="flex items-center flex-wrap gap-1.5">
+                {msg.errorCode && (
+                  <span className="px-1.5 py-0.5 rounded bg-rose-200/70 dark:bg-rose-900/50 font-mono text-[10px] font-semibold">
+                    {msg.errorCode}
+                  </span>
+                )}
+                {msg.errorProvider && (
+                  <span className="text-[11px] font-semibold opacity-80">
+                    {msg.errorProvider}
+                  </span>
+                )}
+              </div>
+              <div className="font-medium leading-relaxed">{msg.error}</div>
+            </div>
           </div>
-          {msg.errorCode === 'AUTH_ERROR' && (
-            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400 flex items-center justify-between">
-              <span>Configure server-side <code className="px-1 py-0.5 rounded bg-slate-200 dark:bg-white/10 font-mono text-[10px]">OPENAI_API_KEY</code> to enable live OpenAI chat completions.</span>
-            </div>
-          )}
-          {msg.errorCode === 'QUOTA_EXCEEDED' && (
-            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400">
-              Your upstream AI account quota has been exhausted. Check your OpenAI billing or switch to another available model.
-            </div>
-          )}
-          {msg.errorCode === 'RATE_LIMITED' && (
-            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400">
-              Rate limit exceeded. Please wait a few seconds before retrying your prompt.
+          {msg.setupStep && (
+            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-700 dark:text-slate-300">
+              {msg.setupStep}
             </div>
           )}
         </div>

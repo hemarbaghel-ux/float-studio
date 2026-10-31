@@ -118,12 +118,12 @@ async function runOrchestratorValidationTests() {
 
   const reviewerPropose = validateToolPermission('reviewer-agent', 'propose_changes');
   assert(!reviewerPropose.allowed, 'reviewer-agent strictly DENIED propose_changes');
-  assert(reviewerPropose.error?.includes('read-only permission'), 'Explains reviewer-agent is read-only');
+  assert(Boolean(reviewerPropose.error?.includes('read-only permission')), 'Explains reviewer-agent is read-only');
 
   // Prohibited direct file modification tools across all agents
   const directWrite = validateToolPermission('main-agent', 'write_file');
   assert(!directWrite.allowed, 'write_file strictly prohibited for main-agent');
-  assert(directWrite.error?.includes('propose_changes'), 'Direct write error instructs using propose_changes');
+  assert(Boolean(directWrite.error?.includes('propose_changes')), 'Direct write error instructs using propose_changes');
 
   const directDelete = validateToolPermission('backend-agent', 'delete_file');
   assert(!directDelete.allowed, 'delete_file strictly prohibited for backend-agent');

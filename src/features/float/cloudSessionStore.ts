@@ -12,30 +12,30 @@ export interface CloudProfile {
 export const AVAILABLE_PROFILES: CloudProfile[] = [
   {
     id: 'sol',
-    name: 'GPT-6.1 Sol (Default)',
-    sessionId: 'sess_087a4d42ca75939b006ace64b295ac8193b83bd1fbfd9a4015',
-    environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
-    model: 'GPT-6.1 Sol (Preview)',
+    name: 'GPT-6 Sol (Default)',
+    sessionId: '',
+    environmentId: '',
+    model: 'GPT-6 Sol (Preview)',
   },
   {
     id: 'astra',
     name: 'GPT-6 Astra',
-    sessionId: 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
-    environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+    sessionId: '',
+    environmentId: '',
     model: 'GPT-6 Astra (Preview)',
   },
 ];
 
 export const DEFAULT_CLOUD_SESSION = {
-  sessionId: AVAILABLE_PROFILES[0].sessionId,
-  environmentId: AVAILABLE_PROFILES[0].environmentId,
+  sessionId: '',
+  environmentId: '',
   region: 'cloud-agent',
   machine: 'sol-ccarenv',
   modelAttached: AVAILABLE_PROFILES[0].model,
   fallbackModel: 'gpt-6-astra',
   fallbackStrategy: 'upstream_fallback_if_unreachable',
-  remoteUrl: 'https://api.openai.com/v1/agents/api/connect/rt_7k2m',
-  execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${AVAILABLE_PROFILES[0].environmentId}' --session-id '${AVAILABLE_PROFILES[0].sessionId}'`,
+  remoteUrl: '',
+  execServerCommand: '',
 };
 
 export interface CloudSessionState {
@@ -59,19 +59,25 @@ export interface CloudSessionState {
   closeModal: () => void;
 }
 
-/** Local browser & cloud session store for workspace execution and GPT-6 Astra attachment. */
+function buildExecServerCommand(remoteUrl: string, environmentId: string, sessionId: string): string {
+  if (!environmentId || !sessionId) return '';
+  const remotePart = remoteUrl ? ` --remote '${remoteUrl}'` : '';
+  return `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server${remotePart} --environment-id '${environmentId}' --session-id '${sessionId}'`;
+}
+
+/** Local browser & cloud session store for workspace execution and GPT-6 Astra/Sol attachment. */
 export const useCloudSession = create<CloudSessionState>()(
   persist(
     (set) => ({
-      active: true,
-      startedAt: Date.now(),
+      active: false,
+      startedAt: undefined,
       region: DEFAULT_CLOUD_SESSION.region,
       machine: DEFAULT_CLOUD_SESSION.machine,
       sessionId: DEFAULT_CLOUD_SESSION.sessionId,
       environmentId: DEFAULT_CLOUD_SESSION.environmentId,
       remoteUrl: DEFAULT_CLOUD_SESSION.remoteUrl,
       execServerCommand: DEFAULT_CLOUD_SESSION.execServerCommand,
-      status: 'connected',
+      status: 'disconnected',
       fallbackReady: true,
       modelAttached: DEFAULT_CLOUD_SESSION.modelAttached,
       modalOpen: false,
@@ -81,21 +87,23 @@ export const useCloudSession = create<CloudSessionState>()(
         sessionId = DEFAULT_CLOUD_SESSION.sessionId,
         environmentId = DEFAULT_CLOUD_SESSION.environmentId,
         modelAttached = DEFAULT_CLOUD_SESSION.modelAttached
-      ) =>
+      ) => {
+        const isConfigured = Boolean(sessionId && environmentId);
         set({
-          active: true,
-          startedAt: Date.now(),
+          active: isConfigured,
+          startedAt: isConfigured ? Date.now() : undefined,
           region,
           machine,
           sessionId,
           environmentId,
           modelAttached,
           remoteUrl: DEFAULT_CLOUD_SESSION.remoteUrl,
-          execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${environmentId}' --session-id '${sessionId}'`,
-          status: 'connected',
+          execServerCommand: buildExecServerCommand(DEFAULT_CLOUD_SESSION.remoteUrl, environmentId, sessionId),
+          status: isConfigured ? 'connected' : 'disconnected',
           fallbackReady: true,
           modalOpen: false
-        }),
+        });
+      },
       stop: () =>
         set({
           active: false,
@@ -107,17 +115,20 @@ export const useCloudSession = create<CloudSessionState>()(
         environmentId = DEFAULT_CLOUD_SESSION.environmentId,
         modelAttached = DEFAULT_CLOUD_SESSION.modelAttached
       ) =>
-        set((prev) => ({
-          active: true,
-          startedAt: prev.startedAt || Date.now(),
-          sessionId,
-          environmentId,
-          modelAttached: modelAttached || prev.modelAttached || DEFAULT_CLOUD_SESSION.modelAttached,
-          remoteUrl: DEFAULT_CLOUD_SESSION.remoteUrl,
-          execServerCommand: `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${environmentId}' --session-id '${sessionId}'`,
-          status: 'connected',
-          fallbackReady: true
-        })),
+        set((prev) => {
+          const isConfigured = Boolean(sessionId && environmentId);
+          return {
+            active: isConfigured,
+            startedAt: isConfigured ? (prev.startedAt || Date.now()) : undefined,
+            sessionId,
+            environmentId,
+            modelAttached: modelAttached || prev.modelAttached || DEFAULT_CLOUD_SESSION.modelAttached,
+            remoteUrl: prev.remoteUrl || DEFAULT_CLOUD_SESSION.remoteUrl,
+            execServerCommand: buildExecServerCommand(prev.remoteUrl || DEFAULT_CLOUD_SESSION.remoteUrl, environmentId, sessionId),
+            status: isConfigured ? 'connected' : 'disconnected',
+            fallbackReady: true
+          };
+        }),
       disconnect: () =>
         set({
           active: false,
@@ -127,26 +138,8 @@ export const useCloudSession = create<CloudSessionState>()(
       closeModal: () => set({ modalOpen: false }),
     }),
     {
-      name: 'float_cloud_session_v4',
-      version: 4,
-      onRehydrateStorage: () => (state) => {
-        if (state) {
-          // If state is not connected to the target session or has outdated environment ID, ensure connected defaults
-          if (!state.sessionId || !state.active || state.status !== 'connected' || state.environmentId !== DEFAULT_CLOUD_SESSION.environmentId) {
-            state.active = true;
-            state.status = 'connected';
-            state.sessionId = DEFAULT_CLOUD_SESSION.sessionId;
-            state.environmentId = DEFAULT_CLOUD_SESSION.environmentId;
-            state.remoteUrl = DEFAULT_CLOUD_SESSION.remoteUrl;
-            state.execServerCommand = DEFAULT_CLOUD_SESSION.execServerCommand;
-            state.region = DEFAULT_CLOUD_SESSION.region;
-            state.machine = DEFAULT_CLOUD_SESSION.machine;
-            state.modelAttached = DEFAULT_CLOUD_SESSION.modelAttached;
-            state.fallbackReady = true;
-            if (!state.startedAt) state.startedAt = Date.now();
-          }
-        }
-      },
+      name: 'float_cloud_session_v5',
+      version: 5,
       partialize: (s) => ({
         active: s.active,
         startedAt: s.startedAt,
@@ -173,10 +166,15 @@ export async function syncCloudSessionWithServer(getToken?: () => Promise<string
     const res = await fetch('/api/session/current', {
       headers: { Authorization: `Bearer ${token}` }
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      useCloudSession.getState().disconnect();
+      return;
+    }
     const data = await res.json();
-    if (data?.sessionId) {
+    if (data?.sessionId && data?.environmentId) {
       useCloudSession.getState().connect(data.sessionId, data.environmentId);
+    } else {
+      useCloudSession.getState().disconnect();
     }
   } catch {}
 }
@@ -188,4 +186,3 @@ export function formatDuration(ms: number) {
   const sec = s % 60;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
 }
-

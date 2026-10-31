@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { GitPullRequest, X, AlertCircle, Loader2 } from 'lucide-react';
+import { GitPullRequest, X, AlertCircle, Loader2, Sparkles } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { apiFetch } from '../../services/api';
 
 interface CreatePullRequestModalProps {
+  projectId: string;
   branch: string;
   defaultBranch: string;
   branches: Array<{ name: string; sha: string; protected: boolean }>;
@@ -12,6 +14,7 @@ interface CreatePullRequestModalProps {
 }
 
 export function CreatePullRequestModal({
+  projectId,
   branch,
   defaultBranch,
   branches,
@@ -23,6 +26,32 @@ export function CreatePullRequestModal({
   const [title, setTitle] = useState(`Merge ${branch} into ${defaultBranch || 'main'}`);
   const [body, setBody] = useState('');
   const [error, setError] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [conflicts, setConflicts] = useState<string[]>([]);
+
+  const handleGenerateFromDiff = async () => {
+    if (!projectId || generating || busy) return;
+    setGenerating(true);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/git/generate-pr-description`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base: baseBranch }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || `Failed to generate PR description (HTTP ${response.status}).`);
+      }
+      if (data.title) setTitle(data.title);
+      if (data.body) setBody(data.body);
+      setConflicts(Array.isArray(data.conflicts) ? data.conflicts : []);
+    } catch (err: any) {
+      setError(err.message || 'Could not generate PR description from diff.');
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,7 +81,7 @@ export function CreatePullRequestModal({
           </div>
           <button
             onClick={onClose}
-            disabled={busy}
+            disabled={busy || generating}
             className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors cursor-pointer"
           >
             <X size={16} />
@@ -66,6 +95,18 @@ export function CreatePullRequestModal({
           </div>
         )}
 
+        {conflicts.length > 0 && (
+          <div className="p-3 text-xs bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 rounded-lg space-y-1">
+            <div className="font-semibold flex items-center gap-1.5">
+              <AlertCircle size={14} className="shrink-0" />
+              <span>Potential merge conflicts detected with {baseBranch}</span>
+            </div>
+            <div className="font-mono text-[11px] break-words">
+              {conflicts.join(', ')}
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex items-center gap-3 text-xs">
             <div className="flex-1">
@@ -73,7 +114,7 @@ export function CreatePullRequestModal({
               <select
                 value={baseBranch}
                 onChange={e => setBaseBranch(e.target.value)}
-                disabled={busy}
+                disabled={busy || generating}
                 className="w-full border border-slate-200 dark:border-white/10 rounded-lg px-2.5 py-1.5 bg-slate-50 dark:bg-[#1a1a1a] text-slate-900 dark:text-white"
               >
                 {branches.map(b => (
@@ -94,13 +135,29 @@ export function CreatePullRequestModal({
             </div>
           </div>
 
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              Synthesize title &amp; description from branch diff
+            </span>
+            <button
+              type="button"
+              data-testid="generate-pr-desc-btn"
+              onClick={() => void handleGenerateFromDiff()}
+              disabled={busy || generating || branch === baseBranch}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-medium border border-slate-200 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/5 text-blue-600 dark:text-blue-400 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
+            >
+              {generating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+              <span>Generate from Diff &amp; Check Conflicts</span>
+            </button>
+          </div>
+
           <div>
             <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1 font-medium">Title</label>
             <input
               value={title}
               onChange={e => setTitle(e.target.value)}
               placeholder="e.g., feat: add oauth authentication"
-              disabled={busy}
+              disabled={busy || generating}
               className="w-full border border-slate-200 dark:border-white/10 rounded-lg px-3 py-1.5 bg-transparent text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
@@ -111,8 +168,8 @@ export function CreatePullRequestModal({
               value={body}
               onChange={e => setBody(e.target.value)}
               placeholder="Describe your changes and link any relevant issues..."
-              rows={4}
-              disabled={busy}
+              rows={5}
+              disabled={busy || generating}
               className="w-full border border-slate-200 dark:border-white/10 rounded-lg p-2.5 bg-transparent text-xs text-slate-900 dark:text-white resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
@@ -121,14 +178,14 @@ export function CreatePullRequestModal({
             <button
               type="button"
               onClick={onClose}
-              disabled={busy}
+              disabled={busy || generating}
               className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={busy || !title.trim() || branch === baseBranch}
+              disabled={busy || generating || !title.trim() || branch === baseBranch}
               className={cn(
                 "px-4 py-1.5 rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               )}
@@ -151,3 +208,4 @@ export function CreatePullRequestModal({
     </div>
   );
 }
+

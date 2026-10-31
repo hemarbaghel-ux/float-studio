@@ -198,14 +198,20 @@ async function runTenantIsolationTests() {
   );
   assert.strictEqual(bobContext.formattedPrompt.includes('ALICE_SECRET_SKILL_INSTRUCTIONS'), false, 'User A custom skill is never injected into User B prompt context');
 
-  // MCP User-Scoped AND Project-Scoped Isolation (Phase A.1 Correction 2)
+  // MCP User-Scoped AND Project-Scoped Isolation (Phase A.1 Correction 2 + Phase 3 Real MCP)
   MCPService.clear();
+  const prevAllowStdio = process.env.FLOAT_ALLOW_STDIO_MCP;
+  process.env.FLOAT_ALLOW_STDIO_MCP = 'true';
+  const tsxBin = `${process.cwd()}/node_modules/.bin/tsx`;
+  const fakeMcpFixture = `${process.cwd()}/scripts/fixtures/fakeMcpStdioServer.ts`;
+
   // Register 1 user-scoped server for Alice and 2 project-scoped servers for Alice (PROJECT_A and PROJECT_A2)
   MCPService.registerServer({
     id: 'mcp-alice-user-global',
     name: 'Alice User-Scoped MCP',
     transport: 'stdio',
-    command: 'npx',
+    command: tsxBin,
+    args: [fakeMcpFixture],
     env: { USER_TOKEN: 'secret1' },
     enabled: true,
     createdAt: Date.now()
@@ -214,8 +220,9 @@ async function runTenantIsolationTests() {
   MCPService.registerServer({
     id: 'mcp-alice-proj-a1',
     name: 'Alice Project A1 MCP',
-    transport: 'http',
-    endpointUrl: 'https://mcp.alice.internal/a1',
+    transport: 'stdio',
+    command: tsxBin,
+    args: [fakeMcpFixture],
     projectId: PROJECT_A,
     env: { DB_PASS: 'supersecret_a1' },
     enabled: true,
@@ -225,8 +232,9 @@ async function runTenantIsolationTests() {
   MCPService.registerServer({
     id: 'mcp-alice-proj-a2',
     name: 'Alice Project A2 MCP',
-    transport: 'http',
-    endpointUrl: 'https://mcp.alice.internal/a2',
+    transport: 'stdio',
+    command: tsxBin,
+    args: [fakeMcpFixture],
     projectId: PROJECT_A2,
     env: { DB_PASS: 'supersecret_a2' },
     enabled: true,
@@ -336,6 +344,8 @@ async function runTenantIsolationTests() {
   });
   assert.strictEqual(bobMcpExec.success, false, 'User B cannot execute tools on User A project-scoped MCP server');
   assert.strictEqual(MCPService.deleteServer('mcp-alice-proj-a1', USER_B, PROJECT_A), false, 'User B cannot delete User A project-scoped MCP server');
+  if (prevAllowStdio === undefined) delete process.env.FLOAT_ALLOW_STDIO_MCP;
+  else process.env.FLOAT_ALLOW_STDIO_MCP = prevAllowStdio;
 
   // Code Review isolation
   CodeReviewService.clear();

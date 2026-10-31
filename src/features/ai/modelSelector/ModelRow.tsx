@@ -34,13 +34,22 @@ export const ModelRow: React.FC<ModelRowProps> = ({
       tabIndex={isHighlighted ? 0 : -1}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      onClick={onSelect}
-      className={`group/item px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer select-none transition-colors ${
-        isSelected
-          ? 'bg-slate-100/90 dark:bg-white/[0.08]'
-          : isHighlighted
-          ? 'bg-slate-50 dark:bg-white/[0.04]'
-          : 'hover:bg-slate-50 dark:hover:bg-white/[0.04]'
+      onClick={() => {
+        if (model.status === 'CONFIG_REQUIRED' || model.availability === 'Add key to enable') {
+          document.dispatchEvent(new CustomEvent('open-api-config-modal'));
+          return;
+        }
+        onSelect();
+      }}
+      className={`group/item px-2.5 py-1.5 rounded-lg flex items-center justify-between select-none transition-colors ${
+        model.status === 'CONFIG_REQUIRED' || model.availability === 'Add key to enable'
+          ? 'opacity-65 cursor-pointer hover:bg-amber-500/5'
+          : 'cursor-pointer ' +
+            (isSelected
+              ? 'bg-slate-100/90 dark:bg-white/[0.08]'
+              : isHighlighted
+              ? 'bg-slate-50 dark:bg-white/[0.04]'
+              : 'hover:bg-slate-50 dark:hover:bg-white/[0.04]')
       }`}
     >
       {/* Model Name & Reasoning/Speed/Effort label */}
@@ -55,19 +64,12 @@ export const ModelRow: React.FC<ModelRowProps> = ({
         )}
       </div>
 
-      {/* Right controls: Optional FREE badge, Optional NEW badge, Setup badge, Touch/Info trigger, Checkmark */}
+      {/* Right controls: Optional FREE badge, Optional NEW badge, Add key to enable badge, Touch/Info trigger, Checkmark */}
       <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-        {/* Free tier badge */}
-        {model.tier === 'Free' && (
-          <span className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded leading-none">
-            FREE
-          </span>
-        )}
-
         {/* Availability / Config warning */}
-        {model.status === 'CONFIG_REQUIRED' && (
-          <span className="text-[9px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1 py-0.5 rounded leading-none">
-            Setup
+        {(model.status === 'CONFIG_REQUIRED' || model.availability === 'Add key to enable') && (
+          <span className="text-[9px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded leading-none">
+            Add key to enable
           </span>
         )}
 

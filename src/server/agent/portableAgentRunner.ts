@@ -64,6 +64,7 @@ function changeSetFrom(result: ToolResult, context: ToolExecutionContext): Chang
       originalHash: change.originalHash,
       proposedHash: change.proposedHash,
       diffStats: change.diffStats,
+      hunks: change.hunks,
       status: change.status || 'pending',
     })),
   };
@@ -71,12 +72,14 @@ function changeSetFrom(result: ToolResult, context: ToolExecutionContext): Chang
 
 async function providerTurn(provider: Provider, model: string, key: string, instruction: string, history: any[], signal: AbortSignal) {
   const definitions = tools();
+  const envSessionId = (model === 'gpt-6-sol' ? process.env.FLOAT_SOL_SESSION_ID : process.env.FLOAT_ASTRA_SESSION_ID)?.trim() || '';
+  const envEnvironmentId = (model === 'gpt-6-sol' ? process.env.FLOAT_SOL_ENVIRONMENT_ID : process.env.FLOAT_ASTRA_ENVIRONMENT_ID)?.trim() || '';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${key}`,
-    ...((model === 'gpt-6-astra' || model === 'gpt-6.1-sol' || model === 'gpt-6-sol' || model === 'gpt-6.1') ? {
-      'X-Session-Id': 'sess_0e5225d2ebb12ca1006acc98ff0200819cb89256c878d26a01',
-      'X-Environment-Id': 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
+    ...((model === 'gpt-6-astra' || model === 'gpt-6-sol') && envSessionId && envEnvironmentId ? {
+      'X-Session-Id': envSessionId,
+      'X-Environment-Id': envEnvironmentId,
     } : {})
   };
   const url = 'https://api.openai.com/v1/chat/completions';
@@ -98,7 +101,11 @@ async function providerTurn(provider: Provider, model: string, key: string, inst
     try { args = JSON.parse(call.function?.arguments || '{}'); } catch { throw new Error(`The model returned invalid JSON arguments for tool ${call.function?.name || 'unknown'}.`); }
     return { id: String(call.id), name: String(call.function?.name || ''), args };
   }) : [];
-  return { text: typeof message.content === 'string' ? message.content : '', calls, assistantMessage: message };
+  const usage = data.usage ? {
+    inputTokens: Number(data.usage.prompt_tokens || 0),
+    outputTokens: Number(data.usage.completion_tokens || 0),
+  } : undefined;
+  return { text: typeof message.content === 'string' ? message.content : '', calls, assistantMessage: message, usage };
 }
 
 export class PortableAgentRunner {
@@ -127,6 +134,8 @@ export class PortableAgentRunner {
     let finalText = '';
     let changeSet: ChangeSet | null = null;
     let toolCallsCount = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
     let finished = false;
     const startedAt = Date.now();
     const repeatedCalls = new Map<string, number>();
@@ -145,6 +154,10 @@ export class PortableAgentRunner {
         }
         send(res, 'event', { type: 'thinking', action: toolCallsCount ? 'Synthesizing' : 'Thinking', message: `Reasoning about request and codebase (round ${round}/${MAX_ROUNDS}).` });
         const turn = await providerTurn(provider, model, apiKey, instruction, history, controller.signal);
+        if (turn.usage) {
+          totalInputTokens += turn.usage.inputTokens;
+          totalOutputTokens += turn.usage.outputTokens;
+        }
         if (turn.text) {
           finalText = finalText ? `${finalText}\n\n${turn.text}` : turn.text;
           send(res, 'delta', { text: turn.text });
@@ -209,12 +222,18 @@ export class PortableAgentRunner {
       if (!controller.signal.aborted && !finished) {
         send(res, 'event', { type: 'failed', message: `Agent did not reach a final answer within ${MAX_ROUNDS} reasoning rounds.` });
       }
-      send(res, 'result', { text: finalText, changeSet, toolCallsCount });
+      send(res, 'result', {
+        text: finalText,
+        changeSet,
+        toolCallsCount,
+        checkpointId: req.body?.checkpointId,
+        usage: (totalInputTokens > 0 || totalOutputTokens > 0) ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens } : undefined
+      });
     } catch (error: any) {
       if (!controller.signal.aborted) {
         const message = error?.message || 'Agent execution failed.';
         send(res, 'event', { type: 'failed', message });
-        send(res, 'result', { text: `**Agent Execution Stopped**: ${message}`, changeSet: null });
+        send(res, 'result', { text: `**Agent Execution Stopped**: ${message}`, changeSet: null, checkpointId: req.body?.checkpointId });
       }
     } finally {
       if (!res.writableEnded) res.end();

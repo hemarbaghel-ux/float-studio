@@ -1,4 +1,4 @@
-export type ProviderId = 'openai' | 'auto';
+export type ProviderId = 'openai' | 'google' | 'anthropic' | 'auto';
 export type ModelStatus =
   | 'AVAILABLE'
   | 'CONFIG_REQUIRED'

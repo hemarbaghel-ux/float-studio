@@ -52,11 +52,11 @@ export function ReportViewer({ report, rawCsv, className = '' }: ReportViewerPro
     }
 
     if (report.pythonCode) {
-      md += `## Sandboxed Python Analysis Code\n\n\`\`\`python\n${report.pythonCode}\n\`\`\`\n\n`;
+      md += `## Reference Python Reproduction Script\n\n\`\`\`python\n${report.pythonCode}\n\`\`\`\n\n`;
     }
 
     if (report.pythonOutput) {
-      md += `## Python Execution Output\n\n\`\`\`\n${report.pythonOutput}\n\`\`\`\n\n`;
+      md += `## Deterministic Statistical Output\n\n\`\`\`\n${report.pythonOutput}\n\`\`\`\n\n`;
     }
 
     return md;
@@ -120,10 +120,10 @@ export function ReportViewer({ report, rawCsv, className = '' }: ReportViewerPro
     <ul>${caveatsHtml}</ul>
   </div>
 
-  <h2>Sandboxed Python Analysis Code</h2>
+  <h2>Reference Python Reproduction Script</h2>
   <pre><code>${report.pythonCode.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>
 
-  <h2>Sandbox Execution Output</h2>
+  <h2>Deterministic Statistical Output</h2>
   <pre><code>${report.pythonOutput.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>
 
   <footer style="margin-top:40px; border-top:1px solid #21262D; padding-top:16px; font-size:11px; color:#6E7681; text-align:center;">
@@ -358,7 +358,7 @@ export function ReportViewer({ report, rawCsv, className = '' }: ReportViewerPro
           >
             <div className="flex items-center gap-2">
               <Code2 size={14} className="text-blue-400" />
-              <span>Inspect Python Sandbox Code & Execution Output</span>
+              <span>Inspect Reference Python Script & Deterministic Statistical Output</span>
             </div>
             {showCode ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </button>
@@ -366,7 +366,7 @@ export function ReportViewer({ report, rawCsv, className = '' }: ReportViewerPro
           {showCode && (
             <div className="p-4 space-y-3 font-mono text-[11px]">
               <div>
-                <span className="text-[10px] text-slate-400 block mb-1"># Python Script Executed in OpenAI Sandbox:</span>
+                <span className="text-[10px] text-slate-400 block mb-1"># Reference Python Reproduction Script:</span>
                 <pre className="p-3 rounded-lg bg-black/50 border border-white/5 text-blue-300 overflow-x-auto whitespace-pre">
                   {report.pythonCode}
                 </pre>
@@ -374,7 +374,7 @@ export function ReportViewer({ report, rawCsv, className = '' }: ReportViewerPro
 
               {report.pythonOutput && (
                 <div>
-                  <span className="text-[10px] text-slate-400 block mb-1"># Standard Output (stdout):</span>
+                  <span className="text-[10px] text-slate-400 block mb-1"># Deterministic Statistical Engine Output (TypeScript/Node.js):</span>
                   <pre className="p-3 rounded-lg bg-black/50 border border-white/5 text-emerald-300 overflow-x-auto whitespace-pre">
                     {report.pythonOutput}
                   </pre>

@@ -2,13 +2,27 @@ import { FieldValue } from 'firebase-admin/firestore';
 import type { Transaction } from 'firebase-admin/firestore';
 import { createHash } from 'node:crypto';
 import { adminDb } from './adminFirebase';
+import {
+  DEFAULT_TTL_MS,
+  LARGE_PAYLOAD_THRESHOLD_BYTES,
+  deleteLargePayloadDurable,
+  loadLargePayloadDurable,
+  saveLargePayloadDurable
+} from './durableState';
 
-const tasks = () => adminDb.collection('agentTasks');
-const events = () => adminDb.collection('agentTaskEvents');
-const results = () => adminDb.collection('agentTaskResults');
-const workspaces = () => adminDb.collection('agentTaskWorkspaces');
-const projectLeases = () => adminDb.collection('agentProjectLeases');
+let overrideDb: any = null;
+export function setAgentPersistenceDbForTests(db: any | null): void {
+  overrideDb = db;
+}
+
+const activeDb = (): typeof adminDb => overrideDb || adminDb;
+const tasks = () => activeDb().collection('agentTasks');
+const events = () => activeDb().collection('agentTaskEvents');
+const results = () => activeDb().collection('agentTaskResults');
+const workspaces = () => activeDb().collection('agentTaskWorkspaces');
+const projectLeases = () => activeDb().collection('agentProjectLeases');
 const PROJECT_LEASE_MS = 45_000;
+const MAX_WORKSPACE_HARD_LIMIT_BYTES = 25 * 1024 * 1024; // 25 MB ceiling
 
 function projectLeaseId(ownerId: string, projectId: string): string {
   return createHash('sha256').update(`${ownerId}:${projectId}`).digest('hex');
@@ -16,31 +30,61 @@ function projectLeaseId(ownerId: string, projectId: string): string {
 
 export async function saveAgentTaskWorkspace(taskId: string, ownerId: string, projectId: string, files: unknown[]): Promise<void> {
   const serialized = JSON.stringify(files);
-  if (Buffer.byteLength(serialized, 'utf8') > 850 * 1024) throw new Error('Agent workspace snapshot exceeds the durable storage limit.');
-  await workspaces().doc(taskId).set({ taskId, ownerId, projectId, files: JSON.parse(serialized), createdAt: Date.now() });
+  const byteLength = Buffer.byteLength(serialized, 'utf8');
+  if (byteLength > MAX_WORKSPACE_HARD_LIMIT_BYTES) {
+    throw new Error('Agent workspace snapshot exceeds the 25 MB maximum storage limit.');
+  }
+  await saveLargePayloadDurable({
+    collectionName: 'agentTaskWorkspaces',
+    docId: taskId,
+    ownerId,
+    projectId,
+    payload: files,
+    extraFields: {
+      taskId,
+      ownerId,
+      projectId,
+      ...(byteLength <= LARGE_PAYLOAD_THRESHOLD_BYTES ? { files: JSON.parse(serialized) } : {})
+    },
+    ttlMs: DEFAULT_TTL_MS,
+    thresholdBytes: LARGE_PAYLOAD_THRESHOLD_BYTES
+  });
 }
 
 export async function getAgentTaskWorkspace(taskId: string, ownerId: string): Promise<any[] | null> {
+  const loaded = await loadLargePayloadDurable<any[]>({
+    collectionName: 'agentTaskWorkspaces',
+    docId: taskId,
+    ownerId
+  });
+  if (loaded && Array.isArray(loaded.payload)) {
+    return loaded.payload;
+  }
   const snapshot = await workspaces().doc(taskId).get();
   if (!snapshot.exists || snapshot.get('ownerId') !== ownerId) return null;
   return Array.isArray(snapshot.get('files')) ? snapshot.get('files') : null;
 }
 
 export async function deleteAgentTaskWorkspace(taskId: string, ownerId: string): Promise<void> {
-  const reference = workspaces().doc(taskId);
-  await adminDb.runTransaction(async transaction => {
-    const snapshot = await transaction.get(reference);
-    if (snapshot.exists && snapshot.get('ownerId') === ownerId) transaction.delete(reference);
+  await deleteLargePayloadDurable({
+    collectionName: 'agentTaskWorkspaces',
+    docId: taskId,
+    ownerId
   });
 }
 
 export async function saveAgentTask(task: Record<string, unknown>): Promise<void> {
-  await tasks().doc(String(task.id)).set(task);
+  const expiresAtMs = Date.now() + DEFAULT_TTL_MS;
+  await tasks().doc(String(task.id)).set({
+    ...task,
+    expiresAt: new Date(expiresAtMs),
+    expiresAtMs
+  });
 }
 
 export async function updateAgentTask(id: string, patch: Record<string, unknown>): Promise<boolean> {
   const reference = tasks().doc(id);
-  return adminDb.runTransaction(async (transaction) => {
+  return activeDb().runTransaction(async (transaction: Transaction) => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) return false;
     if (patch.workerId && snapshot.get('workerId') !== patch.workerId) return false;
@@ -73,7 +117,7 @@ export async function appendAgentEvent(event: Record<string, unknown>): Promise<
   }
   const taskReference = tasks().doc(String(event.taskId));
   const eventReference = events().doc(String(event.id));
-  await adminDb.runTransaction(async transaction => {
+  await activeDb().runTransaction(async transaction => {
     const taskSnapshot = await transaction.get(taskReference);
     // Timestamp-sized sequence keeps new ordered IDs ahead of legacy events that predate sequencing.
     const sequence = Math.max(Number(taskSnapshot.get('eventSequence') || 0), Date.now() * 1_000) + 1;
@@ -100,7 +144,7 @@ export async function updateAgentTaskGitHubState(
   patch: Record<string, unknown>,
 ): Promise<boolean> {
   const reference = tasks().doc(id);
-  return adminDb.runTransaction(async transaction => {
+  return activeDb().runTransaction(async transaction => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists || snapshot.get('ownerId') !== ownerId || snapshot.get('projectId') !== projectId) return false;
     const current = (snapshot.get('github') || {}) as Record<string, unknown>;
@@ -121,7 +165,7 @@ export async function completeAgentTask(taskId: string, ownerId: string, workerI
   }
   const taskRef = tasks().doc(taskId);
   const resultRef = results().doc(taskId);
-  return adminDb.runTransaction(async transaction => {
+  return activeDb().runTransaction(async transaction => {
     const snapshot = await transaction.get(taskRef);
     if (!snapshot.exists || snapshot.get('ownerId') !== ownerId || snapshot.get('workerId') !== workerId) return false;
     if (!['PLANNING', 'INSPECTING', 'WAITING_FOR_TOOL', 'EXECUTING', 'VALIDATING'].includes(String(snapshot.get('status')))) return false;
@@ -170,7 +214,7 @@ export async function listRunningAgentTasks(): Promise<any[]> {
 
 export async function failInterruptedAgentTask(task: any): Promise<boolean> {
   const reference = tasks().doc(String(task.id));
-  return adminDb.runTransaction(async (transaction) => {
+  return activeDb().runTransaction(async (transaction) => {
     const latest = await transaction.get(reference);
     if (!latest.exists || !['PLANNING', 'INSPECTING', 'WAITING_FOR_TOOL', 'EXECUTING', 'VALIDATING'].includes(latest.get('status'))) return false;
     const heartbeatAt = Number(latest.get('heartbeatAt') || 0);
@@ -190,7 +234,7 @@ export async function failInterruptedAgentTask(task: any): Promise<boolean> {
 /** Only one app instance can claim a queued task for execution. */
 export async function claimQueuedAgentTask(id: string, workerId: string): Promise<boolean> {
   const reference = tasks().doc(id);
-  return adminDb.runTransaction(async (transaction: Transaction) => {
+  return activeDb().runTransaction(async (transaction: Transaction) => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists || snapshot.get('status') !== 'QUEUED') return false;
     const ownerId = String(snapshot.get('ownerId') || '');
@@ -216,7 +260,7 @@ export async function claimQueuedAgentTask(id: string, workerId: string): Promis
 
 export async function heartbeatAgentTask(id: string, workerId: string): Promise<{ active: boolean; status?: string }> {
   const reference = tasks().doc(id);
-  return adminDb.runTransaction(async transaction => {
+  return activeDb().runTransaction(async transaction => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists || snapshot.get('workerId') !== workerId) return { active: false, status: snapshot.get('status') };
     const status = String(snapshot.get('status') || '');
@@ -235,7 +279,7 @@ export async function heartbeatAgentTask(id: string, workerId: string): Promise<
 
 export async function releaseAgentProjectLease(taskId: string, ownerId: string, workerId: string): Promise<void> {
   const taskReference = tasks().doc(taskId);
-  await adminDb.runTransaction(async transaction => {
+  await activeDb().runTransaction(async transaction => {
     const taskSnapshot = await transaction.get(taskReference);
     if (!taskSnapshot.exists || taskSnapshot.get('ownerId') !== ownerId) return;
     const projectId = String(taskSnapshot.get('projectId') || '');

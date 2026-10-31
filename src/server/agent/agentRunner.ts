@@ -7,7 +7,7 @@ import { normalizeOpenAIError } from '../providers/openai';
 import { AIProviderError } from '../providers/base';
 
 export interface AgentRunnerOptions {
-  provider?: 'openai';
+  provider?: 'openai' | 'gemini' | 'anthropic';
   model: string;
   prompt: string;
   virtualFiles: any[];

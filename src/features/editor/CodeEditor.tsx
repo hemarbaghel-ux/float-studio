@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import Editor, { useMonaco } from '@monaco-editor/react';
+import Editor, { loader } from '@monaco-editor/react';
 import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
 import { auth } from '../../lib/firebase';
@@ -24,7 +24,45 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
 
   const { selectedModel, providers } = useAIStore();
   const editorRef = useRef<any>(null);
-  const monaco = useMonaco();
+  const [monaco, setMonaco] = useState<any>(() => (loader as any)?.__getMonacoInstance?.() ?? null);
+
+  useEffect(() => {
+    let cancelable: ReturnType<typeof loader.init> | null = null;
+    let isMounted = true;
+
+    if (!monaco) {
+      try {
+        cancelable = loader.init();
+        cancelable
+          .then((instance: any) => {
+            if (isMounted && instance) {
+              setMonaco(instance);
+            }
+          })
+          .catch((err: any) => {
+            if (
+              err?.type === 'cancelation' ||
+              err?.msg === 'operation is manually canceled' ||
+              /cancel/i.test(err?.message || err?.msg || '')
+            ) {
+              return;
+            }
+            console.error('Monaco initialization error:', err);
+          });
+      } catch (e: any) {
+        if (!e?.message?.includes('cancel')) {
+          console.error('Failed to initialize Monaco loader:', e);
+        }
+      }
+    }
+
+    return () => {
+      isMounted = false;
+      try {
+        cancelable?.cancel();
+      } catch {}
+    };
+  }, []);
   const [isInlineAssistantOpen, setIsInlineAssistantOpen] = useState(false);
   const [inlinePosition, setInlinePosition] = useState<{ top: number; left: number } | null>(null);
   const [inlineInstruction, setInlineInstruction] = useState<string>('');
@@ -182,6 +220,7 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
 
   const handleEditorDidMount = (editor: any, monacoInstance: any) => {
     editorRef.current = editor;
+    setMonaco(monacoInstance);
 
     // Add save command (Ctrl+S / Cmd+S)
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {

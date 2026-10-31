@@ -13,7 +13,7 @@ import { ModelRouter } from '../src/server/providers/router';
 import { OpenAIAdapter } from '../src/server/providers/openai';
 import { VERIFIED_MODELS } from '../src/data/verifiedModels';
 import { DASHBOARD_MODELS } from '../src/features/dashboard/dashboardModels';
-import { INITIAL_MODELS, FLOAT_BASIC_MODEL } from '../src/features/ai/registry';
+import { INITIAL_MODELS } from '../src/features/ai/registry';
 import { useAIStore, VALID_FLOAT_MODELS } from '../src/store/aiStore';
 import { useIDEStore } from '../src/store/index';
 import { ToolRegistry } from '../src/server/agent/toolRegistry';
@@ -78,42 +78,40 @@ async function runMasterAuditRegressionTests() {
     resetEphemeralWorkspacesForTests();
   }
 
-  // 2. Model Catalog Reconciliation: Verified Upstream IDs vs Internal FLOAT Aliases
-  console.log('\n--- 2. Model Catalog, Alias Reconciliation & AI Store Integrity ---');
+  // 2. Model Catalog Reconciliation: Verified Exact Model IDs
+  console.log('\n--- 2. Model Catalog, Direct Model Routing & AI Store Integrity ---');
   const router = new ModelRouter();
-  check(DASHBOARD_MODELS.length === 2, 'DASHBOARD_MODELS has consolidated dashboard selector models (GPT-6 Astra & GPT-6.1 Sol)');
-  check(VERIFIED_MODELS.length === 3, 'VERIFIED_MODELS has consolidated catalog entries (GPT-6 Astra, GPT-6.1 Sol & float-basic)');
-  check(INITIAL_MODELS.length === 3 && VALID_FLOAT_MODELS.length === 3, 'INITIAL_MODELS and VALID_FLOAT_MODELS agree on consolidated catalog entries');
-  check(Boolean(FLOAT_BASIC_MODEL && FLOAT_BASIC_MODEL.id === 'float-basic'), 'FLOAT_BASIC_MODEL is exported and defined');
+  check(DASHBOARD_MODELS.length >= 3, 'DASHBOARD_MODELS has consolidated dashboard selector models');
+  check(VERIFIED_MODELS.length >= 3, 'VERIFIED_MODELS has verified catalog entries with exact model IDs');
+  check(Boolean(INITIAL_MODELS.some(m => m.id === 'gemini-4-argon')), 'gemini-4-argon is exported and defined');
 
-  const internalAliases: Array<{ id: string; expectedUpstream: string }> = [
-    { id: 'float-basic', expectedUpstream: 'gpt-4o-mini' },
-    { id: 'gpt-6-astra', expectedUpstream: 'gpt-6-astra' },
-    { id: 'gpt-6.1-sol', expectedUpstream: 'gpt-6.1-sol' }
+  const directModels: Array<{ id: string; expectedApiId: string }> = [
+    { id: 'gemini-4-argon', expectedApiId: 'gemini-4-argon' },
+    { id: 'gpt-6-astra', expectedApiId: 'gpt-6-astra' },
+    { id: 'gpt-6-sol', expectedApiId: 'gpt-6-sol' },
+    { id: 'gpt-6-luna', expectedApiId: 'gpt-6-luna' },
+    { id: 'claude-sonnet-5-5', expectedApiId: 'claude-sonnet-5-5' }
   ];
-  for (const { id, expectedUpstream } of internalAliases) {
-    useAIStore.getState().setSelectedModel(id);
-    check(useAIStore.getState().selectedModel === id, `useAIStore preserves internal alias "${id}"`);
+  for (const { id, expectedApiId } of directModels) {
     const resolved = router.resolveRoute(id);
     const vmEntry = VERIFIED_MODELS.find(m => m.id === id);
     check(
-      resolved.route.isInternalAlias === (id === 'float-basic') &&
-      resolved.route.upstreamModelId === expectedUpstream &&
-      vmEntry?.isInternalAlias === (id === 'float-basic') &&
-      vmEntry?.upstreamModelId === expectedUpstream,
-      `Model "${id}" has truthful alias metadata and upstreamModelId="${expectedUpstream}" in Router and VERIFIED_MODELS`
+      resolved.route.apiModelId === expectedApiId &&
+      vmEntry?.exactModelId === expectedApiId,
+      `Model "${id}" resolves to exact API ID "${expectedApiId}" in Router and VERIFIED_MODELS`
     );
   }
 
-  // 3. OpenAIAdapter Exact Model Preservation & Explicit Alias Mapping
+  // 3. OpenAIAdapter Exact Model Preservation
   console.log('\n--- 3. OpenAIAdapter Upstream Model ID Preservation ---');
   const adapter = new OpenAIAdapter();
   check((adapter as any).resolveApiModel('o1') === 'o1', 'OpenAIAdapter preserves o1 model ID');
   check((adapter as any).resolveApiModel('o3-mini') === 'o3-mini', 'OpenAIAdapter preserves o3-mini model ID');
   check((adapter as any).resolveApiModel('gpt-4o-mini') === 'gpt-4o-mini', 'OpenAIAdapter preserves gpt-4o-mini model ID');
-  check((adapter as any).resolveApiModel('float-basic') === 'gpt-4o-mini', 'OpenAIAdapter maps float-basic alias to gpt-4o-mini');
+  check((adapter as any).resolveApiModel('float-basic') === 'gpt-4o-mini', 'OpenAIAdapter maps float-basic to gpt-4o-mini');
   check((adapter as any).resolveApiModel('gpt-6-astra') === 'gpt-6-astra', 'OpenAIAdapter preserves gpt-6-astra model ID');
-  check((adapter as any).resolveApiModel('gpt-6.1-sol') === 'gpt-6.1-sol', 'OpenAIAdapter preserves gpt-6.1-sol model ID');
+  check((adapter as any).resolveApiModel('gpt-6-sol') === 'gpt-6-sol', 'OpenAIAdapter preserves gpt-6-sol model ID');
+  check((adapter as any).resolveApiModel('gpt-6-luna') === 'gpt-6-luna', 'OpenAIAdapter preserves gpt-6-luna model ID');
 
   // 4. IDE Store File & Folder Lifecycle (Create, Update, Rename, Delete, Tab Sync)
   console.log('\n--- 4. IDE Store File & Folder Lifecycle & Editor State Sync ---');

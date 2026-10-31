@@ -37,9 +37,9 @@ export interface ToolExecutionContext {
    * Maps safePath -> original file entry (or `null` if the file did not exist in the baseline).
    */
   baselineFiles?: Map<string, { path: string; name?: string; content?: string; type: string } | null>;
-  /** Optional execution policy mode ('readonly' | 'ask' | 'allowlist' | 'full_sandbox'). */
-  executionPolicy?: 'readonly' | 'ask' | 'allowlist' | 'full_sandbox';
-  /** When true, commands require explicit user approval before running. */
+  /** Optional execution policy mode ('readonly' | 'ask' | 'allowlist' | 'full_sandbox' | 'auto'). */
+  executionPolicy?: 'readonly' | 'ask' | 'allowlist' | 'full_sandbox' | 'auto';
+  /** When true, commands require explicit user approval before running (unless executionPolicy is 'auto'). */
   requireCommandApproval?: boolean;
   /** Explicit test/runtime flag to authorize sandboxed execution when configured. */
   enableSandboxExecution?: boolean;

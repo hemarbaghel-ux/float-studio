@@ -30,7 +30,7 @@ import {
   saveAgentTaskWorkspace,
   updateAgentTask,
 } from './agentPersistence';
-import { approveAgentTaskPullRequest, createAgentTaskPullRequest, mergeAgentTaskPullRequest, publishAgentTaskBranch, refreshAgentTaskPullRequest } from './github/gitRouter';
+import { approveAgentTaskPullRequest, commentOnAgentTaskPullRequest, createAgentTaskPullRequest, mergeAgentTaskPullRequest, publishAgentTaskBranch, refreshAgentTaskPullRequest } from './github/gitRouter';
 
 // Sensitive patterns to exclude from any agent file context
 const SENSITIVE_PATTERNS = [
@@ -386,6 +386,24 @@ export class AgentOrchestrator {
   private workerHeartbeats = new Map<string, ReturnType<typeof setInterval>>();
   private activeControllers = new Map<string, AbortController>();
   private startingWorkers = 0;
+  private enqueueOnlyOverride: boolean | null = null;
+
+  getWorkerId(): string {
+    return this.workerId;
+  }
+
+  setEnqueueOnlyMode(enabled: boolean | null): void {
+    this.enqueueOnlyOverride = enabled;
+  }
+
+  isEnqueueOnlyMode(): boolean {
+    if (this.enqueueOnlyOverride !== null) return this.enqueueOnlyOverride;
+    return process.env.FLOAT_SEPARATE_WORKER === 'true' && process.env.FLOAT_WORKER_PROCESS !== 'true';
+  }
+
+  getActiveTaskIds(): string[] {
+    return Array.from(this.activeControllers.keys());
+  }
 
   getProjectOwner(projectId: string): string | undefined {
     return this.projectOwners.get(projectId);
@@ -418,7 +436,7 @@ export class AgentOrchestrator {
     // Client-supplied file contents are never treated as authoritative task context.
     const rawFiles = retrySnapshot || flattenProjectFiles(projectData.files).filter(file => !SENSITIVE_PATTERNS.some(pattern => pattern.test(file.path))).slice(0, 200);
     const validated = validateAndNormalizeFileNodes(rawFiles);
-    let remainingBytes = 700 * 1024;
+    let remainingBytes = 10 * 1024 * 1024; // 10 MB workspace snapshot limit (offloaded >900 KB to GCS or chunked Firestore)
     const safeFiles = validated.safeFiles.filter((file) => {
       const size = Buffer.byteLength(file.content, 'utf8');
       if (size > remainingBytes) return false;
@@ -434,9 +452,19 @@ export class AgentOrchestrator {
       ? taskData.assignedAgentId 
       : 'main-agent';
 
-    let modelId = taskData.modelId || 'gpt-6.1-sol';
-    if (typeof modelId !== 'string' || (modelId !== 'gpt-6.1-sol' && modelId !== 'gpt-6-astra' && modelId !== 'auto')) {
-      modelId = 'gpt-6.1-sol';
+    const allowedTaskModels = new Set([
+      'gpt-6-sol',
+      'gpt-6-astra',
+      'gpt-6-luna',
+      'gemini-4-argon',
+      'claude-sonnet-5-5',
+      'claude-opus-5-5',
+      'claude-haiku-5-5',
+      'auto'
+    ]);
+    let modelId = taskData.modelId || 'gpt-6-sol';
+    if (typeof modelId !== 'string' || !allowedTaskModels.has(modelId)) {
+      modelId = 'gpt-6-sol';
     }
 
     const taskId = (typeof taskData.id === 'string' && /^[a-zA-Z0-9_\-]{8,64}$/.test(taskData.id.trim()))
@@ -513,19 +541,21 @@ export class AgentOrchestrator {
     this.events.set(taskId, initialEvents);
     await Promise.all(initialEvents.map((event) => appendAgentEvent(event)));
 
-    void this.processTask(taskId).catch((error) => {
-      console.error(`[AgentOrchestrator] Task ${taskId} could not start:`, error);
-      const current = this.tasks.get(taskId);
-      if (current && !['CANCELLED', 'PAUSED'].includes(current.status)) {
-        current.error = 'Agent task failed to start. Review task events and retry.';
-        void this.updateTaskStatus(taskId, 'FAILED');
-        this.logEvent(taskId, 'agent_error', current.error);
-      }
-    });
+    if (!this.isEnqueueOnlyMode()) {
+      void this.processTask(taskId).catch((error) => {
+        console.error(`[AgentOrchestrator] Task ${taskId} could not start:`, error);
+        const current = this.tasks.get(taskId);
+        if (current && !['CANCELLED', 'PAUSED'].includes(current.status)) {
+          current.error = 'Agent task failed to start. Review task events and retry.';
+          void this.updateTaskStatus(taskId, 'FAILED');
+          this.logEvent(taskId, 'agent_error', current.error);
+        }
+      });
+    }
     return task;
   }
 
-  private async processTask(taskId: string) {
+  public async processTask(taskId: string) {
     if (this.activeControllers.size + this.startingWorkers >= 2) return;
     this.startingWorkers += 1;
     let task: any;
@@ -597,8 +627,8 @@ export class AgentOrchestrator {
 
       await this.updateTaskStatus(taskId, 'EXECUTING', 20);
       const run = AgentRunner.run({
-        model: task.modelId || 'gpt-6.1-sol',
-        provider: 'openai',
+        model: task.modelId || 'gpt-6-sol',
+        provider: task.modelId === 'gemini-4-argon' ? 'gemini' : 'openai',
         prompt: boundedTaskPrompt,
         virtualFiles: safeFiles, projectName: task.context?.sourceProjectName || task.name,
         projectId: task.projectId, userId: task.ownerId, agentTaskId: task.id, signal: controller.signal,
@@ -939,12 +969,14 @@ export class AgentOrchestrator {
   async resumeTaskDurable(taskId: string) {
     await this.setTaskStatusDurable(taskId, 'QUEUED');
     this.logEvent(taskId, 'task_resumed', 'Task resumed by user.');
-    setTimeout(() => {
-      void this.processTask(taskId).catch((error) => {
-        console.error(`[AgentOrchestrator] Resumed task ${taskId} failed:`, error);
-        void this.updateTaskStatus(taskId, 'FAILED');
-      });
-    }, 0);
+    if (!this.isEnqueueOnlyMode()) {
+      setTimeout(() => {
+        void this.processTask(taskId).catch((error) => {
+          console.error(`[AgentOrchestrator] Resumed task ${taskId} failed:`, error);
+          void this.updateTaskStatus(taskId, 'FAILED');
+        });
+      }, 0);
+    }
   }
 
   async retryTaskDurable(taskId: string, userId: string) {
@@ -988,15 +1020,63 @@ export class AgentOrchestrator {
       await this.updateTaskStatus(task.id, 'FAILED');
     }
 
+    if (!this.isEnqueueOnlyMode()) {
+      const queued = await listQueuedAgentTasks();
+      for (const task of queued) {
+        if (this.activeControllers.size >= 2) break;
+        this.tasks.set(task.id, task);
+        void this.processTask(task.id).catch((error) => {
+          console.error(`[AgentOrchestrator] Could not recover queued task ${task.id}:`, error);
+          void this.updateTaskStatus(task.id, 'FAILED');
+        });
+      }
+    }
+  }
+
+  /**
+   * Used by the background worker loop (`worker.ts`) to poll queued tasks and process them.
+   */
+  public async pollQueuedTasksOnce(): Promise<number> {
+    if (this.activeControllers.size >= 2) return 0;
     const queued = await listQueuedAgentTasks();
+    let started = 0;
     for (const task of queued) {
       if (this.activeControllers.size >= 2) break;
       this.tasks.set(task.id, task);
-      void this.processTask(task.id).catch((error) => {
-        console.error(`[AgentOrchestrator] Could not recover queued task ${task.id}:`, error);
-        void this.updateTaskStatus(task.id, 'FAILED');
+      started++;
+      await this.processTask(task.id).catch((error) => {
+        console.error(`[AgentOrchestrator] Worker task ${task.id} failed:`, error);
       });
     }
+    return started;
+  }
+
+  /**
+   * Gracefully stops or requeues running tasks when the worker or server shuts down.
+   */
+  public async gracefulShutdownWorker(): Promise<{ requeuedTaskIds: string[] }> {
+    const requeuedTaskIds: string[] = [];
+    for (const [taskId, controller] of this.activeControllers.entries()) {
+      this.stopWorkerHeartbeat(taskId);
+      controller.abort();
+      const task = this.tasks.get(taskId) || await readAgentTask(taskId).catch(() => null);
+      if (task && ['PLANNING', 'INSPECTING', 'WAITING_FOR_TOOL', 'EXECUTING', 'VALIDATING'].includes(task.status)) {
+        try {
+          await updateAgentTask(taskId, {
+            status: 'QUEUED',
+            workerId: this.workerId
+          });
+          if (task.ownerId) {
+            await releaseAgentProjectLease(taskId, task.ownerId, this.workerId).catch(() => undefined);
+          }
+          requeuedTaskIds.push(taskId);
+        } catch {
+          // Best-effort requeue on shutdown
+        }
+      }
+    }
+    this.activeControllers.clear();
+    return { requeuedTaskIds };
   }
 
   getTask(taskId: string, userId?: string) {
@@ -1240,6 +1320,7 @@ export function setupAgentOrchestratorRoutes(app: any) {
   // Use the project's linked repository and encrypted OAuth connection; task operations never move its current/default branch.
   app.post('/api/agents/tasks/:id/github/publish', runAgentGitHubAction((task, ownerId) => publishAgentTaskBranch(task, ownerId)));
   app.post('/api/agents/tasks/:id/github/pull-request', runAgentGitHubAction((task, ownerId) => createAgentTaskPullRequest(task, ownerId)));
+  app.post('/api/agents/tasks/:id/github/comment', runAgentGitHubAction((task, ownerId, body) => commentOnAgentTaskPullRequest(task, ownerId, body?.comment)));
   app.post('/api/agents/tasks/:id/github/approve', runAgentGitHubAction((task, ownerId) => approveAgentTaskPullRequest(task, ownerId)));
   app.post('/api/agents/tasks/:id/github/refresh', runAgentGitHubAction((task, ownerId) => refreshAgentTaskPullRequest(task, ownerId)));
   app.post('/api/agents/tasks/:id/github/merge', runAgentGitHubAction((task, ownerId, body) => mergeAgentTaskPullRequest(task, ownerId, body.confirmed === true)));

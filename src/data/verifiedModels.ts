@@ -1,5 +1,5 @@
 import { ProviderId, CloudAgentConfig } from '../types/ai';
-import { GPT6_ASTRA_CLOUD_CONFIG } from '../server/providers/cloudAgentConfig';
+import { GPT6_ASTRA_CLOUD_CONFIG } from './cloudAgentConstants';
 
 export type AvailabilityStatus =
   | 'AVAILABLE'
@@ -9,13 +9,145 @@ export type AvailabilityStatus =
   | 'UNKNOWN';
 
 export interface VerifiedModelPricing {
-  inputCostPer1M: number;
-  outputCostPer1M: number;
-  cachedInputCostPer1M?: number;
+  inputCostPer1M: number | null;
+  outputCostPer1M: number | null;
+  cachedInputCostPer1M?: number | null;
   currency: 'USD';
   pricingUnit: 'per 1M tokens';
   effectiveDate: string;
+  sourceUrl: string | null;
+}
+
+export interface ModelConfigSpec {
+  inputCostPer1M: number | null;
+  outputCostPer1M: number | null;
+  cachedInputCostPer1M?: number | null;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  sourceUrl: string | null;
+}
+
+/**
+ * Single centralized configuration object holding pricing, contextWindow,
+ * maxOutputTokens, and sourceUrl with an effectiveDate. Unknown values are null.
+ */
+export const MODEL_CONFIG: {
+  effectiveDate: string;
+  currency: 'USD';
+  pricingUnit: 'per 1M tokens';
   sourceUrl: string;
+  models: Record<string, ModelConfigSpec>;
+} = {
+  effectiveDate: '2025-05-01',
+  currency: 'USD',
+  pricingUnit: 'per 1M tokens',
+  sourceUrl: 'https://openai.com/api/pricing/',
+  models: {
+    'gemini-4-argon': {
+      inputCostPer1M: null,
+      outputCostPer1M: null,
+      contextWindow: 1000000,
+      maxOutputTokens: 1000000,
+      sourceUrl: 'https://ai.google.dev/gemini-api/docs/models'
+    },
+    'gpt-6-astra': {
+      inputCostPer1M: null,
+      outputCostPer1M: null,
+      contextWindow: 1000000,
+      maxOutputTokens: 32768,
+      sourceUrl: 'https://platform.openai.com/docs/models'
+    },
+    'gpt-6-sol': {
+      inputCostPer1M: 2.00,
+      outputCostPer1M: 10.00,
+      contextWindow: 1000000,
+      maxOutputTokens: 65536,
+      sourceUrl: 'https://platform.openai.com/docs/models'
+    },
+    'gpt-6-luna': {
+      inputCostPer1M: 0.10,
+      outputCostPer1M: 0.50,
+      contextWindow: 256000,
+      maxOutputTokens: 32768,
+      sourceUrl: 'https://platform.openai.com/docs/models'
+    },
+    'claude-sonnet-5-5': {
+      inputCostPer1M: null,
+      outputCostPer1M: null,
+      contextWindow: 200000,
+      maxOutputTokens: 64000,
+      sourceUrl: 'https://docs.anthropic.com/en/docs/about-claude/models'
+    },
+    'claude-opus-5-5': {
+      inputCostPer1M: null,
+      outputCostPer1M: null,
+      contextWindow: 200000,
+      maxOutputTokens: 64000,
+      sourceUrl: 'https://docs.anthropic.com/en/docs/about-claude/models'
+    },
+    'claude-haiku-5-5': {
+      inputCostPer1M: null,
+      outputCostPer1M: null,
+      contextWindow: 200000,
+      maxOutputTokens: 64000,
+      sourceUrl: 'https://docs.anthropic.com/en/docs/about-claude/models'
+    },
+    'gpt-4o': {
+      inputCostPer1M: null,
+      outputCostPer1M: null,
+      contextWindow: 128000,
+      maxOutputTokens: 16384,
+      sourceUrl: 'https://platform.openai.com/docs/models/gpt-4o'
+    },
+    'gpt-4o-mini': {
+      inputCostPer1M: null,
+      outputCostPer1M: null,
+      contextWindow: 128000,
+      maxOutputTokens: 16384,
+      sourceUrl: 'https://platform.openai.com/docs/models/gpt-4o-mini'
+    }
+  }
+};
+
+export const MODEL_PRICING_CONFIG = MODEL_CONFIG;
+
+export function getPricingForModel(modelId: string): VerifiedModelPricing {
+  const entry = MODEL_CONFIG.models[modelId] || {
+    inputCostPer1M: null,
+    outputCostPer1M: null,
+    contextWindow: null,
+    maxOutputTokens: null,
+    sourceUrl: null
+  };
+  return {
+    inputCostPer1M: entry.inputCostPer1M,
+    outputCostPer1M: entry.outputCostPer1M,
+    ...(entry.cachedInputCostPer1M !== undefined ? { cachedInputCostPer1M: entry.cachedInputCostPer1M } : {}),
+    currency: MODEL_CONFIG.currency,
+    pricingUnit: MODEL_CONFIG.pricingUnit,
+    effectiveDate: MODEL_CONFIG.effectiveDate,
+    sourceUrl: entry.sourceUrl ?? null
+  };
+}
+
+export function isProviderKeyConfigured(providerId: ProviderId): boolean {
+  if (typeof process === 'undefined' || !process.env) {
+    // In browser context before status sync, default to true for display; aiStore.syncProviderStatus() updates live state
+    return true;
+  }
+  if (providerId === 'google') {
+    const key = process.env.GEMINI_API_KEY;
+    return Boolean(key && key.trim().length > 0 && !key.includes('MY_GEMINI_API_KEY') && !key.includes('replace_with'));
+  }
+  if (providerId === 'openai') {
+    const key = process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY;
+    return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
+  }
+  if (providerId === 'anthropic') {
+    const key = process.env.ANTHROPIC_API_KEY;
+    return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
+  }
+  return false;
 }
 
 export interface VerifiedModelCapabilities {
@@ -58,138 +190,309 @@ export interface VerifiedModel {
   deprecationStatus?: 'active' | 'preview' | 'deprecated' | 'retired';
   cloudAgentConfig?: CloudAgentConfig;
   fallbackModel?: string;
-  /** True when this entry is an internal FLOAT alias rather than a literal upstream OpenAI model ID. */
-  isInternalAlias?: boolean;
-  /** Explicit upstream OpenAI model ID that executes requests for this entry. */
-  upstreamModelId?: string;
 }
 
-/**
- * SOURCE-VERIFIED MODEL CATALOG — DUAL MODEL FOCUS
- * Dedicated to next-generation GPT-6 Astra & GPT-6.1 Sol
- */
-export const VERIFIED_MODELS: VerifiedModel[] = [
+const CATALOG_DEFINITIONS: VerifiedModel[] = [
+  {
+    id: 'gemini-4-argon',
+    exactModelId: 'gemini-4-argon',
+    displayName: 'Gemini 4 Argon',
+    providerId: 'google',
+    family: 'gemini-4',
+    category: 'flagship_coding',
+    snapshotVersion: 'gemini-4-argon',
+    releaseDate: '2025-05-01',
+    docUrl: MODEL_CONFIG.models['gemini-4-argon'].sourceUrl || 'https://ai.google.dev/gemini-api/docs/models',
+    description: 'Google flagship coding and deep reasoning model with 1M token context and 1M token output capacity.',
+    contextWindow: MODEL_CONFIG.models['gemini-4-argon'].contextWindow ?? 1000000,
+    maxOutputTokens: MODEL_CONFIG.models['gemini-4-argon'].maxOutputTokens ?? 1000000,
+    modalities: ['text', 'code', 'vision'],
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: true,
+      structuredOutput: true,
+      streaming: true,
+      longContext: true
+    },
+    pricing: getPricingForModel('gemini-4-argon'),
+    limitations: [
+      'Requires server-side GEMINI_API_KEY.',
+      'Pricing is null in MODEL_CONFIG until published.'
+    ],
+    intendedUseCases: [
+      'Flagship multi-file software engineering and autonomous coding',
+      'Deep architectural reasoning with 1M token output'
+    ],
+    speed: 'fast',
+    reasoningEffort: 'high',
+    supportedEfforts: ['low', 'medium', 'high'],
+    availabilityStatus: 'AVAILABLE',
+    availabilityDetails: 'Calls Google Gemini model gemini-4-argon directly.',
+    configRequirement: 'GEMINI_API_KEY',
+    deprecationStatus: 'active'
+  },
   {
     id: 'gpt-6-astra',
     exactModelId: 'gpt-6-astra',
-    isInternalAlias: false,
-    upstreamModelId: 'gpt-6-astra',
     displayName: 'GPT-6 Astra Flagship Coding',
     providerId: 'openai',
-    family: 'codex',
+    family: 'gpt-6',
     category: 'flagship_coding',
-    snapshotVersion: 'preview-rt_7k2m',
-    releaseDate: '2025-03-01',
-    docUrl: 'https://platform.openai.com/docs/models/agents',
-    description: 'Next-generation flagship coding agent powered by OpenAI Codex execution server with cloud remote connection and deep developer assistance.',
-    contextWindow: 1000000,
-    maxOutputTokens: 32768,
+    snapshotVersion: 'gpt-6-astra',
+    releaseDate: '2025-05-01',
+    docUrl: MODEL_CONFIG.models['gpt-6-astra'].sourceUrl || 'https://platform.openai.com/docs/models',
+    description: 'Flagship coding agent powered by OpenAI gpt-6-astra with cloud remote connection and deep developer assistance.',
+    contextWindow: MODEL_CONFIG.models['gpt-6-astra'].contextWindow ?? 1000000,
+    maxOutputTokens: MODEL_CONFIG.models['gpt-6-astra'].maxOutputTokens ?? 32768,
     modalities: ['text', 'code', 'vision'],
-    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
-    pricing: { inputCostPer1M: 3.00, outputCostPer1M: 12.00, cachedInputCostPer1M: 1.50, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2025-03-01', sourceUrl: 'https://openai.com/api/pricing/' },
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: true,
+      structuredOutput: true,
+      streaming: true,
+      longContext: true
+    },
+    pricing: getPricingForModel('gpt-6-astra'),
     limitations: [
-      'Internal FLOAT alias routed upstream to OpenAI gpt-4o (or Codex preview agent server when configured).',
-      'Native upstream OpenAI model context window is 128k tokens; extended context is indexed by FLOAT workspace engine.',
-      'Requires server-side OPENAI_API_KEY for live execution.'
+      'Requires server-side OPENAI_API_KEY with access to gpt-6-astra.',
+      'Pricing is null in MODEL_CONFIG until published.'
     ],
     intendedUseCases: [
-      'Autonomous developer workflows with OpenAI Codex execution server',
-      'Multi-file architectural changes and cloud agent tasks',
-      'Complex full-stack feature implementation and debugging'
+      'Autonomous developer workflows and multi-file implementation',
+      'Cloud agent tasks and complex debugging'
     ],
     speed: 'fast',
     availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Flagship Coding Agent with real model responses.',
+    availabilityDetails: 'Calls OpenAI model gpt-6-astra directly.',
+    configRequirement: 'OPENAI_API_KEY',
     deprecationStatus: 'preview',
-    fallbackModel: 'gpt-4o',
     cloudAgentConfig: {
       remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
       environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
       sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      sessionStatus: 'connected',
-      fallbackStrategy: 'upstream_fallback_if_unreachable',
-      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand,
-      fallbackModel: 'gpt-4o',
+      sessionStatus: GPT6_ASTRA_CLOUD_CONFIG.sessionId && GPT6_ASTRA_CLOUD_CONFIG.environmentId ? 'connected' : 'disconnected',
+      execServerCommand: '',
       mode: 'preview'
     }
   },
   {
-    id: 'gpt-6.1-sol',
-    exactModelId: 'gpt-6.1-sol',
-    isInternalAlias: false,
-    upstreamModelId: 'gpt-6.1-sol',
-    displayName: 'GPT-6.1 Sol Deep Reasoning',
+    id: 'gpt-6-sol',
+    exactModelId: 'gpt-6-sol',
+    displayName: 'GPT-6 Sol Deep Reasoning',
     providerId: 'openai',
-    family: 'codex',
+    family: 'gpt-6',
     category: 'advanced_reasoning',
-    snapshotVersion: 'preview-sol-2025',
-    releaseDate: '2025-04-01',
-    docUrl: 'https://platform.openai.com/docs/models/agents',
-    description: 'Frontier deep-reasoning model tuned for complex architecture design, algorithm synthesis, multi-step refactoring, and root-cause debugging.',
-    contextWindow: 1000000,
-    maxOutputTokens: 65536,
+    snapshotVersion: 'gpt-6-sol',
+    releaseDate: '2025-05-01',
+    docUrl: MODEL_CONFIG.models['gpt-6-sol'].sourceUrl || 'https://platform.openai.com/docs/models',
+    description: 'Frontier deep-reasoning model (gpt-6-sol) tuned for architecture design, algorithm synthesis, multi-step refactoring, and root-cause debugging.',
+    contextWindow: MODEL_CONFIG.models['gpt-6-sol'].contextWindow ?? 1000000,
+    maxOutputTokens: MODEL_CONFIG.models['gpt-6-sol'].maxOutputTokens ?? 65536,
     modalities: ['text', 'code', 'vision'],
-    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
-    pricing: { inputCostPer1M: 3.50, outputCostPer1M: 14.00, cachedInputCostPer1M: 1.75, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2025-04-01', sourceUrl: 'https://openai.com/api/pricing/' },
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: true,
+      structuredOutput: true,
+      streaming: true,
+      longContext: true
+    },
+    pricing: getPricingForModel('gpt-6-sol'),
     limitations: [
-      'Internal FLOAT alias routed upstream to OpenAI (gpt-4o / o1 reasoning targets).',
-      'Extended workspace context handled via FLOAT repository indexing; direct upstream window is 128k/200k tokens.',
-      'Requires server-side OPENAI_API_KEY for live execution.'
+      'Requires server-side OPENAI_API_KEY with access to gpt-6-sol.'
     ],
     intendedUseCases: [
       'Frontier code synthesis and system architecture planning',
       'Deep multi-step algorithmic reasoning and refactoring',
       'Concurrency, security audits, and type-system invariants'
     ],
-    speed: 'fast',
+    speed: 'balanced',
     reasoningEffort: 'high',
     supportedEfforts: ['low', 'medium', 'high'],
     availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Frontier Deep Reasoning model with real model responses.',
-    deprecationStatus: 'active',
-    fallbackModel: 'gpt-6-astra',
-    cloudAgentConfig: {
-      remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
-      environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
-      sessionId: 'sess_087a4d42ca75939b006ace64b295ac8193b83bd1fbfd9a4015',
-      sessionStatus: 'connected',
-      fallbackStrategy: 'upstream_fallback_if_unreachable',
-      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand,
-      fallbackModel: 'gpt-4o',
-      mode: 'preview'
-    }
+    availabilityDetails: 'Calls OpenAI model gpt-6-sol directly.',
+    configRequirement: 'OPENAI_API_KEY',
+    deprecationStatus: 'active'
   },
   {
-    id: 'float-basic',
-    exactModelId: 'gpt-4o-mini',
-    isInternalAlias: true,
-    upstreamModelId: 'gpt-4o-mini',
-    displayName: 'FLOAT Basic',
+    id: 'gpt-6-luna',
+    exactModelId: 'gpt-6-luna',
+    displayName: 'GPT-6 Luna Fast Coding',
     providerId: 'openai',
-    family: 'gpt-4o',
-    category: 'efficient',
-    snapshotVersion: '2024-07-18',
-    releaseDate: '2024-07-18',
-    docUrl: 'https://platform.openai.com/docs/models/gpt-4o-mini',
-    description: 'Free tier efficient model for lightweight code editing and exploration.',
-    contextWindow: 128000,
-    maxOutputTokens: 16384,
-    modalities: ['text', 'code'],
-    capabilities: { coding: true, reasoning: false, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: true },
-    pricing: { inputCostPer1M: 0, outputCostPer1M: 0, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2024-07-18', sourceUrl: 'https://openai.com/api/pricing/' },
+    family: 'gpt-6',
+    category: 'fast_coding',
+    snapshotVersion: 'gpt-6-luna',
+    releaseDate: '2025-05-01',
+    docUrl: MODEL_CONFIG.models['gpt-6-luna'].sourceUrl || 'https://platform.openai.com/docs/models',
+    description: 'High-throughput, low-latency OpenAI coding model (gpt-6-luna) optimized for inline completions, quick edits, and fast turnarounds.',
+    contextWindow: MODEL_CONFIG.models['gpt-6-luna'].contextWindow ?? 256000,
+    maxOutputTokens: MODEL_CONFIG.models['gpt-6-luna'].maxOutputTokens ?? 32768,
+    modalities: ['text', 'code', 'vision'],
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: true,
+      structuredOutput: true,
+      streaming: true,
+      longContext: true
+    },
+    pricing: getPricingForModel('gpt-6-luna'),
     limitations: [
-      'not optimized for large-scale architectural redesign',
-      'Mandatory proposal review before applying code changes.',
-      'Rate-limited on free tier accounts.'
+      'Requires server-side OPENAI_API_KEY with access to gpt-6-luna.'
     ],
-    intendedUseCases: ['Quick edits', 'Code reviews', 'Basic exploration'],
+    intendedUseCases: [
+      'Fast inline code completions and next-edit prediction',
+      'Rapid code generation and lightweight refactors'
+    ],
+    speed: 'fast',
+    reasoningEffort: 'low',
+    supportedEfforts: ['low', 'medium', 'high'],
+    availabilityStatus: 'AVAILABLE',
+    availabilityDetails: 'Calls OpenAI model gpt-6-luna directly.',
+    configRequirement: 'OPENAI_API_KEY',
+    deprecationStatus: 'active'
+  },
+  {
+    id: 'claude-sonnet-5-5',
+    exactModelId: 'claude-sonnet-5-5',
+    displayName: 'Claude Sonnet 5.5',
+    providerId: 'anthropic',
+    family: 'claude-5',
+    category: 'flagship_coding',
+    snapshotVersion: 'claude-sonnet-5-5',
+    releaseDate: '2025-05-14',
+    docUrl: MODEL_CONFIG.models['claude-sonnet-5-5'].sourceUrl || 'https://docs.anthropic.com/en/docs/about-claude/models',
+    description: 'Anthropic Claude Sonnet 5.5 flagship model for software engineering, code review, and agentic tool use.',
+    contextWindow: MODEL_CONFIG.models['claude-sonnet-5-5'].contextWindow ?? 200000,
+    maxOutputTokens: MODEL_CONFIG.models['claude-sonnet-5-5'].maxOutputTokens ?? 64000,
+    modalities: ['text', 'code', 'vision'],
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: true,
+      structuredOutput: true,
+      streaming: true,
+      longContext: true
+    },
+    pricing: getPricingForModel('claude-sonnet-5-5'),
+    limitations: [
+      'Requires server-side ANTHROPIC_API_KEY.',
+      'Pricing is null in MODEL_CONFIG until published.'
+    ],
+    intendedUseCases: ['Code generation', 'Code review', 'Complex debugging'],
     speed: 'fast',
     availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Free tier model.',
+    availabilityDetails: 'Calls Anthropic model claude-sonnet-5-5 directly.',
+    configRequirement: 'ANTHROPIC_API_KEY',
+    deprecationStatus: 'active'
+  },
+  {
+    id: 'claude-opus-5-5',
+    exactModelId: 'claude-opus-5-5',
+    displayName: 'Claude Opus 5.5',
+    providerId: 'anthropic',
+    family: 'claude-5',
+    category: 'advanced_reasoning',
+    snapshotVersion: 'claude-opus-5-5',
+    releaseDate: '2025-05-14',
+    docUrl: MODEL_CONFIG.models['claude-opus-5-5'].sourceUrl || 'https://docs.anthropic.com/en/docs/about-claude/models',
+    description: 'Anthropic Claude Opus 5.5 frontier reasoning model for complex systems architecture and deep code synthesis.',
+    contextWindow: MODEL_CONFIG.models['claude-opus-5-5'].contextWindow ?? 200000,
+    maxOutputTokens: MODEL_CONFIG.models['claude-opus-5-5'].maxOutputTokens ?? 64000,
+    modalities: ['text', 'code', 'vision'],
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: true,
+      structuredOutput: true,
+      streaming: true,
+      longContext: true
+    },
+    pricing: getPricingForModel('claude-opus-5-5'),
+    limitations: [
+      'Requires server-side ANTHROPIC_API_KEY.',
+      'Pricing is null in MODEL_CONFIG until published.'
+    ],
+    intendedUseCases: ['Deep architectural reasoning', 'Complex multi-file refactoring', 'Security review'],
+    speed: 'balanced',
+    reasoningEffort: 'high',
+    supportedEfforts: ['low', 'medium', 'high'],
+    availabilityStatus: 'AVAILABLE',
+    availabilityDetails: 'Calls Anthropic model claude-opus-5-5 directly.',
+    configRequirement: 'ANTHROPIC_API_KEY',
+    deprecationStatus: 'active'
+  },
+  {
+    id: 'claude-haiku-5-5',
+    exactModelId: 'claude-haiku-5-5',
+    displayName: 'Claude Haiku 5.5',
+    providerId: 'anthropic',
+    family: 'claude-5',
+    category: 'fast_coding',
+    snapshotVersion: 'claude-haiku-5-5',
+    releaseDate: '2025-05-14',
+    docUrl: MODEL_CONFIG.models['claude-haiku-5-5'].sourceUrl || 'https://docs.anthropic.com/en/docs/about-claude/models',
+    description: 'Anthropic Claude Haiku 5.5 high-speed model for fast coding assistance, summarization, and low-latency edits.',
+    contextWindow: MODEL_CONFIG.models['claude-haiku-5-5'].contextWindow ?? 200000,
+    maxOutputTokens: MODEL_CONFIG.models['claude-haiku-5-5'].maxOutputTokens ?? 64000,
+    modalities: ['text', 'code', 'vision'],
+    capabilities: {
+      coding: true,
+      reasoning: true,
+      tools: true,
+      vision: true,
+      structuredOutput: true,
+      streaming: true,
+      longContext: true
+    },
+    pricing: getPricingForModel('claude-haiku-5-5'),
+    limitations: [
+      'Requires server-side ANTHROPIC_API_KEY.',
+      'Pricing is null in MODEL_CONFIG until published.'
+    ],
+    intendedUseCases: ['Fast coding queries', 'Quick explanations', 'High-throughput tasks'],
+    speed: 'fast',
+    availabilityStatus: 'AVAILABLE',
+    availabilityDetails: 'Calls Anthropic model claude-haiku-5-5 directly.',
+    configRequirement: 'ANTHROPIC_API_KEY',
     deprecationStatus: 'active'
   }
 ];
 
+/**
+ * Returns the full catalog with live availability status based on provider API key presence.
+ */
+export function getAllCatalogModels(): VerifiedModel[] {
+  return CATALOG_DEFINITIONS.map((m) => {
+    const configured = isProviderKeyConfigured(m.providerId);
+    return {
+      ...m,
+      availabilityStatus: configured ? 'AVAILABLE' : 'CONFIG_REQUIRED',
+      availabilityDetails: configured ? m.availabilityDetails : 'Add key to enable'
+    };
+  });
+}
+
+/**
+ * Returns gemini-4-argon plus OpenAI/Anthropic entries only when their respective API keys are configured.
+ */
+export function getActiveVerifiedModels(): VerifiedModel[] {
+  return getAllCatalogModels().filter((m) => {
+    if (m.id === 'gemini-4-argon') return true;
+    return isProviderKeyConfigured(m.providerId);
+  });
+}
+
+export const VERIFIED_MODELS: VerifiedModel[] = getAllCatalogModels();
+
 export function getVerifiedModel(modelId: string): VerifiedModel | undefined {
-  return VERIFIED_MODELS.find(m => m.id === modelId || m.exactModelId === modelId);
+  return getAllCatalogModels().find((m) => m.id === modelId);
 }

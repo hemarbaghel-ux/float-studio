@@ -18,7 +18,7 @@ export function CloudSessionBanner() {
 }
 
 export function CloudSessionModal() {
-  const { modalOpen, closeModal, start, active, sessionId, environmentId, modelAttached, stop } = useCloudSession();
+  const { modalOpen, closeModal, start, active, sessionId, environmentId, remoteUrl, modelAttached, stop } = useCloudSession();
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'profile' | 'custom'>('profile');
   const [customSessionId, setCustomSessionId] = useState(sessionId || '');
@@ -26,9 +26,12 @@ export function CloudSessionModal() {
 
   if (!modalOpen) return null;
 
-  const currentSessionId = sessionId || AVAILABLE_PROFILES[0].sessionId;
-  const currentEnvId = environmentId || AVAILABLE_PROFILES[0].environmentId;
-  const execCommand = `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${currentEnvId}'`;
+  const currentSessionId = sessionId || '';
+  const currentEnvId = environmentId || '';
+  const currentRemoteUrl = remoteUrl || '';
+  const execCommand = currentEnvId
+    ? `CODEX_API_KEY="$OPENAI_ENVIRONMENT_KEY" codex exec-server${currentRemoteUrl ? ` --remote '${currentRemoteUrl}'` : ''} --environment-id '${currentEnvId}'${currentSessionId ? ` --session-id '${currentSessionId}'` : ''}`
+    : '# Configure FLOAT_ASTRA_ENVIRONMENT_ID and FLOAT_ASTRA_SESSION_ID on the server or enter Custom IDs above.';
 
   const copyToClipboard = () => {
     navigator.clipboard?.writeText(execCommand);
@@ -159,7 +162,7 @@ export function CloudSessionModal() {
                     type="text"
                     value={customEnvId}
                     onChange={(e) => setCustomEnvId(e.target.value)}
-                    placeholder="ccarenv_b64_..."
+                    placeholder="env_..."
                     className="w-full text-xs font-mono px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-white/10 bg-white dark:bg-black/40 text-slate-900 dark:text-white"
                   />
                 </div>

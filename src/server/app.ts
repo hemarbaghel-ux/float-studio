@@ -5,9 +5,10 @@ import path from 'path';
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
 dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
 
-import { setupAgentOrchestratorRoutes } from './agentOrchestrator';
+import { setupAgentOrchestratorRoutes, orchestrator } from './agentOrchestrator';
 import { integrationsRouter } from './integrationsRouter';
 import { subscriptionRouter, handleStripeWebhook } from './subscription/subscriptionRouter';
+import { recordTokenUsage } from './subscription/subscriptionPersistence';
 import express from 'express';
 import fs from 'fs';
 
@@ -20,6 +21,8 @@ import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredent
 import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './agent/proposalService';
+import { CheckpointService } from './agent/checkpointService';
+import { ToolRegistry } from './agent/toolRegistry';
 import { PlanService } from './agent/planService';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
@@ -31,10 +34,13 @@ import {
   GPT6_ASTRA_CLOUD_CONFIG,
   KNOWN_CLOUD_SESSIONS,
   getUserCloudSessionConfig,
-  updateUserCloudSessionConfig
+  getUserCloudSessionConfigDurable,
+  updateUserCloudSessionConfig,
+  updateUserCloudSessionConfigDurable
 } from './providers/cloudAgentConfig';
 import { GoogleGenAI } from '@google/genai';
 import { analystRouter } from './analystRouter';
+import { checkTransactionalRateLimit, isDurableFirestoreActive, resetFallbackRateLimitsForTests, FirestoreNotConfiguredError } from './durableState';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -87,8 +93,22 @@ export function checkEndpointRateLimit(
   return true;
 }
 
+export async function checkEndpointRateLimitDurable(
+  bucket: string,
+  userId: string,
+  maxRequests = 45,
+  windowMs = 60_000
+): Promise<boolean> {
+  if (!userId) return false;
+  if (isDurableFirestoreActive() || process.env.NODE_ENV === 'production') {
+    return checkTransactionalRateLimit(bucket, userId, maxRequests, windowMs);
+  }
+  return checkEndpointRateLimit(bucket, userId, maxRequests, windowMs);
+}
+
 export function resetEndpointRateLimitsForTests(): void {
   endpointRateLimits.clear();
+  resetFallbackRateLimitsForTests();
 }
 
 export interface CreateAppOptions {
@@ -123,11 +143,11 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   // Cloud agent session status and connection configuration (Authenticated, Per-User Scoped, Rate-Limited)
-  app.get(['/api/session/current', '/api/session/status', '/api/session'], requireAuth, (req: any, res) => {
-    if (!checkEndpointRateLimit('session', req.user.uid, 60, 60_000)) {
+  app.get(['/api/session/current', '/api/session/status', '/api/session'], requireAuth, asyncRoute(async (req: any, res) => {
+    if (!(await checkEndpointRateLimitDurable('session', req.user.uid, 60, 60_000))) {
       return res.status(429).json({ error: 'Session status rate limit exceeded. Please wait a moment.' });
     }
-    const userConfig = getUserCloudSessionConfig(req.user.uid);
+    const userConfig = await getUserCloudSessionConfigDurable(req.user.uid);
     res.status(200).json({
       connected: true,
       active: true,
@@ -139,14 +159,14 @@ export async function createApp(options: CreateAppOptions = {}) {
       execServerCommand: userConfig.execServerCommand,
       knownSessions: KNOWN_CLOUD_SESSIONS
     });
-  });
+  }));
 
-  app.post(['/api/session/connect', '/api/session/reconnect'], requireAuth, (req: any, res) => {
-    if (!checkEndpointRateLimit('session_connect', req.user.uid, 20, 60_000)) {
+  app.post(['/api/session/connect', '/api/session/reconnect'], requireAuth, asyncRoute(async (req: any, res) => {
+    if (!(await checkEndpointRateLimitDurable('session_connect', req.user.uid, 20, 60_000))) {
       return res.status(429).json({ error: 'Session connection rate limit exceeded. Please wait a moment.' });
     }
     const { sessionId, environmentId } = req.body || {};
-    const updateRes = updateUserCloudSessionConfig(req.user.uid, { sessionId, environmentId });
+    const updateRes = await updateUserCloudSessionConfigDurable(req.user.uid, { sessionId, environmentId });
     if (!updateRes.ok) {
       return res.status(400).json({ error: (updateRes as { ok: false; error: string }).error });
     }
@@ -158,7 +178,7 @@ export async function createApp(options: CreateAppOptions = {}) {
       environmentId: updateRes.config.environmentId,
       execServerCommand: updateRes.config.execServerCommand
     });
-  });
+  }));
 
   app.get('/api/ready', async (_req, res) => {
     if (!hasAdminCredentials()) return res.status(503).json({ status: 'not_ready', dependency: 'firebase_admin' });
@@ -301,16 +321,16 @@ export async function createApp(options: CreateAppOptions = {}) {
     });
   });
 
-  // In-memory sliding window rate limiter per authenticated user
-  const checkChatRateLimit = (userId: string, maxRequests = 45, windowMs = 60000): boolean => {
-    return checkEndpointRateLimit('chat', userId, maxRequests, windowMs);
+  // Transactional rate limiter per authenticated user (Firestore with TTL when active)
+  const checkChatRateLimit = async (userId: string, maxRequests = 45, windowMs = 60000): Promise<boolean> => {
+    return checkEndpointRateLimitDurable('chat', userId, maxRequests, windowMs);
   };
 
   // AI API Route - supports progressive SSE streaming and standard JSON.
   // Supports unsaved/ephemeral workspaces via `allowMissing: true` while still
   // rejecting persisted projects owned by another user with 403.
   app.post('/api/ai/chat', requireAuth, express.json({ limit: '24mb' }), async (req: any, res: any) => {
-    if (!checkChatRateLimit(req.user.uid)) {
+    if (!(await checkChatRateLimit(req.user.uid))) {
       return res.status(429).json({
         error: 'Rate limit exceeded. Please wait a moment before sending another request.'
       });
@@ -319,7 +339,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     const isStream = req.body.stream === true || req.headers.accept?.includes('text/event-stream');
     const {
       messages,
-      model = 'gpt-6.1-sol',
+      model = 'gpt-6-sol',
       systemInstruction,
       reasoningEffort,
       effort,
@@ -418,7 +438,9 @@ export async function createApp(options: CreateAppOptions = {}) {
           ...gitRepoInfo,
           ...clientGitContext
         },
-        conversationHistory: priorTurns
+        conversationHistory: priorTurns,
+        workspaceFiles: Array.isArray(req.body.workspaceFiles) ? req.body.workspaceFiles : undefined,
+        includeWorkspaceRules: req.body.includeWorkspaceRules !== undefined ? Boolean(req.body.includeWorkspaceRules) : true
       });
 
       contextExplanation = {
@@ -427,16 +449,126 @@ export async function createApp(options: CreateAppOptions = {}) {
         omittedCount: assembled.omittedCount,
         totalContextChars: assembled.totalContextChars,
         includedItems: assembled.includedItems,
-        excludedItems: assembled.excludedItems
+        excludedItems: assembled.excludedItems,
+        appliedRules: assembled.appliedRules
       };
+
+      const extraParts: any[] = [];
+      if (lastMsg && Array.isArray(lastMsg.parts)) {
+        for (const p of lastMsg.parts) {
+          if (p?.inlineData || p?.image_url) {
+            extraParts.push(p);
+          }
+        }
+      }
+      if (Array.isArray(req.body.imageAttachments)) {
+        for (const img of req.body.imageAttachments) {
+          if (img?.mimeType && img?.data) {
+            extraParts.push({ inlineData: { mimeType: String(img.mimeType), data: String(img.data) } });
+          }
+        }
+      }
 
       processedMessages = [
         ...messages.slice(0, lastMsgIdx),
-        { role: 'user', parts: [{ text: assembled.formattedPrompt }] }
+        { role: 'user', parts: [{ text: assembled.formattedPrompt }, ...extraParts] }
       ];
     }
 
     const dataSharingAllowed = ServerPrivacyGuard.evaluateConsent(req);
+
+    const getRequiredEnvVarForProvider = (providerName?: string, modelId?: string): string => {
+      const p = String(providerName || '').toLowerCase();
+      const m = String(modelId || '').toLowerCase();
+      if (p.includes('google') || p.includes('gemini') || m.startsWith('gemini')) return 'GEMINI_API_KEY';
+      if (p.includes('anthropic') || p.includes('claude') || m.startsWith('claude')) return 'ANTHROPIC_API_KEY';
+      return 'OPENAI_API_KEY';
+    };
+
+    const inferProviderDisplayName = (providerName?: string, modelId?: string): string => {
+      if (providerName && providerName !== 'FLOAT') return providerName;
+      const m = String(modelId || '').toLowerCase();
+      if (m.startsWith('gemini')) return 'Google Gemini';
+      if (m.startsWith('claude')) return 'Anthropic';
+      if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'OpenAI';
+      return providerName || 'FLOAT';
+    };
+
+    const buildStructuredProviderError = (error: any, requestedModel?: string) => {
+      const rawMessage = typeof error === 'string'
+        ? error
+        : (error?.message || error?.msg || 'Generation failed.');
+      const provider = inferProviderDisplayName(error?.provider, requestedModel);
+      const envVar = getRequiredEnvVarForProvider(provider, requestedModel);
+      let code: string = error?.code || 'PROVIDER_ERROR';
+      if (
+        code === 'NOT_CONFIGURED' ||
+        /not configured|missing.*api_key|api_key.*missing/i.test(rawMessage)
+      ) {
+        code = 'NOT_CONFIGURED';
+      } else if (
+        code === 'AUTH_ERROR' ||
+        /invalid.*api_key|incorrect api key|401|unauthorized|authentication failed/i.test(rawMessage)
+      ) {
+        code = 'AUTH_ERROR';
+      } else if (
+        code === 'QUOTA_EXCEEDED' ||
+        /insufficient_quota|billing/i.test(rawMessage)
+      ) {
+        code = 'QUOTA_EXCEEDED';
+      } else if (
+        code === 'RATE_LIMITED' ||
+        /resource_exhausted|429|rate[- ]?limit|quota/i.test(rawMessage)
+      ) {
+        code = 'RATE_LIMITED';
+      } else if (
+        code === 'MODEL_NOT_FOUND' ||
+        /not recognized|not found|404/i.test(rawMessage)
+      ) {
+        code = 'MODEL_NOT_FOUND';
+      }
+
+      const setupStep: string = error?.setupStep || (
+        code === 'NOT_CONFIGURED'
+          ? `Set ${envVar} in your server environment (.env) to enable ${provider}.`
+          : code === 'AUTH_ERROR'
+          ? `Verify that ${envVar} in your server environment (.env) is valid and active for ${provider}.`
+          : code === 'RATE_LIMITED' || code === 'QUOTA_EXCEEDED'
+          ? `Wait a moment and retry, check ${provider} quota/billing for ${envVar}, or switch to another configured model.`
+          : code === 'MODEL_NOT_FOUND'
+          ? `Select a supported model from the model selector.`
+          : `Check ${envVar} configuration and ${provider} connectivity in server logs.`
+      );
+
+      const message = code === 'NOT_CONFIGURED' && !rawMessage.includes(envVar)
+        ? `${rawMessage} (Required env var: ${envVar})`
+        : rawMessage;
+
+      return { code, provider, message, setupStep, envVar };
+    };
+
+    let resolvedModelUsed = String(model || 'gemini-4-argon');
+    let preflightError: any = null;
+    if (typeof (modelRouter as any).resolveRoute === 'function' && !req.body?.demoMode) {
+      try {
+        const { route, adapter } = (modelRouter as any).resolveRoute(model);
+        resolvedModelUsed = route?.id || resolvedModelUsed;
+        if (adapter && typeof adapter.isConfigured === 'function' && !adapter.isConfigured()) {
+          const envVar = getRequiredEnvVarForProvider(adapter.name || route?.provider, model);
+          preflightError = Object.assign(
+            new Error(`${adapter.name || route?.provider} is not configured. Set ${envVar} in your server environment.`),
+            {
+              code: 'NOT_CONFIGURED',
+              provider: adapter.name || inferProviderDisplayName(route?.provider, model),
+              statusCode: 503,
+              setupStep: `Set ${envVar} in your server environment (.env) to enable ${adapter.name || route?.provider}.`
+            }
+          );
+        }
+      } catch (routeErr: any) {
+        preflightError = routeErr;
+      }
+    }
 
     if (isStream) {
       res.writeHead(200, {
@@ -451,7 +583,18 @@ export async function createApp(options: CreateAppOptions = {}) {
         if (!res.writableEnded) abortController.abort();
       });
 
+      let terminalSent = false;
+      const sendTerminal = (payload: Record<string, any>) => {
+        if (terminalSent || res.writableEnded || res.destroyed) return;
+        terminalSent = true;
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      };
+
       try {
+        if (preflightError) {
+          throw preflightError;
+        }
+
         if (contextExplanation) {
           res.write(`data: ${JSON.stringify({ type: 'context_info', contextExplanation })}\n\n`);
         }
@@ -468,38 +611,53 @@ export async function createApp(options: CreateAppOptions = {}) {
             demoMode: Boolean(req.body?.demoMode)
           },
           (delta: string) => {
-            if (!abortController.signal.aborted && !res.destroyed && !res.writableEnded) {
+            if (!abortController.signal.aborted && !res.destroyed && !res.writableEnded && !terminalSent) {
               res.write(`data: ${JSON.stringify({ type: 'delta', text: delta })}\n\n`);
             }
           },
           abortController.signal
         );
 
-        res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage, isSimulated: result.isSimulated, contextExplanation })}\n\n`);
-        res.end();
+        const modelUsed = (result as any)?.modelUsed || resolvedModelUsed;
+
+        if (req.user?.uid && result.usage && typeof result.usage.inputTokens === 'number' && typeof result.usage.outputTokens === 'number') {
+          void recordTokenUsage({
+            userId: req.user.uid,
+            modelId: modelUsed,
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens
+          }).catch(() => undefined);
+        }
+
+        sendTerminal({
+          type: 'done',
+          text: result.text,
+          usage: result.usage,
+          isSimulated: result.isSimulated,
+          contextExplanation,
+          modelUsed
+        });
+        if (!res.writableEnded) res.end();
       } catch (error: any) {
-        const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
-        const isCancelled =
+        const isCancelled = Boolean(
           abortController.signal.aborted ||
-          error?.type === 'cancelation' ||
-          error?.type === 'cancelled' ||
-          error?.name === 'AbortError' ||
-          /cancel/i.test(errorStr) ||
-          errorStr.includes('operation is manually canceled');
+          error?.name === 'AbortError'
+        );
 
         if (!res.writableEnded) {
           if (isCancelled) {
-            res.write(`data: ${JSON.stringify({ type: 'done', text: '', cancelled: true })}\n\n`);
+            sendTerminal({ type: 'done', text: '', cancelled: true, modelUsed: resolvedModelUsed });
           } else {
             console.error('AI Stream Error:', error);
-            const errorCode = error?.code || 'PROVIDER_ERROR';
-            const errorProvider = error?.provider || 'FLOAT';
-            res.write(`data: ${JSON.stringify({
+            const structured = buildStructuredProviderError(error, model);
+            sendTerminal({
               type: 'error',
-              error: error.message || 'Generation failed',
-              code: errorCode,
-              provider: errorProvider
-            })}\n\n`);
+              code: structured.code,
+              provider: structured.provider,
+              message: structured.message,
+              error: structured.message,
+              setupStep: structured.setupStep
+            });
           }
           res.end();
         }
@@ -508,6 +666,10 @@ export async function createApp(options: CreateAppOptions = {}) {
     }
 
     try {
+      if (preflightError) {
+        throw preflightError;
+      }
+
       const response = await modelRouter.generateContent({
         model,
         messages: processedMessages,
@@ -519,41 +681,48 @@ export async function createApp(options: CreateAppOptions = {}) {
         demoMode: Boolean(req.body?.demoMode)
       });
 
-      res.json({ text: response.text, usage: response.usage, isSimulated: response.isSimulated });
+      const modelUsed = (response as any)?.modelUsed || resolvedModelUsed;
+
+      if (req.user?.uid && response.usage && typeof response.usage.inputTokens === 'number' && typeof response.usage.outputTokens === 'number') {
+        void recordTokenUsage({
+          userId: req.user.uid,
+          modelId: modelUsed,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens
+        }).catch(() => undefined);
+      }
+
+      res.json({ text: response.text, usage: response.usage, isSimulated: response.isSimulated, modelUsed });
     } catch (error: any) {
-      const errorStr = typeof error === 'string' ? error : (error?.message || error?.msg || JSON.stringify(error || ''));
-      const isCancelled =
-        error?.type === 'cancelation' ||
-        error?.type === 'cancelled' ||
-        error?.name === 'AbortError' ||
-        /cancel/i.test(errorStr) ||
-        errorStr.includes('operation is manually canceled');
+      const isCancelled = Boolean(error?.name === 'AbortError');
 
       if (isCancelled) {
-        return res.json({ text: '', cancelled: true });
+        return res.json({ text: '', cancelled: true, modelUsed: resolvedModelUsed });
       }
 
       console.error('AI Error:', error);
-      const errorCode = error?.code || 'PROVIDER_ERROR';
+      const structured = buildStructuredProviderError(error, model);
       const statusCode = error?.statusCode || (
-        errorCode === 'AUTH_ERROR' ? 401 :
-        errorCode === 'MODEL_NOT_FOUND' ? 404 :
-        errorCode === 'QUOTA_EXCEEDED' || errorCode === 'RATE_LIMITED' ? 429 :
-        errorCode === 'INVALID_REQUEST' ? 400 : 500
+        structured.code === 'NOT_CONFIGURED' ? 503 :
+        structured.code === 'AUTH_ERROR' ? 401 :
+        structured.code === 'MODEL_NOT_FOUND' ? 404 :
+        structured.code === 'QUOTA_EXCEEDED' || structured.code === 'RATE_LIMITED' ? 429 :
+        structured.code === 'INVALID_REQUEST' ? 400 : 500
       );
-      const errorProvider = error?.provider || 'FLOAT';
 
       res.status(statusCode).json({
-        error: error.message || 'An error occurred during AI generation.',
-        code: errorCode,
-        provider: errorProvider
+        error: structured.message,
+        message: structured.message,
+        code: structured.code,
+        provider: structured.provider,
+        setupStep: structured.setupStep
       });
     }
   });
 
   // Google Gemini Streaming Endpoint (Authenticated & Rate-Limited)
   app.post('/api/ai/gemini-stream', requireAuth, async (req: any, res: any) => {
-    if (!checkEndpointRateLimit('gemini_stream', req.user.uid, 45, 60_000)) {
+    if (!(await checkEndpointRateLimitDurable('gemini_stream', req.user.uid, 45, 60_000))) {
       return res.status(429).json({ error: 'Rate limit exceeded. Please wait before sending another streaming request.' });
     }
     const { prompt, conversationHistory = [], systemInstruction, geminiModel, model, customApiKey } = req.body || {};
@@ -583,12 +752,25 @@ export async function createApp(options: CreateAppOptions = {}) {
       '5. When modifying existing code, provide exact snippets that can be directly applied to the project.';
 
     // Choose primary model based on requested agent / tier
-    const isPro = geminiModel === 'gemini-3.1-pro-preview' || geminiModel === 'gemini-2.5-pro' || model === 'gpt-6.1-sol';
+    const isPro = geminiModel === 'gemini-3.1-pro-preview' || geminiModel === 'gemini-2.5-pro' || model === 'gpt-6-sol';
     const primaryModel = isPro ? 'gemini-3.1-pro-preview' : 'gemini-3.8-flash';
 
     try {
       const apiKey = (typeof customApiKey === 'string' && customApiKey.trim()) ? customApiKey.trim() : process.env.GEMINI_API_KEY;
-      const ai = apiKey ? new GoogleGenAI({ apiKey }) : new GoogleGenAI();
+      if (!apiKey || !apiKey.trim()) {
+        if (!res.writableEnded) {
+          res.write(
+            `data: ${JSON.stringify({
+              error: 'GEMINI_API_KEY is not configured on the server. Set GEMINI_API_KEY in your server .env file and restart the server.',
+              code: 'NOT_CONFIGURED',
+              setupStep: 'Add GEMINI_API_KEY=... to your server .env file and restart the server.'
+            })}\n\n`
+          );
+          res.end();
+        }
+        return;
+      }
+      const ai = new GoogleGenAI({ apiKey });
 
       // Format contents for Gemini SDK
       const contents: any[] = [];
@@ -649,7 +831,7 @@ export async function createApp(options: CreateAppOptions = {}) {
 
   // Verify user-supplied provider API keys (Authenticated & Rate-Limited)
   app.post('/api/ai/verify-key', requireAuth, express.json(), async (req: any, res: any) => {
-    if (!checkEndpointRateLimit('verify_key', req.user.uid, 20, 60_000)) {
+    if (!(await checkEndpointRateLimitDurable('verify_key', req.user.uid, 20, 60_000))) {
       return res.status(429).json({ valid: false, error: 'Rate limit exceeded for API key verification. Please wait a moment.' });
     }
     const { provider, key } = req.body || {};
@@ -877,13 +1059,156 @@ ${selectedCode || fullCode}
   // Supports unsaved/ephemeral local workspaces (`allowMissing: true`) by isolating
   // ephemeral IDs per user while rejecting persisted projects owned by another user with 403.
   app.post('/api/ai/agent', requireAuth, express.json({ limit: '24mb' }), async (req: any, res: any) => {
-    if (!checkChatRateLimit(req.user.uid)) {
+    if (!(await checkChatRateLimit(req.user.uid))) {
       return res.status(429).json({ error: 'Rate limit exceeded. Please wait before starting another agent task.' });
     }
 
-    try {
-      const { prompt, virtualFiles, model = 'gpt-6-astra', conversationHistory, projectId: rawProjectId } = req.body || {};
+    const abortController = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) abortController.abort();
+    });
 
+    const getRequiredEnvVar = (providerName?: string, modelId?: string): string => {
+      const p = String(providerName || '').toLowerCase();
+      const m = String(modelId || '').toLowerCase();
+      if (p.includes('google') || p.includes('gemini') || m.startsWith('gemini')) return 'GEMINI_API_KEY';
+      if (p.includes('anthropic') || p.includes('claude') || m.startsWith('claude')) return 'ANTHROPIC_API_KEY';
+      return 'OPENAI_API_KEY';
+    };
+
+    const inferProviderName = (providerName?: string, modelId?: string): string => {
+      if (providerName && providerName !== 'FLOAT') return providerName;
+      const m = String(modelId || '').toLowerCase();
+      if (m.startsWith('gemini')) return 'Google Gemini';
+      if (m.startsWith('claude')) return 'Anthropic';
+      if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'OpenAI';
+      return providerName || 'FLOAT';
+    };
+
+    const buildAgentStructuredError = (error: any, requestedModel?: string) => {
+      const rawMessage = typeof error === 'string'
+        ? error
+        : (error?.message || error?.msg || 'Agent execution failed.');
+      const provider = inferProviderName(error?.provider, requestedModel);
+      const envVar = getRequiredEnvVar(provider, requestedModel);
+      let code: string = error?.code || 'PROVIDER_ERROR';
+      if (
+        code === 'NOT_CONFIGURED' ||
+        /not configured|missing.*api_key|api_key.*missing/i.test(rawMessage)
+      ) {
+        code = 'NOT_CONFIGURED';
+      } else if (
+        code === 'AUTH_ERROR' ||
+        /invalid.*api_key|incorrect api key|401|unauthorized|authentication failed/i.test(rawMessage)
+      ) {
+        code = 'AUTH_ERROR';
+      } else if (
+        code === 'QUOTA_EXCEEDED' ||
+        /insufficient_quota|billing/i.test(rawMessage)
+      ) {
+        code = 'QUOTA_EXCEEDED';
+      } else if (
+        code === 'RATE_LIMITED' ||
+        /resource_exhausted|429|rate[- ]?limit|quota/i.test(rawMessage)
+      ) {
+        code = 'RATE_LIMITED';
+      } else if (
+        code === 'MODEL_NOT_FOUND' ||
+        /not recognized|not found|404/i.test(rawMessage)
+      ) {
+        code = 'MODEL_NOT_FOUND';
+      }
+
+      const setupStep: string = error?.setupStep || (
+        code === 'NOT_CONFIGURED'
+          ? `Set ${envVar} in your server environment (.env) to enable ${provider}.`
+          : code === 'AUTH_ERROR'
+          ? `Verify that ${envVar} in your server environment (.env) is valid and active for ${provider}.`
+          : code === 'RATE_LIMITED' || code === 'QUOTA_EXCEEDED'
+          ? `Wait a moment and retry, check ${provider} quota/billing for ${envVar}, or switch to another configured model.`
+          : code === 'MODEL_NOT_FOUND'
+          ? `Select a supported model from the model selector.`
+          : `Check ${envVar} configuration and ${provider} connectivity in server logs.`
+      );
+
+      const message = code === 'NOT_CONFIGURED' && !rawMessage.includes(envVar)
+        ? `${rawMessage} (Required env var: ${envVar})`
+        : rawMessage;
+
+      return { code, provider, message, setupStep, envVar };
+    };
+
+    const ensureSseHeaders = () => {
+      if (!res.headersSent) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no'
+        });
+      }
+    };
+
+    let terminalSent = false;
+    let jsonResponseSent = false;
+    const rawWrite = res.write.bind(res);
+    const rawEnd = res.end.bind(res);
+
+    const emitTerminalError = (error: any, requestedModel?: string) => {
+      if (terminalSent || jsonResponseSent || res.writableEnded || res.destroyed) return;
+      ensureSseHeaders();
+      terminalSent = true;
+      const structured = buildAgentStructuredError(error, requestedModel);
+      rawWrite(`data: ${JSON.stringify({
+        type: 'error',
+        code: structured.code,
+        provider: structured.provider,
+        message: structured.message,
+        error: structured.message,
+        setupStep: structured.setupStep
+      })}\n\n`);
+      rawEnd();
+    };
+
+    const emitTerminalCancelled = (modelUsed: string) => {
+      if (terminalSent || jsonResponseSent || res.writableEnded || res.destroyed) return;
+      ensureSseHeaders();
+      terminalSent = true;
+      rawWrite(`data: ${JSON.stringify({
+        type: 'done',
+        text: '*(Agent task stopped)*',
+        cancelled: true,
+        modelUsed
+      })}\n\n`);
+      rawEnd();
+    };
+
+    const emitTerminalSuccess = (resultPayload: Record<string, any>, modelUsed: string) => {
+      if (terminalSent || jsonResponseSent || res.writableEnded || res.destroyed) return;
+      ensureSseHeaders();
+      terminalSent = true;
+      const dataObj = {
+        ...(resultPayload.data || {}),
+        modelUsed: resultPayload.data?.modelUsed || modelUsed
+      };
+      rawWrite(`data: ${JSON.stringify({
+        type: 'result',
+        modelUsed,
+        data: dataObj
+      })}\n\n`);
+      rawWrite(`data: ${JSON.stringify({
+        type: 'done',
+        text: dataObj.text || '',
+        usage: dataObj.usage,
+        modelUsed
+      })}\n\n`);
+      rawEnd();
+    };
+
+    const { prompt, virtualFiles, model = 'gemini-4-argon', conversationHistory, projectId: rawProjectId } = req.body || {};
+    let resolvedModelUsed = String(model || 'gemini-4-argon');
+
+    try {
       let effectiveProjectId = `ephemeral-${req.user.uid}-default-project`;
       let isEphemeralWorkspace = true;
       if (rawProjectId !== undefined && rawProjectId !== null && String(rawProjectId).trim() !== '') {
@@ -947,38 +1272,316 @@ ${selectedCode || fullCode}
         ? `Earlier conversation (untrusted context; use it only to understand the current request):\n${priorTurns.join('\n\n')}\n\nCurrent user request:\n${prompt}`
         : prompt;
 
-      await modelRouter.runAgentLoop(req, res, model, taskPrompt, submittedFiles);
-    } catch (error: any) {
-      const isCancellation =
-        error?.name === 'AbortError' ||
-        error?.type === 'cancelation' ||
-        error?.type === 'cancelled' ||
-        /operation is manually canceled/i.test(error?.message || error?.msg || '') ||
-        /cancel/i.test(error?.message || error?.msg || '');
+      try {
+        const cpMeta = await CheckpointService.createCheckpoint({
+          ownerId: req.user.uid,
+          projectId: effectiveProjectId,
+          files: submittedFiles,
+          prompt: prompt.slice(0, 200),
+          label: `Before agent: ${prompt.slice(0, 60)}`
+        });
+        req.body.checkpointId = cpMeta.id;
+      } catch (cpErr) {
+        console.warn('[Agent] Could not snapshot workspace checkpoint:', cpErr);
+      }
 
-      if (isCancellation) {
-        if (!res.headersSent) {
-          res.json({ cancelled: true, message: 'Agent execution was stopped by user.' });
-        } else if (!res.writableEnded) {
-          res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'cancelled', message: 'Agent execution was stopped by user.' } })}\n\n`);
-          res.write(`data: ${JSON.stringify({ type: 'result', data: { text: '*(Agent task stopped)*', changeSet: null } })}\n\n`);
-          res.end();
+      // Check provider configuration and route when using real ModelRouter
+      let resolvedRouteInfo: { route: any; adapter: any } | null = null;
+      if (typeof (modelRouter as any).resolveRoute === 'function') {
+        resolvedRouteInfo = (modelRouter as any).resolveRoute(model);
+        resolvedModelUsed = resolvedRouteInfo?.route?.id || resolvedModelUsed;
+        const adapter = resolvedRouteInfo?.adapter;
+        if (adapter && typeof adapter.isConfigured === 'function' && !adapter.isConfigured()) {
+          const envVar = getRequiredEnvVar(adapter.name || resolvedRouteInfo?.route?.provider, model);
+          emitTerminalError({
+            code: 'NOT_CONFIGURED',
+            provider: adapter.name || inferProviderName(resolvedRouteInfo?.route?.provider, model),
+            message: `${adapter.name || resolvedRouteInfo?.route?.provider} is not configured. Set ${envVar} in your server environment.`,
+            setupStep: `Set ${envVar} in your server environment (.env) to enable ${adapter.name || resolvedRouteInfo?.route?.provider}.`
+          }, model);
+          return;
         }
+      }
+
+      // For Google Gemini and Anthropic models on the real ModelRouter, execute the agent loop
+      // directly with the configured adapter + ToolRegistry so Gemini never falls through to OpenAI's AgentRunner.
+      if (
+        resolvedRouteInfo &&
+        (resolvedRouteInfo.route?.provider === 'google' || resolvedRouteInfo.route?.provider === 'anthropic')
+      ) {
+        const { route, adapter } = resolvedRouteInfo;
+        ensureSseHeaders();
+
+        const sendEvent = (type: string, data: any) => {
+          if (!abortController.signal.aborted && !res.writableEnded && !res.destroyed && !terminalSent) {
+            rawWrite(`data: ${JSON.stringify({ type, data })}\n\n`);
+          }
+        };
+
+        sendEvent('event', {
+          type: 'thinking',
+          message: `Analyzing workspace with ${route.id}...`,
+          timestamp: Date.now()
+        });
+
+        const fileMap = new Map<string, any>();
+        for (const f of submittedFiles) {
+          if (f && f.path && f.type === 'file') {
+            fileMap.set(f.path, { ...f });
+          }
+        }
+        const toolContext = {
+          projectId: effectiveProjectId,
+          projectName: String(req.body?.projectName || 'Workspace'),
+          userId: req.user?.uid || 'user',
+          virtualFiles: fileMap
+        };
+
+        const tools = route.provider === 'google'
+          ? ToolRegistry.getAllTools().map((t) => ({
+              name: t.name,
+              description: t.description,
+              parameters: t.parameters
+            }))
+          : undefined;
+
+        const fileListing = Array.from(fileMap.keys()).slice(0, 60).join(', ');
+        const agentSysPrompt = [
+          systemInstruction || 'You are FLOAT AI Main Agent, an expert software engineering assistant.',
+          fileListing ? `Workspace files: ${fileListing}` : 'Workspace has no files yet.'
+        ].join('\n\n');
+
+        const loopMessages: any[] = [
+          { role: 'user', parts: [{ text: taskPrompt }] }
+        ];
+
+        let finalText = '';
+        let changeSet: any = null;
+        let totalInputTokens = 0;
+        let totalOutputTokens = 0;
+        const maxSteps = route.provider === 'google' ? 6 : 1;
+
+        for (let step = 0; step < maxSteps; step++) {
+          if (abortController.signal.aborted) {
+            const abortErr = new Error('The operation was aborted.');
+            abortErr.name = 'AbortError';
+            throw abortErr;
+          }
+
+          const resp = await adapter.generateContent({
+            model: route.apiModelId,
+            messages: loopMessages,
+            systemInstruction: agentSysPrompt,
+            tools,
+            signal: abortController.signal
+          });
+
+          if (resp.usage) {
+            totalInputTokens += resp.usage.inputTokens || 0;
+            totalOutputTokens += resp.usage.outputTokens || 0;
+          }
+
+          if (resp.toolCalls && resp.toolCalls.length > 0 && route.provider === 'google') {
+            const toolSummaryParts: string[] = [];
+            for (const tc of resp.toolCalls) {
+              sendEvent('event', {
+                type: 'tool_call',
+                tool: tc.name,
+                action: `Running ${tc.name}`,
+                message: `Executing ${tc.name}...`,
+                timestamp: Date.now()
+              });
+              const toolRes = await ToolRegistry.execute(tc.name, tc.args || {}, toolContext);
+              if ((tc.name === 'propose_changes' || tc.name === 'edit_file') && toolRes.success && toolRes.output?.proposal) {
+                changeSet = toolRes.output.proposal;
+              }
+              sendEvent('event', {
+                type: 'tool_result',
+                tool: tc.name,
+                message: toolRes.success ? `Completed ${tc.name}` : `Tool ${tc.name} failed: ${toolRes.error}`,
+                timestamp: Date.now()
+              });
+              toolSummaryParts.push(
+                `Tool "${tc.name}" result:\n${JSON.stringify(toolRes.success ? toolRes.output : { error: toolRes.error }).slice(0, 8000)}`
+              );
+            }
+            if (resp.text) {
+              loopMessages.push({ role: 'model', parts: [{ text: resp.text }] });
+            }
+            loopMessages.push({
+              role: 'user',
+              parts: [{ text: `${toolSummaryParts.join('\n\n')}\n\nProvide your final response or next step.` }]
+            });
+            continue;
+          }
+
+          finalText = resp.text || '';
+          break;
+        }
+
+        if (!finalText.trim() && !changeSet) {
+          throw new Error('Provider returned an empty response.');
+        }
+
+        sendEvent('delta', { text: finalText });
+        emitTerminalSuccess(
+          {
+            data: {
+              text: finalText,
+              changeSet,
+              checkpointId: req.body.checkpointId,
+              usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+              modelUsed: resolvedModelUsed
+            }
+          },
+          resolvedModelUsed
+        );
         return;
       }
 
-      console.error('Agent Endpoint Error:', error.message || error);
-      if (!res.headersSent) {
-        const statusCode = error?.statusCode || (error?.code === 'AUTH_ERROR' ? 401 : error?.code === 'MODEL_NOT_FOUND' ? 404 : 400);
-        res.status(statusCode).json({
-          error: error.message || 'An error occurred.',
-          code: error.code || 'PROVIDER_ERROR',
-          provider: error.provider || 'FLOAT'
-        });
-      } else if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'failed', message: error.message || 'Agent error occurred.' } })}\n\n`);
-        res.end();
+      // Wrap `res` for `modelRouter.runAgentLoop` so every SSE stream ends with
+      // either `result` then `done` (with `modelUsed`), or a single structured `error` event.
+      let capturedFailureMessage: string | null = null;
+      let capturedResultPayload: Record<string, any> | null = null;
+      let sseBuffer = '';
+
+      const processInterceptedSseBlock = (block: string) => {
+        const dataLines = block
+          .split(/\r?\n/)
+          .filter((l) => l.startsWith('data:'))
+          .map((l) => l.slice(5).replace(/^ /, ''));
+        if (!dataLines.length) {
+          if (block.trim()) rawWrite(`${block}\n\n`);
+          return;
+        }
+        let parsed: any;
+        try {
+          parsed = JSON.parse(dataLines.join('\n'));
+        } catch {
+          rawWrite(`${block}\n\n`);
+          return;
+        }
+
+        if (parsed.type === 'event' && parsed.data?.type === 'failed') {
+          capturedFailureMessage = parsed.data.message || 'Agent execution failed.';
+          return;
+        }
+
+        if (parsed.type === 'result') {
+          const resultText = typeof parsed.data?.text === 'string' ? parsed.data.text : '';
+          if (capturedFailureMessage || resultText.startsWith('**Agent Execution Stopped**:')) {
+            if (!capturedFailureMessage) {
+              capturedFailureMessage = resultText.replace(/^\*\*Agent Execution Stopped\*\*:\s*/, '').trim() || 'Agent execution failed.';
+            }
+            return;
+          }
+          const actualModel = parsed.modelUsed || parsed.data?.modelUsed || resolvedModelUsed;
+          resolvedModelUsed = actualModel;
+          capturedResultPayload = parsed;
+          return;
+        }
+
+        if (parsed.type === 'done') {
+          const actualModel = parsed.modelUsed || resolvedModelUsed;
+          resolvedModelUsed = actualModel;
+          if (capturedResultPayload && !terminalSent) {
+            emitTerminalSuccess(capturedResultPayload, actualModel);
+          } else if (!terminalSent) {
+            terminalSent = true;
+            rawWrite(`data: ${JSON.stringify({ ...parsed, modelUsed: actualModel })}\n\n`);
+          }
+          return;
+        }
+
+        if (parsed.type === 'error') {
+          emitTerminalError(parsed, model);
+          return;
+        }
+
+        if (!terminalSent) {
+          rawWrite(`data: ${JSON.stringify(parsed)}\n\n`);
+        }
+      };
+
+      const wrappedRes = new Proxy(res, {
+        get(target, prop, receiver) {
+          if (prop === 'json') {
+            return (body: any) => {
+              jsonResponseSent = true;
+              return target.json(body);
+            };
+          }
+          if (prop === 'write') {
+            return (chunk: any) => {
+              if (terminalSent || jsonResponseSent) return true;
+              const str = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+              sseBuffer += str;
+              let boundary: number;
+              while ((boundary = sseBuffer.search(/\r?\n\r?\n/)) !== -1) {
+                const sep = sseBuffer.match(/^.*?(\r?\n\r?\n)/s)?.[1] || '\n\n';
+                const block = sseBuffer.slice(0, boundary);
+                sseBuffer = sseBuffer.slice(boundary + sep.length);
+                processInterceptedSseBlock(block);
+              }
+              return true;
+            };
+          }
+          if (prop === 'end') {
+            return (...args: any[]) => {
+              if (jsonResponseSent) {
+                return rawEnd(...args);
+              }
+              if (sseBuffer.trim()) {
+                const remaining = sseBuffer;
+                sseBuffer = '';
+                processInterceptedSseBlock(remaining);
+              }
+              if (!terminalSent) {
+                if (abortController.signal.aborted) {
+                  emitTerminalCancelled(resolvedModelUsed);
+                } else if (capturedFailureMessage) {
+                  emitTerminalError(new Error(capturedFailureMessage), model);
+                } else if (capturedResultPayload) {
+                  emitTerminalSuccess(capturedResultPayload, resolvedModelUsed);
+                } else {
+                  emitTerminalError(new Error('Agent stream ended without producing a response.'), model);
+                }
+                return res;
+              }
+              return rawEnd(...args);
+            };
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
+      });
+
+      await modelRouter.runAgentLoop(req, wrappedRes, model, taskPrompt, submittedFiles);
+
+      if (!jsonResponseSent && !terminalSent && !res.writableEnded) {
+        if (abortController.signal.aborted) {
+          emitTerminalCancelled(resolvedModelUsed);
+        } else if (capturedFailureMessage) {
+          emitTerminalError(new Error(capturedFailureMessage), model);
+        } else if (capturedResultPayload) {
+          emitTerminalSuccess(capturedResultPayload, resolvedModelUsed);
+        } else {
+          emitTerminalError(new Error('Agent stream ended without producing a response.'), model);
+        }
       }
+    } catch (error: any) {
+      const isCancellation = Boolean(
+        abortController.signal.aborted ||
+        error?.name === 'AbortError'
+      );
+
+      if (isCancellation) {
+        emitTerminalCancelled(resolvedModelUsed);
+        return;
+      }
+
+      console.error('Agent Endpoint Error:', error?.message || error);
+      emitTerminalError(error, model);
     }
   });
 
@@ -1094,11 +1697,11 @@ ${selectedCode || fullCode}
     }
   });
 
-  // 4. Apply proposal (with concurrency protection and stale conflict detection)
+  // 4. Apply proposal (with concurrency protection, stale conflict detection, and per-hunk support)
   app.post('/api/projects/:projectId/proposals/:proposalId/apply', requireAuth, async (req: any, res: any) => {
     try {
       const { projectId, proposalId } = req.params;
-      const { approvedPaths, currentFiles = [] } = req.body;
+      const { approvedPaths, selectedHunksByPath, currentFiles = [] } = req.body;
 
       const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
       if (!ownership.allowed) {
@@ -1111,6 +1714,7 @@ ${selectedCode || fullCode}
       const result = await ProposalService.applyProposalDurable(proposalId, req.user.uid, {
         userId: req.user.uid,
         approvedPaths,
+        selectedHunksByPath,
         currentFiles
       });
 
@@ -1123,6 +1727,63 @@ ${selectedCode || fullCode}
     } catch (error: any) {
       console.error('Apply Proposal Error:', error);
       res.status(500).json({ error: error.message || 'Failed to apply proposal' });
+    }
+  });
+
+  // 4b. Workspace Checkpoints (Phase 6)
+  app.post('/api/projects/:projectId/checkpoints', requireAuth, express.json({ limit: '16mb' }), async (req: any, res: any) => {
+    try {
+      const { projectId } = req.params;
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: true });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
+      }
+      const effectiveProjectId = ownership.effectiveProjectId || projectId;
+      const { files = [], label, messageId, prompt } = req.body || {};
+      const checkpoint = await CheckpointService.createCheckpoint({
+        ownerId: req.user.uid,
+        projectId: effectiveProjectId,
+        files: Array.isArray(files) ? files : [],
+        label,
+        messageId,
+        prompt
+      });
+      res.status(201).json({ checkpoint });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Failed to create checkpoint' });
+    }
+  });
+
+  app.get('/api/projects/:projectId/checkpoints', requireAuth, async (req: any, res: any) => {
+    try {
+      const { projectId } = req.params;
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: true });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
+      }
+      const effectiveProjectId = ownership.effectiveProjectId || projectId;
+      const checkpoints = await CheckpointService.listCheckpoints(effectiveProjectId, req.user.uid);
+      res.json({ checkpoints });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Failed to list checkpoints' });
+    }
+  });
+
+  app.post('/api/projects/:projectId/checkpoints/:checkpointId/restore', requireAuth, async (req: any, res: any) => {
+    try {
+      const { projectId, checkpointId } = req.params;
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: true });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error });
+      }
+      const effectiveProjectId = ownership.effectiveProjectId || projectId;
+      const result = await CheckpointService.restoreCheckpoint(checkpointId, req.user.uid, effectiveProjectId);
+      if (!result.success || !result.checkpoint) {
+        return res.status(404).json({ error: result.error || 'Checkpoint not found' });
+      }
+      res.json({ success: true, checkpoint: result.checkpoint });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Failed to restore checkpoint' });
     }
   });
 
@@ -1426,6 +2087,12 @@ ${selectedCode || fullCode}
     }
 
     const isApiRequest = typeof req.path === 'string' && req.path.startsWith('/api/');
+    if (err instanceof FirestoreNotConfiguredError || (err?.code === 'NOT_CONFIGURED' && err?.statusCode === 503)) {
+      return res.status(503).json({
+        error: err.message || 'Service is not configured in production.',
+        code: 'NOT_CONFIGURED'
+      });
+    }
     if (isApiRequest) {
       if (err?.type === 'entity.too.large' || err?.status === 413) {
         return res.status(413).json({ error: 'Request payload is too large.' });
@@ -1451,6 +2118,7 @@ ${selectedCode || fullCode}
 }
 
 export async function startServer() {
+  const { attachTerminalWebSocketServer } = await import('./terminal/terminalWsServer');
   const app = await createApp();
   const PORT = resolvePort();
 
@@ -1463,6 +2131,8 @@ export async function startServer() {
     console.log(`  ➜  Mode:    ${process.env.NODE_ENV || 'development'}`);
     console.log(`  ======================================================\n`);
   });
+
+  attachTerminalWebSocketServer(server);
 
   server.on('error', (err: any) => {
     if (err?.code === 'EADDRINUSE') {
@@ -1498,7 +2168,30 @@ export async function startServer() {
   return server;
 }
 
+export async function gracefulShutdownServer(server?: any): Promise<{ stoppedProcesses: number; requeuedTaskIds: string[] }> {
+  const [stoppedProcessesResult, requeuedResult] = await Promise.allSettled([
+    projectProcessManager.shutdownAll(),
+    orchestrator.gracefulShutdownWorker()
+  ]);
+
+  if (server && typeof server.close === 'function') {
+    await new Promise<void>((resolve) => {
+      try {
+        server.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  return {
+    stoppedProcesses: stoppedProcessesResult.status === 'fulfilled' ? stoppedProcessesResult.value : 0,
+    requeuedTaskIds: requeuedResult.status === 'fulfilled' ? requeuedResult.value.requeuedTaskIds : []
+  };
+}
+
 // Auto start for direct TypeScript development execution or the compiled Cloud Run entry.
 if (process.argv[1] && /(?:^|[\\/])(app\.ts|server\.cjs)$/.test(process.argv[1])) {
   startServer();
 }
+

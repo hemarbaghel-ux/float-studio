@@ -38,7 +38,25 @@ import {
 } from './evalPersistence';
 
 // Globally supported models for evaluations in FLOAT AI
-export const SUPPORTED_EVAL_MODELS = new Set<string>(['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1', 'o1-mini', 'gpt-4.5-preview', 'gpt-4-turbo', 'chatgpt-4o-latest', 'auto', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol']);
+export const SUPPORTED_EVAL_MODELS = new Set<string>([
+  'gpt-4o',
+  'o3-mini',
+  'gpt-4o-mini',
+  'o1',
+  'o1-mini',
+  'gpt-4.5-preview',
+  'gpt-4-turbo',
+  'chatgpt-4o-latest',
+  'auto',
+  'float-basic',
+  'gpt-6-astra',
+  'gpt-6-sol',
+  'gpt-6-luna',
+  'gemini-4-argon',
+  'claude-sonnet-5-5',
+  'claude-opus-5-5',
+  'claude-haiku-5-5'
+]);
 
 // Built-in standard evaluation tasks for coding, debugging, refactoring, and agentic workflows
 const INITIAL_TASKS: EvalTask[] = [
@@ -538,7 +556,7 @@ export class EvalEngine {
     
     // Step 1: Clean repository snapshot isolation
     run.activity?.push({ type: 'info', message: 'Step 1/8: Creating clean repository snapshot isolation', timestamp: Date.now() });
-    const snapshotFiles = task.files.map(f => ({ path: f.path, content: f.content }));
+    const snapshotFiles = (task.files || []).map(f => ({ path: f.path, content: f.content }));
     let filesReadCount = snapshotFiles.length;
     let filesChangedCount = 0;
 
@@ -713,7 +731,7 @@ export class EvalEngine {
       const code = match[2];
 
       if (!matchedPath || matchedPath.length > 50 || matchedPath === 'python' || matchedPath === 'ts') {
-        matchedPath = task.files[0]?.path || 'solution.py';
+        matchedPath = (task.files && task.files[0]?.path) || 'solution.py';
       }
 
       const existingFile = originalFiles.find(f => f.path === matchedPath) || originalFiles[0];

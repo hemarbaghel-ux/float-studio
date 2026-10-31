@@ -1,8 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import { CodeProposal, ProposalChange, DiffStats, ProposalStatus } from '../../types/proposal';
+import { computeDiffHunks, applySelectedHunks, DiffHunk, DiffHunkLine } from '../../lib/diffHunks';
 import { getCodeProposal, listCodeProposals, saveCodeProposal } from './proposalPersistence';
-import { hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from '../adminFirebase';
+import { isPermissionDeniedError, markAdminCredentialsUnavailable } from '../adminFirebase';
+import { isDurableFirestoreActive } from '../durableState';
+
+export { computeDiffHunks, applySelectedHunks };
+export type { DiffHunk, DiffHunkLine };
 
 const SENSITIVE_SEGMENT = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.))/i;
 const SENSITIVE_EXTENSION = /\.(?:pem|key|p12|pfx|keystore|crt|cer)$/i;
@@ -78,6 +83,11 @@ export class ProposalService {
   private static proposals = new Map<string, CodeProposal>();
   private static activeLocks = new Set<string>();
 
+  static clearCacheForTests(): void {
+    this.proposals.clear();
+    this.activeLocks.clear();
+  }
+
   static createProposal(input: CreateProposalInput): { proposal?: CodeProposal; error?: string } {
     const { ownerId, projectId, description, conversationId, agentId, agentTaskId, rawChanges, virtualFiles } = input;
 
@@ -113,6 +123,8 @@ export class ProposalService {
       const originalHash = operation === 'create' ? '' : computeContentHash(existingContent);
       const proposedHash = operation === 'delete' ? '' : computeContentHash(proposedContent);
       const diffStats = computeDiffStats(existingContent, proposedContent);
+      const hunks = computeDiffHunks(existingContent, proposedContent);
+      const selectedHunkIds = hunks.map((h) => h.id);
 
       validatedChanges.push({
         path: safePath,
@@ -122,7 +134,9 @@ export class ProposalService {
         originalHash,
         proposedHash,
         status: 'pending',
-        diffStats
+        diffStats,
+        hunks,
+        selectedHunkIds
       });
 
       affectedFiles.push(safePath);
@@ -145,6 +159,9 @@ export class ProposalService {
     };
 
     this.proposals.set(proposalId, proposal);
+    if (isDurableFirestoreActive()) {
+      void this.persistProposalMetadata(proposal);
+    }
     return { proposal };
   }
 
@@ -155,7 +172,7 @@ export class ProposalService {
   static async createProposalDurable(input: CreateProposalInput): Promise<{ proposal?: CodeProposal; error?: string }> {
     const result = this.createProposal(input);
     if (!result.proposal) return result;
-    if (!hasAdminCredentials()) return result;
+    if (!isDurableFirestoreActive()) return result;
     try {
       await saveCodeProposal(result.proposal);
       return result;
@@ -170,7 +187,7 @@ export class ProposalService {
   }
 
   static async persistProposalMetadata(proposal: CodeProposal): Promise<void> {
-    if (!hasAdminCredentials()) return;
+    if (!isDurableFirestoreActive()) return;
     try {
       await saveCodeProposal(proposal);
     } catch (error: any) {
@@ -188,21 +205,24 @@ export class ProposalService {
   }
 
   static async getProposalDurable(proposalId: string, ownerId: string): Promise<CodeProposal | null> {
+    if (isDurableFirestoreActive()) {
+      try {
+        const proposal = await getCodeProposal(proposalId, ownerId);
+        if (proposal) {
+          this.proposals.set(proposalId, proposal);
+          return proposal;
+        }
+      } catch (error: any) {
+        if (isPermissionDeniedError(error)) markAdminCredentialsUnavailable(error);
+      }
+    }
     const cached = this.proposals.get(proposalId);
     if (cached?.ownerId === ownerId) return cached;
-    if (!hasAdminCredentials()) return null;
-    try {
-      const proposal = await getCodeProposal(proposalId, ownerId);
-      if (proposal) this.proposals.set(proposalId, proposal);
-      return proposal;
-    } catch (error: any) {
-      if (isPermissionDeniedError(error)) markAdminCredentialsUnavailable(error);
-      return null;
-    }
+    return null;
   }
 
   static async listProposalsDurable(projectId: string, ownerId: string): Promise<CodeProposal[]> {
-    if (!hasAdminCredentials()) {
+    if (!isDurableFirestoreActive()) {
       return this.listProposalsForProject(projectId).filter((p) => p.ownerId === ownerId);
     }
     try {
@@ -230,14 +250,19 @@ export class ProposalService {
   static async applyProposalDurable(
     proposalId: string,
     ownerId: string,
-    options: { userId: string; approvedPaths?: string[]; currentFiles: Array<{ path: string; content?: string }> }
+    options: {
+      userId: string;
+      approvedPaths?: string[];
+      selectedHunksByPath?: Record<string, string[]>;
+      currentFiles: Array<{ path: string; content?: string }>;
+    }
   ) {
     if (!await this.getProposalDurable(proposalId, ownerId)) {
       return { success: false, status: 'failed' as ProposalStatus, error: 'Proposal not found.' };
     }
     const result = await this.applyProposal(proposalId, options);
     const proposal = this.proposals.get(proposalId);
-    if (proposal && hasAdminCredentials()) {
+    if (proposal && isDurableFirestoreActive()) {
       await saveCodeProposal(proposal).catch((err) => {
         if (isPermissionDeniedError(err)) markAdminCredentialsUnavailable(err);
       });
@@ -251,7 +276,7 @@ export class ProposalService {
     }
     const result = this.rejectProposal(proposalId, userId);
     const proposal = this.proposals.get(proposalId);
-    if (proposal && result.success && hasAdminCredentials()) {
+    if (proposal && result.success && isDurableFirestoreActive()) {
       await saveCodeProposal(proposal).catch((err) => {
         if (isPermissionDeniedError(err)) markAdminCredentialsUnavailable(err);
       });
@@ -307,17 +332,19 @@ export class ProposalService {
     options: {
       userId: string;
       approvedPaths?: string[];
+      selectedHunksByPath?: Record<string, string[]>;
       currentFiles: Array<{ path: string; content?: string }>;
     }
   ): Promise<{
     success: boolean;
     status: ProposalStatus;
     appliedFiles?: string[];
+    patchedContents?: Record<string, string>;
     failedFiles?: { path: string; error: string }[];
     conflicts?: { path: string; message: string }[];
     error?: string;
   }> {
-    const { userId, approvedPaths, currentFiles } = options;
+    const { userId, approvedPaths, selectedHunksByPath, currentFiles } = options;
 
     // Mutex guard against concurrent duplicate apply clicks
     if (this.activeLocks.has(proposalId)) {
@@ -357,7 +384,7 @@ export class ProposalService {
         }
       }
 
-      // Conflict validation check
+      // SHA-256 stale-file conflict validation check
       const { isStale, conflicts } = this.checkConflicts(proposal, currentMap);
       if (isStale) {
         proposal.status = 'stale';
@@ -372,7 +399,9 @@ export class ProposalService {
       }
 
       const appliedFiles: string[] = [];
+      const patchedContents: Record<string, string> = {};
       const failedFiles: { path: string; error: string }[] = [];
+      let hasPartialHunkSelection = false;
 
       for (const change of proposal.changes) {
         // If approvedPaths specified, only apply approved subset
@@ -381,18 +410,71 @@ export class ProposalService {
           continue;
         }
 
+        const fileHunks = change.hunks || computeDiffHunks(change.originalContent || '', change.proposedContent || '');
+        change.hunks = fileHunks;
+
+        if (selectedHunksByPath && Object.prototype.hasOwnProperty.call(selectedHunksByPath, change.path)) {
+          const selectedIds = Array.isArray(selectedHunksByPath[change.path]) ? selectedHunksByPath[change.path] : [];
+          if (selectedIds.length === 0 && fileHunks.length > 0) {
+            change.status = 'rejected';
+            change.selectedHunkIds = [];
+            continue;
+          }
+
+          if (selectedIds.length < fileHunks.length) {
+            hasPartialHunkSelection = true;
+          }
+
+          try {
+            const patched = applySelectedHunks(
+              change.originalContent || '',
+              change.proposedContent || '',
+              selectedIds
+            );
+            change.patchedContent = patched;
+            change.selectedHunkIds = selectedIds;
+            change.diffStats = computeDiffStats(change.originalContent || '', patched);
+            change.status = 'applied';
+            appliedFiles.push(change.path);
+            patchedContents[change.path] = patched;
+          } catch (err: any) {
+            change.status = 'failed';
+            failedFiles.push({ path: change.path, error: err.message || 'Hunk apply failed' });
+          }
+          continue;
+        }
+
         try {
+          const fullPatched = change.operation === 'delete' ? '' : (change.proposedContent || '');
+          change.patchedContent = fullPatched;
+          change.selectedHunkIds = fileHunks.map((h) => h.id);
           change.status = 'applied';
           appliedFiles.push(change.path);
+          patchedContents[change.path] = fullPatched;
         } catch (err: any) {
           change.status = 'failed';
           failedFiles.push({ path: change.path, error: err.message || 'Write failed' });
         }
       }
 
-      const isPartial = appliedFiles.length > 0 && appliedFiles.length < proposal.changes.length;
+      if (appliedFiles.length === 0 && failedFiles.length === 0) {
+        proposal.status = 'rejected';
+        proposal.updatedAt = Date.now();
+        return {
+          success: false,
+          status: 'rejected',
+          appliedFiles: [],
+          patchedContents: {},
+          error: 'No files or hunks were selected to apply.'
+        };
+      }
+
+      const isPartial =
+        hasPartialHunkSelection ||
+        (appliedFiles.length > 0 && appliedFiles.length < proposal.changes.length);
       proposal.status = isPartial ? 'partially_applied' : (failedFiles.length > 0 ? 'failed' : 'applied');
       proposal.appliedFiles = appliedFiles;
+      proposal.patchedContents = patchedContents;
       proposal.failedFiles = failedFiles.length > 0 ? failedFiles : undefined;
       proposal.updatedAt = Date.now();
 
@@ -400,6 +482,7 @@ export class ProposalService {
         success: appliedFiles.length > 0,
         status: proposal.status,
         appliedFiles,
+        patchedContents,
         failedFiles: failedFiles.length > 0 ? failedFiles : undefined
       };
     } finally {

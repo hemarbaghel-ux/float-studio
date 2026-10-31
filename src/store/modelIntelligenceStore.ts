@@ -224,11 +224,13 @@ export const useModelIntelligenceStore = create<ModelIntelligenceState>((set, ge
 
     // Normalization per 1M tokens: tokens / 1,000,000 * rate
     const uncachedTokens = Math.max(0, inTokens - cacheTokens);
-    const inputCost = (uncachedTokens / 1_000_000) * model.pricing.inputCostPer1M;
-    const outputCost = (outTokens / 1_000_000) * model.pricing.outputCostPer1M;
-    const cachedRate = model.pricing.cachedInputCostPer1M !== undefined 
+    const inRate = model.pricing.inputCostPer1M ?? 0;
+    const outRate = model.pricing.outputCostPer1M ?? 0;
+    const inputCost = (uncachedTokens / 1_000_000) * inRate;
+    const outputCost = (outTokens / 1_000_000) * outRate;
+    const cachedRate = model.pricing.cachedInputCostPer1M != null 
       ? model.pricing.cachedInputCostPer1M 
-      : model.pricing.inputCostPer1M * 0.5;
+      : inRate * 0.5;
     const cachedCost = (cacheTokens / 1_000_000) * cachedRate;
 
     return {

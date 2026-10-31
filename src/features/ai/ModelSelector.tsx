@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useAIStore } from '../../store/aiStore';
+import { useAIStore, filterVisibleModelsForUI } from '../../store/aiStore';
 import { ChevronDown, Key } from 'lucide-react';
 import { INITIAL_MODELS } from './registry';
 import { AIModel } from '../../types/ai';
@@ -35,7 +35,7 @@ export function ModelSelector({
   variant = 'composer',
   className = ''
 }: ModelSelectorProps) {
-  const { models, setModels, syncProviderStatus, setSelectedModel } = useAIStore();
+  const { models, providers, modelHealthStatus, statusSynced, setModels, syncProviderStatus, setSelectedModel } = useAIStore();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState<number>(0);
@@ -72,21 +72,22 @@ export function ModelSelector({
   const activeModels = useMemo(() => {
     const list = models.length > 0 ? models : INITIAL_MODELS;
     const seen = new Set<string>();
-    return list.filter(m => {
+    const deduped = list.filter(m => {
       if (seen.has(m.id)) return false;
       seen.add(m.id);
       return true;
     });
-  }, [models]);
+    return filterVisibleModelsForUI(deduped, providers, modelHealthStatus, statusSynced);
+  }, [models, providers, modelHealthStatus, statusSynced]);
   const currentSelectedId = activeModelId || useAIStore.getState().selectedModel;
-  const currentModel = activeModels.find(m => m.id === currentSelectedId) || activeModels[0];
+  const currentModel = activeModels.find(m => m.id === currentSelectedId) || activeModels[0] || INITIAL_MODELS[0];
 
   // Helper to map model to display speed/effort label
   const getSpeedLabel = (model: AIModel): string => {
     if (model.reasoningLevel) {
       return model.reasoningLevel;
     }
-    if (model.id === 'gpt-6.1-sol') return 'Deep Reasoning';
+    if (model.id === 'gpt-6-sol') return 'Deep Reasoning';
     if (model.id === 'gpt-6-astra') return 'Cloud Agent';
 
     switch (model.speed) {

@@ -208,10 +208,10 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
               <div>
                 <span className="text-xs text-[#8B949E]">Cached Input</span>
                 <p className="text-base font-bold text-white mt-0.5">
-                  {verified?.pricing?.cachedInputCostPer1M !== undefined 
+                  {verified?.pricing?.cachedInputCostPer1M != null 
                     ? `$${verified.pricing.cachedInputCostPer1M.toFixed(3)}`
                     : 'Not supported'}
-                  {verified?.pricing?.cachedInputCostPer1M !== undefined && (
+                  {verified?.pricing?.cachedInputCostPer1M != null && (
                     <span className="text-xs font-normal text-[#8B949E] ml-1">/ 1M tokens</span>
                   )}
                 </p>

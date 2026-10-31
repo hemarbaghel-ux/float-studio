@@ -1,11 +1,13 @@
 import express from 'express';
-import { GoogleGenAI } from '@google/genai';
 import { DatasetProfile, DatasetColumn, ExecutiveReport, AgentProgressStep } from '../features/analyst/types';
 import { requireAuth } from './authMiddleware';
+import { modelRouter } from './providers/router';
+import { AIProviderError } from './providers/base';
+import { checkTransactionalRateLimit, isDurableFirestoreActive, resetFallbackRateLimitsForTests } from './durableState';
 
 export const analystRouter = express.Router();
 
-// Per-user sliding window rate limiter for Data Analyst endpoints
+// Per-user sliding window fallback for Data Analyst endpoints when Firestore is inactive
 const analystRateLimits = new Map<string, number[]>();
 const MAX_ANALYST_RATE_LIMIT_USERS = 5_000;
 
@@ -26,8 +28,17 @@ export function checkAnalystRateLimit(userId: string, maxRequests = 20, windowMs
   return true;
 }
 
+export async function checkAnalystRateLimitDurable(userId: string, maxRequests = 20, windowMs = 60_000): Promise<boolean> {
+  if (!userId) return false;
+  if (isDurableFirestoreActive()) {
+    return checkTransactionalRateLimit('analyst', userId, maxRequests, windowMs);
+  }
+  return checkAnalystRateLimit(userId, maxRequests, windowMs);
+}
+
 export function resetAnalystRateLimitsForTests(): void {
   analystRateLimits.clear();
+  resetFallbackRateLimitsForTests();
 }
 
 // Enforce verified authentication on all Data Analyst routes
@@ -141,52 +152,244 @@ function profileDataset(name: string, csvText: string): DatasetProfile {
   };
 }
 
-/**
- * Safe simulated Python Sandbox Runner for data aggregations and statistical calculations.
- */
-function runSandboxPython(_code: string, rows: Record<string, any>[]): { stdout: string; summaryStats: Record<string, any> } {
-  const stdoutLines: string[] = [
-    `[OpenAI Sandbox Python 3.11 Environment]`,
-    `>>> import pandas as pd`,
-    `>>> import numpy as np`,
-    `>>> df = pd.read_csv('dataset.csv')  # Ingested ${rows.length} records`,
-  ];
+function tryParseJsonReport(text: string): Record<string, any> | null {
+  if (!text || typeof text !== 'string') return null;
+  const trimmed = text.trim();
+  const candidates: string[] = [trimmed];
 
-  const summaryStats: Record<string, any> = {
-    rowCount: rows.length,
-  };
-
-  if (rows.length > 0) {
-    const keys = Object.keys(rows[0]);
-    keys.forEach((key) => {
-      const nums = rows.map((r) => r[key]).filter((v) => typeof v === 'number') as number[];
-      if (nums.length > rows.length * 0.5) {
-        const sum = nums.reduce((a, b) => a + b, 0);
-        const mean = sum / nums.length;
-        const sorted = [...nums].sort((a, b) => a - b);
-        const median = sorted[Math.floor(sorted.length / 2)];
-        summaryStats[key] = {
-          sum: Number(sum.toFixed(2)),
-          mean: Number(mean.toFixed(2)),
-          median,
-          min: sorted[0],
-          max: sorted[sorted.length - 1],
-        };
-        stdoutLines.push(`>>> df['${key}'].describe() -> mean: ${mean.toFixed(2)}, median: ${median}, max: ${sorted[sorted.length - 1]}`);
-      }
-    });
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch && fencedMatch[1]) {
+    candidates.unshift(fencedMatch[1].trim());
+  } else {
+    const firstBrace = trimmed.indexOf('{');
+    const lastBrace = trimmed.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+    }
   }
 
-  stdoutLines.push(`>>> Analysis execution verified successfully. 0 errors.`);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+export type AnalystErrorCategory =
+  | 'api_connection'
+  | 'sandbox_timeout'
+  | 'malformed_code'
+  | 'cancelled'
+  | 'service_unavailable';
+
+export interface ClassifiedAnalystError {
+  statusCode: number;
+  code: string;
+  category: AnalystErrorCategory;
+  error: string;
+  details?: Record<string, any>;
+}
+
+const NETWORK_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'API_CONNECTION_ERROR',
+  'api_connection_error',
+]);
+
+const PYTHON_EXCEPTION_REGEX =
+  /\b(SyntaxError|IndentationError|TabError|NameError|TypeError|ValueError|ZeroDivisionError|KeyError|IndexError|AttributeError|MemoryError|RuntimeError|ModuleNotFoundError|ImportError)\s*:\s*([^\r\n]+)/i;
+
+/**
+ * Classifies an error caught during hosted `code_interpreter` execution into specific
+ * HTTP status codes and error categories:
+ * - 499 CANCELLED: request aborted by caller
+ * - 504 SANDBOX_TIMEOUT: container/sandbox execution timeout or upstream gateway timeout
+ * - 502 API_CONNECTION_ERROR: upstream network/socket/DNS/connection failure
+ * - 422 MALFORMED_CODE_EXECUTION: syntax error, runtime traceback, or malformed Python execution
+ * - 503 NOT_CONFIGURED / CODE_INTERPRETER_NOT_SUPPORTED / UNSUPPORTED_PROVIDER / MODEL_NOT_AVAILABLE:
+ *   provider not configured or model/account does not support hosted code_interpreter
+ */
+export function classifyAnalystExecutionError(
+  err: any,
+  model: string,
+  aborted = false
+): ClassifiedAnalystError {
+  const rawMessage = String(
+    err?.error?.message || err?.message || 'OpenAI Code Interpreter execution failed.'
+  );
+  const upstreamCode = String(
+    err?.code || err?.details?.code || err?.error?.code || err?.type || ''
+  );
+  const status = err?.statusCode ?? err?.status ?? err?.details?.status;
+  const errName = String(err?.name || '');
+
+  // 1. Request cancellation -> 499
+  if (
+    aborted ||
+    errName === 'AbortError' ||
+    status === 499 ||
+    upstreamCode === 'CANCELLED' ||
+    upstreamCode === 'cancelled'
+  ) {
+    return {
+      statusCode: 499,
+      code: 'CANCELLED',
+      category: 'cancelled',
+      error: 'Analyst query was cancelled.',
+    };
+  }
+
+  // 2. Sandbox timeout errors -> 504 Gateway Timeout
+  if (
+    errName === 'APIConnectionTimeoutError' ||
+    upstreamCode === 'SANDBOX_TIMEOUT' ||
+    upstreamCode === 'sandbox_timeout' ||
+    upstreamCode === 'ETIMEDOUT' ||
+    upstreamCode === 'ESOCKETTIMEDOUT' ||
+    upstreamCode === 'container_expired' ||
+    status === 504 ||
+    /timed?\s*out|timeout|deadline exceeded|sandbox.*timeout|container.*expired|execution.*time.*limit/i.test(
+      rawMessage
+    )
+  ) {
+    return {
+      statusCode: 504,
+      code: 'SANDBOX_TIMEOUT',
+      category: 'sandbox_timeout',
+      error: `Sandbox execution timed out while running Python analysis for model "${model}": ${rawMessage}`,
+      details: {
+        model,
+        upstreamCode: upstreamCode || 'sandbox_timeout',
+        ...(err?.details && typeof err.details === 'object' ? err.details : {}),
+      },
+    };
+  }
+
+  // 3. API connection issues -> 502 Bad Gateway
+  if (
+    errName === 'APIConnectionError' ||
+    NETWORK_ERROR_CODES.has(upstreamCode) ||
+    status === 502 ||
+    /connection error|network error|fetch failed|socket hang up|econnrefused|econnreset|enotfound|eai_again|bad gateway|upstream connect|failed to connect/i.test(
+      rawMessage
+    )
+  ) {
+    return {
+      statusCode: 502,
+      code: 'API_CONNECTION_ERROR',
+      category: 'api_connection',
+      error: `API connection error while communicating with OpenAI code_interpreter for model "${model}": ${rawMessage}`,
+      details: {
+        model,
+        upstreamCode: upstreamCode || 'api_connection_error',
+        ...(err?.details && typeof err.details === 'object' ? err.details : {}),
+      },
+    };
+  }
+
+  // 4. Malformed code execution -> 422 Unprocessable Entity
+  if (
+    upstreamCode === 'MALFORMED_CODE_EXECUTION' ||
+    upstreamCode === 'malformed_code_execution' ||
+    upstreamCode === 'code_execution_error' ||
+    upstreamCode === 'python_execution_error' ||
+    status === 422 ||
+    PYTHON_EXCEPTION_REGEX.test(rawMessage) ||
+    /traceback \(most recent call last\)|malformed code|code execution failed/i.test(rawMessage)
+  ) {
+    return {
+      statusCode: 422,
+      code: 'MALFORMED_CODE_EXECUTION',
+      category: 'malformed_code',
+      error: `Malformed code execution in sandbox for model "${model}": ${rawMessage}`,
+      details: {
+        model,
+        upstreamCode: upstreamCode || 'malformed_code_execution',
+        ...(err?.details && typeof err.details === 'object' ? err.details : {}),
+      },
+    };
+  }
+
+  // 5. Service unavailable / unsupported model or account -> 503 Service Unavailable
+  const resolvedCode =
+    err instanceof AIProviderError
+      ? err.code
+      : upstreamCode || 'CODE_INTERPRETER_NOT_SUPPORTED';
+
   return {
-    stdout: stdoutLines.join('\n'),
-    summaryStats,
+    statusCode: 503,
+    code: resolvedCode,
+    category: 'service_unavailable',
+    error:
+      rawMessage ||
+      `OpenAI hosted code_interpreter is not supported for model "${model}" or this account.`,
+    ...(err instanceof AIProviderError && err.details ? { details: err.details } : {}),
+  };
+}
+
+/**
+ * Inspects the completed `code_interpreter` result to detect unhandled Python syntax or
+ * runtime failures when no valid executive report was produced.
+ */
+export function detectMalformedCodeOutput(ciResult: {
+  code?: string;
+  stdout?: string;
+  logs?: string[];
+  text?: string;
+  files?: any[];
+}): { isMalformed: boolean; exceptionSummary?: string; traceback?: string } {
+  const combinedLogs = [
+    ciResult.stdout || '',
+    ...(Array.isArray(ciResult.logs) ? ciResult.logs : []),
+  ]
+    .join('\n')
+    .trim();
+
+  if (!combinedLogs) {
+    return { isMalformed: false };
+  }
+
+  const hasTraceback = /Traceback \(most recent call last\):/i.test(combinedLogs);
+  const exceptionMatch = combinedLogs.match(PYTHON_EXCEPTION_REGEX);
+
+  if (!hasTraceback && !exceptionMatch) {
+    return { isMalformed: false };
+  }
+
+  // If the model recovered and still produced a valid structured JSON executive report, do not fail the request
+  const parsedReport = ciResult.text ? tryParseJsonReport(ciResult.text) : null;
+  if (parsedReport && (parsedReport.summary || parsedReport.title)) {
+    return { isMalformed: false };
+  }
+
+  const exceptionSummary = exceptionMatch
+    ? `${exceptionMatch[1]}: ${exceptionMatch[2].trim()}`
+    : 'Unhandled Python exception in code_interpreter container';
+
+  return {
+    isMalformed: true,
+    exceptionSummary,
+    traceback: combinedLogs,
   };
 }
 
 // 1. Ingest & Profile CSV
-analystRouter.post('/profile', requireAuth, express.json({ limit: '15mb' }), (req: any, res) => {
-  if (!checkAnalystRateLimit(req.user?.uid, 30, 60_000)) {
+analystRouter.post('/profile', requireAuth, express.json({ limit: '15mb' }), async (req: any, res) => {
+  if (!(await checkAnalystRateLimitDurable(req.user?.uid, 30, 60_000))) {
     return res.status(429).json({ error: 'Rate limit exceeded for dataset profiling. Please wait a moment.' });
   }
   const { name = 'dataset.csv', csvData } = req.body || {};
@@ -202,9 +405,9 @@ analystRouter.post('/profile', requireAuth, express.json({ limit: '15mb' }), (re
   }
 });
 
-// 2. Query Agent & Execute Sandbox
+// 2. Query Agent & Execute Hosted OpenAI Code Interpreter via Responses API
 analystRouter.post('/query', requireAuth, express.json({ limit: '15mb' }), async (req: any, res) => {
-  if (!checkAnalystRateLimit(req.user?.uid, 20, 60_000)) {
+  if (!(await checkAnalystRateLimitDurable(req.user?.uid, 20, 60_000))) {
     return res.status(429).json({ error: 'Rate limit exceeded for analyst queries. Please wait a moment.' });
   }
   const {
@@ -218,237 +421,237 @@ analystRouter.post('/query', requireAuth, express.json({ limit: '15mb' }), async
     return res.status(400).json({ error: 'csvData and query are required' });
   }
 
-  const { rows, headers } = parseCsv(csvData);
-  const modelName = model === 'gpt-6.1-sol' ? 'GPT-6.1 Sol' : 'GPT-6 Astra';
+  if (/^(claude|grok|deepseek|llama|mistral|qwen|cohere|gemini)/i.test(String(model).trim())) {
+    return res.status(503).json({
+      error: `Model "${model}" does not support OpenAI hosted code_interpreter.`,
+      code: 'UNSUPPORTED_PROVIDER',
+      category: 'unsupported_model',
+    });
+  }
 
+  let routeInfo: ReturnType<typeof modelRouter.resolveRoute>;
+  try {
+    routeInfo = modelRouter.resolveRoute(model);
+  } catch (err: any) {
+    const classified = classifyAnalystExecutionError(err, model, false);
+    return res.status(classified.statusCode).json({
+      error: classified.error || `Model "${model}" does not support OpenAI hosted code_interpreter.`,
+      code: classified.code,
+      category: classified.category,
+      ...(classified.details ? { details: classified.details } : {}),
+    });
+  }
+
+  if (routeInfo.route.provider !== 'openai' || typeof (routeInfo.adapter as any).runCodeInterpreterResponse !== 'function') {
+    return res.status(503).json({
+      error: `Model "${model}" (${routeInfo.route.provider}) does not support OpenAI hosted code_interpreter.`,
+      code: 'UNSUPPORTED_PROVIDER',
+      category: 'unsupported_model',
+    });
+  }
+
+  if (!routeInfo.adapter.isConfigured()) {
+    return res.status(503).json({
+      error: 'AI provider is not configured for Data Analyst queries. Set OPENAI_API_KEY in the server environment (.env) and restart the server.',
+      code: 'NOT_CONFIGURED',
+      category: 'service_unavailable',
+      setupStep: 'Add OPENAI_API_KEY=sk-... to your server .env file and restart the server.',
+    });
+  }
+
+  const abortController = new AbortController();
+  req.on('close', () => {
+    if (!res.writableEnded) {
+      abortController.abort();
+    }
+  });
+
+  const { rows, headers } = parseCsv(csvData);
+  const modelDisplayMap: Record<string, string> = {
+    'gpt-6-astra': 'GPT-6 Astra',
+    'gpt-6-sol': 'GPT-6 Sol',
+    'gpt-6-luna': 'GPT-6 Luna',
+    'gpt-4o': 'GPT-4o',
+    'gpt-4o-mini': 'GPT-4o mini',
+    'float-basic': 'GPT-4o mini'
+  };
+  const upstreamTarget = routeInfo.route.apiModelId;
+  const modelName = modelDisplayMap[model] || model;
+  const truthfulModelLabel = `${modelName} (via OpenAI ${upstreamTarget})`;
+
+  const instructions =
+    `You are the FLOAT Senior Data Analyst Agent (${truthfulModelLabel}). ` +
+    `A CSV file named "${datasetName}" (${rows.length} rows, columns: ${headers.join(', ')}) is attached to your code_interpreter container. ` +
+    `Use the code_interpreter tool to load and analyze the CSV file in Python, print key statistical outputs to stdout, ` +
+    `and then return your final executive report as a JSON object with this structure:\n` +
+    `{\n` +
+    `  "title": "Concise Descriptive Report Title",\n` +
+    `  "summary": "Executive findings with exact figures computed by Python.",\n` +
+    `  "keyMetrics": [\n` +
+    `    { "label": "Metric Name", "value": "Computed Value", "change": "Context", "trend": "up|down|neutral", "description": "Details" }\n` +
+    `  ],\n` +
+    `  "charts": [\n` +
+    `    {\n` +
+    `      "type": "bar",\n` +
+    `      "title": "Chart Title",\n` +
+    `      "description": "Chart description",\n` +
+    `      "xAxisKey": "category_col",\n` +
+    `      "series": [{ "key": "numeric_col", "name": "Series Name", "color": "#3B82F6" }],\n` +
+    `      "data": []\n` +
+    `    }\n` +
+    `  ],\n` +
+    `  "recommendations": ["Recommendation 1", "Recommendation 2"],\n` +
+    `  "caveats": ["Caveat 1", "Caveat 2"]\n` +
+    `}`;
+
+  const startTime = Date.now();
+  let ciResult;
+  try {
+    ciResult = await modelRouter.runCodeInterpreterResponse(
+      {
+        model,
+        apiModelId: upstreamTarget,
+        instructions,
+        input: `Dataset: "${datasetName}"\nUser query: "${query}"`,
+        csvFile: {
+          filename: datasetName,
+          content: csvData,
+          mimeType: 'text/csv',
+        },
+        stream: true,
+        signal: abortController.signal,
+      },
+      undefined,
+      abortController.signal
+    );
+  } catch (err: any) {
+    const classified = classifyAnalystExecutionError(
+      err,
+      model,
+      abortController.signal.aborted
+    );
+    if (classified.statusCode === 499 && res.headersSent) {
+      return;
+    }
+    return res.status(classified.statusCode).json({
+      error: classified.error,
+      code: classified.code,
+      category: classified.category,
+      ...(classified.details ? { details: classified.details } : {}),
+    });
+  }
+
+  const malformedCheck = detectMalformedCodeOutput(ciResult);
+  if (malformedCheck.isMalformed) {
+    return res.status(422).json({
+      error: `Malformed code execution in sandbox: ${malformedCheck.exceptionSummary}`,
+      code: 'MALFORMED_CODE_EXECUTION',
+      category: 'malformed_code',
+      details: {
+        model,
+        exception: malformedCheck.exceptionSummary,
+        pythonCode: ciResult.code || '',
+        stdout: ciResult.stdout || malformedCheck.traceback || '',
+      },
+    });
+  }
+
+  const hasCode = Boolean(ciResult.code && ciResult.code.trim().length > 0);
+  const hasStdout = Boolean(ciResult.stdout && ciResult.stdout.trim().length > 0);
+  const hasText = Boolean(ciResult.text && ciResult.text.trim().length > 0);
+  const hasFiles = Array.isArray(ciResult.files) && ciResult.files.length > 0;
+
+  if (!hasCode && !hasStdout && !hasText && !hasFiles) {
+    return res.status(503).json({
+      error: `OpenAI hosted code_interpreter returned an empty execution result for model "${model}".`,
+      code: 'CODE_INTERPRETER_UNAVAILABLE',
+      category: 'service_unavailable',
+    });
+  }
+
+  const parsedJson = tryParseJsonReport(ciResult.text);
+  const reportTitle =
+    (typeof parsedJson?.title === 'string' && parsedJson.title.trim()) ||
+    `Analytical Report: ${String(query).slice(0, 45)}`;
+  const aiSummary =
+    (typeof parsedJson?.summary === 'string' && parsedJson.summary.trim()) ||
+    ciResult.text.trim() ||
+    ciResult.stdout.trim();
+  const aiCaveats: string[] = Array.isArray(parsedJson?.caveats)
+    ? parsedJson.caveats.map(String)
+    : [];
+  const aiRecommendations: string[] = Array.isArray(parsedJson?.recommendations)
+    ? parsedJson.recommendations.map(String)
+    : [];
+  const reportCharts: any[] = Array.isArray(parsedJson?.charts) ? parsedJson.charts : [];
+
+  const keyMetrics =
+    Array.isArray(parsedJson?.keyMetrics) && parsedJson.keyMetrics.length > 0
+      ? parsedJson.keyMetrics
+      : [
+          {
+            label: 'Sample Rows',
+            value: rows.length.toLocaleString(),
+            change: 'Uploaded CSV',
+            trend: 'neutral' as const,
+            description: datasetName,
+          },
+          {
+            label: 'Columns Profiled',
+            value: headers.length.toLocaleString(),
+            change: 'CSV Schema',
+            trend: 'neutral' as const,
+            description: headers.slice(0, 4).join(', '),
+          },
+        ];
+
+  const elapsedMs = Math.max(1, Date.now() - startTime);
   const steps: AgentProgressStep[] = [
     {
       id: 'step-1',
-      title: 'Inspect & Profile Dataset',
-      description: `Ingested ${rows.length} rows across ${headers.length} columns (${headers.slice(0, 5).join(', ')}...)`,
+      title: 'Upload CSV to OpenAI Files API',
+      description: `Uploaded ${datasetName} (${rows.length} rows, ${headers.length} columns) and attached to code_interpreter container`,
       status: 'completed',
-      durationMs: 140,
+      durationMs: Math.round(elapsedMs * 0.2),
     },
     {
       id: 'step-2',
-      title: 'Formulate Statistical Hypothesis',
-      description: `Mapped query intent: "${String(query).slice(0, 60)}..."`,
+      title: 'Execute Python in Hosted code_interpreter',
+      description: hasCode
+        ? `Executed ${ciResult.codeBlocks.length} Python code block(s) via OpenAI Responses API`
+        : 'Processed analytical request via OpenAI Responses API',
       status: 'completed',
-      durationMs: 280,
+      durationMs: Math.round(elapsedMs * 0.6),
     },
     {
       id: 'step-3',
-      title: 'Execute in OpenAI Python Sandbox',
-      description: 'Running pandas aggregation, correlation matrix, and anomaly detection in sandbox',
+      title: 'Capture stdout, Charts & Generated Files',
+      description: `Captured ${ciResult.logs.length} stdout log block(s) and ${ciResult.files.length} generated container file(s)`,
       status: 'completed',
-      durationMs: 420,
-    },
-    {
-      id: 'step-4',
-      title: 'Synthesize Interactive Visualizations',
-      description: 'Formatting multi-series chart payloads with tooltips and responsive axes',
-      status: 'completed',
-      durationMs: 210,
-    },
-    {
-      id: 'step-5',
-      title: 'Compile Executive Findings & Caveats',
-      description: 'Assembling strategic takeaways, recommendations, and sample bias warnings',
-      status: 'completed',
-      durationMs: 190,
-    },
-  ];
-
-  const generatedPythonCode =
-`import pandas as pd
-import numpy as np
-
-# Load dataset and inspect data types
-df = pd.read_csv('${datasetName}')
-print(f"Shape: {df.shape}")
-
-# Statistical aggregations for query: ${String(query).replace(/'/g, "\\'")}
-summary = df.describe(include='all')
-print(summary)
-
-# Correlation and group aggregations
-numeric_cols = df.select_dtypes(include=[np.number]).columns
-if len(numeric_cols) >= 2:
-    corr = df[numeric_cols].corr()
-    print("Correlation matrix:")
-    print(corr)
-`;
-
-  const sandboxRes = runSandboxPython(generatedPythonCode, rows);
-
-  const charts: any[] = [];
-  const numericKeys = headers.filter((h) => {
-    const vals = rows.map((r) => r[h]).filter((v) => typeof v === 'number');
-    return vals.length > rows.length * 0.5;
-  });
-
-  const categoryKeys = headers.filter((h) => !numericKeys.includes(h));
-  const primaryCategory = categoryKeys[0] || headers[0];
-  const primaryNumeric = numericKeys[0] || headers[1];
-  const secondaryNumeric = numericKeys[1];
-
-  if (primaryCategory && primaryNumeric) {
-    const grouped: Record<string, { count: number; sum: number; sum2: number }> = {};
-    rows.forEach((r) => {
-      const cat = String(r[primaryCategory] || 'Other');
-      if (!grouped[cat]) grouped[cat] = { count: 0, sum: 0, sum2: 0 };
-      grouped[cat].count += 1;
-      const val = Number(r[primaryNumeric]);
-      if (!isNaN(val)) grouped[cat].sum += val;
-      if (secondaryNumeric) {
-        const val2 = Number(r[secondaryNumeric]);
-        if (!isNaN(val2)) grouped[cat].sum2 += val2;
-      }
-    });
-
-    const chartData = Object.entries(grouped)
-      .slice(0, 10)
-      .map(([cat, stats]) => ({
-        [primaryCategory]: cat,
-        [primaryNumeric]: Number((stats.sum / (stats.count || 1)).toFixed(2)),
-        ...(secondaryNumeric ? { [secondaryNumeric]: Number((stats.sum2 / (stats.count || 1)).toFixed(2)) } : {}),
-      }));
-
-    charts.push({
-      type: 'bar',
-      title: `${primaryNumeric.replace(/_/g, ' ')} by ${primaryCategory.replace(/_/g, ' ')}`,
-      description: `Aggregated average comparison across top ${primaryCategory.replace(/_/g, ' ')} categories.`,
-      xAxisKey: primaryCategory,
-      series: [
-        { key: primaryNumeric, name: primaryNumeric.replace(/_/g, ' '), color: '#3B82F6' },
-        ...(secondaryNumeric ? [{ key: secondaryNumeric, name: secondaryNumeric.replace(/_/g, ' '), color: '#10B981' }] : []),
-      ],
-      data: chartData,
-    });
-
-    const distributionData = Object.entries(grouped)
-      .slice(0, 6)
-      .map(([cat, stats]) => ({
-        name: cat,
-        count: stats.count,
-        value: Number(stats.sum.toFixed(1)),
-      }));
-
-    charts.push({
-      type: 'pie',
-      title: `Category Volume Distribution (${primaryCategory.replace(/_/g, ' ')})`,
-      description: `Proportional breakdown of total observations and cumulative metrics.`,
-      xAxisKey: 'name',
-      series: [{ key: 'value', name: 'Total Volume', color: '#8B5CF6' }],
-      data: distributionData,
-    });
-  }
-
-  let aiSummary = '';
-  let aiCaveats: string[] = [
-    `Sample size of ${rows.length} records provides directional statistical guidance; broader cohorts recommended for formal confidence intervals.`,
-    `Outliers in upper percentiles may skew arithmetic means; evaluate medians alongside standard deviations.`,
-    `Historical data patterns reflect specific operational conditions; seasonal or macro anomalies should be controlled for.`,
-  ];
-  let aiRecommendations: string[] = [
-    `Focus operational interventions on categories exhibiting negative variance or elevated error rates.`,
-    `Implement continuous monitoring on key performance indicators to detect drift before quarterly reviews.`,
-    `Segment future data collection by geography and cohort tenure for granular retention targeting.`,
-  ];
-
-  try {
-    const aiKey = process.env.GEMINI_API_KEY;
-    if (aiKey) {
-      const ai = new GoogleGenAI({ apiKey: aiKey });
-      const prompt =
-        `You are the FLOAT Senior Data Analyst Agent (${modelName}). ` +
-        `Analyze the following dataset metadata and user query.\n\n` +
-        `DATASET: ${datasetName} (${rows.length} rows, columns: ${headers.join(', ')})\n` +
-        `USER QUERY: "${query}"\n` +
-        `COMPUTED STATISTICS: ${JSON.stringify(sandboxRes.summaryStats)}\n\n` +
-        `Respond in JSON format with exactly this structure:\n` +
-        `{\n` +
-        `  "title": "Concise Descriptive Report Title",\n` +
-        `  "summary": "3-4 paragraphs of executive findings with exact figures, data insights, and clear conclusions.",\n` +
-        `  "recommendations": ["Recommendation 1", "Recommendation 2", "Recommendation 3"],\n` +
-        `  "caveats": ["Caveat 1 on data limitations", "Caveat 2 on potential confounders", "Caveat 3"]\n` +
-        `}\n` +
-        `Do not wrap in markdown quotes. Just return the JSON object.`;
-
-      const response = await ai.models.generateContent({
-        model: model === 'gpt-6.1-sol' ? 'gemini-3.1-pro-preview' : 'gemini-3.8-flash',
-        contents: prompt,
-      });
-
-      const responseText = response.text || '';
-      const cleanJson = responseText.replace(/^```json|```$/g, '').trim();
-      const parsed = JSON.parse(cleanJson);
-      if (parsed.summary) aiSummary = parsed.summary;
-      if (Array.isArray(parsed.caveats)) aiCaveats = parsed.caveats;
-      if (Array.isArray(parsed.recommendations)) aiRecommendations = parsed.recommendations;
-    }
-  } catch (aiErr) {
-    console.warn('[AnalystRouter] AI generation fallback:', aiErr);
-  }
-
-  if (!aiSummary) {
-    aiSummary =
-      `Based on the quantitative analysis of **${datasetName}** (${rows.length} records across ${headers.length} attributes), ` +
-      `the data reveals clear structural relationships for your query: "${query}".\n\n` +
-      `Primary observations indicate distinct variance between categorical groupings, with key metrics ` +
-      `demonstrating statistically significant concentration in upper performance tiers. Review the interactive visualizations and Python sandbox outputs below for detailed distributions.`;
-  }
-
-  const keyMetrics = [
-    {
-      label: 'Sample Rows',
-      value: rows.length.toLocaleString(),
-      change: '+100%',
-      trend: 'up' as const,
-      description: 'Clean parsed records',
-    },
-    ...(primaryNumeric && sandboxRes.summaryStats[primaryNumeric]
-      ? [
-          {
-            label: `Avg ${primaryNumeric.replace(/_/g, ' ')}`,
-            value: sandboxRes.summaryStats[primaryNumeric].mean.toLocaleString(),
-            change: 'Mean value',
-            trend: 'neutral' as const,
-            description: `Median: ${sandboxRes.summaryStats[primaryNumeric].median}`,
-          },
-          {
-            label: `Max ${primaryNumeric.replace(/_/g, ' ')}`,
-            value: sandboxRes.summaryStats[primaryNumeric].max.toLocaleString(),
-            change: 'Peak metric',
-            trend: 'up' as const,
-            description: `Min: ${sandboxRes.summaryStats[primaryNumeric].min}`,
-          },
-        ]
-      : []),
-    {
-      label: 'Confidence Score',
-      value: '98.4%',
-      change: 'High reliability',
-      trend: 'up' as const,
-      description: 'Zero null variance',
+      durationMs: Math.round(elapsedMs * 0.2),
     },
   ];
 
   const report: ExecutiveReport = {
-    id: `rep_${Date.now()}`,
-    title: `Analytical Report: ${String(query).slice(0, 45)}`,
+    id: ciResult.responseId || `rep_${Date.now()}`,
+    title: reportTitle,
     summary: aiSummary,
     keyMetrics,
-    charts,
-    pythonCode: generatedPythonCode,
-    pythonOutput: sandboxRes.stdout,
+    charts: reportCharts,
+    generatedFiles: ciResult.files,
+    pythonCode: ciResult.code,
+    pythonOutput: ciResult.stdout,
     caveats: aiCaveats,
     recommendations: aiRecommendations,
     generatedAt: Date.now(),
-    modelUsed: modelName,
+    modelUsed: truthfulModelLabel,
   };
 
   res.json({
+    code: ciResult.code,
+    stdout: ciResult.stdout,
+    files: ciResult.files,
+    charts: reportCharts,
     steps,
     report,
   });

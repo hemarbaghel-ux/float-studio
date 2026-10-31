@@ -7,6 +7,8 @@ import { DiagnosticsService } from '../diagnostics/diagnosticsService';
 import { ValidationService } from '../validation/validationService';
 import { projectProcessManager } from '../execution/processManager';
 import { floatBrainManager } from '../brain';
+import { sanitizeTerminalOutput, TerminalService } from '../terminal/terminalService';
+import { ExecutionPolicyManager } from '../policy/executionPolicy';
 
 // Patterns to exclude from file listings and reads
 const SENSITIVE_SEGMENT = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor$|dist$|build$|coverage$|\.next$|\.cache$|\.venv$|venv$|\.ssh$|\.aws$|\.npmrc$|\.pypirc$|\.netrc$|\.ds_store$|id_rsa(?:$|\.)|id_ed25519(?:$|\.))/i;
@@ -922,12 +924,22 @@ const runCommandTool: ToolDefinition = {
       };
     }
 
-    // Outcome 5: Command requires developer approval (either policy is "ask" / requireCommandApproval, or command is not on pre-approved allowlist)
+    // Outcome 5: Command requires developer approval unless the user chose Auto mode
     const isApproved = String(args.approved || '').toLowerCase() === 'true';
     const isAllowlisted = APPROVED_SANDBOX_COMMANDS.test(rawCmd);
-    if ((context.requireCommandApproval || context.executionPolicy === 'ask' || !isAllowlisted) && !isApproved) {
+    const isAutoMode =
+      context.executionPolicy === 'auto' ||
+      (context.executionPolicy === undefined &&
+        !context.requireCommandApproval &&
+        ExecutionPolicyManager.getPolicyMode(context.userId) === 'auto');
+    const needsApproval =
+      !isAutoMode &&
+      !isApproved &&
+      (Boolean(context.requireCommandApproval) || context.executionPolicy === 'ask' || !isAllowlisted);
+
+    if (needsApproval) {
       const approvalReason = !isAllowlisted
-        ? `Command "${rawCmd}" is not in the pre-approved verification allowlist and requires explicit developer approval.`
+        ? `Command "${rawCmd}" is not in the pre-approved verification allowlist and requires explicit developer approval (or Auto mode).`
         : `Command "${rawCmd}" requires developer approval under the active execution policy.`;
       return {
         success: false,
@@ -955,6 +967,15 @@ const runCommandTool: ToolDefinition = {
         const fileList = Array.from(context.virtualFiles.entries())
           .filter(([p, f]) => f.type === 'file' && !isSensitivePath(p))
           .map(([p, f]) => ({ path: p, content: f.content || '' }));
+
+        const executionId = `agent-cmd-${Date.now()}`;
+        if (hasCustomSandboxExecutor) {
+          projectProcessManager.emitLiveExecutionEvent(context.userId, context.projectId, rawCmd, {
+            type: 'started',
+            executionId
+          });
+        }
+
         const execFn = context.sandboxExecutor
           ? context.sandboxExecutor
           : (req: any) => projectProcessManager.execute(req);
@@ -966,6 +987,46 @@ const runCommandTool: ToolDefinition = {
           timeoutMs: 10000,
           signal: context.signal
         });
+
+        const cleanStdout = sanitizeTerminalOutput(result.stdout || '');
+        const cleanStderr = sanitizeTerminalOutput(result.stderr || '');
+        const cleanError = result.error ? sanitizeTerminalOutput(result.error) : undefined;
+
+        if (hasCustomSandboxExecutor) {
+          if (cleanStdout) {
+            projectProcessManager.emitLiveExecutionEvent(context.userId, context.projectId, rawCmd, {
+              type: 'output',
+              stream: 'stdout',
+              text: cleanStdout
+            });
+          }
+          if (cleanStderr) {
+            projectProcessManager.emitLiveExecutionEvent(context.userId, context.projectId, rawCmd, {
+              type: 'output',
+              stream: 'stderr',
+              text: cleanStderr
+            });
+          }
+          projectProcessManager.emitLiveExecutionEvent(context.userId, context.projectId, rawCmd, {
+            type: 'completed',
+            status: result.status,
+            exitCode: result.exitCode,
+            durationMs: result.durationMs
+          });
+        }
+
+        // Also record in any active terminal session for this project
+        const existingSessions = await TerminalService.listSessionsDurable(context.projectId, context.userId);
+        if (existingSessions.length > 0) {
+          await TerminalService.appendExecutionDurable(
+            existingSessions[0].id,
+            context.userId,
+            rawCmd,
+            cleanStdout,
+            cleanStderr,
+            result.exitCode ?? (result.status === 'succeeded' ? 0 : 1)
+          ).catch(() => undefined);
+        }
 
         const passed = result.status === 'succeeded' && result.exitCode === 0;
         if (passed) {
@@ -980,16 +1041,16 @@ const runCommandTool: ToolDefinition = {
               sandboxExecuted: true,
               syntaxValidationOnly: false,
               exitCode: 0,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              output: result.stdout || result.stderr || `Command "${rawCmd}" executed in isolated sandbox and passed.`,
+              stdout: cleanStdout,
+              stderr: cleanStderr,
+              output: cleanStdout || cleanStderr || `Command "${rawCmd}" executed in isolated sandbox and passed.`,
               durationMs: result.durationMs
             }
           };
         }
 
         // Outcome 2: Actual command executed in isolated sandbox and failed
-        const failMsg = result.error || result.stderr || result.stdout || `Command "${rawCmd}" failed in isolated sandbox with exit code ${result.exitCode ?? 1}.`;
+        const failMsg = cleanError || cleanStderr || cleanStdout || `Command "${rawCmd}" failed in isolated sandbox with exit code ${result.exitCode ?? 1}.`;
         return {
           success: false,
           error: failMsg,
@@ -1001,16 +1062,17 @@ const runCommandTool: ToolDefinition = {
             sandboxExecuted: true,
             syntaxValidationOnly: false,
             exitCode: result.exitCode ?? 1,
-            stdout: result.stdout,
-            stderr: result.stderr,
+            stdout: cleanStdout,
+            stderr: cleanStderr,
             output: failMsg,
             durationMs: result.durationMs
           }
         };
       } catch (err: any) {
+        const cleanErrMsg = sanitizeTerminalOutput(err?.message || 'Isolated sandbox command execution failed.');
         return {
           success: false,
-          error: err?.message || 'Isolated sandbox command execution failed.',
+          error: cleanErrMsg,
           output: {
             command: rawCmd,
             outcome: 'sandbox_failed',
@@ -1019,7 +1081,7 @@ const runCommandTool: ToolDefinition = {
             sandboxExecuted: true,
             syntaxValidationOnly: false,
             exitCode: 1,
-            output: err?.message || 'Isolated sandbox command execution failed.'
+            output: cleanErrMsg
           }
         };
       }

@@ -19,7 +19,9 @@ import {
   FileCode,
   Undo2,
   AlertCircle,
-  GitCommit
+  GitCommit,
+  Sparkles,
+  MessageSquare
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useIDEStore } from '../../store';
@@ -94,6 +96,9 @@ export function GitPanel() {
 
   // Discard changes confirmation state
   const [discardingPath, setDiscardingPath] = useState<string | null>(null);
+  const [generatingCommitMsg, setGeneratingCommitMsg] = useState(false);
+  const [reviewingPrNumber, setReviewingPrNumber] = useState<number | null>(null);
+  const [prReviewSummary, setPrReviewSummary] = useState<{ prNumber: number; findingsCount: number; summary: string } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -331,6 +336,57 @@ export function GitPanel() {
     setStagedPaths(new Set());
   };
 
+  const handleGenerateCommitMessage = async () => {
+    if (!projectId || generatingCommitMsg || busy || !status?.changes?.length) return;
+    setGeneratingCommitMsg(true);
+    setError('');
+    try {
+      const toCommit = stagedPaths.size > 0 ? Array.from(stagedPaths) : undefined;
+      const response = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/git/generate-commit-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stagedPaths: toCommit }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || `Failed to generate commit message (HTTP ${response.status}).`);
+      }
+      if (data.message) {
+        setMessage(data.message);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Could not generate commit message from diff.');
+    } finally {
+      setGeneratingCommitMsg(false);
+    }
+  };
+
+  const handleAiReviewPR = async (prNumber: number) => {
+    if (!projectId || reviewingPrNumber !== null || busy) return;
+    setReviewingPrNumber(prNumber);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/git/pull-requests/${prNumber}/ai-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postComment: true }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || `AI PR review failed (HTTP ${response.status}).`);
+      }
+      setPrReviewSummary({
+        prNumber,
+        findingsCount: Array.isArray(data.findings) ? data.findings.length : 0,
+        summary: data.body || 'Review comment posted.',
+      });
+    } catch (err: any) {
+      setError(err.message || 'Could not complete AI PR review.');
+    } finally {
+      setReviewingPrNumber(null);
+    }
+  };
+
   const switchBranch = (name: string) => {
     const dirty = (status?.changes?.length || 0) > 0;
     const hasPending = Boolean(status?.pendingCommit);
@@ -359,6 +415,14 @@ export function GitPanel() {
   const githubConnection = connections.find(c => c.provider === 'github');
   const gitlabConnection = connections.find(c => c.provider === 'gitlab');
   const connected = (githubConnection?.status === 'connected') || (gitlabConnection?.status === 'connected');
+  const expiredConnection = (githubConnection?.status === 'expired') || (gitlabConnection?.status === 'expired');
+  const isDetachedHead = Boolean(
+    status?.linked && (
+      !status.branch ||
+      status.branch === 'HEAD' ||
+      /^[0-9a-f]{40}$/i.test(status.branch.trim())
+    )
+  );
 
   const allChanges = status?.changes || [];
   const stagedChanges = allChanges.filter(c => stagedPaths.has(c.path));
@@ -387,6 +451,30 @@ export function GitPanel() {
           <div role="alert" className="mx-3 mt-3 p-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-start gap-2 break-words">
             <AlertCircle size={14} className="shrink-0 mt-0.5" />
             <div className="flex-1">{error}</div>
+          </div>
+        )}
+
+        {expiredConnection && (
+          <div role="alert" className="mx-3 mt-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs space-y-1.5">
+            <div className="font-semibold flex items-center gap-1.5">
+              <AlertCircle size={14} className="shrink-0" />
+              <span>Git OAuth token expired</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              Your Git provider authorization has expired. Reconnect in Integrations to continue syncing branches and pull requests.
+            </p>
+          </div>
+        )}
+
+        {isDetachedHead && (
+          <div role="alert" className="mx-3 mt-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs space-y-1">
+            <div className="font-semibold flex items-center gap-1.5">
+              <AlertCircle size={14} className="shrink-0" />
+              <span>Detached HEAD State</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              Commits and pushes are blocked while in detached HEAD. Create or switch to a named branch above before committing.
+            </p>
           </div>
         )}
 
@@ -634,7 +722,18 @@ export function GitPanel() {
                   />
                   <div className="flex items-center gap-1.5">
                     <button
-                      disabled={busy || !message.trim() || !allChanges.length}
+                      type="button"
+                      data-testid="generate-commit-msg-btn"
+                      title="Generate commit message from staged or working tree diff"
+                      disabled={busy || generatingCommitMsg || !allChanges.length}
+                      onClick={() => void handleGenerateCommitMessage()}
+                      className="py-1.5 px-2.5 border border-slate-200 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-slate-300 rounded-lg text-xs transition-colors flex items-center justify-center gap-1 disabled:opacity-40 cursor-pointer shrink-0"
+                    >
+                      {generatingCommitMsg ? <LoaderCircle size={13} className="animate-spin text-blue-500" /> : <Sparkles size={13} className="text-blue-500" />}
+                      <span>Generate</span>
+                    </button>
+                    <button
+                      disabled={busy || isDetachedHead || !message.trim() || !allChanges.length}
                       onClick={() => void handleCommit()}
                       className="flex-1 py-1.5 px-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
                     >
@@ -841,6 +940,16 @@ export function GitPanel() {
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
+                            data-testid="ai-review-pr-btn"
+                            onClick={() => void handleAiReviewPR(pr.number)}
+                            disabled={busy || reviewingPrNumber === pr.number}
+                            title="Run AI diff review & post comment (never self-approves)"
+                            className="p-1 hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer disabled:opacity-40"
+                          >
+                            {reviewingPrNumber === pr.number ? <LoaderCircle size={12} className="animate-spin text-blue-500" /> : <MessageSquare size={12} />}
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => openDiffForPR(pr.number, pr.title)}
                             title="Inspect changed files"
                             className="p-1 hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
@@ -869,6 +978,11 @@ export function GitPanel() {
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                         {pr.head} → {pr.base}
                       </div>
+                      {prReviewSummary?.prNumber === pr.number && (
+                        <div className="mt-1.5 p-1.5 rounded bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-700 dark:text-blue-300">
+                          AI Review posted ({prReviewSummary.findingsCount} finding{prReviewSummary.findingsCount === 1 ? '' : 's'}) — event: COMMENT
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -982,6 +1096,7 @@ export function GitPanel() {
       {/* Create Pull Request Modal */}
       {showPRModal && status && (
         <CreatePullRequestModal
+          projectId={projectId}
           branch={status.branch || 'main'}
           defaultBranch={status.defaultBranch || 'main'}
           branches={status.branches || []}

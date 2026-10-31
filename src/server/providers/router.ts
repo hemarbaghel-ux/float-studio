@@ -3,49 +3,59 @@ import {
   AIProviderRequest,
   AIProviderResponse,
   AIProviderError,
-  ProviderHealthCheckResult
+  ProviderHealthCheckResult,
+  CodeInterpreterResponseRequest,
+  CodeInterpreterResponseResult,
+  CodeInterpreterStreamEvent
 } from './base';
 import { OpenAIAdapter } from './openai';
+import { GoogleGeminiAdapter } from './gemini';
+import { AnthropicAdapter } from './anthropic';
 import { ServerPrivacyGuard } from '../privacyGuard';
 
 export interface ModelRouteDefinition {
-  provider: 'openai';
+  provider: 'openai' | 'google' | 'anthropic';
   apiModelId: string;
-  /** True when the route ID is a FLOAT-defined internal alias rather than a literal upstream OpenAI model ID. */
-  isInternalAlias?: boolean;
-  /** The verified upstream OpenAI model ID executed by the adapter (or fallback target for preview cloud agents). */
-  upstreamModelId?: string;
 }
 
 export class ModelRouter {
   private adapters: Map<string, AIProviderAdapter> = new Map();
 
-  // Explicit provider/model allowlist. GPT-6 Astra & Sol are the flagship primary models.
+  // Single source of truth for real upstream model IDs (zero fake aliases).
+  // gpt-6.1-sol is excluded unless /api/ai/health proves it works.
   private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Flagship Primary Models (Exclusive Focus)
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: false, upstreamModelId: 'gpt-6-astra' },
-    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: false, upstreamModelId: 'gpt-6.1-sol' },
+    // Google Gemini 4 Flagship Coding & Reasoning
+    'gemini-4-argon': { provider: 'google', apiModelId: 'gemini-4-argon' },
 
-    // Dynamic router aliases mapped to Astra & Sol
-    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: true, upstreamModelId: 'gpt-6-astra' },
-    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-6.1-sol' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-6.1-sol' },
+    // Real OpenAI GPT-6 Models
+    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' },
+    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6-sol' },
+    'gpt-6-luna': { provider: 'openai', apiModelId: 'gpt-6-luna' },
 
-    // Legacy / Fallback Backend Routes
-    'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: false, upstreamModelId: 'gpt-4o' },
-    'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: false, upstreamModelId: 'gpt-4o-mini' },
-    'o1': { provider: 'openai', apiModelId: 'o1', isInternalAlias: false, upstreamModelId: 'o1' },
-    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini', isInternalAlias: false, upstreamModelId: 'o1-mini' },
-    'o3-mini': { provider: 'openai', apiModelId: 'o3-mini', isInternalAlias: false, upstreamModelId: 'o3-mini' },
-    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview', isInternalAlias: false, upstreamModelId: 'gpt-4.5-preview' },
-    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo', isInternalAlias: false, upstreamModelId: 'gpt-4-turbo' },
-    'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest', isInternalAlias: false, upstreamModelId: 'chatgpt-4o-latest' },
-    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo', isInternalAlias: false, upstreamModelId: 'gpt-3.5-turbo' },
-    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: true, upstreamModelId: 'gpt-4o-mini' }
+    // Standard OpenAI Models
+    'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
+    'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
+    'o1': { provider: 'openai', apiModelId: 'o1' },
+    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
+    'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
+    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview' },
+    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo' },
+    'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest' },
+    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' },
+
+    // Real Anthropic Claude Models
+    'claude-sonnet-5-5': { provider: 'anthropic', apiModelId: 'claude-sonnet-5-5' },
+    'claude-opus-5-5': { provider: 'anthropic', apiModelId: 'claude-opus-5-5' },
+    'claude-haiku-5-5': { provider: 'anthropic', apiModelId: 'claude-haiku-5-5' },
+    'claude-sonnet-4-20250514': { provider: 'anthropic', apiModelId: 'claude-sonnet-4-20250514' },
+    'claude-3-7-sonnet-20250219': { provider: 'anthropic', apiModelId: 'claude-3-7-sonnet-20250219' },
+    'claude-3-5-sonnet-20241022': { provider: 'anthropic', apiModelId: 'claude-3-5-sonnet-20241022' }
   };
 
   constructor() {
     this.registerAdapter(new OpenAIAdapter());
+    this.registerAdapter(new GoogleGeminiAdapter());
+    this.registerAdapter(new AnthropicAdapter());
   }
 
   registerAdapter(adapter: AIProviderAdapter) {
@@ -56,23 +66,63 @@ export class ModelRouter {
     return this.adapters.get(providerId);
   }
 
-  getProviderStatus(): Record<string, { name: string; configured: boolean }> {
-    const status: Record<string, { name: string; configured: boolean }> = {};
+  getConfiguredModelIds(): string[] {
+    const ids: string[] = [];
+    const googleAdapter = this.adapters.get('google');
+    const openaiAdapter = this.adapters.get('openai');
+    const anthropicAdapter = this.adapters.get('anthropic');
+
+    if (googleAdapter?.isConfigured()) {
+      ids.push('gemini-4-argon');
+    }
+    if (openaiAdapter?.isConfigured()) {
+      ids.push('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna');
+      if (this.modelRoutes['gpt-6.1-sol']) {
+        ids.push('gpt-6.1-sol');
+      }
+    }
+    if (anthropicAdapter?.isConfigured()) {
+      ids.push('claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5');
+    }
+    return ids;
+  }
+
+  getProviderStatus(): Record<string, { name: string; configured: boolean; models?: string[] }> {
+    const status: Record<string, { name: string; configured: boolean; models?: string[] }> = {};
     for (const [id, adapter] of this.adapters.entries()) {
+      const modelsForProvider = Object.entries(this.modelRoutes)
+        .filter(([, route]) => route.provider === id)
+        .map(([modelId]) => modelId);
       status[id] = {
         name: adapter.name,
-        configured: adapter.isConfigured()
+        configured: adapter.isConfigured(),
+        models: modelsForProvider
       };
     }
     return status;
   }
 
-  async checkAllProvidersHealth(): Promise<Record<string, ProviderHealthCheckResult>> {
-    const results: Record<string, ProviderHealthCheckResult> = {};
+  async checkAllProvidersHealth(): Promise<
+    Record<
+      string,
+      ProviderHealthCheckResult & {
+        models?: Record<string, { status: 'ok' | 'error'; code?: string; statusCode?: number; message?: string }>;
+      }
+    >
+  > {
+    const results: Record<
+      string,
+      ProviderHealthCheckResult & {
+        models?: Record<string, { status: 'ok' | 'error'; code?: string; statusCode?: number; message?: string }>;
+      }
+    > = {};
     for (const [id, adapter] of this.adapters.entries()) {
       if (adapter.checkHealth) {
         try {
           results[id] = await adapter.checkHealth();
+          if (id === 'openai' && results[id]?.models?.['gpt-6.1-sol']?.status === 'ok') {
+            this.modelRoutes['gpt-6.1-sol'] = { provider: 'openai', apiModelId: 'gpt-6.1-sol' };
+          }
         } catch (err: any) {
           results[id] = {
             provider: adapter.name,
@@ -95,17 +145,23 @@ export class ModelRouter {
   }
 
   resolveModelId(modelId: string): string {
-    if (modelId === 'auto' || !modelId) {
+    const trimmed = (modelId || '').trim();
+    if (!trimmed || trimmed === 'auto') {
+      const openaiAdapter = this.adapters.get('openai');
+      const googleAdapter = this.adapters.get('google');
+      if (googleAdapter?.isConfigured() && !openaiAdapter?.isConfigured()) {
+        return 'gemini-4-argon';
+      }
       return 'gpt-6-astra';
     }
-    return modelId;
+    return trimmed;
   }
 
   validateModelAvailability(modelId: string): void {
     const lower = (modelId || '').toLowerCase();
     if (
-      lower.startsWith('gemini') ||
-      lower.startsWith('claude') ||
+      lower === 'gemini-2.0-flash' ||
+      lower.startsWith('gemini-1.5') ||
       lower.startsWith('grok') ||
       lower.startsWith('deepseek') ||
       lower.startsWith('composer') ||
@@ -116,7 +172,7 @@ export class ModelRouter {
       lower.startsWith('cohere')
     ) {
       throw new AIProviderError(
-        `Model "${modelId}" belongs to an unsupported provider. FLOAT AI supports OpenAI models exclusively.`,
+        `Model "${modelId}" belongs to an unsupported provider or is retired.`,
         'UNSUPPORTED_PROVIDER',
         'FLOAT',
         400
@@ -132,14 +188,14 @@ export class ModelRouter {
   }
 
   resolveRoute(modelId: string): { route: ModelRouteDefinition; adapter: AIProviderAdapter } {
-    const key = (modelId || 'auto').trim();
+    const key = this.resolveModelId(modelId);
     this.validateModelAvailability(key);
     const route = this.modelRoutes[key];
 
     if (!route) {
       throw new AIProviderError(
         `Model "${modelId}" is not recognized or supported by the FLOAT router. Configured route candidates include: ${Object.keys(this.modelRoutes).join(', ')}`,
-        'MODEL_NOT_FOUND',
+        'MODEL_NOT_AVAILABLE',
         'FLOAT',
         404
       );
@@ -158,34 +214,47 @@ export class ModelRouter {
     return { route, adapter };
   }
 
+  private getRequiredEnvKeyName(providerId: string): string {
+    if (providerId === 'google') return 'GEMINI_API_KEY';
+    if (providerId === 'anthropic') return 'ANTHROPIC_API_KEY';
+    return 'OPENAI_API_KEY';
+  }
+
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
 
-    const dataSharingAllowed = request.dataSharingAllowed !== undefined
-      ? request.dataSharingAllowed === true
-      : request.dataSharingConsent === true;
+    const dataSharingAllowed =
+      request.dataSharingAllowed !== undefined
+        ? request.dataSharingAllowed === true
+        : request.dataSharingConsent === true;
 
-    ServerPrivacyGuard.logAudit('ModelRouter', `generateContent(${request.model} -> ${route.provider}:${route.apiModelId})`, dataSharingAllowed, {
-      requestedModel: request.model,
-      routedProvider: route.provider,
-      apiModelId: route.apiModelId,
-      messageCount: request.messages?.length || 0,
-      dataSharingAllowed
-    });
+    ServerPrivacyGuard.logAudit(
+      'ModelRouter',
+      `generateContent(${request.model} -> ${route.provider}:${route.apiModelId})`,
+      dataSharingAllowed,
+      {
+        requestedModel: request.model,
+        routedProvider: route.provider,
+        apiModelId: route.apiModelId,
+        messageCount: request.messages?.length || 0,
+        dataSharingAllowed
+      }
+    );
 
     if (!adapter.isConfigured() && !request.demoMode) {
+      const envVar = this.getRequiredEnvKeyName(route.provider);
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure the server-side API key.`,
-        'AUTH_ERROR',
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${envVar} in the server environment.`,
+        'NOT_CONFIGURED',
         adapter.name,
-        401
+        503
       );
     }
 
     const startTime = Date.now();
     const result = await adapter.generateContent({
       ...request,
-      model: request.model,
+      model: route.apiModelId,
       apiModelId: route.apiModelId,
       dataSharingConsent: dataSharingAllowed,
       dataSharingAllowed
@@ -213,40 +282,51 @@ export class ModelRouter {
   ): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
 
-    const dataSharingAllowed = request.dataSharingAllowed !== undefined
-      ? request.dataSharingAllowed === true
-      : request.dataSharingConsent === true;
+    const dataSharingAllowed =
+      request.dataSharingAllowed !== undefined
+        ? request.dataSharingAllowed === true
+        : request.dataSharingConsent === true;
 
-    ServerPrivacyGuard.logAudit('ModelRouter', `generateContentStream(${request.model} -> ${route.provider}:${route.apiModelId})`, dataSharingAllowed, {
-      requestedModel: request.model,
-      routedProvider: route.provider,
-      apiModelId: route.apiModelId,
-      messageCount: request.messages?.length || 0,
-      dataSharingAllowed
-    });
+    ServerPrivacyGuard.logAudit(
+      'ModelRouter',
+      `generateContentStream(${request.model} -> ${route.provider}:${route.apiModelId})`,
+      dataSharingAllowed,
+      {
+        requestedModel: request.model,
+        routedProvider: route.provider,
+        apiModelId: route.apiModelId,
+        messageCount: request.messages?.length || 0,
+        dataSharingAllowed
+      }
+    );
 
     if (!adapter.isConfigured() && !request.demoMode) {
+      const envVar = this.getRequiredEnvKeyName(route.provider);
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure the server-side API key.`,
-        'AUTH_ERROR',
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${envVar} in the server environment.`,
+        'NOT_CONFIGURED',
         adapter.name,
-        401
+        503
       );
     }
 
     if (adapter.generateContentStream) {
-      return adapter.generateContentStream({
-        ...request,
-        model: request.model,
-        apiModelId: route.apiModelId,
-        dataSharingConsent: dataSharingAllowed,
-        dataSharingAllowed
-      }, onChunk, signal);
+      return adapter.generateContentStream(
+        {
+          ...request,
+          model: route.apiModelId,
+          apiModelId: route.apiModelId,
+          dataSharingConsent: dataSharingAllowed,
+          dataSharingAllowed
+        },
+        onChunk,
+        signal
+      );
     }
 
     const result = await adapter.generateContent({
       ...request,
-      model: request.model,
+      model: route.apiModelId,
       apiModelId: route.apiModelId,
       dataSharingConsent: dataSharingAllowed,
       dataSharingAllowed
@@ -270,20 +350,26 @@ export class ModelRouter {
     const { route, adapter } = this.resolveRoute(model);
     const dataSharingAllowed = ServerPrivacyGuard.evaluateConsent(req);
 
-    ServerPrivacyGuard.logAudit('ModelRouter', `runAgentLoop(${model} -> ${route.provider}:${route.apiModelId})`, dataSharingAllowed, {
-      requestedModel: model,
-      routedProvider: route.provider,
-      apiModelId: route.apiModelId,
-      fileCount: virtualFiles?.length || 0,
-      dataSharingAllowed
-    });
+    ServerPrivacyGuard.logAudit(
+      'ModelRouter',
+      `runAgentLoop(${model} -> ${route.provider}:${route.apiModelId})`,
+      dataSharingAllowed,
+      {
+        requestedModel: model,
+        routedProvider: route.provider,
+        apiModelId: route.apiModelId,
+        fileCount: virtualFiles?.length || 0,
+        dataSharingAllowed
+      }
+    );
 
     if (!adapter.isConfigured()) {
+      const envVar = this.getRequiredEnvKeyName(route.provider);
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To run agents with "${model}", configure the server-side API key.`,
-        'AUTH_ERROR',
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To run agents with "${model}", configure ${envVar} in the server environment.`,
+        'NOT_CONFIGURED',
         adapter.name,
-        401
+        503
       );
     }
 
@@ -302,4 +388,60 @@ export class ModelRouter {
 
     return adapter.runAgentLoop(req, res, route.apiModelId, prompt, virtualFiles);
   }
+
+  async runCodeInterpreterResponse(
+    request: CodeInterpreterResponseRequest,
+    onEvent?: (event: CodeInterpreterStreamEvent) => void,
+    signal?: AbortSignal
+  ): Promise<CodeInterpreterResponseResult> {
+    let route: ModelRouteDefinition;
+    let adapter: AIProviderAdapter;
+    try {
+      const resolved = this.resolveRoute(request.model);
+      route = resolved.route;
+      adapter = resolved.adapter;
+    } catch (err: any) {
+      const code = err instanceof AIProviderError ? err.code : 'CODE_INTERPRETER_NOT_SUPPORTED';
+      throw new AIProviderError(
+        err?.message || `Model "${request.model}" does not support hosted code_interpreter.`,
+        code,
+        'OpenAI',
+        503,
+        { status: 503, code, model: request.model }
+      );
+    }
+
+    if (!adapter.isConfigured()) {
+      const envVar = this.getRequiredEnvKeyName(route.provider);
+      throw new AIProviderError(
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${envVar} in the server environment.`,
+        'NOT_CONFIGURED',
+        adapter.name,
+        503,
+        { status: 503, code: 'not_configured', model: request.model }
+      );
+    }
+
+    if (typeof adapter.runCodeInterpreterResponse !== 'function') {
+      throw new AIProviderError(
+        `Provider "${adapter.name}" does not support hosted code_interpreter via the Responses API.`,
+        'CODE_INTERPRETER_NOT_SUPPORTED',
+        adapter.name,
+        503,
+        { status: 503, code: 'code_interpreter_not_supported', model: request.model }
+      );
+    }
+
+    return adapter.runCodeInterpreterResponse(
+      {
+        ...request,
+        model: request.model,
+        apiModelId: route.apiModelId
+      },
+      onEvent,
+      signal
+    );
+  }
 }
+
+export const modelRouter = new ModelRouter();

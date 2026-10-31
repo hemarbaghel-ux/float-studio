@@ -43,7 +43,7 @@ export async function runAutomation(id: string): Promise<void> {
   const user = auth.currentUser;
   // Automations are stored in browser-local storage. Never run legacy or
   // another account's record using the currently signed-in user's session.
-  if (!a || !isAutomationOwnedBy(a, user?.uid) || inFlight.has(id)) return;
+  if (!a || !user || !isAutomationOwnedBy(a, user.uid) || inFlight.has(id)) return;
   inFlight.add(id);
   const runId = store.startRun(id);
   try {

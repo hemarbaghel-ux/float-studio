@@ -61,7 +61,7 @@ async function runDiagnosisSuite() {
 
   // --- Suite 2: Error Normalization, Status Mapping, and Secret Redaction ---
   console.log('\n--- Suite 2: Error Normalization & Secret Redaction ---');
-  
+
   // 401 with raw secret embedded in message
   const raw401Error = {
     status: 401,
@@ -83,22 +83,22 @@ async function runDiagnosisSuite() {
   assert(norm403.code === 'AUTH_ERROR', 'HTTP 403 normalizes to AUTH_ERROR');
   assert(norm403.statusCode === 403, 'HTTP 403 maps to status code 403');
 
-  // 404 Model Not Found
+  // 404 Model Not Available
   const raw404Error = {
     status: 404,
     message: 'The model gpt-unknown does not exist or you do not have access.'
   };
   const norm404 = normalizeOpenAIError(raw404Error);
-  assert(norm404.code === 'MODEL_NOT_FOUND', 'HTTP 404 normalizes to MODEL_NOT_FOUND');
+  assert((norm404.code as string) === 'MODEL_NOT_AVAILABLE', 'HTTP 404 normalizes to MODEL_NOT_AVAILABLE');
   assert(norm404.statusCode === 404, 'HTTP 404 maps to status code 404');
 
-  // 429 Quota Exceeded vs Rate Limited
+  // 429 Quota Exceeded vs Rate Limited -> RATE_LIMITED
   const rawQuotaError = {
     status: 429,
     message: 'You exceeded your current quota, please check your plan and billing details.'
   };
   const normQuota = normalizeOpenAIError(rawQuotaError);
-  assert(normQuota.code === 'QUOTA_EXCEEDED', 'Quota message normalizes to QUOTA_EXCEEDED');
+  assert(normQuota.code === 'RATE_LIMITED', 'Quota 429 normalizes to RATE_LIMITED');
 
   const rawRateError = {
     status: 429,
@@ -117,7 +117,7 @@ async function runDiagnosisSuite() {
   assert(norm502.statusCode === 502, '502 maps to statusCode 502');
 
   // --- Suite 3: Safe Diagnostic Probe of Actual Configured Environment ---
-  console.log('\n--- Suite 3: Safe Live Authentication Diagnostic Probe ---');
+  console.log('\n--- Suite 3: Safe Live Per-Model Health Diagnostic Probe ---');
   const realAdapter = new OpenAIAdapter();
   const isConfigured = realAdapter.isConfigured();
   console.log(`  Configured in current environment: ${isConfigured}`);
@@ -125,19 +125,12 @@ async function runDiagnosisSuite() {
   if (!isConfigured) {
     console.log('  [DIAGNOSTIC RESULT] OpenAI is NOT configured (no key present or placeholder).');
   } else {
-    try {
-      const health = await realAdapter.checkHealth();
-      if (health.authenticated && health.modelAvailable) {
-        console.log('  [DIAGNOSTIC RESULT] LIVE AUTHENTICATION SUCCESSFUL: Upstream OpenAI models listed and accessible.');
-      } else {
-        console.log(`  [DIAGNOSTIC RESULT] LIVE AUTHENTICATION FAILED: ${health.error}`);
-        assert(health.configured === true, 'Health check indicates configured: true');
-        assert(health.authenticated === false, 'Health check indicates authenticated: false');
-        assert(health.modelAvailable === false, 'Health check indicates modelAvailable: false');
-      }
-    } catch (err: any) {
-      console.log(`  [DIAGNOSTIC RESULT] Caught unexpected health check failure: ${err.message}`);
+    const health = await realAdapter.checkHealth();
+    console.log(`  [DIAGNOSTIC RESULT] authenticated=${health.authenticated}, modelAvailable=${health.modelAvailable}`);
+    for (const [mId, mStatus] of Object.entries(health.models || {})) {
+      console.log(`    - ${mId}: ${mStatus.status}${mStatus.code ? ` (${mStatus.code}: ${mStatus.message})` : ''}`);
     }
+    assert(health.configured === true, 'Health check indicates configured: true');
   }
 
   console.log('\n======================================================');

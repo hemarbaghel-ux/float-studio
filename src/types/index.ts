@@ -31,11 +31,19 @@ export interface AIMessage {
   modelId?: string;
   agentId?: string;
   latency?: number;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens?: number;
+    estimatedCostUsd?: number | null;
+  };
+  checkpointId?: string;
+  checkpoint?: FileNode[];
+  imageAttachments?: Array<{ id: string; name: string; mimeType: string; dataUrl: string }>;
   status?: 'sending' | 'streaming' | 'completed' | 'error' | 'cancelled';
   error?: string;
   isSimulated?: boolean;
   conversationId?: string;
-  checkpoint?: FileNode[];
   changes?: Record<string, { status: 'pending' | 'accepted' | 'rejected'; before?: string | null }>;
   agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   cancelled?: boolean;
@@ -46,6 +54,7 @@ export interface AIMessage {
     totalContextChars?: number;
     includedItems?: Array<{ id: string; name: string; type: string; source: string; chars: number; priority: number }>;
     excludedItems?: Array<{ name: string; reason: string }>;
+    appliedRules?: Array<{ id: string; name: string; scope: string; sourceFile?: string; priority?: number }>;
   };
 }
 
@@ -66,6 +75,8 @@ export interface AIContextItem {
   startLine?: number;
   endLine?: number;
   sizeBytes?: number;
+  mimeType?: string;
+  imageDataUrl?: string;
 }
 
 export interface EditorSettings {
@@ -105,9 +116,12 @@ export interface Change {
   operation: 'create' | 'modify' | 'delete' | 'rename';
   originalContent?: string;
   proposedContent?: string;
+  patchedContent?: string;
   originalHash?: string;
   proposedHash?: string;
   diffStats?: { additions: number; deletions: number };
+  hunks?: import('./proposal').DiffHunk[];
+  selectedHunkIds?: string[];
   status: 'pending' | 'approved' | 'rejected' | 'applied' | 'failed';
 }
 

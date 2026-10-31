@@ -23,6 +23,7 @@ export interface FloatRule {
   scope: RuleScope;
   enabled: boolean;
   priority: number; // 1 = highest
+  sourceFile?: string;
   globs?: string[];
   projectId?: string;
   userId?: string;
@@ -147,8 +148,9 @@ export class RulesService {
   }
 
   /**
-   * Discovers repository rules from `.float/rules/` files in the workspace.
-   * Supports `.md`, `.txt`, and `.json` formats.
+   * Discovers repository rules from `AGENTS.md`, `.cursorrules`, `.floatrules`,
+   * `.cursor/rules/*`, and `.float/rules/*` files in the workspace.
+   * Supports `.md`, `.mdc`, `.txt`, and `.json` formats.
    */
   static discoverRepositoryRules(
     files: Array<{ path?: string; name?: string; content?: string }>
@@ -158,6 +160,23 @@ export class RulesService {
     for (const f of files) {
       const rawPath = f.path || f.name || '';
       const norm = normalizeWorkspacePath(rawPath);
+      const lowerNorm = norm.toLowerCase();
+
+      if (lowerNorm === 'agents.md') {
+        const rawContent = (f.content || '').trim();
+        if (rawContent) {
+          repoRules.push({
+            id: 'repo-agents-md',
+            name: 'AGENTS.md',
+            sourceFile: norm,
+            content: rawContent.slice(0, MAX_RULE_LENGTH),
+            scope: 'repository',
+            enabled: true,
+            priority: 1
+          });
+        }
+        continue;
+      }
 
       if (norm === '.cursorrules' || norm === '.floatrules') {
         const rawContent = (f.content || '').trim();
@@ -165,6 +184,7 @@ export class RulesService {
           repoRules.push({
             id: `repo-${norm.replace('.', '')}`,
             name: norm === '.floatrules' ? 'FLOAT Rules (.floatrules)' : 'Cursor Rules (.cursorrules)',
+            sourceFile: norm,
             content: rawContent.slice(0, MAX_RULE_LENGTH),
             scope: 'repository',
             enabled: true,
@@ -174,9 +194,11 @@ export class RulesService {
         continue;
       }
 
-      if (!norm.startsWith('.float/rules/')) continue;
+      const isFloatRulesDir = norm.startsWith('.float/rules/');
+      const isCursorRulesDir = norm.startsWith('.cursor/rules/');
+      if (!isFloatRulesDir && !isCursorRulesDir) continue;
 
-      const baseName = norm.replace(/^\.float\/rules\//, '');
+      const baseName = norm.replace(/^\.(?:float|cursor)\/rules\//, '');
       if (!baseName || baseName.includes('/') || baseName.includes('..')) continue;
 
       const rawContent = (f.content || '').trim();
@@ -191,6 +213,7 @@ export class RulesService {
                 repoRules.push({
                   id: `repo-${baseName}-${idx}`,
                   name: item.name || `${baseName} Rule #${idx + 1}`,
+                  sourceFile: norm,
                   content: String(item.content).slice(0, MAX_RULE_LENGTH),
                   scope: 'repository',
                   enabled: item.enabled !== false,
@@ -203,6 +226,7 @@ export class RulesService {
             repoRules.push({
               id: `repo-${baseName}`,
               name: parsed.name || baseName,
+              sourceFile: norm,
               content: String(parsed.content).slice(0, MAX_RULE_LENGTH),
               scope: 'repository',
               enabled: parsed.enabled !== false,
@@ -217,6 +241,7 @@ export class RulesService {
         repoRules.push({
           id: `repo-${baseName}`,
           name: baseName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '),
+          sourceFile: norm,
           content: rawContent.slice(0, MAX_RULE_LENGTH),
           scope: 'repository',
           enabled: true,

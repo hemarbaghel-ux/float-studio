@@ -519,104 +519,125 @@ async function runPhaseARegressionSuite() {
     });
     check(regUserMcp.status === 200, 'HTTP POST /api/mcp/servers registers user-scoped MCP server for user_alice');
 
-    const regProjMcp = await fetch(`${baseUrl}/api/mcp/servers`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: 'srv-alice-proj-1',
-        name: 'Alice Proj 1 MCP',
-        transport: 'http',
-        endpointUrl: 'https://mcp.example.com/p1',
-        projectId: 'proj_alice_1',
-        env: { SECRET: 'p1' }
-      })
+    const mockMcpHttpServer = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        let parsed: any = {};
+        try { parsed = JSON.parse(body); } catch {}
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id: parsed.id || 1,
+          result: { content: [{ type: 'text', text: 'deployed staging' }] }
+        }));
+      });
     });
-    check(regProjMcp.status === 200, 'HTTP POST /api/mcp/servers registers project-scoped MCP server for proj_alice_1');
+    await new Promise<void>(resolve => mockMcpHttpServer.listen(0, '127.0.0.1', () => resolve()));
+    const mcpPort = (mockMcpHttpServer.address() as { port: number }).port;
 
-    MCPService.setDiscoveredTools('srv-alice-proj-1', [
-      { name: 'deploy_proj_1', description: 'Deploy proj 1', inputSchema: { type: 'object' } }
-    ], 'user_alice', 'proj_alice_1');
-    MCPService.setDiscoveredResources('srv-alice-proj-1', [
-      { uri: 'mcp://proj_alice_1/config', name: 'Proj 1 Config' }
-    ], 'user_alice', 'proj_alice_1');
+    try {
+      const regProjMcp = await fetch(`${baseUrl}/api/mcp/servers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'srv-alice-proj-1',
+          name: 'Alice Proj 1 MCP',
+          transport: 'http',
+          endpointUrl: `http://127.0.0.1:${mcpPort}/mcp`,
+          projectId: 'proj_alice_1',
+          env: { SECRET: 'p1' }
+        })
+      });
+      check(regProjMcp.status === 200, 'HTTP POST /api/mcp/servers registers project-scoped MCP server for proj_alice_1');
 
-    const listNoProjResp = await fetch(`${baseUrl}/api/mcp/servers`, {
-      headers: { Authorization: `Bearer ${aliceToken}` }
-    });
-    const listNoProjJson = await listNoProjResp.json();
-    check(
-      listNoProjResp.status === 200 &&
-        listNoProjJson.servers.length === 1 &&
-        listNoProjJson.servers[0].id === 'srv-alice-user',
-      'HTTP GET /api/mcp/servers without projectId returns ONLY user-scoped server and hides project-scoped server'
-    );
+      MCPService.setDiscoveredTools('srv-alice-proj-1', [
+        { name: 'deploy_proj_1', description: 'Deploy proj 1', inputSchema: { type: 'object' } }
+      ], 'user_alice', 'proj_alice_1');
+      MCPService.setDiscoveredResources('srv-alice-proj-1', [
+        { uri: 'mcp://proj_alice_1/config', name: 'Proj 1 Config' }
+      ], 'user_alice', 'proj_alice_1');
 
-    const toolsNoProjResp = await fetch(`${baseUrl}/api/mcp/tools?serverId=srv-alice-proj-1`, {
-      headers: { Authorization: `Bearer ${aliceToken}` }
-    });
-    const toolsNoProjJson = await toolsNoProjResp.json();
-    check(
-      toolsNoProjResp.status === 200 && toolsNoProjJson.tools.length === 0,
-      'HTTP GET /api/mcp/tools without projectId does not expose project-scoped tools'
-    );
+      const listNoProjResp = await fetch(`${baseUrl}/api/mcp/servers`, {
+        headers: { Authorization: `Bearer ${aliceToken}` }
+      });
+      const listNoProjJson = await listNoProjResp.json();
+      check(
+        listNoProjResp.status === 200 &&
+          listNoProjJson.servers.length === 1 &&
+          listNoProjJson.servers[0].id === 'srv-alice-user',
+        'HTTP GET /api/mcp/servers without projectId returns ONLY user-scoped server and hides project-scoped server'
+      );
 
-    const resNoProjResp = await fetch(`${baseUrl}/api/mcp/resources?serverId=srv-alice-proj-1`, {
-      headers: { Authorization: `Bearer ${aliceToken}` }
-    });
-    const resNoProjJson = await resNoProjResp.json();
-    check(
-      resNoProjResp.status === 200 && resNoProjJson.resources.length === 0,
-      'HTTP GET /api/mcp/resources without projectId does not expose project-scoped resources'
-    );
+      const toolsNoProjResp = await fetch(`${baseUrl}/api/mcp/tools?serverId=srv-alice-proj-1`, {
+        headers: { Authorization: `Bearer ${aliceToken}` }
+      });
+      const toolsNoProjJson = await toolsNoProjResp.json();
+      check(
+        toolsNoProjResp.status === 200 && toolsNoProjJson.tools.length === 0,
+        'HTTP GET /api/mcp/tools without projectId does not expose project-scoped tools'
+      );
 
-    const execNoProjResp = await fetch(`${baseUrl}/api/mcp/execute`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serverId: 'srv-alice-proj-1', toolName: 'deploy_proj_1', args: {} })
-    });
-    check(
-      execNoProjResp.status === 404,
-      'HTTP POST /api/mcp/execute without projectId rejects execution on project-scoped MCP server (404)'
-    );
+      const resNoProjResp = await fetch(`${baseUrl}/api/mcp/resources?serverId=srv-alice-proj-1`, {
+        headers: { Authorization: `Bearer ${aliceToken}` }
+      });
+      const resNoProjJson = await resNoProjResp.json();
+      check(
+        resNoProjResp.status === 200 && resNoProjJson.resources.length === 0,
+        'HTTP GET /api/mcp/resources without projectId does not expose project-scoped resources'
+      );
 
-    const execMismatchProjResp = await fetch(`${baseUrl}/api/mcp/execute`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        serverId: 'srv-alice-proj-1',
-        toolName: 'deploy_proj_1',
-        projectId: 'proj_alice_2',
-        args: {}
-      })
-    });
-    check(
-      execMismatchProjResp.status === 404,
-      'HTTP POST /api/mcp/execute with mismatched projectId (proj_alice_2) rejects execution on proj_alice_1 server (404)'
-    );
+      const execNoProjResp = await fetch(`${baseUrl}/api/mcp/execute`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverId: 'srv-alice-proj-1', toolName: 'deploy_proj_1', args: {} })
+      });
+      check(
+        execNoProjResp.status === 404,
+        'HTTP POST /api/mcp/execute without projectId rejects execution on project-scoped MCP server (404)'
+      );
 
-    const bobMcpProjResp = await fetch(`${baseUrl}/api/mcp/servers?projectId=proj_alice_1`, {
-      headers: { Authorization: `Bearer ${bobToken}` }
-    });
-    check(
-      bobMcpProjResp.status === 403,
-      'HTTP GET /api/mcp/servers?projectId=proj_alice_1 by non-owner user_bob returns 403'
-    );
+      const execMismatchProjResp = await fetch(`${baseUrl}/api/mcp/execute`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serverId: 'srv-alice-proj-1',
+          toolName: 'deploy_proj_1',
+          projectId: 'proj_alice_2',
+          args: {}
+        })
+      });
+      check(
+        execMismatchProjResp.status === 404,
+        'HTTP POST /api/mcp/execute with mismatched projectId (proj_alice_2) rejects execution on proj_alice_1 server (404)'
+      );
 
-    const execMatchingProjResp = await fetch(`${baseUrl}/api/mcp/execute`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        serverId: 'srv-alice-proj-1',
-        toolName: 'deploy_proj_1',
-        projectId: 'proj_alice_1',
-        args: { env: 'staging' }
-      })
-    });
-    const execMatchingProjJson = await execMatchingProjResp.json();
-    check(
-      execMatchingProjResp.status === 200 && execMatchingProjJson.success === true,
-      'HTTP POST /api/mcp/execute with matching owner and projectId executes tool (200)'
-    );
+      const bobMcpProjResp = await fetch(`${baseUrl}/api/mcp/servers?projectId=proj_alice_1`, {
+        headers: { Authorization: `Bearer ${bobToken}` }
+      });
+      check(
+        bobMcpProjResp.status === 403,
+        'HTTP GET /api/mcp/servers?projectId=proj_alice_1 by non-owner user_bob returns 403'
+      );
+
+      const execMatchingProjResp = await fetch(`${baseUrl}/api/mcp/execute`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serverId: 'srv-alice-proj-1',
+          toolName: 'deploy_proj_1',
+          projectId: 'proj_alice_1',
+          args: { env: 'staging' }
+        })
+      });
+      const execMatchingProjJson = await execMatchingProjResp.json();
+      check(
+        execMatchingProjResp.status === 200 && execMatchingProjJson.success === true,
+        'HTTP POST /api/mcp/execute with matching owner and projectId executes tool (200)'
+      );
+    } finally {
+      await new Promise<void>(resolve => mockMcpHttpServer.close(() => resolve()));
+    }
 
     // 3F. HTTP Rate Limiting (429) on Sensitive Endpoints
     console.log('\n--- 8. HTTP Verification: Rate Limiting (429) ---');

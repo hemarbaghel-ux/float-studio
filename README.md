@@ -1,53 +1,95 @@
-# FLOAT Studio
+# FLOAT AI — Developer Platform & IDE
 
-FLOAT Studio is a browser based coding workspace with AI chat, reviewable code proposals, model integrations, and account backed project features.
+FLOAT AI is an AI-powered software development environment combining a full-featured Monaco code editor, multi-provider AI model routing, structured diff review, git branch/commit/push workflows, durable Firestore state, and background agent workers.
 
-## Requirements
+---
 
-- Node.js 24.x and npm
-- A Firebase project with Authentication and the configured Firestore database enabled
-- At least one server-side model provider key (for example `GEMINI_API_KEY`)
-- An HTTPS origin and OAuth app credentials to enable GitHub or GitLab connections
+## Runtime Requirements
 
-## Local development
+- **Node.js**: `22.x` (enforced in `package.json` `engines`, `.github/workflows/ci.yml`, and `Dockerfile`)
+- **Git**: Required on the host or container for worktree isolation, branch creation, commit, and remote push workflows.
+- **Docker** *(optional)*: Required only if using containerized terminal sandboxes (`node-pty` + Docker) or building production container images.
 
-```sh
-npm ci
-cp .env.example .env
-npm run dev
-```
+---
 
-Set `GEMINI_API_KEY` in `.env` to enable Gemini calls. For Firestore-backed agent, eval, proposal, and OAuth persistence during local development, run `gcloud auth application-default login` or set `GOOGLE_APPLICATION_CREDENTIALS` to a local service account file. Do not commit that file. The UI can sign in only when the Firebase project has the requested providers enabled and the deployed origin is in its authorized domains.
+## Quick Start (Local Development)
 
-Browser-local project, transcript, and automation caches are partitioned by Firebase user ID; signed-out work is stored in a separate local namespace. Legacy cache entries created before account partitioning are never silently assigned to an account. A one-time confirmation prompt lets the owner import them; existing account data is not overwritten, source caches are kept, and one account's claim prevents another account in that browser from importing the same legacy data (legacy automation data is backed up before ownership is assigned).
+1. **Install dependencies:**
+   ```bash
+   npm ci
+   ```
 
-## Build and checks
+2. **Configure environment variables:**
+   ```bash
+   cp .env.example .env
+   ```
+   Populate `GEMINI_API_KEY` (and optionally `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_JSON`) in `.env`.
 
-```sh
-npm run lint
+3. **Start the development server (Port 3000):**
+   ```bash
+   npm run dev
+   ```
+
+---
+
+## Production Build & Execution
+
+Build the Vite frontend (`dist/`), Express server bundle (`dist/server.cjs`), and background worker bundle (`dist/worker.cjs`):
+
+```bash
 npm run build
-npm start
 ```
 
-`npm start` serves the production build from `dist/`. The server listens on `PORT` (default `3000`) and exposes `/api/health` for health checks.
+- **Start the production web/API server:**
+  ```bash
+  npm start
+  # Runs: node dist/server.cjs
+  ```
 
-## Production deployment
+- **Start the background agent worker:**
+  ```bash
+  npm run worker
+  # Runs: node dist/worker.cjs
+  ```
 
-The included Dockerfile builds a production image on Node 24. For a Cloud Run deployment:
+> **Production Durable State Note (`NODE_ENV=production`)**:
+> In production, FLOAT requires valid Firebase Admin credentials (`FIREBASE_SERVICE_ACCOUNT_JSON` or Application Default Credentials). If Firestore Admin credentials are missing when `NODE_ENV=production`, stateful API routes fail closed with HTTP `503` (`code: "NOT_CONFIGURED"`) instead of falling back to ephemeral in-memory storage.
 
-1. Build and deploy the image with ingress restricted as appropriate for the app.
-2. Attach a dedicated service account with Firestore access to the configured named database. The server uses Application Default Credentials; do not ship service account keys in the image.
-3. Configure the Firebase web app, Authentication providers, authorized domains, Firestore rules, and the named database referenced by `firebase-applet-config.json`.
-4. Set `APP_URL` to the canonical HTTPS origin. Set `FLOAT_OAUTH_ENCRYPTION_KEY` to a stable base64 encoded 32-byte secret; store it in Secret Manager and keep it unchanged while encrypted integration tokens exist.
-5. Configure at least one model provider secret such as `GEMINI_API_KEY`. Provider keys are server-side and must not use a `VITE_` prefix.
-6. To enable GitHub or GitLab, configure the corresponding client ID and secret. Register the callback URLs as `APP_URL/api/integrations/github/callback` and `APP_URL/api/integrations/gitlab/callback`.
-7. Configure `NODE_ENV=production` and the platform supplied `PORT`.
-8. Install Git in the app/worker image. Agent tasks create an independent local Git repository, `agent/<task-id>` branch, and linked worktree from FLOAT's saved project snapshot. Set `FLOAT_AGENT_WORKTREE_ROOT` to a private writable scratch directory and `FLOAT_GIT_BIN` if Git is not on `PATH`.
+---
 
-OAuth connection records and one-time callback states are stored in Firestore by the server Admin SDK; browser Firestore rules deny access to these collections. The Admin SDK uses the configured named database and the Cloud Run service account.
+## Docker Deployment
 
-Agent task records, sequenced activity events, isolated-workspace snapshots, and proposals are stored in Firestore. Queued tasks are claimed transactionally; a Firestore lease serializes tasks for the same owner/project, renews with the worker heartbeat, and expires if a worker disappears. Each running task uses a task-private Git branch/worktree; only validated proposal changes are written there. The review diff and baseline commit are persisted, then the local worktree and branch repository are removed. Users must review the durable proposal before applying it to their active project. The generated branch is based on FLOAT's saved file snapshot and has no GitHub remote or source-repository ancestry; pushing/merging this task branch to a connected repository is not implemented. Task events stream over authenticated, resumable SSE; task state still refreshes through the task API. Interrupted tasks can be resumed or retried, and stale task worktrees are removed during recovery. Evaluation runs are persisted and marked interrupted if their worker stops. For sustained high availability and long-running jobs, deploy a dedicated managed worker queue and worker service before scaling beyond a preview release.
+The repository includes a multi-stage `Dockerfile` based on `node:22-bookworm-slim` with `git` installed, running as the non-root `node` user, and exposing a `HEALTHCHECK` against `/api/health`.
 
-## Current release scope
+- **Build and run the web/API server image:**
+  ```bash
+  docker build --target runtime -t float-studio:web .
+  docker run -p 3000:3000 --env-file .env float-studio:web
+  ```
 
-FLOAT is a preview browser application. Subscription checkout, paid plan entitlements, desktop installers, and hosted cloud execution are not implemented. The browser worker is isolated from the server and does not provide a remote shell. Provider availability depends on deployment credentials and account configuration. Do not advertise paid plans or hosted execution until those services are implemented and operational.
+- **Build and run the background worker image:**
+  ```bash
+  docker build --target worker -t float-studio:worker .
+  docker run --env-file .env float-studio:worker
+  ```
+
+---
+
+## Git & GitHub Push Workflow
+
+FLOAT provides server-side Git and GitHub branch/commit/PR integration (`src/server/git/gitPrService.ts`):
+- Secret scanning blocks commits containing leaked credentials (`sk-`, `ghp_`, `AIza`, `AKIA`, PEM private keys).
+- Protected branches (`main`, `master`, `production`, `release`) cannot be overwritten directly; changes are pushed to isolated feature branches (`float/...`) using the user's server-stored GitHub OAuth token and opened as Pull Requests.
+
+---
+
+## Verification & Testing
+
+- **Typecheck:**
+  ```bash
+  npm run lint
+  ```
+- **Full verification suite (including all `scripts/testPhase*.ts` tests):**
+  ```bash
+  npm test
+  ```

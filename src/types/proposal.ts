@@ -1,3 +1,6 @@
+import type { DiffHunk, DiffHunkLine } from '../lib/diffHunks';
+export type { DiffHunk, DiffHunkLine };
+
 export type ProposalStatus = 
   | 'pending_review'
   | 'applying'
@@ -19,10 +22,13 @@ export interface ProposalChange {
   operation: ChangeOperation;
   originalContent?: string;
   proposedContent?: string;
+  patchedContent?: string;
   originalHash?: string;
   proposedHash?: string;
   status: 'pending' | 'approved' | 'rejected' | 'applied' | 'failed';
   diffStats: DiffStats;
+  hunks?: DiffHunk[];
+  selectedHunkIds?: string[];
 }
 
 export interface CodeProposal {
@@ -40,8 +46,10 @@ export interface CodeProposal {
   affectedFiles: string[];
   changes: ProposalChange[];
   appliedFiles?: string[];
+  patchedContents?: Record<string, string>;
   failedFiles?: { path: string; error: string }[];
   conflictDetails?: { path: string; message: string }[];
   createdAt: number;
   updatedAt: number;
 }
+

@@ -201,8 +201,8 @@ export function DataAnalystWorkspace() {
     // Initial progressive steps
     const initialSteps: AgentProgressStep[] = [
       { id: '1', title: 'Inspect & Profile Dataset', description: 'Checking column statistics & data types', status: 'running' },
-      { id: '2', title: 'Formulate Statistical Hypothesis', description: 'Generating analytical Python script', status: 'pending' },
-      { id: '3', title: 'Execute in OpenAI Python Sandbox', description: 'Running pandas aggregation & metrics in sandbox', status: 'pending' },
+      { id: '2', title: 'Formulate Statistical Hypothesis', description: 'Generating reference Python reproduction script', status: 'pending' },
+      { id: '3', title: 'Execute Deterministic Statistical Aggregation', description: 'Computing column distributions, means, medians, and extremes', status: 'pending' },
       { id: '4', title: 'Synthesize Interactive Visualizations', description: 'Formatting multi-series chart payloads', status: 'pending' },
       { id: '5', title: 'Compile Executive Findings & Caveats', description: 'Assembling strategic takeaways and limitations', status: 'pending' },
     ];
@@ -242,7 +242,8 @@ export function DataAnalystWorkspace() {
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || `HTTP ${response.status}`);
+        const detail = errJson.setupStep ? `${errJson.error} (${errJson.setupStep})` : errJson.error;
+        throw new Error(detail || `HTTP ${response.status}`);
       }
 
       const data = await response.json();
@@ -257,7 +258,7 @@ export function DataAnalystWorkspace() {
       const agentMessage: AnalystMessage = {
         id: `agent_${Date.now()}`,
         role: 'agent',
-        content: `I have completed the analysis for your query: "${queryText.trim()}". Review the executive summary, dynamic charts, and sandboxed Python code below.`,
+        content: `I have completed the analysis for your query: "${queryText.trim()}". Review the executive summary, dynamic charts, and deterministic statistical output below.`,
         steps: finalizedSteps,
         report: data.report,
         createdAt: Date.now(),
@@ -266,6 +267,7 @@ export function DataAnalystWorkspace() {
       setMessages((prev) => [...prev, agentMessage]);
     } catch (err: any) {
       clearInterval(stepTimer);
+      setInputQuery(queryText);
       setErrorMsg(err.message || 'Analysis run failed');
       setCurrentSteps((prev) => prev.map((s) => (s.status === 'running' ? { ...s, status: 'error' as const } : s)));
     } finally {
@@ -291,11 +293,11 @@ export function DataAnalystWorkspace() {
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Python Sandbox Active
+                Statistical Engine Ready
               </span>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-[#8B949E]">
-              Autonomous data inspection, Python code execution, and interactive chart synthesis
+              Dataset profiling, deterministic statistical aggregation, and interactive chart synthesis
             </p>
           </div>
         </div>

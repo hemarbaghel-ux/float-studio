@@ -165,7 +165,7 @@ async function main() {
 
   results.push({
     name: 'Explicit reject and apply workflow with virtual file synchronization',
-    pass: rejectRes.success && rejectedStatus && stillUntouchedAfterReject && applyRes.success && appliedStatus && fileUpdatedAfterApply,
+    pass: Boolean(rejectRes.success && rejectedStatus && stillUntouchedAfterReject && applyRes.success && appliedStatus && fileUpdatedAfterApply),
     details: `Reject: success=${rejectRes.success}, status=${rejectedStatus}; Apply: success=${applyRes.success}, status=${appliedStatus}`
   });
 

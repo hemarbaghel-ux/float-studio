@@ -132,7 +132,7 @@ export function CheckoutPage() {
       (stripe as any).initEmbeddedCheckout({
         clientSecret,
       })
-      .then((embeddedCheckout) => {
+      .then((embeddedCheckout: any) => {
         if (isCancelled || !checkoutContainerRef.current) {
           embeddedCheckout.destroy();
           return;
@@ -141,7 +141,7 @@ export function CheckoutPage() {
         embeddedCheckout.mount(checkoutContainerRef.current);
         embeddedCheckoutRef.current = embeddedCheckout;
       })
-      .catch((mountErr) => {
+      .catch((mountErr: any) => {
         if (isCancelled) return;
         console.error('Error mounting embedded checkout:', mountErr);
         setSessionError(mountErr.message || 'Failed to render Stripe checkout elements.');

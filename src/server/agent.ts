@@ -1,5 +1,5 @@
-import { ModelRouter } from './providers/ModelRouter';
-import { ModelRequest } from '../types/ai';
+import { modelRouter } from './providers/router';
+import { ToolCallDefinition } from './providers/base';
 
 interface VirtualFile {
   path: string;
@@ -7,33 +7,10 @@ interface VirtualFile {
   content?: string;
 }
 
-const router = new ModelRouter();
-
-router.registerModel({
-  id: 'gpt-6.1-sol',
-  displayName: 'GPT-6.1 Sol (Preview)',
-  providerId: 'openai',
-  family: 'codex',
-  contextWindow: 1000000,
-  capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true },
-  status: 'AVAILABLE',
-  speed: 'fast'
-});
-router.registerModel({
-  id: 'gpt-6-astra',
-  displayName: 'GPT-6 Astra (Preview)',
-  providerId: 'openai',
-  family: 'codex',
-  contextWindow: 1000000,
-  capabilities: { coding: true, reasoning: true, vision: true, tools: true, structuredOutput: true, streaming: true },
-  status: 'AVAILABLE',
-  speed: 'fast'
-});
-
 export async function runAgentLoop(
   req: any,
   res: any,
-  apiKey: string, // passed from environment or request? In the old one it was passed in.
+  _apiKey: string,
   modelId: string,
   prompt: string,
   virtualFiles: VirtualFile[],
@@ -42,7 +19,7 @@ export async function runAgentLoop(
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
+    Connection: 'keep-alive'
   });
 
   const sendEvent = (type: string, data: any) => {
@@ -50,20 +27,12 @@ export async function runAgentLoop(
   };
 
   sendEvent('event', { type: 'task_started', message: 'Task started...' });
-  
-  // Set the environment variable for Google Gemini Adapter since it reads from process.env
-  // or we could pass it in. If we receive it from req, we temporarily set it (not ideal for concurrent)
-  // But wait! AI Studio injects process.env.GEMINI_API_KEY. So we just use that.
-  // Never mutate global process.env.GEMINI_API_KEY from caller arguments.
-
   sendEvent('event', { type: 'planning', message: 'Planning approach...' });
-  
-  // Create an in-memory map of files for the tools
-  const fileMap = new Map<string, VirtualFile>();
-  virtualFiles.forEach(f => fileMap.set(f.path, f));
 
-  // Define tools
-  const tools = [
+  const fileMap = new Map<string, VirtualFile>();
+  virtualFiles.forEach((f) => fileMap.set(f.path, f));
+
+  const tools: ToolCallDefinition[] = [
     {
       name: 'list_files',
       description: 'Lists all files in the project workspace.',
@@ -93,7 +62,8 @@ export async function runAgentLoop(
     },
     {
       name: 'propose_changes',
-      description: 'Submits the final proposed changes to the user for review. Use this when you have finished planning and generating changes.',
+      description:
+        'Submits the final proposed changes to the user for review. Use this when you have finished planning and generating changes.',
       parameters: {
         type: 'object',
         properties: {
@@ -105,7 +75,10 @@ export async function runAgentLoop(
               properties: {
                 path: { type: 'string', description: 'The path of the file to change' },
                 operation: { type: 'string', description: 'The operation type: create, modify, delete, rename' },
-                proposedContent: { type: 'string', description: 'The new content of the file (required for create and modify)' }
+                proposedContent: {
+                  type: 'string',
+                  description: 'The new content of the file (required for create and modify)'
+                }
               },
               required: ['path', 'operation']
             }
@@ -122,67 +95,58 @@ You DO NOT directly modify files. You use the propose_changes tool to submit a c
 Always read files before modifying them.
 When proposing changes, provide the FULL complete file content in proposedContent, do not use diffs or placeholders.`;
 
-  let history: any[] = [{ role: 'user', content: prompt }];
-  let changeSet = null;
+  const history: any[] = [{ role: 'user', content: prompt }];
+  let changeSet: any = null;
   let iterations = 0;
   let finalResponseText = '';
   const MAX_ITERATIONS = 10;
-  
-  // Handle Model Resolution
-  let resolvedModelId = modelId;
-  if (!resolvedModelId || resolvedModelId === 'auto' || (resolvedModelId !== 'gpt-6-astra' && resolvedModelId !== 'gpt-6.1-sol')) {
-    resolvedModelId = 'gpt-6.1-sol';
-  }
+
+  const resolvedModelId = modelRouter.resolveModelId(modelId || 'auto');
 
   try {
     while (iterations < MAX_ITERATIONS) {
       iterations++;
-      
       const startTime = Date.now();
-      
-      const request: ModelRequest = {
-        modelId: resolvedModelId,
+
+      const response = await modelRouter.generateContent({
+        model: resolvedModelId,
         messages: history,
         systemInstruction: systemInstructions,
-        tools,
-      };
+        tools
+      });
 
-      const response = await router.route(request);
-      
       const latency = Date.now() - startTime;
-
-      const messageParts: any[] = [];
-      const functionCalls = response.functionCalls || [];
+      const toolCalls = response.toolCalls || [];
 
       if (response.text) {
-         finalResponseText = response.text;
-         sendEvent('event', { type: 'generating', message: 'Analyzing...' });
-         messageParts.push({ text: response.text });
+        finalResponseText = response.text;
+        sendEvent('event', { type: 'generating', message: 'Analyzing...' });
+        history.push({ role: 'assistant', content: response.text });
       }
 
-      history.push({ role: 'model', parts: messageParts }); // Store original parts for potential next iteration if needed
-      
-      if (functionCalls.length > 0) {
+      if (toolCalls.length > 0) {
         const functionResponses: any[] = [];
-        
-        for (const call of functionCalls) {
-          const { name, args } = call;
-          
+
+        for (const call of toolCalls) {
+          const { name, arguments: args } = call;
+
           if (name === 'list_files') {
             sendEvent('event', { type: 'searching', message: 'Listing files...' });
-            const files = Array.from(fileMap.values()).map(f => f.path);
+            const files = Array.from(fileMap.values()).map((f) => f.path);
             functionResponses.push({
               name,
               response: { result: files }
             });
           } else if (name === 'read_file') {
-            const path = args.path as string;
-            sendEvent('event', { type: 'reading_file', message: `Reading ${path}...` });
-            
-            // Normalize and validate path
-            const normalized = path.replace(/^\/+/, '');
+            const filePath = String(args?.path || '');
+            sendEvent('event', { type: 'reading_file', message: `Reading ${filePath}...` });
+
+            const normalized = filePath.replace(/^\/+/, '');
             if (normalized.includes('../')) {
-              functionResponses.push({ name, response: { error: 'Invalid path: ../ traversal is not allowed.' } });
+              functionResponses.push({
+                name,
+                response: { error: 'Invalid path: ../ traversal is not allowed.' }
+              });
               continue;
             }
 
@@ -193,15 +157,13 @@ When proposing changes, provide the FULL complete file content in proposedConten
               functionResponses.push({ name, response: { error: 'File not found' } });
             }
           } else if (name === 'search_codebase') {
-            const query = args.query as string;
+            const query = String(args?.query || '');
             sendEvent('event', { type: 'searching', message: `Searching for "${query}"...` });
             const results: any[] = [];
-            
+
             for (const file of fileMap.values()) {
-              if (file.type === 'file' && file.content) {
-                if (file.content.includes(query)) {
-                  results.push({ path: file.path, match: true }); // Simple implementation
-                }
+              if (file.type === 'file' && file.content && file.content.includes(query)) {
+                results.push({ path: file.path, match: true });
               }
             }
             functionResponses.push({ name, response: { results } });
@@ -209,9 +171,9 @@ When proposing changes, provide the FULL complete file content in proposedConten
             sendEvent('event', { type: 'review_ready', message: 'Changes are ready for review.' });
             changeSet = {
               id: Math.random().toString(36).substring(7),
-              description: args.description,
+              description: args?.description,
               status: 'pending',
-              changes: (args.changes as any[]).map(c => {
+              changes: ((args?.changes as any[]) || []).map((c) => {
                 const original = fileMap.get(c.path)?.content;
                 return {
                   path: c.path,
@@ -225,23 +187,21 @@ When proposing changes, provide the FULL complete file content in proposedConten
             functionResponses.push({ name, response: { status: 'Changes submitted.' } });
           }
         }
-        
+
         history.push({
           role: 'user',
-          parts: functionResponses.map(r => ({ functionResponse: r }))
+          content: JSON.stringify({ toolResults: functionResponses })
         });
 
         if (changeSet) {
-           break; // Stop loop after proposing changes
+          break;
         }
       } else {
-        // No function calls, we are done
-        // Attach stats metadata on final result
-        sendEvent('result', { 
-           text: finalResponseText,
-           modelId: resolvedModelId,
-           agentId,
-           latency
+        sendEvent('result', {
+          text: finalResponseText,
+          modelId: resolvedModelId,
+          agentId,
+          latency
         });
         res.end();
         return;

@@ -392,7 +392,7 @@ export class UserService {
 
   const testerResult = coordinationResult.results.find(r => r.role === 'tester');
   assert(Boolean(testerResult?.structuredFinding), 'Tester produces structured finding packet');
-  assert(testerResult?.structuredFinding?.targetFiles.some(f => f.includes('test')), 'Tester accurately identifies test suite in structured finding');
+  assert(Boolean(testerResult?.structuredFinding?.targetFiles.some(f => f.includes('test'))), 'Tester accurately identifies test suite in structured finding');
 
   // -------------------------------------------------------------
   // Test 13: Agent Tools Execution in ToolRegistry

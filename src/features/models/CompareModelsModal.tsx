@@ -189,7 +189,7 @@ export function CompareModelsModal({
                         const verified = getVerifiedModel(m.id);
                         return (
                           <td key={m.id} className="p-3 text-center font-mono text-slate-300">
-                            {verified?.pricing?.cachedInputCostPer1M !== undefined 
+                            {verified?.pricing?.cachedInputCostPer1M != null 
                               ? `$${verified.pricing.cachedInputCostPer1M.toFixed(3)} / 1M`
                               : 'Standard'}
                           </td>

@@ -39,11 +39,13 @@ export function ModelCostCalculator({ initialModelId }: ModelCostCalculatorProps
     const effectiveCached = Math.min(cachedTokens, inputTokens);
     const uncachedInput = Math.max(0, inputTokens - effectiveCached);
 
-    const inputCost = (uncachedInput / 1_000_000) * model.pricing.inputCostPer1M;
-    const outputCost = (outputTokens / 1_000_000) * model.pricing.outputCostPer1M;
-    const cacheRate = model.pricing.cachedInputCostPer1M !== undefined 
+    const inRate = model.pricing.inputCostPer1M ?? 0;
+    const outRate = model.pricing.outputCostPer1M ?? 0;
+    const inputCost = (uncachedInput / 1_000_000) * inRate;
+    const outputCost = (outputTokens / 1_000_000) * outRate;
+    const cacheRate = model.pricing.cachedInputCostPer1M != null 
       ? model.pricing.cachedInputCostPer1M 
-      : model.pricing.inputCostPer1M * 0.5;
+      : inRate * 0.5;
     const cachedCost = (effectiveCached / 1_000_000) * cacheRate;
 
     const perRequest = inputCost + outputCost + cachedCost;
@@ -214,21 +216,21 @@ export function ModelCostCalculator({ initialModelId }: ModelCostCalculatorProps
           <div className="p-2.5 rounded-lg bg-[#0D1117]/60">
             <span className="text-[#8B949E]">Uncached Input ({Math.max(0, inputTokens - cachedTokens).toLocaleString()} tokens)</span>
             <p className="font-mono font-bold text-slate-200 mt-1">${currentCost.uncachedInputCost.toFixed(5)}</p>
-            <span className="text-[10px] text-[#8B949E]">@ ${selectedModel.pricing.inputCostPer1M.toFixed(2)}/1M</span>
+            <span className="text-[10px] text-[#8B949E]">@ ${(selectedModel.pricing.inputCostPer1M ?? 0).toFixed(2)}/1M</span>
           </div>
 
           <div className="p-2.5 rounded-lg bg-[#0D1117]/60">
             <span className="text-[#8B949E]">Cached Input ({Math.min(cachedTokens, inputTokens).toLocaleString()} tokens)</span>
             <p className="font-mono font-bold text-slate-200 mt-1">${currentCost.cachedCost.toFixed(5)}</p>
             <span className="text-[10px] text-[#8B949E]">
-              @ ${(selectedModel.pricing.cachedInputCostPer1M ?? selectedModel.pricing.inputCostPer1M * 0.5).toFixed(3)}/1M
+              @ ${(selectedModel.pricing.cachedInputCostPer1M ?? (selectedModel.pricing.inputCostPer1M ?? 0) * 0.5).toFixed(3)}/1M
             </span>
           </div>
 
           <div className="p-2.5 rounded-lg bg-[#0D1117]/60">
             <span className="text-[#8B949E]">Output Tokens ({outputTokens.toLocaleString()} tokens)</span>
             <p className="font-mono font-bold text-slate-200 mt-1">${currentCost.outputCost.toFixed(5)}</p>
-            <span className="text-[10px] text-[#8B949E]">@ ${selectedModel.pricing.outputCostPer1M.toFixed(2)}/1M</span>
+            <span className="text-[10px] text-[#8B949E]">@ ${(selectedModel.pricing.outputCostPer1M ?? 0).toFixed(2)}/1M</span>
           </div>
         </div>
       </div>
@@ -269,10 +271,10 @@ export function ModelCostCalculator({ initialModelId }: ModelCostCalculatorProps
                       {m.providerId}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-slate-300">
-                      ${m.pricing.inputCostPer1M.toFixed(2)}
+                      ${(m.pricing.inputCostPer1M ?? 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-slate-300">
-                      ${m.pricing.outputCostPer1M.toFixed(2)}
+                      ${(m.pricing.outputCostPer1M ?? 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">
                       ${cost.total < 0.0001 ? '<$0.0001' : cost.total.toFixed(4)}

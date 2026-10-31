@@ -35,13 +35,8 @@ export function EvalsRuns({ onNewEval }: EvalsRunsProps) {
 
       return matchSearch && matchStatus && matchModel;
     }).sort((a, b) => {
-      let valA: any = a[sortBy] ?? 0;
-      let valB: any = b[sortBy] ?? 0;
-
-      if (sortBy === 'cost') {
-        valA = a.actualCost ?? a.estimatedCost ?? 0;
-        valB = b.actualCost ?? b.estimatedCost ?? 0;
-      }
+      let valA: number = sortBy === 'cost' ? (a.actualCost ?? a.estimatedCost ?? 0) : Number((a as any)[sortBy] ?? 0);
+      let valB: number = sortBy === 'cost' ? (b.actualCost ?? b.estimatedCost ?? 0) : Number((b as any)[sortBy] ?? 0);
 
       if (sortOrder === 'desc') {
         return valB > valA ? 1 : -1;
