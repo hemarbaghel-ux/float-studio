@@ -285,7 +285,22 @@ export function ContextPicker({ query, trigger = '@', onSelect, onClose }: Conte
     });
   }
 
-  // 6. Project & User Rules (@rules) — includes AGENTS.md, .cursorrules, .floatrules if present in workspace
+  // 6. Whole-Codebase Context (@codebase)
+  suggestions.push({
+    id: 'context-codebase',
+    type: 'context',
+    label: '@codebase',
+    sublabel: 'Whole-codebase semantic & lexical retrieval',
+    icon: <Layers size={13} className="text-indigo-500 shrink-0" />,
+    item: {
+      type: 'attachment',
+      name: '@codebase',
+      content: `[Whole-Codebase Search Request]\nSearch across all indexed workspace files, symbol graphs, and module dependencies for relevant context.`,
+      sizeBytes: 250
+    }
+  });
+
+  // 7. Project & User Rules (@rules) — includes AGENTS.md, .cursorrules, .floatrules if present in workspace
   const ruleFiles = allNodes.filter(n =>
     n.type === 'file' &&
     (n.path === 'AGENTS.md' || n.path === '.cursorrules' || n.path === '.floatrules' || n.path.startsWith('.cursor/rules/') || n.path.startsWith('.float/rules/'))
@@ -308,7 +323,7 @@ export function ContextPicker({ query, trigger = '@', onSelect, onClose }: Conte
     }
   });
 
-  // 7. Symbols from workspace index
+  // 8. Symbols from workspace index
   try {
     const index = workspaceIndexManager.getIndex(projectId || 'active-workspace');
     const symbolQuery = cleanQuery.replace(/^@(?:symbol\s*)?/, '').trim();
