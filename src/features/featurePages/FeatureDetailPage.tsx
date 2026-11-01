@@ -365,7 +365,7 @@ export function FeatureDetailPage({ slug }: FeatureDetailPageProps) {
                 <div>
                   <span className="text-xs text-slate-500 dark:text-[#8B949E] uppercase font-bold block mb-1">API Key Needed</span>
                   <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
-                    {feature.requirementsAndLimitations.providerKeyRequired ? 'Required (BYOK or managed plan)' : 'Managed by FLOAT'}
+                    {feature.requirementsAndLimitations.providerKeyRequired ? 'Required as a server-side deployment setting' : 'Managed by FLOAT'}
                   </span>
                 </div>
               </div>

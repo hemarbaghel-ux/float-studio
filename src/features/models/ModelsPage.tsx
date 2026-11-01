@@ -105,7 +105,7 @@ export function ModelsPage() {
       if (filterCapability !== 'All') {
         if (filterCapability === 'Coding' && !m.capabilities.coding) return false;
         if (filterCapability === 'Reasoning' && !m.capabilities.reasoning) return false;
-        if (filterCapability === 'Agentic' && !m.capabilities.tools) return false;
+        if (filterCapability === 'Tool Calling' && !m.capabilities.tools) return false;
         if (filterCapability === 'Vision' && !m.capabilities.vision) return false;
         if (filterCapability === 'Fast' && m.speed !== 'fast') return false;
       }
@@ -167,17 +167,6 @@ export function ModelsPage() {
               className="text-white border-b-2 border-[#7C3AED] pb-1 transition-colors"
             >
               {t('nav.models', 'Models')}
-            </a>
-            <a 
-              href="/evals" 
-              onClick={(e) => {
-                e.preventDefault();
-                window.history.pushState({}, '', '/evals');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-              }}
-              className="hover:text-white transition-colors"
-            >
-              {t('nav.evals', 'Evals')}
             </a>
             <a 
               href="/models/usage" 
@@ -391,7 +380,6 @@ export function ModelsPage() {
                       >
                         <option value="All">All OpenAI Models</option>
                         <option value="OpenAI">OpenAI</option>
-                        <option value="FLOAT">FLOAT Free Tier</option>
                       </select>
                     </div>
 
@@ -405,7 +393,7 @@ export function ModelsPage() {
                         <option value="All">All Capabilities</option>
                         <option value="Coding">Coding</option>
                         <option value="Reasoning">Reasoning</option>
-                        <option value="Agentic">Tool Calling</option>
+                        <option value="Tool Calling">Tool Calling</option>
                         <option value="Vision">Vision</option>
                         <option value="Fast">Fast Latency</option>
                       </select>
@@ -460,7 +448,7 @@ export function ModelsPage() {
 
                           {/* Description */}
                           <p className="text-xs text-[#8B949E] leading-relaxed line-clamp-3 mb-4">
-                            {model.description || 'Frontier developer model for autonomous code editing and reasoning.'}
+                            {model.description || 'Provider model for coding and reasoning requests.'}
                           </p>
 
                           {/* Specifications Row */}
@@ -584,7 +572,7 @@ export function ModelsPage() {
                     FLOAT Source Hierarchy & Verification Constitution
                   </h2>
                   <p className="text-xs text-[#8B949E] mt-1 leading-relaxed">
-                    Trustworthiness is prioritized over data density. The four-tier source hierarchy ensures every 
+                    Trustworthiness is prioritized over data density. The source hierarchy ensures every
                     number, price, and capability on this page is authentic and traceable.
                   </p>
                 </div>
@@ -613,19 +601,8 @@ export function ModelsPage() {
                   </div>
 
                   <div className="p-4 rounded-xl bg-[#0D1117] border border-[#21262D]">
-                    <div className="flex items-center gap-2 text-sky-400 font-bold text-sm mb-1.5">
-                      <span className="w-5 h-5 rounded-full bg-sky-950 border border-sky-500/40 flex items-center justify-center text-xs">3</span>
-                      <span>Tier C: FLOAT First-Party Evals</span>
-                    </div>
-                    <p className="text-xs text-[#8B949E] leading-relaxed">
-                      FLOAT's internal evaluations are strictly isolated. Completed runs require active server provider 
-                      connections and record exact task IDs, execution latencies, unit test outcomes, and calculated costs.
-                    </p>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-[#0D1117] border border-[#21262D]">
                     <div className="flex items-center gap-2 text-rose-400 font-bold text-sm mb-1.5">
-                      <span className="w-5 h-5 rounded-full bg-rose-950 border border-rose-500/40 flex items-center justify-center text-xs">4</span>
+                      <span className="w-5 h-5 rounded-full bg-rose-950 border border-rose-500/40 flex items-center justify-center text-xs">3</span>
                       <span>Prohibited Sources & Shortcuts</span>
                     </div>
                     <p className="text-xs text-[#8B949E] leading-relaxed">

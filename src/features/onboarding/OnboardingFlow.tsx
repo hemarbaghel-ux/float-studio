@@ -475,11 +475,11 @@ export function OnboardingFlow() {
               <div className="w-full bg-transparent border border-white/10 rounded-xl p-4 mb-6 flex flex-col gap-2.5">
                 <div className="flex items-center gap-2.5 text-xs text-[#C9D1D9]">
                   <Check size={14} className="text-emerald-400 shrink-0" /> 
-                  <span>AI agents index codebase context and project structure</span>
+                  <span>FLOAT can include authorized project context in AI chat</span>
                 </div>
                 <div className="flex items-center gap-2.5 text-xs text-[#C9D1D9]">
                   <Check size={14} className="text-emerald-400 shrink-0" /> 
-                  <span>Automated pull request inspection and code review</span>
+                  <span>Connect an authorized repository for workspace workflows</span>
                 </div>
                 <div className="flex items-center gap-2.5 text-xs text-[#C9D1D9]">
                   <Check size={14} className="text-emerald-400 shrink-0" /> 

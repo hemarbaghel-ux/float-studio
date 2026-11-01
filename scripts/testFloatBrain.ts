@@ -15,8 +15,6 @@
  * 11. Scoped persistent memory and tenant isolation
  * 12. Honest search mode reporting (no fabricated embeddings)
  * 13. Strict character & token budgeting with provenance
- * 14. Specialist subagent structured evidence exchange
- * 15. Agent tools execution in ToolRegistry
  * 16. Observability and audit metrics
  */
 
@@ -27,8 +25,6 @@ import { BrainMemoryService } from '../src/server/brain/brainMemory';
 import { BrainSyncPipeline } from '../src/server/brain/brainSync';
 import { FloatBrain, floatBrainManager } from '../src/server/brain/floatBrain';
 import { ContextBuilder } from '../src/server/contextBuilder';
-import { MultiAgentCoordinator } from '../src/server/agent/subagents';
-import { ToolRegistry } from '../src/server/agent/toolRegistry';
 
 let passed = 0;
 let failed = 0;
@@ -367,67 +363,6 @@ export class UserService {
   assert(assembled.formattedPrompt.includes('[Project Architectural Memory]'), 'Injects scoped architectural memory into context');
   assert(assembled.formattedPrompt.includes('SqlUserRepository'), 'Injects verified memory content into context');
   assert(assembled.totalContextChars <= 6000, 'ContextBuilder bounds total context characters within budget');
-
-  // -------------------------------------------------------------
-  // Test 12: Specialist Subagent Structured Findings (No Context Chaos)
-  // -------------------------------------------------------------
-  console.log('\n--- 12. MultiAgent Coordinator Structured Findings ---');
-  const coordinationResult = await MultiAgentCoordinator.coordinate(
-    'Refactor UserService to use connection pooling',
-    [
-      { role: 'explorer', instructions: 'Find user repository and database classes' },
-      { role: 'planner', instructions: 'Plan connection pooling migration', contextFiles: ['src/services/userService.ts'] },
-      { role: 'tester', instructions: 'Verify database test coverage', contextFiles: ['src/services/userService.ts'] }
-    ],
-    { userId, projectId }
-  );
-
-  assert(coordinationResult.results.length === 3, 'Coordinates all 3 specialist subagents');
-  assert(coordinationResult.results.every(r => r.success), 'All specialist subagents execute successfully');
-  
-  const plannerResult = coordinationResult.results.find(r => r.role === 'planner');
-  assert(Boolean(plannerResult?.structuredFinding), 'Planner produces structured finding packet');
-  assert(Boolean(plannerResult?.structuredFinding?.proposedChangesSummary), 'Structured finding includes proposed changes summary');
-  assert(plannerResult?.structuredFinding?.dependencies.length! > 0, 'Planner finding includes impacted module dependencies');
-
-  const testerResult = coordinationResult.results.find(r => r.role === 'tester');
-  assert(Boolean(testerResult?.structuredFinding), 'Tester produces structured finding packet');
-  assert(Boolean(testerResult?.structuredFinding?.targetFiles.some(f => f.includes('test'))), 'Tester accurately identifies test suite in structured finding');
-
-  // -------------------------------------------------------------
-  // Test 13: Agent Tools Execution in ToolRegistry
-  // -------------------------------------------------------------
-  console.log('\n--- 13. Agent Tools in ToolRegistry ---');
-  const virtualFiles = new Map<string, any>();
-  for (const f of files) {
-    virtualFiles.set(f.path, { name: f.path.split('/').pop(), type: 'file', content: f.content });
-  }
-  const toolCtx = {
-    projectId,
-    projectName: 'test-brain-eval',
-    userId,
-    virtualFiles
-  };
-
-  // Tool 1: query_codebase_graph
-  const graphToolRes = await ToolRegistry.execute('query_codebase_graph', { query: 'UserService' }, toolCtx);
-  assert(graphToolRes.success, 'Tool "query_codebase_graph" executes successfully');
-  assert(Boolean(graphToolRes.output?.callGraph), 'Returns callGraph for symbol');
-
-  // Tool 2: get_impacted_files
-  const impactToolRes = await ToolRegistry.execute('get_impacted_files', { path: 'src/types/user.ts' }, toolCtx);
-  assert(impactToolRes.success, 'Tool "get_impacted_files" executes successfully');
-  assert(impactToolRes.output?.directImporters.length > 0, 'Returns direct importers in tool output');
-
-  // Tool 3: get_symbol_relationships
-  const symRelRes = await ToolRegistry.execute('get_symbol_relationships', { name: 'IUserRepository' }, toolCtx);
-  assert(symRelRes.success, 'Tool "get_symbol_relationships" executes successfully');
-
-  // Tool 4: inspect_project_brain
-  const inspectRes = await ToolRegistry.execute('inspect_project_brain', {}, toolCtx);
-  assert(inspectRes.success, 'Tool "inspect_project_brain" executes successfully');
-  assert(inspectRes.output?.stats?.totalFiles >= 7, 'Observability tool reports true file count');
-  assert(inspectRes.output?.searchMode === 'lexical_graph_hybrid', 'Observability tool reports honest searchMode');
 
   // -------------------------------------------------------------
   // Summary

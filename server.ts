@@ -48,7 +48,7 @@ let isShuttingDown = false;
 export async function handleGracefulShutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log(`\n  🛑 Received ${signal}. Closing HTTP server, stopping active terminals, and requeuing running agent tasks...`);
+  console.log(`\n  🛑 Received ${signal}. Closing HTTP server and stopping active executions...`);
 
   const forceExitTimer = setTimeout(() => {
     process.exit(0);
@@ -59,7 +59,7 @@ export async function handleGracefulShutdown(signal: string): Promise<void> {
     if (activeShutdownFn) {
       const result = await activeShutdownFn(activeServer);
       console.log(
-        `  ✓ Graceful shutdown complete (stoppedProcesses=${result?.stoppedProcesses ?? 0}, requeuedTasks=${result?.requeuedTaskIds?.length ?? 0}).`
+        `  ✓ Graceful shutdown complete (stoppedProcesses=${result?.stoppedProcesses ?? 0}).`
       );
     } else if (activeServer && typeof activeServer.close === 'function') {
       await new Promise<void>((resolve) => activeServer.close(() => resolve()));
@@ -120,4 +120,3 @@ if (process.argv[1] && /(?:^|[\\/])server\.ts$/.test(process.argv[1])) {
     process.exit(1);
   });
 }
-

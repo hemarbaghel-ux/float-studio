@@ -1,6 +1,6 @@
 # FLOAT AI — Developer Platform & IDE
 
-FLOAT AI is an AI-powered software development environment combining a full-featured Monaco code editor, multi-provider AI model routing, structured diff review, git branch/commit/push workflows, durable Firestore state, and background agent workers.
+FLOAT AI is an AI-powered software development environment combining a Monaco code editor, server-side OpenAI model routing, structured code-change review, Git workflows, and durable Firestore project state.
 
 ---
 
@@ -23,7 +23,7 @@ FLOAT AI is an AI-powered software development environment combining a full-feat
    ```bash
    cp .env.example .env
    ```
-   Populate `GEMINI_API_KEY` (and optionally `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_JSON`) in `.env`.
+   Configure `OPENAI_API_KEY` on the server for real model requests. Configure Firebase Admin credentials when using cloud persistence. Do not place provider credentials in browser code or commit them.
 
 3. **Start the development server (Port 3000):**
    ```bash
@@ -34,7 +34,7 @@ FLOAT AI is an AI-powered software development environment combining a full-feat
 
 ## Production Build & Execution
 
-Build the Vite frontend (`dist/`), Express server bundle (`dist/server.cjs`), and background worker bundle (`dist/worker.cjs`):
+Build the Vite frontend (`dist/`) and Express server bundle (`dist/server.cjs`):
 
 ```bash
 npm run build
@@ -44,12 +44,6 @@ npm run build
   ```bash
   npm start
   # Runs: node dist/server.cjs
-  ```
-
-- **Start the background agent worker:**
-  ```bash
-  npm run worker
-  # Runs: node dist/worker.cjs
   ```
 
 > **Production Durable State Note (`NODE_ENV=production`)**:
@@ -65,12 +59,6 @@ The repository includes a multi-stage `Dockerfile` based on `node:22-bookworm-sl
   ```bash
   docker build --target runtime -t float-studio:web .
   docker run -p 3000:3000 --env-file .env float-studio:web
-  ```
-
-- **Build and run the background worker image:**
-  ```bash
-  docker build --target worker -t float-studio:worker .
-  docker run --env-file .env float-studio:worker
   ```
 
 ---

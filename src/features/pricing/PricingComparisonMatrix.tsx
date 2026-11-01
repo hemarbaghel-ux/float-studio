@@ -76,11 +76,11 @@ export const MATRIX_CATEGORIES: MatrixCategory[] = [
   {
     id: 'ai_modes',
     title: 'AI Coding Capabilities',
-    description: 'Frontier AI models, composer modes, and inline assistance',
+    description: 'Model selection, AI chat, and inline assistance',
     features: [
       {
-        name: 'Everyday Model Access (GPT-4o mini)',
-        description: 'Unlimited GPT-4o mini and everyday fast coding assistance',
+        name: 'GPT-6 Astra and GPT-6.1 Sol',
+        description: 'Model selection; access depends on server-side provider configuration and provider account access',
         hobby: 'included',
         pro: 'included',
         business: 'included',
@@ -114,24 +114,6 @@ export const MATRIX_CATEGORIES: MatrixCategory[] = [
         business: 'included',
         enterprise: 'included'
       },
-      {
-        name: 'Plan Mode (Structured DAGs)',
-        description: 'Step-by-step implementation plan with human approval gates',
-        hobby: 'limited',
-        hobbyNote: 'Single-file plans',
-        pro: 'included',
-        business: 'included',
-        enterprise: 'included'
-      },
-      {
-        name: 'Autonomous Agent Mode',
-        description: 'Multi-file coding agent with tool execution and loop detection',
-        hobby: 'limited',
-        hobbyNote: 'Single file buffer',
-        pro: 'included',
-        business: 'included',
-        enterprise: 'included'
-      }
     ]
   },
   {
@@ -164,69 +146,6 @@ export const MATRIX_CATEGORIES: MatrixCategory[] = [
         business: 'included',
         enterprise: 'included'
       },
-      {
-        name: 'Custom Agent Skills',
-        description: 'Domain-specific instructions, scripts, and workflows',
-        hobby: 'included',
-        pro: 'included',
-        business: 'included',
-        enterprise: 'included'
-      }
-    ]
-  },
-  {
-    id: 'agent_platform',
-    title: 'Agent Platform & Tools',
-    description: 'Execution control, policy evaluation, and extension ecosystems',
-    features: [
-      {
-        name: 'Staged Proposal Diff Reviews',
-        description: 'Zero direct unapproved file modifications; immutable staging',
-        hobby: 'included',
-        pro: 'included',
-        business: 'included',
-        enterprise: 'included'
-      },
-      {
-        name: 'Parallel Subagent Orchestration',
-        description: 'Hierarchical subagent delegation with recursive cancellation',
-        hobby: 'limited',
-        hobbyNote: '1 subagent',
-        pro: 'included',
-        proNote: 'Up to 5 concurrent',
-        business: 'included',
-        businessNote: 'Up to 20 concurrent',
-        enterprise: 'included',
-        enterpriseNote: 'Custom scaling'
-      },
-      {
-        name: 'Model Context Protocol (MCP)',
-        description: 'Connect standard MCP tools and lazy-loaded schema tools',
-        hobby: 'config_required',
-        hobbyNote: 'Local MCP servers',
-        pro: 'config_required',
-        proNote: 'Configurable MCP',
-        business: 'included',
-        enterprise: 'included'
-      },
-      {
-        name: 'Lifecycle Hooks',
-        description: 'Pre-edit and post-apply command scripts with Windows support',
-        hobby: 'included',
-        pro: 'included',
-        business: 'included',
-        enterprise: 'included'
-      },
-      {
-        name: 'Browser Agent Automations',
-        description: 'Playwright headless browser execution for web tasks',
-        hobby: 'infra_required',
-        hobbyNote: 'Needs browser runner',
-        pro: 'infra_required',
-        proNote: 'Needs browser runner',
-        business: 'infra_required',
-        enterprise: 'infra_required'
-      }
     ]
   },
   {
@@ -234,14 +153,6 @@ export const MATRIX_CATEGORIES: MatrixCategory[] = [
     title: 'Source Control & GitHub',
     description: 'Version control workflows and repository synchronization',
     features: [
-      {
-        name: 'Git Worktree Isolation',
-        description: 'Isolated disk worktrees for background agent modifications',
-        hobby: 'included',
-        pro: 'included',
-        business: 'included',
-        enterprise: 'included'
-      },
       {
         name: 'GitHub OAuth & PR Workflow',
         description: 'Clone, branch, commit, push, and open PRs from the workspace',
@@ -251,31 +162,6 @@ export const MATRIX_CATEGORIES: MatrixCategory[] = [
         proNote: 'Requires GitHub App keys',
         business: 'config_required',
         enterprise: 'included'
-      }
-    ]
-  },
-  {
-    id: 'automation_cloud',
-    title: 'Background Tasks & Cloud',
-    description: 'Long-running persistent execution and task recovery',
-    features: [
-      {
-        name: 'Local Persistent Agent Tasks',
-        description: 'Heartbeat-backed background agent jobs with refresh recovery',
-        hobby: 'included',
-        pro: 'included',
-        business: 'included',
-        enterprise: 'included'
-      },
-      {
-        name: 'Cloud Worker Agent Cluster',
-        description: 'Remote worker pool for decoupled long-running task execution',
-        hobby: 'infra_required',
-        hobbyNote: 'Requires Cloud Worker',
-        pro: 'infra_required',
-        proNote: 'Requires Cloud Worker',
-        business: 'infra_required',
-        enterprise: 'infra_required'
       }
     ]
   },

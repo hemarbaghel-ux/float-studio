@@ -1,4 +1,4 @@
-import { ProposalService, computeContentHash, computeDiffStats, sanitizeProposalPath } from '../src/server/agent/proposalService';
+import { ProposalService, computeContentHash, computeDiffStats, prepareProposalFinalization, sanitizeProposalPath } from '../src/server/proposals/proposalService';
 
 async function runTests() {
   console.log('--- Starting FLOAT Phase 5 Code Proposal & Diff Review Test Suite ---');
@@ -68,45 +68,35 @@ async function runTests() {
   assert(proposal.changes[0].originalHash === computeContentHash(originalContentBefore), 'Proposal captures exact original file hash');
   assert(proposal.changes[1].operation === 'create', 'Identifies new file creation');
 
-  // 4. Stale conflict detection
-  const divergedFiles = new Map<string, string>();
-  divergedFiles.set('src/main.py', 'print("user made changes in editor")\n');
-  divergedFiles.set('src/helper.py', 'def help(): pass\n');
-
-  const conflictCheck = ProposalService.checkConflicts(proposal, divergedFiles);
-  assert(conflictCheck.isStale === true, 'Detects stale proposal when file content has diverged');
-  assert(conflictCheck.conflicts.length > 0 && conflictCheck.conflicts[0].path === 'src/main.py', 'Identifies exact conflicting file');
-
-  // 5. Applying a stale proposal must be rejected
-  const staleApplyResult = await ProposalService.applyProposal(proposal.id, {
-    userId: 'user-123',
-    currentFiles: [
-      { path: 'src/main.py', content: 'print("user made changes in editor")\n' }
-    ]
-  });
-  assert(!staleApplyResult.success && staleApplyResult.status === 'stale', 'Rejects applying proposal when file content has diverged');
-
-  // 6. Applying with matching hash succeeds
-  const cleanFiles = [
-    { path: 'src/main.py', content: 'print("original")\n' }
-  ];
-  const applyResult = await ProposalService.applyProposal(proposal.id, {
-    userId: 'user-123',
+  // 4. Status can be finalized only after exact proposed content is in the saved snapshot.
+  const unsavedCompletion = prepareProposalFinalization(proposal, {
+    ownerId: 'user-123',
+    projectId: 'proj-abc',
     approvedPaths: ['src/main.py'],
-    currentFiles: cleanFiles
+    currentFiles: [{ path: 'src/main.py', content: 'print("original")\n' }],
+    projectData: { fileStorageVersion: 2, fileGeneration: 'generation-1' },
   });
+  assert(!unsavedCompletion.result.success && unsavedCompletion.result.status === 'stale', 'Does not mark proposal applied before cloud content is saved');
 
-  assert(applyResult.success === true, 'Successfully applies approved proposal when hashes match');
-  assert(applyResult.status === 'partially_applied', 'Status is partially_applied when subset approved');
-
-  // 7. Duplicate apply guard (cannot apply already applied changes)
-  const duplicateApply = await ProposalService.applyProposal(proposal.id, {
-    userId: 'user-123',
+  const savedCompletion = prepareProposalFinalization(proposal, {
+    ownerId: 'user-123',
+    projectId: 'proj-abc',
     approvedPaths: ['src/main.py'],
-    currentFiles: cleanFiles
+    currentFiles: [{ path: 'src/main.py', content: 'print("refactored")\n' }],
+    projectData: { fileStorageVersion: 2, fileGeneration: 'generation-2' },
   });
-  // Since all approved changes were applied, re-applying without new approved files
-  assert(duplicateApply.appliedFiles?.length === 1 || !duplicateApply.success, 'Handles repeated apply safely');
+  assert(savedCompletion.result.success, 'Confirms approved content from the saved workspace');
+  assert(savedCompletion.result.status === 'partially_applied', 'Unselected changes remain available for later review');
+  assert(proposal.status === 'pending_review', 'Preparing final status does not mutate the stored proposal');
+
+  const duplicateCompletion = prepareProposalFinalization(savedCompletion.proposal!, {
+    ownerId: 'user-123',
+    projectId: 'proj-abc',
+    approvedPaths: ['src/main.py'],
+    currentFiles: [{ path: 'src/main.py', content: 'print("refactored")\n' }],
+    projectData: { fileStorageVersion: 2, fileGeneration: 'generation-2' },
+  });
+  assert(duplicateCompletion.result.success, 'Retrying a confirmed path is idempotent');
 
   // 8. Rejection without file modification
   const rejectTestProposal = ProposalService.createProposal({
@@ -123,12 +113,15 @@ async function runTests() {
   assert(rejectResult.success && rejectResult.status === 'rejected', 'Successfully marks proposal as rejected');
   assert(ProposalService.getProposal(rejectTestProposal.id)?.status === 'rejected', 'Rejected proposal status is persisted');
 
-  // Re-applying a rejected proposal must fail
-  const applyRejected = await ProposalService.applyProposal(rejectTestProposal.id, {
-    userId: 'user-123',
-    currentFiles: cleanFiles
+  // Finalizing a rejected proposal must fail
+  const applyRejected = prepareProposalFinalization(rejectTestProposal, {
+    ownerId: 'user-123',
+    projectId: 'proj-abc',
+    approvedPaths: ['src/main.py'],
+    currentFiles: [],
+    projectData: {},
   });
-  assert(!applyRejected.success && applyRejected.status === 'rejected', 'Cannot apply a rejected proposal');
+  assert(!applyRejected.result.success && applyRejected.result.status === 'rejected', 'Cannot finalize a rejected proposal');
 
   // 9. Unauthorized proposal access
   const unauthorizedReject = ProposalService.rejectProposal(rejectTestProposal.id, 'attacker-user');

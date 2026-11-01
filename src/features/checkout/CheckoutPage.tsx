@@ -194,7 +194,7 @@ export function CheckoutPage() {
           </div>
           <h1 className="text-xl font-bold text-white mb-2">Sign in to subscribe to FLOAT {planConfig.name}</h1>
           <p className="text-xs text-slate-400 mb-6">
-            A Firebase user account is required to link your subscription and sync your developer agents.
+            A Firebase user account is required to link your subscription and sync your FLOAT workspace.
           </p>
           <div className="text-left">
             <SignUpPage initialMode="signin" isModal={false} returnTo={returnUrl} />

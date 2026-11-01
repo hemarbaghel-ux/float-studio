@@ -1,13 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Terminal as XTerm } from '@xterm/xterm';
-import '@xterm/xterm/css/xterm.css';
 import { useIDEStore } from '../../store';
 import { useValidationStore } from '../../store/validationStore';
 import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loader2, CheckCircle2, Square, Shield, Sparkles } from 'lucide-react';
 import { cn, flattenFileTree } from '../../lib/utils';
 import { executeProjectCommand } from '../../services/projectExecution';
 import { ValidationPanel } from '../../components/panels/ValidationPanel';
-import { useCloudSession, AVAILABLE_PROFILES } from '../float/cloudSessionStore';
 import { isShellCommand, runShell } from '../float/sandbox';
 import { sandboxFs } from '../float/workspaceFs';
 import { auth } from '../../lib/firebase';
@@ -25,8 +22,7 @@ export function BottomPanel() {
     lastExecutionTimeMs,
     isRunningCode,
     runActiveCode,
-    files,
-    projectId
+    files
   } = useIDEStore();
 
   const handleDebugWithAI = (errorText: string) => {
@@ -47,13 +43,8 @@ export function BottomPanel() {
 
   const [inputVal, setInputVal] = useState('');
   const [isExecutingInput, setIsExecutingInput] = useState(false);
-  const [policyMode, setPolicyMode] = useState<'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed' | 'auto'>('sandboxed');
-  const [terminalConfigError, setTerminalConfigError] = useState<{ message: string; setupSteps: string[] } | null>(null);
-  const [wsConnected, setWsConnected] = useState(false);
+  const [policyMode, setPolicyMode] = useState<'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed'>('sandboxed');
   const terminalEndRef = useRef<HTMLDivElement>(null);
-  const xtermContainerRef = useRef<HTMLDivElement>(null);
-  const xtermInstanceRef = useRef<XTerm | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const executionController = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -71,123 +62,7 @@ export function BottomPanel() {
     });
   }, []);
 
-  // Attach xterm.js and connect to /api/terminal/:sessionId WebSocket
-  useEffect(() => {
-    if (bottomPanelTab !== 'terminal') return;
-    let cancelled = false;
-    let term: XTerm | null = null;
-
-    if (xtermContainerRef.current && !xtermInstanceRef.current) {
-      term = new XTerm({
-        cursorBlink: true,
-        fontSize: 12,
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-        convertEol: true,
-        rows: 10,
-        cols: 96,
-        theme: {
-          background: '#080808',
-          foreground: '#C9D1D9',
-          cursor: '#79C0FF'
-        }
-      });
-      term.open(xtermContainerRef.current);
-      xtermInstanceRef.current = term;
-
-      term.onData((data: string) => {
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'input', data }));
-        }
-      });
-    }
-
-    const connectPtySession = async () => {
-      const user = auth.currentUser;
-      if (!user) return;
-      const token = await user.getIdToken().catch(() => null);
-      if (!token || cancelled) return;
-
-      const activeProjId = projectId || 'default-project';
-      const sessionId = `pty-${activeProjId}`;
-
-      try {
-        const checkRes = await fetch(
-          `/api/terminal/${encodeURIComponent(sessionId)}?projectId=${encodeURIComponent(activeProjId)}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const checkData = await checkRes.json().catch(() => ({}));
-        if (cancelled) return;
-
-        if (!checkRes.ok || checkData.configured === false || checkData.code === 'TERMINAL_NOT_CONFIGURED') {
-          setWsConnected(false);
-          setTerminalConfigError({
-            message: checkData.error || 'Terminal not configured: isolated Docker sandbox and node-pty are required.',
-            setupSteps: Array.isArray(checkData.setupSteps) ? checkData.setupSteps : []
-          });
-          return;
-        }
-
-        setTerminalConfigError(null);
-        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${proto}//${window.location.host}/api/terminal/${encodeURIComponent(sessionId)}?projectId=${encodeURIComponent(activeProjId)}&token=${encodeURIComponent(token)}`;
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          if (!cancelled) setWsConnected(true);
-        };
-
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(String(ev.data || '{}'));
-            if (msg.type === 'error' && msg.code === 'TERMINAL_NOT_CONFIGURED') {
-              setWsConnected(false);
-              setTerminalConfigError({
-                message: msg.message || 'Terminal not configured.',
-                setupSteps: Array.isArray(msg.setupSteps) ? msg.setupSteps : []
-              });
-              return;
-            }
-            if (msg.type === 'output' && typeof msg.data === 'string') {
-              xtermInstanceRef.current?.write(msg.data);
-              if (msg.source === 'agent_run_command') {
-                addTerminalEntry({ type: msg.stream === 'stderr' ? 'error' : 'output', content: msg.data });
-              }
-            } else if (msg.type === 'agent_command_started' && typeof msg.command === 'string') {
-              xtermInstanceRef.current?.write(msg.data || `\r\n$ ${msg.command}\r\n`);
-              addTerminalEntry({ type: 'command', content: `[Agent] ${msg.command}` });
-            } else if (msg.type === 'agent_command_completed') {
-              xtermInstanceRef.current?.write(msg.data || '');
-            }
-          } catch {
-            // Ignore malformed WS message
-          }
-        };
-
-        ws.onclose = () => {
-          if (!cancelled) setWsConnected(false);
-        };
-      } catch {
-        // Ignore transient connection error
-      }
-    };
-
-    void connectPtySession();
-
-    return () => {
-      cancelled = true;
-      if (wsRef.current) {
-        try { wsRef.current.close(); } catch {}
-        wsRef.current = null;
-      }
-      if (xtermInstanceRef.current) {
-        try { xtermInstanceRef.current.dispose(); } catch {}
-        xtermInstanceRef.current = null;
-      }
-    };
-  }, [bottomPanelTab, projectId]);
-
-  const handlePolicyChange = async (newMode: 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed' | 'auto') => {
+  const handlePolicyChange = async (newMode: 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed') => {
     setPolicyMode(newMode);
     const token = await auth.currentUser?.getIdToken();
     if (token) {
@@ -215,16 +90,10 @@ export function BottomPanel() {
 
     if (trimmed === 'clear') {
       clearTerminal();
-      xtermInstanceRef.current?.clear();
       return;
     }
 
-    if (wsConnected && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'input', data: `${trimmed}\n` }));
-      return;
-    }
-
-    if (useCloudSession.getState().active && isShellCommand(trimmed)) {
+    if (isShellCommand(trimmed)) {
         setIsExecutingInput(true);
         try {
           const { output, code } = await runShell(trimmed, sandboxFs());
@@ -237,57 +106,6 @@ export function BottomPanel() {
         return;
     }
 
-    if (trimmed === 'session' || trimmed.startsWith('session ')) {
-      const parts = trimmed.split(/\s+/);
-      const sub = parts[1]?.toLowerCase();
-      const cs = useCloudSession.getState();
-
-      if (sub === 'stop' || sub === 'disconnect') {
-        cs.stop();
-        addTerminalEntry({
-          type: 'output',
-          content: 'Session disconnected. Type "session connect" or "session sol" to reconnect.'
-        });
-        return;
-      }
-
-      if (sub === 'sol') {
-        const solProfile = AVAILABLE_PROFILES.find(p => p.id === 'sol') || AVAILABLE_PROFILES[0];
-        cs.start('cloud-agent', 'sol-ccarenv', solProfile.sessionId, solProfile.environmentId, solProfile.model);
-      } else if (sub === 'astra' || sub === 'new') {
-        const astraProfile = AVAILABLE_PROFILES.find(p => p.id === 'astra') || AVAILABLE_PROFILES[1];
-        cs.start('cloud-agent', 'astra-ccarenv', astraProfile.sessionId, astraProfile.environmentId, astraProfile.model);
-      } else if (sub === 'connect') {
-        const customSession = parts[2];
-        const customEnv = parts[3];
-        if (customSession && customEnv) {
-          cs.start('cloud-agent', 'custom-ccarenv', customSession, customEnv, 'Custom Agent');
-        } else {
-          cs.connect();
-        }
-      }
-
-      const now = useCloudSession.getState();
-      if (now.active && now.sessionId && now.environmentId) {
-        addTerminalEntry({
-          type: 'output',
-          content: `Cloud execution session connected & active:
-  Agent Target:  ${now.modelAttached || 'GPT-6 Sol'}
-  Session ID:    ${now.sessionId}
-  Environment:   ${now.environmentId}
-  Remote URL:    ${now.remoteUrl || 'NOT_CONFIGURED'}
-  Exec Server:   codex exec-server${now.remoteUrl ? ` --remote '${now.remoteUrl}'` : ''} --environment-id '${now.environmentId}'
-  Commands:      session sol | session astra | session connect <sessId> <envId> | session stop`
-        });
-      } else {
-        addTerminalEntry({
-          type: 'output',
-          content: 'NOT_CONFIGURED: Cloud session is currently disconnected or unconfigured. Type: session connect <sessId> <envId> to attach.'
-        });
-      }
-      return;
-    }
-
     if (trimmed === 'help') {
       addTerminalEntry({
         type: 'output',
@@ -298,8 +116,7 @@ export function BottomPanel() {
   clear               Clear the terminal screen
   help                Display this assistance message
 
-Browser worker (type: session start):
-  This is a separate, limited in-browser interpreter and is not a server shell.`
+  Browser worker commands use the local limited sandbox, not a server shell.`
       });
       return;
     }
@@ -310,7 +127,8 @@ Browser worker (type: session start):
     let stdout = '';
     let stderr = '';
     try {
-      await useIDEStore.getState().saveProject();
+      const saveResult = await useIDEStore.getState().saveProject();
+      if (saveResult.status !== 'synced') throw new Error(saveResult.message);
       const state = useIDEStore.getState();
       if (!state.projectId) throw new Error('Save this workspace before running a server command.');
       const virtualFiles = flattenFileTree(state.files).filter(file => file.type === 'file').map(file => ({ path: file.path, content: file.content }));
@@ -327,7 +145,8 @@ Browser worker (type: session start):
       });
       if (result.changedFiles?.length || result.deletedFiles?.length) {
         useIDEStore.getState().applyExecutionChanges(result.changedFiles || [], result.deletedFiles || []);
-        await useIDEStore.getState().saveProject();
+        const saveResult = await useIDEStore.getState().saveProject();
+        if (saveResult.status !== 'synced') throw new Error(saveResult.message);
       }
       const output = stdout + stderr;
       const failure = result.status === 'succeeded' ? null : `${result.status === 'timed_out' ? 'Process timed out' : result.status === 'cancelled' ? 'Process cancelled' : 'Process exited with code ' + result.exitCode}${stderr ? `\n${stderr}` : ''}`;
@@ -383,9 +202,9 @@ Browser worker (type: session start):
         </div>
 
         <div className="flex items-center gap-1">
-          {/* Execution Policy Mode Selector */}
+          {/* Execution Policy Mode Selector (Phase 8) */}
           <div className="flex items-center gap-1 mr-2 px-1.5 py-0.5 rounded text-[10px] bg-slate-200/60 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-slate-600 dark:text-[#8B949E]">
-            <Shield size={11} className={policyMode === 'sandboxed' || policyMode === 'auto' ? "text-emerald-500" : "text-blue-500"} />
+            <Shield size={11} className={policyMode === 'sandboxed' ? "text-emerald-500" : "text-blue-500"} />
             <span className="font-semibold uppercase tracking-wider text-[9px]">Policy:</span>
             <select
               value={policyMode}
@@ -394,9 +213,8 @@ Browser worker (type: session start):
               title="Execution policy mode for commands and terminals"
             >
               <option value="sandboxed" className="dark:bg-[#141414]">Sandboxed (Default)</option>
-              <option value="auto" className="dark:bg-[#141414]">Auto (Approve sandboxed commands)</option>
-              <option value="safe" className="dark:bg-[#141414]">Safe (Read-only)</option>
-              <option value="review" className="dark:bg-[#141414]">Review (Prompt per command)</option>
+              <option value="safe" className="dark:bg-[#141414]">Safe (Auto-run harmless)</option>
+              <option value="review" className="dark:bg-[#141414]">Review (Prompt user)</option>
               <option value="allowlist" className="dark:bg-[#141414]">Allowlist (Approved dev)</option>
               <option value="manual" className="dark:bg-[#141414]">Manual (Interactive only)</option>
             </select>
@@ -417,7 +235,7 @@ Browser worker (type: session start):
           {bottomPanelTab === 'terminal' && (
             <>
               {isExecutingInput && <button onClick={() => executionController.current?.abort()} title="Stop process" className="p-1 text-rose-500 hover:bg-slate-200 dark:hover:bg-[#1C1C1C] rounded"><Square size={13} fill="currentColor" /></button>}
-              <button onClick={() => { clearTerminal(); xtermInstanceRef.current?.clear(); }} title="Clear Terminal" className="p-1 text-slate-400 dark:text-[#8B949E] hover:bg-slate-200 dark:hover:bg-[#1C1C1C] hover:text-slate-800 dark:hover:text-white rounded transition-colors cursor-pointer"><Trash2 size={13} /></button>
+              <button onClick={clearTerminal} title="Clear Terminal" className="p-1 text-slate-400 dark:text-[#8B949E] hover:bg-slate-200 dark:hover:bg-[#1C1C1C] hover:text-slate-800 dark:hover:text-white rounded transition-colors cursor-pointer"><Trash2 size={13} /></button>
             </>
           )}
 
@@ -441,30 +259,6 @@ Browser worker (type: session start):
         {/* Terminal Tab */}
         {bottomPanelTab === 'terminal' && (
           <div className="text-slate-800 dark:text-[#C9D1D9] flex flex-col min-h-full">
-            {terminalConfigError && (
-              <div className="mb-2.5 p-2.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[11px] space-y-1">
-                <div className="font-semibold flex items-center gap-1.5">
-                  <AlertCircle size={13} className="shrink-0 text-amber-500" />
-                  <span>{terminalConfigError.message}</span>
-                </div>
-                {terminalConfigError.setupSteps.length > 0 && (
-                  <ol className="list-decimal list-inside space-y-0.5 text-[10px] opacity-90 pl-1">
-                    {terminalConfigError.setupSteps.map((step, idx) => (
-                      <li key={idx}>{step}</li>
-                    ))}
-                  </ol>
-                )}
-              </div>
-            )}
-
-            <div
-              ref={xtermContainerRef}
-              className={cn(
-                "w-full rounded overflow-hidden border border-slate-200 dark:border-[#1F1F1F] mb-2",
-                wsConnected ? "block min-h-[120px]" : "hidden"
-              )}
-            />
-
             <div className="flex-1 space-y-1">
               {terminalEntries.map(entry => (
                 <div

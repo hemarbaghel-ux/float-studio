@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useAIStore, filterVisibleModelsForUI } from '../../store/aiStore';
-import { ChevronDown, Key } from 'lucide-react';
+import { useAIStore } from '../../store/aiStore';
+import { ChevronDown } from 'lucide-react';
 import { INITIAL_MODELS } from './registry';
 import { AIModel } from '../../types/ai';
 import { Portal } from '../../components/Portal';
@@ -13,7 +13,6 @@ export { ModelInfoCard } from './modelSelector/ModelInfoCard';
 export interface ModelSelectorProps {
   activeModelId?: string;
   onModelChange: (modelId: string) => void;
-  agentId?: string;
   placement?: 'top' | 'bottom' | 'auto';
   variant?: 'compact' | 'composer' | 'full';
   className?: string;
@@ -30,12 +29,11 @@ interface DropdownPosition {
 export function ModelSelector({
   activeModelId,
   onModelChange,
-  agentId,
   placement = 'auto',
   variant = 'composer',
   className = ''
 }: ModelSelectorProps) {
-  const { models, providers, modelHealthStatus, statusSynced, setModels, syncProviderStatus, setSelectedModel } = useAIStore();
+  const { models, setModels, syncProviderStatus, setSelectedModel } = useAIStore();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState<number>(0);
@@ -72,31 +70,17 @@ export function ModelSelector({
   const activeModels = useMemo(() => {
     const list = models.length > 0 ? models : INITIAL_MODELS;
     const seen = new Set<string>();
-    const deduped = list.filter(m => {
+    return list.filter(m => {
       if (seen.has(m.id)) return false;
       seen.add(m.id);
       return true;
     });
-    return filterVisibleModelsForUI(deduped, providers, modelHealthStatus, statusSynced);
-  }, [models, providers, modelHealthStatus, statusSynced]);
+  }, [models]);
   const currentSelectedId = activeModelId || useAIStore.getState().selectedModel;
-  const currentModel = activeModels.find(m => m.id === currentSelectedId) || activeModels[0] || INITIAL_MODELS[0];
+  const currentModel = activeModels.find(m => m.id === currentSelectedId) || activeModels[0];
 
-  // Helper to map model to display speed/effort label
-  const getSpeedLabel = (model: AIModel): string => {
-    if (model.reasoningLevel) {
-      return model.reasoningLevel;
-    }
-    if (model.id === 'gpt-6-sol') return 'Deep Reasoning';
-    if (model.id === 'gpt-6-astra') return 'Cloud Agent';
-
-    switch (model.speed) {
-      case 'fast': return 'Fast';
-      case 'balanced': return 'Medium';
-      case 'slow': return 'High';
-      default: return 'Fast';
-    }
-  };
+  const getModelCapabilityLabel = (model: AIModel): string =>
+    model.capabilities.reasoning ? 'Reasoning' : 'Standard';
 
   // Filter models based on search term
   const filteredModels = useMemo(() => {
@@ -106,13 +90,13 @@ export function ModelSelector({
       const name = (m.displayName || '').toLowerCase();
       const shortName = (m.shortName || '').toLowerCase();
       const provider = (m.provider || m.providerId || '').toLowerCase();
-      const speed = getSpeedLabel(m).toLowerCase();
+      const capability = getModelCapabilityLabel(m).toLowerCase();
       const id = m.id.toLowerCase();
       return (
         name.includes(s) ||
         shortName.includes(s) ||
         provider.includes(s) ||
-        speed.includes(s) ||
+        capability.includes(s) ||
         id.includes(s)
       );
     });
@@ -426,7 +410,7 @@ export function ModelSelector({
           </span>
 
           <span className="text-[12px] text-slate-400 dark:text-[#7D8590] font-normal">
-            {getSpeedLabel(currentModel)}
+            {getModelCapabilityLabel(currentModel)}
           </span>
 
           <ChevronDown
@@ -449,7 +433,7 @@ export function ModelSelector({
               {getCleanModelName(currentModel.displayName, currentModel.shortName)}
             </span>
             <span className="text-[11px] text-slate-400 dark:text-[#7D8590]">
-              {getSpeedLabel(currentModel)}
+              {getModelCapabilityLabel(currentModel)}
             </span>
           </div>
           <ChevronDown
@@ -499,32 +483,13 @@ export function ModelSelector({
               onHoverModel={handleHoverModel}
               onLeaveItem={handleLeaveItem}
               listRef={listRef}
-              getSpeedLabel={getSpeedLabel}
+              getSpeedLabel={getModelCapabilityLabel}
               onInfoClick={(model) => {
                 setHoveredModel(model);
                 setIsCardPinned(true);
               }}
             />
 
-            {/* Configure API Keys (Cursor BYOK) */}
-            <div className="p-1.5 border-t border-slate-200 dark:border-[#21262D] bg-slate-50/60 dark:bg-[#161B22]/60">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsOpen(false);
-                  document.dispatchEvent(new CustomEvent('open-api-config-modal'));
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium text-slate-700 dark:text-[#C9D1D9] hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  <Key size={13} className="text-emerald-500" />
-                  <span>Configure API Keys...</span>
-                </div>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                  BYOK
-                </span>
-              </button>
-            </div>
           </div>
         </Portal>
       )}

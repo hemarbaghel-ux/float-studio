@@ -21,7 +21,6 @@ import {
   Cpu,
   Layers,
   RefreshCw,
-  Sparkles,
   Zap,
   TrendingDown,
   TrendingUp,
@@ -30,36 +29,12 @@ import {
   AlertCircle,
   HelpCircle
 } from 'lucide-react';
-import { useUsageStore, ModelUsageRecord } from '../../store/usageStore';
-import { generateSampleUsageData } from '../models/sampleUsageData';
+import { useUsageStore } from '../../store/usageStore';
 import { UsageSavingsCard } from './UsageSavingsCard';
-import { apiFetch } from '../../services/api';
 
 interface ProviderStatus {
   name: string;
   configured: boolean;
-}
-
-interface LeaderboardItem {
-  modelId: string;
-  modelName: string;
-  providerId: string;
-  overallScore: number;
-  taskSuccessRate: number;
-  avgLatencyMs: number;
-  avgTokens: number;
-  avgCost: number;
-}
-
-interface EvalRunSummary {
-  id: string;
-  modelId: string;
-  providerId: string;
-  durationMs?: number;
-  duration?: number;
-  totalTokens?: number;
-  status: string;
-  createdAt: number;
 }
 
 export const PROVIDER_PALETTE: Record<string, { name: string; color: string; border: string }> = {
@@ -82,25 +57,27 @@ export const PROVIDER_PALETTE: Record<string, { name: string; color: string; bor
     name: 'xAI',
     color: '#8B5CF6', // Purple
     border: 'border-purple-500/20'
+  },
+  unknown: {
+    name: 'Unknown provider',
+    color: '#94A3B8',
+    border: 'border-slate-500/20'
   }
 };
 
 export function UsageAnalyticsView() {
-  const { records, setRecords } = useUsageStore();
+  const { records } = useUsageStore();
 
   const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | 'all'>('7d');
-  const [providerFilter, setProviderFilter] = useState<'all' | 'google' | 'openai' | 'anthropic' | 'xai'>('all');
+  const [providerFilter, setProviderFilter] = useState<'all' | 'google' | 'openai' | 'anthropic' | 'xai' | 'unknown'>('all');
   const [tokenChartType, setTokenChartType] = useState<'stacked' | 'area'>('stacked');
   const [latencyChartType, setLatencyChartType] = useState<'model' | 'timeline'>('model');
 
   // External API data
   const [providers, setProviders] = useState<Record<string, ProviderStatus>>({});
-  const [leaderboard, setLeaderboard] = useState<LeaderboardItem[]>([]);
-  const [evalRuns, setEvalRuns] = useState<EvalRunSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [isSampleLoaded, setIsSampleLoaded] = useState(false);
 
   // Fetch Model Provider Status from /api/ai/models/status
   const fetchProviderStatus = useCallback(async () => {
@@ -125,56 +102,18 @@ export function UsageAnalyticsView() {
     }
   }, []);
 
-  // Fetch Evaluations from /api/evals/leaderboard & /api/evals/runs
-  const fetchEvaluationData = useCallback(async () => {
-    try {
-      const [leaderboardRes, runsRes] = await Promise.allSettled([
-        apiFetch('/api/evals/leaderboard'),
-        apiFetch('/api/evals/runs')
-      ]);
-
-      if (leaderboardRes.status === 'fulfilled' && leaderboardRes.value.ok) {
-        const boardData = await leaderboardRes.value.json();
-        if (Array.isArray(boardData)) {
-          setLeaderboard(boardData);
-        }
-      }
-
-      if (runsRes.status === 'fulfilled' && runsRes.value.ok) {
-        const runsData = await runsRes.value.json();
-        if (Array.isArray(runsData)) {
-          setEvalRuns(runsData);
-        }
-      }
-    } catch (err) {
-      console.warn('[UsageAnalytics] Evaluation telemetry note:', err);
-    }
-  }, []);
-
   // Refresh all telemetry
   const refreshTelemetry = useCallback(async () => {
     setIsRefreshing(true);
-    await Promise.all([fetchProviderStatus(), fetchEvaluationData()]);
+    await fetchProviderStatus();
     setLastUpdated(new Date());
     setIsRefreshing(false);
-  }, [fetchProviderStatus, fetchEvaluationData]);
+  }, [fetchProviderStatus]);
 
   useEffect(() => {
     setIsLoading(true);
     refreshTelemetry().finally(() => setIsLoading(false));
   }, [refreshTelemetry]);
-
-  // Load realistic sample data if user wants to preview telemetry
-  const handleLoadSampleData = () => {
-    const sample = generateSampleUsageData();
-    setRecords(sample);
-    setIsSampleLoaded(true);
-  };
-
-  const handleClearData = () => {
-    useUsageStore.getState().clearRecords();
-    setIsSampleLoaded(false);
-  };
 
   // Helper: map provider name to standard keys
   const normalizeProvider = (p: string = ''): string => {
@@ -183,7 +122,7 @@ export function UsageAnalyticsView() {
     if (s.includes('openai') || s.includes('gpt') || s.includes('o1') || s.includes('o3')) return 'openai';
     if (s.includes('anthropic') || s.includes('claude')) return 'anthropic';
     if (s.includes('xai') || s.includes('grok')) return 'xai';
-    return 'google';
+    return 'unknown';
   };
 
   // Filter records by time and provider
@@ -257,6 +196,7 @@ export function UsageAnalyticsView() {
       openai: number;
       anthropic: number;
       xai: number;
+      unknown: number;
       inputTokens: number;
       outputTokens: number;
       totalTokens: number;
@@ -284,6 +224,7 @@ export function UsageAnalyticsView() {
         openai: 0,
         anthropic: 0,
         xai: 0,
+        unknown: 0,
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
@@ -301,6 +242,7 @@ export function UsageAnalyticsView() {
         else if (pKey === 'openai') slot.openai += rec.totalTokens || 0;
         else if (pKey === 'anthropic') slot.anthropic += rec.totalTokens || 0;
         else if (pKey === 'xai') slot.xai += rec.totalTokens || 0;
+        else slot.unknown += rec.totalTokens || 0;
 
         slot.inputTokens += rec.inputTokens || 0;
         slot.outputTokens += rec.outputTokens || 0;
@@ -339,10 +281,10 @@ export function UsageAnalyticsView() {
 
     // 1. Ingest workspace chat usage records
     for (const rec of filteredRecords) {
-      const key = rec.modelId || 'gemini-3.8-flash';
+      const key = rec.modelId || 'Unknown model';
       const existing = map.get(key) || {
         modelId: key,
-        provider: rec.provider || 'google',
+        provider: rec.provider || 'unknown',
         totalTokens: 0,
         inputTokens: 0,
         outputTokens: 0,
@@ -359,22 +301,6 @@ export function UsageAnalyticsView() {
       existing.cost += rec.estimatedCost || 0;
 
       map.set(key, existing);
-    }
-
-    // 2. Ingest evaluation leaderboard data if available
-    for (const entry of leaderboard) {
-      if (!map.has(entry.modelId)) {
-        map.set(entry.modelId, {
-          modelId: entry.modelId,
-          provider: entry.providerId || 'google',
-          totalTokens: entry.avgTokens || 0,
-          inputTokens: Math.round((entry.avgTokens || 0) * 0.7),
-          outputTokens: Math.round((entry.avgTokens || 0) * 0.3),
-          latencies: entry.avgLatencyMs ? [entry.avgLatencyMs] : [],
-          requests: 1,
-          cost: entry.avgCost || 0
-        });
-      }
     }
 
     return Array.from(map.values())
@@ -395,7 +321,7 @@ export function UsageAnalyticsView() {
         };
       })
       .sort((a, b) => b.totalTokens - a.totalTokens);
-  }, [filteredRecords, leaderboard]);
+  }, [filteredRecords]);
 
   // Provider Distribution
   const providerDistribution = useMemo(() => {
@@ -403,7 +329,8 @@ export function UsageAnalyticsView() {
       google: { tokens: 0, latencySum: 0, reqCount: 0, cost: 0 },
       openai: { tokens: 0, latencySum: 0, reqCount: 0, cost: 0 },
       anthropic: { tokens: 0, latencySum: 0, reqCount: 0, cost: 0 },
-      xai: { tokens: 0, latencySum: 0, reqCount: 0, cost: 0 }
+      xai: { tokens: 0, latencySum: 0, reqCount: 0, cost: 0 },
+      unknown: { tokens: 0, latencySum: 0, reqCount: 0, cost: 0 }
     };
 
     for (const rec of filteredRecords) {
@@ -481,26 +408,6 @@ export function UsageAnalyticsView() {
             <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
 
-          {/* Sample Data Toggle for Preview */}
-          {!hasData && (
-            <button
-              onClick={handleLoadSampleData}
-              className="px-3 py-1.5 text-xs font-medium bg-slate-900 text-white dark:bg-white dark:text-black rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer"
-            >
-              <Sparkles size={13} />
-              <span>Load Preview Data</span>
-            </button>
-          )}
-
-          {isSampleLoaded && (
-            <button
-              onClick={handleClearData}
-              title="Clear preview sample records"
-              className="px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-[#8B949E] hover:text-red-500 rounded-lg transition-colors cursor-pointer"
-            >
-              Clear Preview
-            </button>
-          )}
         </div>
       </div>
 
@@ -522,12 +429,9 @@ export function UsageAnalyticsView() {
           )}
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {Object.entries({
-            google: providers.google || { name: 'Google Gemini', configured: true },
-            openai: providers.openai || { name: 'OpenAI', configured: true },
-            anthropic: providers.anthropic || { name: 'Anthropic', configured: true },
-            xai: providers.xai || { name: 'xAI', configured: true }
+            openai: providers.openai || { name: 'OpenAI', configured: false }
           }).map(([key, info]) => {
             const isConfigured = info.configured;
             return (
@@ -545,7 +449,7 @@ export function UsageAnalyticsView() {
                   </div>
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-[#8B949E]">
-                  {isConfigured ? 'Operational' : 'Unconfigured'}
+                  {isConfigured ? 'Credential configured; model access unverified' : 'Not configured'}
                 </div>
               </div>
             );
@@ -641,7 +545,7 @@ export function UsageAnalyticsView() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-[#141414] rounded-lg border border-slate-200/80 dark:border-[#222222]">
           <span className="text-[11px] text-slate-400 font-medium px-2">Provider:</span>
-          {(['all', 'google', 'openai', 'anthropic', 'xai'] as const).map((prov) => (
+          {(['all', 'openai', 'unknown'] as const).map((prov) => (
             <button
               key={prov}
               onClick={() => setProviderFilter(prov)}
@@ -656,12 +560,6 @@ export function UsageAnalyticsView() {
           ))}
         </div>
 
-        {isSampleLoaded && (
-          <div className="text-xs text-slate-500 dark:text-[#8B949E] flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-            <span>Viewing Preview Benchmark Data</span>
-          </div>
-        )}
       </div>
 
       {/* ======================================================== */}
@@ -709,12 +607,6 @@ export function UsageAnalyticsView() {
             <div className="w-full h-full flex flex-col items-center justify-center text-xs text-slate-400 dark:text-[#6E7681] gap-2 border border-dashed border-slate-200 dark:border-[#222] rounded-lg">
               <BarChart3 size={24} className="text-slate-300 dark:text-[#333]" />
               <span>No token consumption telemetry recorded yet.</span>
-              <button
-                onClick={handleLoadSampleData}
-                className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-              >
-                Load Preview Benchmark Data
-              </button>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">

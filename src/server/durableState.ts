@@ -594,4 +594,3 @@ export async function deleteServerDocDurable(
 export function isDurableFirestoreActive(): boolean {
   return hasActiveDb();
 }
-

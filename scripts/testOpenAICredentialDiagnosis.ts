@@ -127,8 +127,8 @@ async function runDiagnosisSuite() {
   } else {
     const health = await realAdapter.checkHealth();
     console.log(`  [DIAGNOSTIC RESULT] authenticated=${health.authenticated}, modelAvailable=${health.modelAvailable}`);
-    for (const [mId, mStatus] of Object.entries(health.models || {})) {
-      console.log(`    - ${mId}: ${mStatus.status}${mStatus.code ? ` (${mStatus.code}: ${mStatus.message})` : ''}`);
+    for (const [mId, mStatus] of Object.entries(health.modelAccess || {})) {
+      console.log(`    - ${mId}: ${mStatus.status} (${mStatus.upstreamModelId}: ${mStatus.detail})`);
     }
     assert(health.configured === true, 'Health check indicates configured: true');
   }

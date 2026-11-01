@@ -6,7 +6,7 @@ import { MCPService, MCPServerConfig, MAX_MCP_OUTPUT_CHARS } from '../src/server
 console.log('=== FLOAT AI Phase 3: Real Model Context Protocol (MCP) Client Verification ===\n');
 
 const FIXTURE_PATH = path.resolve(process.cwd(), 'scripts/fixtures/fakeMcpStdioServer.ts');
-const TSX_BIN = path.resolve(process.cwd(), 'node_modules/.bin/tsx');
+const TSX_CLI = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
 
 async function runTests() {
   const prevAllowStdio = process.env.FLOAT_ALLOW_STDIO_MCP;
@@ -21,8 +21,8 @@ async function runTests() {
       id: 'srv-db-mcp',
       name: 'PostgreSQL MCP Server',
       transport: 'stdio',
-      command: TSX_BIN,
-      args: [FIXTURE_PATH],
+      command: process.execPath,
+      args: [TSX_CLI, FIXTURE_PATH],
       env: {
         DATABASE_URL: 'postgres://admin:supersecret@localhost:5432/main'
       },

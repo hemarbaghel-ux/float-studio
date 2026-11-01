@@ -278,7 +278,7 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false, r
               {mode === 'reset' && "Reset your workspace access."}
             </h1>
             <p className="text-xs sm:text-sm text-slate-400 mt-2 leading-relaxed">
-              {mode === 'signup' && "Create your FLOAT account to explore repositories, collaborate with autonomous agents, and write code."}
+              {mode === 'signup' && "Create your FLOAT account to explore repositories, use AI chat, and work with code."}
               {mode === 'signin' && "Sign in to continue your projects, work with your AI models, and keep your development moving."}
               {mode === 'reset' && "Enter the email address associated with your FLOAT account and we'll send you a password recovery link."}
             </p>

@@ -270,4 +270,3 @@ export function resetSubscriptionMemoryState(): void {
 }
 
 export const clearSubscriptionCache = resetSubscriptionMemoryState;
-

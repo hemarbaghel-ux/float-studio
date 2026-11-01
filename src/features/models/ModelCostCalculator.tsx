@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { 
-  Calculator, 
-  DollarSign, 
-  Coins, 
-  Layers, 
-  Info, 
-  RotateCcw, 
+import {
+  Calculator,
+  DollarSign,
+  Coins,
+  Layers,
+  Info,
+  RotateCcw,
   ExternalLink,
   Sparkles,
   HelpCircle
@@ -43,8 +43,8 @@ export function ModelCostCalculator({ initialModelId }: ModelCostCalculatorProps
     const outRate = model.pricing.outputCostPer1M ?? 0;
     const inputCost = (uncachedInput / 1_000_000) * inRate;
     const outputCost = (outputTokens / 1_000_000) * outRate;
-    const cacheRate = model.pricing.cachedInputCostPer1M != null 
-      ? model.pricing.cachedInputCostPer1M 
+    const cacheRate = model.pricing.cachedInputCostPer1M != null
+      ? model.pricing.cachedInputCostPer1M
       : inRate * 0.5;
     const cachedCost = (effectiveCached / 1_000_000) * cacheRate;
 
@@ -249,19 +249,19 @@ export function ModelCostCalculator({ initialModelId }: ModelCostCalculatorProps
                 <th className="px-4 py-3 text-right">Input Rate (/1M)</th>
                 <th className="px-4 py-3 text-right">Output Rate (/1M)</th>
                 <th className="px-4 py-3 text-right font-bold text-white">Estimated Workload Cost</th>
-                <th className="px-4 py-3 text-right">Cost Relative to Gemini 3.1 Flash Lite</th>
+                <th className="px-4 py-3 text-right">Cost Relative to GPT-6 Astra</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#21262D] bg-[#12161F]">
               {models.map(m => {
                 const cost = calculateForModel(m);
-                const baseModel = models.find(x => x.id === 'gemini-3.1-flash-lite');
+                const baseModel = models.find(x => x.id === 'gpt-6-astra');
                 const baseCost = baseModel ? calculateForModel(baseModel).total : cost.total;
                 const ratio = baseCost > 0 ? (cost.total / baseCost) : 1;
 
                 return (
-                  <tr 
-                    key={m.id} 
+                  <tr
+                    key={m.id}
                     className={`hover:bg-[#161B22] transition-colors ${m.id === selectedModelId ? 'bg-purple-950/20' : ''}`}
                   >
                     <td className="px-4 py-3 font-bold text-white whitespace-nowrap">
@@ -295,7 +295,7 @@ export function ModelCostCalculator({ initialModelId }: ModelCostCalculatorProps
         <Info size={16} className="text-purple-400 shrink-0 mt-0.5" />
         <div className="leading-relaxed">
           <span className="font-semibold text-slate-200">Honest Evaluation Disclosure: </span>
-          The token cost figures above represent official raw API token consumption calculations for single requests. In autonomous multi-step agent loops (such as SWE-bench workflows), total task cost depends on the number of tool iterations, file reads, and search cycles executed by the agent scaffolding.
+          The token cost figures above are estimates for individual model requests. Actual provider charges depend on the model, account pricing, and returned usage details.
         </div>
       </div>
     </div>

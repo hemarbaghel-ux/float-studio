@@ -322,9 +322,8 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
       if (!useIDEStore.getState().rightSidebarOpen) {
         useIDEStore.getState().toggleRightSidebar();
       }
-      window.dispatchEvent(new CustomEvent('switch-ai-mode', { detail: { mode: 'agent' } }));
       setTimeout(() => {
-        const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"], textarea[placeholder*="Agent"]') as HTMLTextAreaElement;
+        const aiInput = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
         aiInput?.focus();
       }, 80);
     });

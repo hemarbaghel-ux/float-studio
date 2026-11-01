@@ -8,7 +8,7 @@ on:
 
 jobs:
   verify:
-    name: Typecheck, Security & Phase Verification Suite, Production Build
+    name: Typecheck, Security & Regression Suite, Production Build
     runs-on: ubuntu-latest
 
     steps:
@@ -27,8 +27,8 @@ jobs:
       - name: TypeScript static check (lint)
         run: npm run lint
 
-      - name: Run full verification suite (Security, Provider Routing, Durable State, Phases 0-8)
-        run: npm test
-
-      - name: Production build (client + server + worker bundles)
+      - name: Production build (client + server bundles)
         run: npm run build
+
+      - name: Run full verification suite (Chat, Models, Persistence, Security)
+        run: npm test

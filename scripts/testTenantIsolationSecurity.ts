@@ -5,7 +5,7 @@
  * 1. User A cannot access User B's projects (server-side verifyProjectOwnership)
  * 2. User A cannot access User B's conversations
  * 3. User A cannot access User B's proposals or file change sets
- * 4. User A cannot access User B's tasks or cloud background agent executions
+ * 4. User A cannot access User B's project proposals
  * 5. User A cannot access User B's memories
  * 6. User A cannot access User B's terminal sessions
  * 7. User A cannot read or modify User B's rules, skills, MCP servers/tools/resources, code reviews, diagnostics, or automations
@@ -15,17 +15,15 @@
  */
 
 import assert from 'assert';
-import { ProposalService } from '../src/server/agent/proposalService';
-import { orchestrator } from '../src/server/agentOrchestrator';
+import path from 'node:path';
+import { ProposalService } from '../src/server/proposals/proposalService';
 import { MemoryService } from '../src/server/memory/memoryService';
 import { TerminalService } from '../src/server/terminal/terminalService';
-import { BrowserAgentService } from '../src/server/browser/browserAgent';
 import { RulesService } from '../src/server/rules/rulesService';
 import { SkillsService } from '../src/server/skills/skillsService';
 import { MCPService } from '../src/server/mcp/mcpService';
 import { CodeReviewService } from '../src/server/review/codeReviewService';
 import { DiagnosticsService } from '../src/server/diagnostics/diagnosticsService';
-import { AutomationService } from '../src/server/automations/automationService';
 import { ContextBuilder } from '../src/server/contextBuilder';
 import { verifyProjectOwnership, setProjectLookupForTests } from '../src/server/projectOwnership';
 import { isSensitivePath, normalizeWorkspacePath } from '../src/services/indexing/fileFilter';
@@ -75,28 +73,6 @@ async function runTenantIsolationTests() {
   assert.strictEqual(bobCommandExec, undefined, 'User B must not append or execute in User A terminal session');
   console.log('[PASS] Cross-tenant terminal session boundaries strictly enforced');
 
-  // 3. Cross-Tenant Cloud Task / Worker Isolation
-  console.log('\n--- Test 3: Cross-Tenant Cloud Task Isolation ---');
-  const taskId = `task-iso-${Date.now()}`;
-  (orchestrator as any).tasks.set(taskId, {
-    id: taskId,
-    ownerId: USER_A,
-    projectId: PROJECT_A,
-    name: 'Alice Private Agent Task',
-    prompt: 'Analyze codebase for security vulnerabilities',
-    status: 'QUEUED',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    progress: 0,
-    phase: 'QUEUED'
-  });
-
-  const bobTask = orchestrator.getTask(taskId, USER_B);
-  assert.strictEqual(bobTask, null, 'User B cannot read User A background task');
-  const aliceTask = orchestrator.getTask(taskId, USER_A);
-  assert.strictEqual(aliceTask?.ownerId, USER_A, 'User A can read own background task');
-  console.log('[PASS] Cross-tenant cloud agent and task isolation strictly enforced');
-
   // 4. Cross-Tenant Proposal & ChangeSet Isolation
   console.log('\n--- Test 4: Cross-Tenant Proposal & ChangeSet Isolation ---');
   const createRes = ProposalService.createProposal({
@@ -116,9 +92,12 @@ async function runTenantIsolationTests() {
   assert.ok(createRes.proposal, 'Proposal created successfully');
   const aliceProposalId = createRes.proposal.id;
 
-  const bobApprove = await ProposalService.applyProposalDurable(aliceProposalId, USER_B, {
-    userId: USER_B,
-    currentFiles: []
+  const bobApprove = await ProposalService.finalizeProposalDurable(aliceProposalId, {
+    ownerId: USER_B,
+    projectId: PROJECT_A,
+    approvedPaths: ['src/secret.ts'],
+    currentFiles: [{ path: 'src/secret.ts', content: 'export const KEY = "internal";' }],
+    projectData: { fileStorageVersion: 2, fileGeneration: 'generation-test' },
   });
   assert.strictEqual(bobApprove.success, false, 'User B must not apply User A proposal');
   assert.ok(bobApprove.error?.toLowerCase().includes('not found'), 'Authorization guard returns not found for non-owner');
@@ -202,16 +181,16 @@ async function runTenantIsolationTests() {
   MCPService.clear();
   const prevAllowStdio = process.env.FLOAT_ALLOW_STDIO_MCP;
   process.env.FLOAT_ALLOW_STDIO_MCP = 'true';
-  const tsxBin = `${process.cwd()}/node_modules/.bin/tsx`;
-  const fakeMcpFixture = `${process.cwd()}/scripts/fixtures/fakeMcpStdioServer.ts`;
+  const tsxCli = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
+  const fakeMcpFixture = path.resolve(process.cwd(), 'scripts/fixtures/fakeMcpStdioServer.ts');
 
   // Register 1 user-scoped server for Alice and 2 project-scoped servers for Alice (PROJECT_A and PROJECT_A2)
   MCPService.registerServer({
     id: 'mcp-alice-user-global',
     name: 'Alice User-Scoped MCP',
     transport: 'stdio',
-    command: tsxBin,
-    args: [fakeMcpFixture],
+    command: process.execPath,
+    args: [tsxCli, fakeMcpFixture],
     env: { USER_TOKEN: 'secret1' },
     enabled: true,
     createdAt: Date.now()
@@ -221,8 +200,8 @@ async function runTenantIsolationTests() {
     id: 'mcp-alice-proj-a1',
     name: 'Alice Project A1 MCP',
     transport: 'stdio',
-    command: tsxBin,
-    args: [fakeMcpFixture],
+    command: process.execPath,
+    args: [tsxCli, fakeMcpFixture],
     projectId: PROJECT_A,
     env: { DB_PASS: 'supersecret_a1' },
     enabled: true,
@@ -233,8 +212,8 @@ async function runTenantIsolationTests() {
     id: 'mcp-alice-proj-a2',
     name: 'Alice Project A2 MCP',
     transport: 'stdio',
-    command: tsxBin,
-    args: [fakeMcpFixture],
+    command: process.execPath,
+    args: [tsxCli, fakeMcpFixture],
     projectId: PROJECT_A2,
     env: { DB_PASS: 'supersecret_a2' },
     enabled: true,
@@ -370,28 +349,6 @@ async function runTenantIsolationTests() {
   assert.strictEqual(DiagnosticsService.getDiagnostics(PROJECT_A, undefined, USER_B).length, 0, 'User B cannot read User A project diagnostics');
   assert.strictEqual(DiagnosticsService.clearDiagnostics(PROJECT_A, undefined, USER_B), false, 'User B cannot clear User A project diagnostics');
 
-  // Automations isolation
-  AutomationService.clear();
-  const aliceAuto = AutomationService.createAutomation({
-    projectId: PROJECT_A,
-    userId: USER_A,
-    name: 'Alice Nightly Audit',
-    trigger: { type: 'manual' },
-    action: { type: 'create_report' },
-    permissions: ['read'],
-    enabled: true
-  });
-  let bobTriggerRejected = false;
-  try {
-    await AutomationService.trigger(aliceAuto.id, { triggerType: 'manual', userId: USER_B, projectId: PROJECT_A });
-  } catch {
-    bobTriggerRejected = true;
-  }
-  assert.strictEqual(bobTriggerRejected, true, 'User B cannot trigger User A automation');
-  await AutomationService.trigger(aliceAuto.id, { triggerType: 'manual', userId: USER_A, projectId: PROJECT_A });
-  assert.strictEqual(AutomationService.getRunLogs(aliceAuto.id, USER_B, PROJECT_A).length, 0, 'User B cannot read User A automation run logs');
-  assert.strictEqual(AutomationService.getRunLogs(aliceAuto.id, USER_A, PROJECT_A).length, 1, 'User A can read own automation run logs');
-
   setProjectLookupForTests(null);
   console.log('[PASS] Milestone 9 services & MCP project isolation enforce strict user + project boundaries');
 
@@ -419,27 +376,8 @@ async function runTenantIsolationTests() {
   }
   console.log('[PASS] Traversal, environment files, and private keys strictly guarded');
 
-  // 7. SSRF Protection on Browser Agent
-  console.log('\n--- Test 7: Browser Agent SSRF Protection ---');
-  const unsafeTargets = [
-    'http://localhost:3000',
-    'http://127.0.0.1:8080',
-    'http://169.254.169.254/latest/meta-data/',
-    'http://10.0.0.1/admin',
-    'http://192.168.1.1/router'
-  ];
-
-  for (const target of unsafeTargets) {
-    const check = BrowserAgentService.validateUrlSafety(target);
-    assert.strictEqual(check.safe, false, `SSRF target "${target}" must be blocked`);
-  }
-
-  const safeTarget = BrowserAgentService.validateUrlSafety('https://docs.float.ai/guide');
-  assert.strictEqual(safeTarget.safe, true, 'Public HTTPS documentation URL is allowed');
-  console.log('[PASS] SSRF protection blocks localhost, internal IPs, and cloud metadata');
-
   console.log('\n==================================================');
-  console.log('Cross-Tenant Isolation & Security Hardening: All 7 suites passed!');
+  console.log('Cross-Tenant Isolation & Security Hardening: All 6 active suites passed!');
   console.log('==================================================\n');
 }
 

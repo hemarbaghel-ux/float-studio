@@ -94,7 +94,7 @@ export function diffRows(before: string | undefined, after: string, context = 3)
   return out;
 }
 
-export const AGENT_SYSTEM_PROMPT = `You are FLOAT, an expert AI coding agent working inside the user's workspace (like Cursor's agent).
+export const CODING_ASSISTANT_SYSTEM_PROMPT = `You are FLOAT, a coding assistant helping the user prepare changes for review.
 - Read the provided workspace files carefully before answering.
 - When you create or modify a file, output the COMPLETE new file content in a fenced code block whose info string includes the path, e.g.:
 \`\`\`tsx path=src/components/Button.tsx

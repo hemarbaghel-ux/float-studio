@@ -92,7 +92,8 @@ export const useValidationStore = create<ValidationState>((set, get) => ({
     });
 
     try {
-      await useIDEStore.getState().saveProject();
+      const saveResult = await useIDEStore.getState().saveProject();
+      if (saveResult.status !== 'synced') throw new Error(saveResult.message);
       const savedProjectId = useIDEStore.getState().projectId;
       if (!savedProjectId) throw new Error('Save this workspace before running validation.');
       const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';

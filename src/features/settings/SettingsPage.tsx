@@ -10,7 +10,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useAIStore } from '../../store/aiStore';
 import { useI18nStore, SUPPORTED_LANGUAGES } from '../../store/i18nStore';
 import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
-import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
+import { INITIAL_MODELS } from '../ai/registry';
 import { useConsentStore } from '../../store/consentStore';
 
 export function SettingsPage() {
@@ -38,10 +38,7 @@ export function SettingsPage() {
   const { settings, updateSettings, files, projectName } = useIDEStore();
   const { user, logout } = useAuthStore();
   const { preferences, updateConsent, withdrawConsent, isSaving: isSavingConsent, error: consentError, clearError } = useConsentStore();
-  const {
-    selectedModel, setSelectedModel,
-    selectedAgent, setSelectedAgent
-  } = useAIStore();
+  const { selectedModel, setSelectedModel } = useAIStore();
   const { currentLanguage, setLanguage } = useI18nStore();
 
   const handleResetDefaults = () => {
@@ -85,7 +82,7 @@ export function SettingsPage() {
       setNotificationPermission(res);
       if (res === 'granted') {
         new Notification('FLOAT Notifications Active', {
-          body: 'You will receive execution completions and background task updates.',
+          body: 'FLOAT notifications are enabled.',
           icon: '/favicon.ico'
         });
       }
@@ -96,7 +93,7 @@ export function SettingsPage() {
     { id: 'general', label: 'General', icon: SlidersHorizontal, desc: 'Language, startup tab, confirmations' },
     { id: 'appearance', label: 'Appearance', icon: Palette, desc: 'Dark, light, and system themes' },
     { id: 'editor', label: 'Editor', icon: Code2, desc: 'Font size, font family, minimap, tabs, wrap' },
-    { id: 'ai', label: 'AI & Models', icon: Bot, desc: 'Default models, agents, availability' },
+    { id: 'ai', label: 'AI & Models', icon: Bot, desc: 'Default model and availability' },
     { id: 'notifications', label: 'Notifications', icon: Bell, desc: 'In-app toasts and desktop alerts' },
     { id: 'privacy', label: 'Privacy & Data', icon: Shield, desc: 'Workspace exports, account safety' },
   ];
@@ -447,7 +444,7 @@ export function SettingsPage() {
             <div className="space-y-6">
               <div>
                 <h3 className="text-base font-semibold text-slate-900 dark:text-white">AI & Intelligence Models</h3>
-                <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-0.5">Manage default model routing, agents, and capability limits</p>
+                <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-0.5">Choose the default model for chat and coding assistance.</p>
               </div>
 
               <div className="space-y-4 divide-y divide-slate-100 dark:divide-white/5">
@@ -470,50 +467,16 @@ export function SettingsPage() {
                   </select>
                 </div>
 
-                {/* Default Agent */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4">
-                  <div>
-                    <h4 className="text-xs font-semibold text-slate-900 dark:text-white">Default Agent Workflow</h4>
-                    <p className="text-xs text-slate-500 dark:text-[#8B949E]">Autonomous agent strategy for tasks and refactorings</p>
-                  </div>
-                  <select
-                    value={selectedAgent}
-                    onChange={(e) => setSelectedAgent(e.target.value)}
-                    className="px-3 py-1.5 bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg text-xs text-slate-800 dark:text-white focus:outline-none focus:border-slate-400 dark:focus:border-white/30 w-52 cursor-pointer"
-                  >
-                    {INITIAL_AGENTS.map(a => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Live Model Catalog */}
+                {/* Selectable models; model access is verified only by the server runtime. */}
                 <div className="pt-4">
-                  <h4 className="text-xs font-semibold text-slate-900 dark:text-white mb-2">Verified Configured Models</h4>
+                  <h4 className="text-xs font-semibold text-slate-900 dark:text-white mb-2">Available Model Choices</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="p-3 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#141414] flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Cpu size={15} className="text-slate-600 dark:text-[#C5C5C5]" />
-                        <div>
-                          <span className="text-xs font-semibold block text-slate-900 dark:text-white">Gemini 2.5 Flash</span>
-                          <span className="text-[10px] text-slate-400">1M Context • Real-time Code Edits</span>
-                        </div>
+                    {INITIAL_MODELS.map((model) => (
+                      <div key={model.id} className="p-3 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#141414]">
+                        <span className="text-xs font-semibold block text-slate-900 dark:text-white">{model.displayName}</span>
+                        <span className="text-[10px] text-slate-400">{model.id} · OpenAI · Access unverified until a real request succeeds</span>
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-white/10 text-slate-800 dark:text-white border border-slate-300 dark:border-white/15">Active</span>
-                    </div>
-
-                    <div className="p-3 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#141414] flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Cpu size={15} className="text-slate-600 dark:text-[#C5C5C5]" />
-                        <div>
-                          <span className="text-xs font-semibold block text-slate-900 dark:text-white">Gemini 2.5 Pro</span>
-                          <span className="text-[10px] text-slate-400">2M Context • Complex Architecture</span>
-                        </div>
-                      </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-white/10 text-slate-800 dark:text-white border border-slate-300 dark:border-white/15">Active</span>
-                    </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -544,7 +507,7 @@ export function SettingsPage() {
                 <div className="flex items-center justify-between pt-4">
                   <div>
                     <h4 className="text-xs font-semibold text-slate-900 dark:text-white">Desktop System Notifications</h4>
-                    <p className="text-xs text-slate-500 dark:text-[#8B949E]">Receive background notifications when long agent tasks complete</p>
+                    <p className="text-xs text-slate-500 dark:text-[#8B949E]">Allow FLOAT to show browser notifications.</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-[11px] text-slate-400 capitalize">{notificationPermission}</span>

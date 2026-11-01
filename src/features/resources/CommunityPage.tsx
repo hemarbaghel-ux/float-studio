@@ -38,21 +38,21 @@ export function CommunityPage() {
     {
       title: 'Community Discussions',
       icon: <MessageSquare size={18} className="text-purple-600 dark:text-purple-400" />,
-      desc: 'Ask questions, discuss agent architectures, and exchange prompt engineering techniques with fellow developers.',
+      desc: 'Ask questions, discuss development workflows, and exchange prompt writing techniques with fellow developers.',
       status: 'Coming soon',
       note: 'Developer forums and discussion channels are preparing for launch.'
     },
     {
       title: 'Project Showcase',
       icon: <Share2 size={18} className="text-blue-600 dark:text-blue-400" />,
-      desc: 'Showcase web applications, APIs, and tools you have created using FLOAT’s Ask, Plan, Edit, and Agent workflows.',
+      desc: 'Showcase applications, APIs, and tools you have created with FLOAT.',
       status: 'Coming soon',
       note: 'Community project directory will open alongside our public showcase.'
     },
     {
       title: 'Feature Requests & Voting',
       icon: <Lightbulb size={18} className="text-amber-600 dark:text-amber-400" />,
-      desc: 'Propose new features, AI agent capabilities, and IDE improvements directly to the FLOAT product team.',
+      desc: 'Suggest product improvements directly to the FLOAT team.',
       status: 'Active In-App',
       note: 'Use the interactive submission form below to submit requests directly.'
     },
@@ -183,7 +183,7 @@ export function CommunityPage() {
                   <input
                     type="text"
                     required
-                    placeholder="e.g., Support for custom agent system prompts in settings"
+                    placeholder="e.g., Add a keyboard shortcut for opening project search"
                     value={featureTitle}
                     onChange={(e) => setFeatureTitle(e.target.value)}
                     className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500"

@@ -1,14 +1,14 @@
 import React from 'react';
-import { 
-  X, 
-  Check, 
-  Minus, 
-  Cpu, 
-  Brain, 
-  Wrench, 
-  Eye, 
-  Scale, 
-  Coins, 
+import {
+  X,
+  Check,
+  Minus,
+  Cpu,
+  Brain,
+  Wrench,
+  Eye,
+  Scale,
+  Coins,
   ExternalLink,
   ShieldAlert
 } from 'lucide-react';
@@ -24,11 +24,11 @@ interface CompareModelsModalProps {
   onRemoveModel: (id: string) => void;
 }
 
-export function CompareModelsModal({ 
-  isOpen, 
-  onClose, 
-  selectedModels, 
-  onRemoveModel 
+export function CompareModelsModal({
+  isOpen,
+  onClose,
+  selectedModels,
+  onRemoveModel
 }: CompareModelsModalProps) {
   if (!isOpen) return null;
 
@@ -57,15 +57,15 @@ export function CompareModelsModal({
   return (
     <AnimatePresence>
       <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
           className="absolute inset-0 bg-black/70 backdrop-blur-sm"
         />
-        
-        <motion.div 
+
+        <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
@@ -82,7 +82,7 @@ export function CompareModelsModal({
                 Comparing verified specifications, benchmark results, and official pricing.
               </p>
             </div>
-            <button 
+            <button
               onClick={onClose}
               className="p-1.5 rounded-lg hover:bg-[#21262D] text-[#8B949E] hover:text-white transition-colors cursor-pointer"
             >
@@ -189,7 +189,7 @@ export function CompareModelsModal({
                         const verified = getVerifiedModel(m.id);
                         return (
                           <td key={m.id} className="p-3 text-center font-mono text-slate-300">
-                            {verified?.pricing?.cachedInputCostPer1M != null 
+                            {verified?.pricing?.cachedInputCostPer1M != null
                               ? `$${verified.pricing.cachedInputCostPer1M.toFixed(3)} / 1M`
                               : 'Standard'}
                           </td>

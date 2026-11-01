@@ -1,11 +1,20 @@
 import { db, auth } from '../lib/firebase';
 import { 
   collection, query, where, getDocs, doc, getDoc, 
-  setDoc, updateDoc, deleteDoc, serverTimestamp, orderBy, limit 
+  setDoc, updateDoc, deleteDoc, serverTimestamp, orderBy, writeBatch, runTransaction
 } from 'firebase/firestore';
 import { AIMessage } from '../types';
 import { OperationType, handleFirestoreError } from '../lib/firestoreErrors';
 import { conversationCacheKey, conversationListCacheKey } from './conversationCacheKeys';
+import {
+  CONVERSATION_MESSAGE_BATCH_SIZE,
+  CONVERSATION_MESSAGE_MANIFEST_ID,
+  ConversationMessageManifest,
+  ConversationSyncResult,
+  parseConversationMessageDocuments,
+  serializeConversationMessages,
+  serializeLegacyConversationSnapshot,
+} from './conversationCloudMessages';
 
 export interface ConversationRecord {
   id: string;
@@ -105,11 +114,11 @@ export class ConversationService {
   /**
    * Cloud Firestore persistence with strict owner verification
    */
-  static async syncToCloud(record: ConversationRecord): Promise<void> {
+  static async syncToCloud(record: ConversationRecord): Promise<ConversationSyncResult> {
     const user = auth.currentUser;
     // Keep an offline copy in the current account's own local cache.
     this.saveLocalConversation(record, user?.uid ?? null);
-    if (!user) return; // Unauthenticated users use local storage only
+    if (!user) return { status: 'local-only', reason: 'not-authenticated' }; // Unauthenticated users use local storage only
 
     const convRef = doc(db, 'conversations', record.id);
 
@@ -128,41 +137,117 @@ export class ConversationService {
         isOwner = false;
       }
 
-      // Keep the serialized payload below Firestore's document limit. Drop oldest
-      // turns as whole messages; slicing JSON can leave an unreadable partial record.
-      const cloudMessages = [...record.messages].slice(-24);
-      let serializedMessages = JSON.stringify(cloudMessages);
-      while (serializedMessages.length > 850_000 && cloudMessages.length > 1) {
-        cloudMessages.shift();
-        serializedMessages = JSON.stringify(cloudMessages);
+      const serializedMessages = serializeConversationMessages(record.messages);
+      const legacySnapshot = serializeLegacyConversationSnapshot(record.messages);
+      if (!serializedMessages || !legacySnapshot) {
+        console.warn(`Conversation ${record.id} contains a message too large for Firestore; the complete local copy was kept.`);
+        return { status: 'local-only', reason: 'message-too-large' };
       }
-      if (serializedMessages.length > 850_000) {
-        console.warn(`Conversation ${record.id} is too large for Firestore; the complete local copy was kept.`);
-        return;
-      }
+      const generation = crypto.randomUUID();
+      let previousGeneration: string | undefined;
+
+      const parentData = {
+        ownerId: user.uid,
+        projectId: record.projectId,
+        title: record.title.slice(0, 190),
+        messages: legacySnapshot,
+        messageCount: record.messages.length,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
 
       if (docExists && isOwner) {
+        previousGeneration = await this.beginMessageSync(record.id, user.uid, generation, record.messages.length);
         await updateDoc(convRef, {
           title: record.title.slice(0, 190),
-          messages: serializedMessages,
+          messages: legacySnapshot,
+          messageCount: record.messages.length,
           updatedAt: serverTimestamp()
         });
       } else if (docExists) {
         console.error(`Refusing to overwrite conversation ${record.id} owned by another account.`);
-        return;
+        return { status: 'failed', reason: 'permission-denied' };
       } else {
-        await setDoc(convRef, {
-          ownerId: user.uid,
-          projectId: record.projectId,
-          title: record.title.slice(0, 190),
-          messages: serializedMessages,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
+        await setDoc(convRef, parentData);
+        previousGeneration = await this.beginMessageSync(record.id, user.uid, generation, record.messages.length);
       }
+
+      await this.syncMessageDocuments(record.id, user.uid, serializedMessages, generation, previousGeneration);
+      return { status: 'synced' };
     } catch (err: any) {
       console.error('Failed to sync conversation to Cloud Firestore:', err);
       // Non-fatal: local copy is preserved
+      const permissionDenied = err?.code === 'permission-denied' || /permission|owner/i.test(err?.message || '');
+      return { status: 'failed', reason: permissionDenied ? 'permission-denied' : 'cloud-unavailable' };
+    }
+  }
+
+  private static async beginMessageSync(
+    conversationId: string,
+    ownerId: string,
+    generation: string,
+    count: number
+  ): Promise<string | undefined> {
+    const messagesRef = collection(db, 'conversations', conversationId, 'messages');
+    const manifestRef = doc(messagesRef, CONVERSATION_MESSAGE_MANIFEST_ID);
+    const prior = await getDoc(manifestRef);
+    const priorData = prior.exists() ? prior.data() : null;
+    const previousGeneration = priorData?.complete === true
+      ? priorData.generation
+      : priorData?.previousGeneration;
+
+    await setDoc(manifestRef, {
+      ownerId,
+      generation,
+      ...(typeof previousGeneration === 'string' ? { previousGeneration } : {}),
+      count,
+      complete: false
+    });
+    return typeof previousGeneration === 'string' ? previousGeneration : undefined;
+  }
+
+  private static async syncMessageDocuments(
+    conversationId: string,
+    ownerId: string,
+    messages: NonNullable<ReturnType<typeof serializeConversationMessages>>,
+    generation: string,
+    previousGeneration?: string
+  ): Promise<void> {
+    const messagesRef = collection(db, 'conversations', conversationId, 'messages');
+    const manifestRef = doc(messagesRef, CONVERSATION_MESSAGE_MANIFEST_ID);
+
+    for (let start = 0; start < messages.length; start += CONVERSATION_MESSAGE_BATCH_SIZE) {
+      const batch = writeBatch(db);
+      const group = messages.slice(start, start + CONVERSATION_MESSAGE_BATCH_SIZE);
+      for (const item of group) {
+        batch.set(doc(messagesRef, `${generation}_${item.id}`), {
+          ownerId,
+          generation,
+          index: item.index,
+          message: item.message
+        });
+      }
+      await batch.commit();
+    }
+
+    const completed = await runTransaction(db, async transaction => {
+      const currentManifest = await transaction.get(manifestRef);
+      if (currentManifest.data()?.generation !== generation) return false;
+      transaction.update(manifestRef, { complete: true });
+      return true;
+    });
+    if (!completed) return;
+
+    // Delete only the generation this save replaced. A newer concurrent save
+    // can already be writing when this cleanup runs.
+    const existing = await getDocs(query(messagesRef));
+    const obsolete = previousGeneration
+      ? existing.docs.filter(snapshot => snapshot.data().generation === previousGeneration)
+      : [];
+    for (let start = 0; start < obsolete.length; start += CONVERSATION_MESSAGE_BATCH_SIZE) {
+      const batch = writeBatch(db);
+      for (const snapshot of obsolete.slice(start, start + CONVERSATION_MESSAGE_BATCH_SIZE)) batch.delete(snapshot.ref);
+      await batch.commit();
     }
   }
 
@@ -197,7 +282,7 @@ export class ConversationService {
           title: data.title || 'Untitled Chat',
           createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now(),
           updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : Date.now(),
-          messageCount: msgCount
+          messageCount: Number.isInteger(data.messageCount) && data.messageCount >= 0 ? data.messageCount : msgCount
         });
       });
 
@@ -224,20 +309,60 @@ export class ConversationService {
       const snap = await getDoc(convRef);
       if (snap.exists()) {
         const data = snap.data();
-        if (data.ownerId === user.uid && data.messages) {
-          const messages = JSON.parse(data.messages);
-          if (Array.isArray(messages)) {
-            // Update local cache
-            this.saveLocalConversation({
-              id: conversationId,
-              projectId: data.projectId,
-              title: data.title || 'Chat',
-              createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now(),
-              updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : Date.now(),
-              messages
-            }, user.uid);
-            return messages;
+        if (data.ownerId !== user.uid) return null;
+
+        const messagesRef = collection(db, 'conversations', conversationId, 'messages');
+        const manifestSnap = await getDoc(doc(messagesRef, CONVERSATION_MESSAGE_MANIFEST_ID));
+        let messages: AIMessage[] | null = null;
+        if (manifestSnap.exists()) {
+          const manifest = manifestSnap.data();
+          if (manifest.ownerId === user.uid &&
+              (manifest.complete === true || typeof manifest.previousGeneration === 'string')) {
+            const messageSnapshot = await getDocs(query(messagesRef, orderBy('index')));
+            const selectedGeneration = manifest.complete === true
+              ? manifest.generation
+              : manifest.previousGeneration;
+            const selectedCount = manifest.complete === true
+              ? manifest.count
+              : messageSnapshot.docs.filter(messageDoc => messageDoc.data().generation === selectedGeneration).length;
+            messages = parseConversationMessageDocuments(
+              messageSnapshot.docs.map(messageDoc => ({
+                id: messageDoc.id,
+                index: messageDoc.data().index,
+                message: messageDoc.data().message,
+                generation: messageDoc.data().generation,
+              })),
+              {
+                ownerId: user.uid,
+                generation: selectedGeneration,
+                count: selectedCount,
+                complete: true
+              } as ConversationMessageManifest
+            );
           }
+        }
+
+        // Supports old conversation documents and recovers safely from an interrupted
+        // multi-batch sync instead of presenting a partial cloud history as complete.
+        if (!messages && typeof data.messages === 'string') {
+          try {
+            const legacy = JSON.parse(data.messages);
+            if (Array.isArray(legacy)) messages = legacy as AIMessage[];
+          } catch {
+            messages = null;
+          }
+        }
+
+        if (messages) {
+          this.saveLocalConversation({
+            id: conversationId,
+            projectId: data.projectId,
+            title: data.title || 'Chat',
+            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now(),
+            updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : Date.now(),
+            messages
+          }, user.uid);
+          return messages;
         }
       }
     } catch (err) {
@@ -256,6 +381,14 @@ export class ConversationService {
       const convRef = doc(db, 'conversations', conversationId);
       const snap = await getDoc(convRef);
       if (snap.exists() && snap.data().ownerId === user.uid) {
+        const messagesSnapshot = await getDocs(query(collection(db, 'conversations', conversationId, 'messages')));
+        for (let start = 0; start < messagesSnapshot.docs.length; start += CONVERSATION_MESSAGE_BATCH_SIZE) {
+          const batch = writeBatch(db);
+          for (const messageDoc of messagesSnapshot.docs.slice(start, start + CONVERSATION_MESSAGE_BATCH_SIZE)) {
+            batch.delete(messageDoc.ref);
+          }
+          await batch.commit();
+        }
         await deleteDoc(convRef);
       }
     } catch (err: any) {
@@ -329,7 +462,7 @@ export class ConversationService {
           title: data.title || 'Untitled Chat',
           createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now(),
           updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : Date.now(),
-          messageCount: msgCount
+          messageCount: Number.isInteger(data.messageCount) && data.messageCount >= 0 ? data.messageCount : msgCount
         });
       });
 

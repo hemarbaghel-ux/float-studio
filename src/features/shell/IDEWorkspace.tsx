@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { loadProjectFileTree } from '../../services/projectCloudRepository';
 import { useIDEStore } from '../../store';
 import { ActivityBar } from './ActivityBar';
 import { Header } from './Header';
@@ -12,11 +13,7 @@ import { SearchPanel } from '../search/SearchPanel';
 import { GitPanel } from '../git/GitPanel';
 import { CommandPalette } from '../command-palette/CommandPalette';
 import { SettingsModal } from '../settings/SettingsModal';
-import { ApiConfigModal } from '../settings/ApiConfigModal';
 
-import { AgentManagerModal } from '../ai/AgentManagerModal';
-import { EvalsWorkspace } from '../evals/EvalsWorkspace';
-import { AgentsWorkspace } from '../agents/AgentsWorkspace';
 
 export function IDEWorkspace() {
   const { saveProject, files, 
@@ -29,18 +26,13 @@ export function IDEWorkspace() {
   } = useIDEStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [agentManagerOpen, setAgentManagerOpen] = useState(false);
-  const [apiConfigOpen, setApiConfigOpen] = useState(false);
   const { setProject } = useIDEStore();
 
-  useEffect(() => {
-    const handleOpen = () => setApiConfigOpen(true);
-    document.addEventListener('open-api-config-modal', handleOpen);
-    return () => document.removeEventListener('open-api-config-modal', handleOpen);
-  }, []);
 
   useEffect(() => {
+    let loadSequence = 0;
     const handleLocationOrLoad = () => {
+      const requestSequence = ++loadSequence;
       const path = window.location.pathname;
       let id = '';
       if (path.startsWith('/chat/')) {
@@ -50,18 +42,17 @@ export function IDEWorkspace() {
       } else if (path === '/workspace' || path === '/ide') {
         id = useIDEStore.getState().projectId || '';
       }
-      if (id && useIDEStore.getState().projectId !== id) {
+      const explicitProjectRoute = path.startsWith('/chat/') || path.startsWith('/workspace/');
+      const workspaceState = useIDEStore.getState();
+      if (id && !(workspaceState.projectId === id && workspaceState.projectLoadedFromCloud) &&
+          (explicitProjectRoute || workspaceState.projectId !== id)) {
         getDoc(doc(db, 'projects', id))
-          .then(snap => {
+          .then(async snap => {
+            if (requestSequence !== loadSequence) return;
             if (snap.exists()) {
               const data = snap.data();
-              let parsedFiles = [];
-              try {
-                parsedFiles = typeof data.files === 'string' ? JSON.parse(data.files) : (data.files || []);
-              } catch {
-                parsedFiles = [];
-              }
-              setProject(data.name || 'Untitled Project', parsedFiles, id);
+              const parsedFiles = await loadProjectFileTree(db, id, data);
+              if (requestSequence === loadSequence) setProject(data.name || 'Untitled Project', parsedFiles, id, 'cloud');
             }
           })
           .catch(err => {
@@ -72,7 +63,10 @@ export function IDEWorkspace() {
 
     handleLocationOrLoad();
     window.addEventListener('popstate', handleLocationOrLoad);
-    return () => window.removeEventListener('popstate', handleLocationOrLoad);
+    return () => {
+      loadSequence += 1;
+      window.removeEventListener('popstate', handleLocationOrLoad);
+    };
   }, [setProject]);
 
   useEffect(() => {
@@ -87,7 +81,7 @@ export function IDEWorkspace() {
         useIDEStore.getState().toggleRightSidebar();
         // Focus the chat input
         setTimeout(() => {
-          const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"], textarea[placeholder*="Agent"]') as HTMLTextAreaElement;
+          const aiInput = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
           aiInput?.focus();
         }, 80);
       } else if ((e.key === 'i' || e.key === 'I') && (e.ctrlKey || e.metaKey)) {
@@ -95,9 +89,8 @@ export function IDEWorkspace() {
         if (!useIDEStore.getState().rightSidebarOpen) {
           useIDEStore.getState().toggleRightSidebar();
         }
-        window.dispatchEvent(new CustomEvent('switch-ai-mode', { detail: { mode: 'agent' } }));
         setTimeout(() => {
-          const aiInput = document.querySelector('textarea[placeholder*="Ask"], textarea[placeholder*="Plan"], textarea[placeholder*="Edit"], textarea[placeholder*="Agent"]') as HTMLTextAreaElement;
+          const aiInput = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
           aiInput?.focus();
         }, 80);
       }
@@ -109,9 +102,7 @@ export function IDEWorkspace() {
   // Expose function to open settings globally for now
   useEffect(() => {
     const handleOpenSettings = () => setSettingsOpen(true);
-    const handleOpenAgentManager = () => setAgentManagerOpen(true);
     document.addEventListener('open-settings', handleOpenSettings);
-    document.addEventListener('open-agent-manager', handleOpenAgentManager);
     
     // Auto save logic
     const saveTimeout = setTimeout(() => {
@@ -120,7 +111,6 @@ export function IDEWorkspace() {
     
     return () => {
       document.removeEventListener('open-settings', handleOpenSettings);
-      document.removeEventListener('open-agent-manager', handleOpenAgentManager);
       clearTimeout(saveTimeout);
     };
   }, [files]); // Re-run effect when files change to debounce save
@@ -143,8 +133,6 @@ export function IDEWorkspace() {
         <div className="flex-1 flex flex-col min-w-0 h-full min-h-0 overflow-hidden relative">
           <div className="flex-1 min-h-0 relative h-full w-full overflow-hidden">
             {activeWorkspace === 'code' && <EditorArea />}
-            {activeWorkspace === 'evals' && <EvalsWorkspace />}
-            {activeWorkspace === 'agents' && <AgentsWorkspace />}
           </div>
           
           {bottomPanelOpen && (
@@ -165,8 +153,6 @@ export function IDEWorkspace() {
 
       <CommandPalette />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
-      {agentManagerOpen && <AgentManagerModal onClose={() => setAgentManagerOpen(false)} />}
-      <ApiConfigModal isOpen={apiConfigOpen} onClose={() => setApiConfigOpen(false)} />
     </div>
   );
 }

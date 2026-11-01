@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 const PRINCIPLES = [
   {
     title: "From first thought to first commit.",
-    subtext: "Structure complex requirements into clean, verifiable steps with autonomous assistance."
+    subtext: "Structure complex requirements into clear, verifiable steps with AI assistance."
   },
   {
     title: "Make room for ambitious builds.",
@@ -15,7 +15,7 @@ const PRINCIPLES = [
   },
   {
     title: "Your workspace. Your rules.",
-    subtext: "Custom skills, team guidelines, and explicit model choices tailored to your engineering stack."
+    subtext: "Project guidelines and explicit model choices tailored to your engineering stack."
   }
 ];
 

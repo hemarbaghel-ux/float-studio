@@ -47,12 +47,6 @@ import {
   checkEndpointRateLimit,
   resetEndpointRateLimitsForTests
 } from '../src/server/app';
-import {
-  GPT6_ASTRA_CLOUD_CONFIG,
-  getUserCloudSessionConfig,
-  updateUserCloudSessionConfig,
-  resetUserCloudSessionsForTests
-} from '../src/server/providers/cloudAgentConfig';
 import { RulesService } from '../src/server/rules/rulesService';
 import { SkillsService } from '../src/server/skills/skillsService';
 import { MCPService } from '../src/server/mcp/mcpService';
@@ -234,12 +228,32 @@ async function runPhaseARegressionSuite() {
   // ---------------------------------------------------------------------------
   console.log('\n--- 3. Real HTTP-Level Express Route & Middleware Tests ---');
   let lastAgentProjectIdSeen: string | null = null;
+  let lastAnalystModelIdSeen: string | null = null;
+  let lastAnalystDataSharingAllowed: boolean | undefined;
 
   const mockModelRouter: any = {
     getProviderStatus: () => ({ openai: { configured: true } }),
     checkAllProvidersHealth: async () => ({ openai: { ok: true } }),
+    resolveRoute: (modelId: string) => {
+      if (modelId === 'invalid-model') {
+        const error: any = new Error('Selected model is unavailable.');
+        error.code = 'MODEL_NOT_FOUND';
+        error.statusCode = 404;
+        throw error;
+      }
+      return { route: { provider: 'openai', apiModelId: modelId } };
+    },
     generateContent: async (opts: any) => {
       const promptText = JSON.stringify(opts?.messages || '');
+      if (promptText.includes('Rows analyzed:')) {
+        lastAnalystModelIdSeen = opts.model;
+        lastAnalystDataSharingAllowed = opts.dataSharingAllowed;
+        return { text: JSON.stringify({
+          summary: 'The supplied rows show the values in the report metrics.',
+          recommendations: ['Review the observed values.'],
+          caveats: ['This report summarizes only the supplied rows.']
+        }) };
+      }
       if (promptText.includes('structured implementation plan') || promptText.includes('JSON')) {
         return {
           text: JSON.stringify({
@@ -270,7 +284,10 @@ async function runPhaseARegressionSuite() {
     }
   };
 
-  const app = await createApp({ skipVite: true, modelRouterOverride: mockModelRouter });
+  const app = await createApp({
+    skipVite: true,
+    modelRouterOverride: mockModelRouter,
+  });
   const server: http.Server = await new Promise((resolve) => {
     const srv = app.listen(0, '127.0.0.1', () => resolve(srv));
   });
@@ -285,7 +302,6 @@ async function runPhaseARegressionSuite() {
       { method: 'POST', url: '/api/analyst/profile', body: { rows: [{ a: 1 }] } },
       { method: 'POST', url: '/api/analyst/query', body: { query: 'test', rows: [{ a: 1 }] } },
       { method: 'POST', url: '/api/ai/gemini-stream', body: { prompt: 'hi' } },
-      { method: 'POST', url: '/api/ai/verify-key', body: { provider: 'openai', key: 'sk-test' } },
       { method: 'POST', url: '/api/ai/chat', body: { messages: [{ role: 'user', content: 'hi' }] } },
       { method: 'POST', url: '/api/ai/agent', body: { prompt: 'fix bug' } },
       { method: 'POST', url: '/api/ai/plan', body: { prompt: 'plan feature' } },
@@ -293,7 +309,11 @@ async function runPhaseARegressionSuite() {
       { method: 'GET', url: '/api/mcp/servers' },
       { method: 'GET', url: '/api/projects/proj_alice_1/search?q=alpha' },
       { method: 'GET', url: '/api/projects/proj_alice_1/proposals' },
-      { method: 'GET', url: '/api/projects/proj_alice_1/rules' }
+      { method: 'GET', url: '/api/projects/proj_alice_1/rules' },
+      { method: 'GET', url: '/api/browser/status' },
+      { method: 'POST', url: '/api/browser/action', body: { type: 'navigate' } },
+      { method: 'POST', url: '/api/projects/proj_alice_1/coordinate', body: { goal: 'delegate work' } },
+      { method: 'GET', url: '/api/projects/proj_alice_1/automations' }
     ];
 
     for (const ep of unauthEndpoints) {
@@ -322,61 +342,129 @@ async function runPhaseARegressionSuite() {
     check(certOutageHttpResp.status === 503, 'HTTP GET /api/session/current during public-cert outage fails closed with 503');
     setGooglePublicKeysForTests({ [kid]: publicKey });
 
+    const retiredSessionResp = await fetch(`${baseUrl}/api/session/current`, {
+      headers: { Authorization: `Bearer ${aliceToken}` }
+    });
+    const retiredSessionBody = await retiredSessionResp.json();
+    check(retiredSessionResp.status === 410 && retiredSessionBody.code === 'CLOUD_SESSIONS_UNAVAILABLE', 'Authenticated cloud-session request receives an explicit unavailable response');
+
+    const removedKeyVerificationResp = await fetch(`${baseUrl}/api/ai/verify-key`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'openai', key: 'intentionally-not-a-credential' })
+    });
+    check(removedKeyVerificationResp.status === 404, 'User-supplied API key verification endpoint is removed');
+
+    const retiredGeminiResp = await fetch(`${baseUrl}/api/ai/gemini-stream`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Hello', model: 'gpt-6-astra' })
+    });
+    const retiredGeminiBody = await retiredGeminiResp.json();
+    check(
+      retiredGeminiResp.status === 410 && retiredGeminiBody.code === 'MODEL_NOT_FOUND',
+      'Authenticated legacy Gemini streaming route returns an explicit unavailable error without provider substitution'
+    );
+
+    const analystResp = await fetch(`${baseUrl}/api/analyst/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${aliceToken}`,
+        'Content-Type': 'application/json',
+        'X-Float-Data-Sharing': '1',
+      },
+      body: JSON.stringify({
+        csvData: 'group,value\nA,10\nB,20\n',
+        datasetName: 'sample.csv',
+        query: 'Summarize value by group',
+        model: 'gpt-6.1-sol',
+      })
+    });
+    const analystBody = await analystResp.json();
+    check(
+      analystResp.status === 200 && lastAnalystModelIdSeen === 'gpt-6.1-sol' &&
+        analystBody.report?.modelUsed === 'gpt-6.1-sol' && analystBody.report?.providerUsed === 'openai',
+      'Data Analyst sends the selected model ID unchanged through the shared model router'
+    );
+    check(
+      lastAnalystDataSharingAllowed === true,
+      'Data Analyst uses the shared server privacy-consent parser for provider requests'
+    );
+    check(
+      analystBody.report?.rowsAnalyzed === 2 && analystBody.report?.pythonOutput === undefined &&
+        !analystBody.report?.keyMetrics?.some((metric: any) => metric.label === 'Confidence Score'),
+      'Analyst report uses computed CSV rows and omits fabricated sandbox output and confidence metrics'
+    );
+
+    const unavailableAnalystResp = await fetch(`${baseUrl}/api/analyst/query`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ csvData: 'group,value\nA,10\n', query: 'Summarize', model: 'invalid-model' })
+    });
+    const unavailableAnalystBody = await unavailableAnalystResp.json();
+    check(
+      unavailableAnalystResp.status === 404 && unavailableAnalystBody.code === 'MODEL_NOT_FOUND' &&
+        unavailableAnalystBody.report === undefined,
+      'Data Analyst returns a clear unavailable-model error without generating a substitute report'
+    );
+
     // 3B. Correction 1: `default-project` Ownership Bypass Fixed (Persisted vs Ephemeral Mode)
     console.log('\n--- 4. HTTP Verification: default-project Persisted vs Ephemeral Ownership ---');
     resetEphemeralWorkspacesForTests();
-    const aliceEphemeralAgentResp = await fetch(`${baseUrl}/api/ai/agent`, {
+    const retiredAgentResp = await fetch(`${baseUrl}/api/ai/agent`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: 'Inspect workspace', projectId: 'default-project', virtualFiles: [] })
     });
-    const aliceEphemeralAgentJson = await aliceEphemeralAgentResp.json();
-    check(
-      aliceEphemeralAgentResp.status === 200 &&
-        aliceEphemeralAgentJson.isEphemeralWorkspace === true &&
-        lastAgentProjectIdSeen === 'ephemeral-user_alice-default-project',
-      'HTTP POST /api/ai/agent with unpersisted default-project runs in explicit user-isolated ephemeral mode (ephemeral-user_alice-default-project)'
-    );
+    const retiredAgentBody = await retiredAgentResp.json();
+    check(retiredAgentResp.status === 410 && retiredAgentBody.code === 'AGENTS_UNAVAILABLE', 'Authenticated agent execution endpoint is retired');
 
-    const bobEphemeralPlanResp = await fetch(`${baseUrl}/api/ai/plan`, {
+    const retiredPlanResp = await fetch(`${baseUrl}/api/ai/plan`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${bobToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: 'Create a plan', projectId: 'default-project', virtualFiles: [] })
     });
-    const bobEphemeralPlanJson = await bobEphemeralPlanResp.json();
-    check(
-      bobEphemeralPlanResp.status === 201 &&
-        bobEphemeralPlanJson.isEphemeralWorkspace === true &&
-        bobEphemeralPlanJson.plan?.projectId === 'ephemeral-user_bob-default-project',
-      'HTTP POST /api/ai/plan with unpersisted default-project isolates plan under ephemeral-user_bob-default-project'
-    );
+    check(retiredPlanResp.status === 410, 'Authenticated plan endpoint is retired');
 
-    // Persisted 'default-project' owned by user_alice in Firestore: user_bob MUST be rejected with 403!
+    const retiredTaskResp = await fetch(`${baseUrl}/api/agents/tasks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Start a background agent task' })
+    });
+    check(retiredTaskResp.status === 410, 'Authenticated background agent API is retired');
+
+    const retiredAgentSurfaces: Array<{ method: string; url: string; body?: any }> = [
+      { method: 'GET', url: '/api/browser/status' },
+      { method: 'POST', url: '/api/browser/action', body: { type: 'navigate', url: 'https://example.com' } },
+      { method: 'POST', url: '/api/projects/proj_alice_1/coordinate', body: { goal: 'delegate work' } },
+      { method: 'GET', url: '/api/projects/proj_alice_1/automations' },
+      { method: 'POST', url: '/api/projects/proj_alice_1/automations', body: { name: 'run task', trigger: { type: 'manual' }, action: { type: 'agent' } } },
+      { method: 'POST', url: '/api/projects/proj_alice_1/automations/old-id/trigger', body: {} },
+      { method: 'GET', url: '/api/projects/proj_alice_1/automations/old-id/logs' },
+      { method: 'POST', url: '/api/evals/run', body: { taskId: 'old-task', modelId: 'gpt-6-astra', agentId: 'retired-agent', providerId: 'openai' } }
+    ];
+    for (const endpoint of retiredAgentSurfaces) {
+      const response = await fetch(`${baseUrl}${endpoint.url}`, {
+        method: endpoint.method,
+        headers: {
+          Authorization: `Bearer ${aliceToken}`,
+          ...(endpoint.body ? { 'Content-Type': 'application/json' } : {})
+        },
+        body: endpoint.body ? JSON.stringify(endpoint.body) : undefined
+      });
+      const body = await response.json();
+      check(
+        response.status === 410 && body.code === 'AGENTS_UNAVAILABLE',
+        `Authenticated agent surface ${endpoint.method} ${endpoint.url} is explicitly retired`
+      );
+    }
+
+    // Persisted 'default-project' ownership remains enforced by supported chat routes.
     persistedProjects.set('default-project', {
       ownerId: 'user_alice',
       name: 'Alice Persisted Default Project',
       files: JSON.stringify([{ id: 's1', name: 'secret.ts', path: 'src/secret.ts', type: 'file', content: 'export const SECRET = 1;' }])
     });
-
-    const bobHijackDefaultAgent = await fetch(`${baseUrl}/api/ai/agent`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${bobToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: 'Steal default-project', projectId: 'default-project', virtualFiles: [] })
-    });
-    check(
-      bobHijackDefaultAgent.status === 403,
-      'HTTP POST /api/ai/agent blocks user_bob with 403 when default-project is a persisted project owned by user_alice'
-    );
-
-    const bobHijackDefaultPlan = await fetch(`${baseUrl}/api/ai/plan`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${bobToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: 'Steal plan on default-project', projectId: 'default-project', virtualFiles: [] })
-    });
-    check(
-      bobHijackDefaultPlan.status === 403,
-      'HTTP POST /api/ai/plan blocks user_bob with 403 when default-project is a persisted project owned by user_alice'
-    );
 
     const bobHijackDefaultChat = await fetch(`${baseUrl}/api/ai/chat`, {
       method: 'POST',
@@ -389,20 +477,6 @@ async function runPhaseARegressionSuite() {
     check(
       bobHijackDefaultChat.status === 403,
       'HTTP POST /api/ai/chat blocks user_bob with 403 when default-project is a persisted project owned by user_alice'
-    );
-
-    // Meanwhile user_alice (the owner of persisted 'default-project') succeeds in persisted mode:
-    const aliceOwnDefaultAgent = await fetch(`${baseUrl}/api/ai/agent`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: 'Work on my persisted default-project', projectId: 'default-project', virtualFiles: [] })
-    });
-    const aliceOwnDefaultAgentJson = await aliceOwnDefaultAgent.json();
-    check(
-      aliceOwnDefaultAgent.status === 200 &&
-        aliceOwnDefaultAgentJson.isEphemeralWorkspace === false &&
-        aliceOwnDefaultAgentJson.effectiveProjectId === 'default-project',
-      'HTTP POST /api/ai/agent allows owner user_alice to access persisted default-project'
     );
 
     persistedProjects.delete('default-project');
@@ -425,12 +499,9 @@ async function runPhaseARegressionSuite() {
     const aliceUnsavedPlan = await fetch(`${baseUrl}/api/ai/plan`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: unsavedId,
-        prompt: 'Plan unsaved workspace feature'
-      })
+      body: JSON.stringify({ projectId: unsavedId, prompt: 'Plan unsaved workspace feature' })
     });
-    check(aliceUnsavedPlan.status === 201, 'HTTP POST /api/ai/plan supports unsaved local workspace for user_alice (201)');
+    check(aliceUnsavedPlan.status === 410, 'Retired plan endpoint stays unavailable for unsaved workspaces');
 
     const bobUnsavedHijack = await fetch(`${baseUrl}/api/ai/chat`, {
       method: 'POST',
@@ -639,31 +710,17 @@ async function runPhaseARegressionSuite() {
       await new Promise<void>(resolve => mockMcpHttpServer.close(() => resolve()));
     }
 
-    // 3F. HTTP Rate Limiting (429) on Sensitive Endpoints
-    console.log('\n--- 8. HTTP Verification: Rate Limiting (429) ---');
+    // 3F. Rate limiting remains on active sensitive endpoints; retired sessions return 410 after auth.
+    console.log('\n--- 8. HTTP Verification: Retired cloud-session behavior ---');
     resetEndpointRateLimitsForTests();
     resetAnalystRateLimitsForTests();
 
-    let hit429OnSessionConnect = false;
-    for (let i = 0; i < 21; i++) {
-      const r = await fetch(`${baseUrl}/api/session/connect`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: `sess_rate_${i}` })
-      });
-      if (r.status === 429) {
-        hit429OnSessionConnect = true;
-        break;
-      }
-    }
-    check(hit429OnSessionConnect, 'HTTP POST /api/session/connect enforces rate limiting and returns 429 on 21st request');
-
-    const bobSessionResp = await fetch(`${baseUrl}/api/session/connect`, {
+    const retiredSessionPostResp = await fetch(`${baseUrl}/api/session/connect`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${bobToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: 'sess_bob_ok' })
+      headers: { Authorization: `Bearer ${aliceToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'ignored', environmentId: 'ignored' })
     });
-    check(bobSessionResp.status === 200, 'HTTP POST /api/session/connect isolates rate limit buckets per authenticated user');
+    check(retiredSessionPostResp.status === 410, 'Authenticated cloud-session connect requests are retired without changing configuration');
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

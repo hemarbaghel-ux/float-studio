@@ -4,7 +4,7 @@ import { RulesService } from '../src/server/rules/rulesService';
 import { SkillsService } from '../src/server/skills/skillsService';
 import { TerminalService } from '../src/server/terminal/terminalService';
 import { CodeReviewService } from '../src/server/review/codeReviewService';
-import { WORKFLOW_MODE_POLICIES } from '../src/server/agent/agentModes';
+import { ProposalService } from '../src/server/proposals/proposalService';
 
 console.log('=== FLOAT AI Milestone 9: End-to-End Developer Loop Verification ===\n');
 
@@ -42,8 +42,8 @@ export function run() {
     assert.strictEqual(repoRules.length, 1, 'Repository rule discovered from workspace files');
     console.log('[PASS] Stage 1: Workspace files and repository rules indexed');
 
-    // Stage 2: AI Context Assembly in Plan Mode
-    console.log('\n--- Stage 2: Context Assembly & Plan Formulation ---');
+    // Stage 2: AI Context Assembly for a normal chat request
+    console.log('\n--- Stage 2: Context Assembly & Planning Guidance ---');
     const assembled = ContextBuilder.retrieveAndBuildBoundedContext(
       'Plan refactoring of validateSession to support expiry timestamps',
       projectId,
@@ -52,22 +52,36 @@ export function run() {
       {
         userId,
         projectId,
-        workflowMode: 'plan'
-      }
+        workflowMode: 'agent'
+      } as any
     );
 
     assert.strictEqual(assembled.intent, 'refactor', 'Task intent classified as refactor');
-    assert.ok(assembled.formattedPrompt.includes('[Workflow Mode: PLAN MODE]'), 'Plan mode instructions present');
+    assert.ok(!assembled.formattedPrompt.includes('[Workflow Mode:'), 'Retired workflow-mode prompt injection is absent');
     assert.ok(assembled.formattedPrompt.includes('validateSession'), 'Target code excerpt retrieved');
     assert.ok(assembled.formattedPrompt.includes('All exported functions must include type annotations'), 'Effective rule injected');
-    console.log('[PASS] Stage 2: Context retrieved with rules, mode instructions, and bounded excerpts');
+    console.log('[PASS] Stage 2: Context retrieved with rules and bounded excerpts, without agent workflow instructions');
 
-    // Stage 3: Human Review Gate on Plan and Proposals
-    console.log('\n--- Stage 3: Approval Gates on Plan & Edits ---');
-    const planPolicy = WORKFLOW_MODE_POLICIES['plan'];
-    assert.strictEqual(planPolicy.requiresHumanApproval, true, 'Plan execution strictly requires explicit user approval');
-    assert.strictEqual(planPolicy.canApplyProposals, false, 'Model cannot self-apply edits');
-    console.log('[PASS] Stage 3: Safety gates prevent autonomous unvetted application');
+    // Stage 3: User-controlled review boundary remains explicit.
+    console.log('\n--- Stage 3: Explicit Proposal Review Gate ---');
+    const reviewFiles = new Map<string, { content?: string }>([
+      ['src/auth/session.ts', { content: workspaceFiles[0].content }]
+    ]);
+    const originalSession = reviewFiles.get('src/auth/session.ts')?.content;
+    const proposal = ProposalService.createProposal({
+      ownerId: userId,
+      projectId,
+      description: 'Add an expiry check to session validation',
+      rawChanges: [{
+        path: 'src/auth/session.ts',
+        operation: 'modify',
+        proposedContent: `${originalSession}\n// expiry validation proposed`
+      }],
+      virtualFiles: reviewFiles
+    });
+    assert.strictEqual(proposal.proposal?.status, 'pending_review', 'Generated code changes remain pending explicit review');
+    assert.strictEqual(reviewFiles.get('src/auth/session.ts')?.content, originalSession, 'Original workspace files remain unchanged before Apply');
+    console.log('[PASS] Stage 3: Code change is a reviewable proposal and original file remains unchanged');
 
     // Stage 4: Terminal Session & Execution
     console.log('\n--- Stage 4: Sandboxed Terminal Session ---');

@@ -1,5 +1,5 @@
 import { ValidationService } from '../src/server/validation/validationService';
-import { ProposalService } from '../src/server/agent/proposalService';
+import { ProposalService } from '../src/server/proposals/proposalService';
 
 async function runTests() {
   console.log('--- Starting FLOAT Phase 6 Testing, Validation & Error Analysis Test Suite ---');

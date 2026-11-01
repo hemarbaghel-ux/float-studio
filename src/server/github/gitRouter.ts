@@ -1,14 +1,15 @@
 import { Router, Response } from 'express';
 import JSZip from 'jszip';
 import { createTwoFilesPatch } from 'diff';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { FieldValue, type DocumentData, type DocumentReference } from 'firebase-admin/firestore';
 import { requireAuth } from '../authMiddleware';
 import { adminDb } from '../adminFirebase';
 import { getIntegrationConnection, saveIntegrationConnection, type StoredIntegrationConnection } from '../integrationStore';
 import type { FileNode } from '../../types';
-import { computeContentHash } from '../agent/proposalService';
-import { updateAgentTaskGitHubState } from '../agentPersistence';
+import { loadProjectFileTreeAdmin } from '../projectContent';
+import { serializeProjectFileTree } from '../../services/projectCloudFiles';
+import { deleteProjectContentGenerationAdmin, writeProjectFileTreeAdmin } from '../projectContent';
 
 export const gitRouter = Router({ mergeParams: true });
 const API = 'https://api.github.com';
@@ -27,225 +28,11 @@ interface GitLink {
 }
 interface GitContext {
   ownerId: string; projectId: string; projectRef: DocumentReference; project: DocumentData;
+  savedFileGeneration?: string; savedLegacyFileValue?: string;
   link?: GitLink; connection: StoredIntegrationConnection; repository?: any;
 }
 type Change = { path: string; status: 'added' | 'modified' | 'deleted' };
 const links = () => adminDb.collection('projectGitLinks');
-
-/** Publishes an agent's saved proposal as a new task-scoped remote branch. The
- * ephemeral agent Git history is intentionally not pushed: its base may differ
- * from GitHub. Instead, proposal contents are checked against the live base and
- * committed with a real GitHub parent SHA. */
-export async function publishAgentTaskBranch(task: any, ownerId: string): Promise<Record<string, unknown>> {
-  const ctx = await loadContext(String(task.projectId || ''), ownerId, true);
-  assertAgentProjectLink(task, ownerId, ctx);
-  if (task.status !== 'COMPLETED') throw httpError(409, 'Only completed agent tasks can publish changes.');
-  const changes = agentChanges(task);
-  if (!changes.length) throw httpError(409, 'This agent task has no publishable file changes.');
-  const existing = task.github;
-  if (existing?.branch && existing?.commitSha) {
-    const ref = await githubOptional(ctx, '/git/ref/heads/' + branchPath(existing.branch));
-    if (ref?.object?.sha === existing.commitSha) return { github: existing, message: 'Agent branch is already published.' };
-    throw httpError(409, 'The recorded agent branch no longer points to its published commit. No remote branch was changed.');
-  }
-
-  const baseBranch = ctx.link!.defaultBranch;
-  const baseRef = await getRef(ctx, baseBranch);
-  const baseFiles = await getTree(ctx, baseRef.object.sha);
-  const conflicts: Array<{ path: string; reason: string }> = [];
-  const normalized: Array<{ path: string; operation: string; content?: string }> = [];
-  for (const change of changes) {
-    const path = normalizeGitPath(String(change.path || ''));
-    if (!path || !isManagedPath(path)) throw httpError(400, 'Agent change contains an unsafe or unsupported file path.');
-    if (change.operation === 'rename') throw httpError(409, 'Rename proposals must be represented as explicit create/delete changes before publishing.');
-    if (!['create', 'modify', 'delete'].includes(change.operation)) throw httpError(400, 'Agent proposal contains an unsupported file operation.');
-    const live = baseFiles[path];
-    if (change.operation === 'create' && live) conflicts.push({ path, reason: 'The file already exists on the linked GitHub default branch.' });
-    if ((change.operation === 'modify' || change.operation === 'delete') && !live) conflicts.push({ path, reason: 'The file no longer exists on the linked GitHub default branch.' });
-    if (live && (change.operation === 'modify' || change.operation === 'delete')) {
-      const liveContent = await getBlob(ctx, live.sha);
-      const expectedHash = String(change.originalHash || '');
-      if ((expectedHash && computeContentHash(liveContent) !== expectedHash) || (!expectedHash && liveContent !== String(change.originalContent ?? ''))) {
-        conflicts.push({ path, reason: 'The file changed on GitHub after the agent snapshot.' });
-      }
-    }
-    if (change.operation !== 'delete' && typeof change.proposedContent !== 'string') throw httpError(422, 'Agent proposal is missing proposed file content.');
-    normalized.push({ path, operation: change.operation, content: change.proposedContent });
-  }
-  if (conflicts.length) throw httpError(409, 'Agent changes conflict with the current GitHub default branch. No branch was created.', { conflicts });
-
-  const parent = await github(ctx, '/git/commits/' + encodeURIComponent(baseRef.object.sha));
-  const entries: any[] = [];
-  for (const change of normalized) {
-    const old = baseFiles[change.path];
-    if (change.operation === 'delete') entries.push({ path: change.path, mode: old?.mode || '100644', type: 'blob', sha: null });
-    else {
-      const blob = await github(ctx, '/git/blobs', { method: 'POST', body: { content: change.content, encoding: 'utf-8' } });
-      entries.push({ path: change.path, mode: old?.mode || '100644', type: 'blob', sha: blob.sha });
-    }
-  }
-  const tree = await github(ctx, '/git/trees', { method: 'POST', body: { base_tree: parent.tree.sha, tree: entries } });
-  const login = ctx.connection.accountName || ctx.link!.repositoryOwner;
-  const accountId = ctx.connection.accountId || '';
-  const email = accountId ? `${accountId}+${login}@users.noreply.github.com` : `${login}@users.noreply.github.com`;
-  const commit = await github(ctx, '/git/commits', { method: 'POST', body: {
-    message: `FLOAT agent: ${String(task.name || 'agent changes').slice(0, 180)}`,
-    tree: tree.sha, parents: [baseRef.object.sha],
-    author: { name: login, email }, committer: { name: login, email },
-  } });
-  const branch = validateBranch(`float/agents/${String(task.id).replace(/[^A-Za-z0-9-]/g, '').slice(0, 80)}`);
-  const occupied = await githubOptional(ctx, '/git/ref/heads/' + branchPath(branch));
-  if (occupied) throw httpError(409, 'The unique agent branch name already exists. No existing branch was overwritten.');
-  await github(ctx, '/git/refs', { method: 'POST', body: { ref: 'refs/heads/' + branch, sha: commit.sha } });
-  const publication = {
-    repository: `${ctx.link!.repositoryOwner}/${ctx.link!.repositoryName}`,
-    branch, baseBranch, baseSha: baseRef.object.sha, commitSha: commit.sha,
-    commitUrl: commit.html_url || `${ctx.repository.html_url}/commit/${commit.sha}`,
-    publishedAt: Date.now(), pullRequest: null,
-  };
-  if (!await updateAgentTaskGitHubState(String(task.id), ownerId, String(task.projectId), publication)) {
-    throw httpError(409, 'The branch was published, but task ownership changed before status could be saved. Refresh the task and contact an administrator if it is not shown.');
-  }
-  return { github: publication, message: `Published ${branch} at ${commit.sha.slice(0, 8)}.` };
-}
-
-export async function createAgentTaskPullRequest(task: any, ownerId: string): Promise<Record<string, unknown>> {
-  const ctx = await loadContext(String(task.projectId || ''), ownerId, true);
-  assertAgentProjectLink(task, ownerId, ctx);
-  const publication = task.github;
-  if (!publication?.branch || !publication?.commitSha) throw httpError(409, 'Publish this completed agent task to GitHub before creating a pull request.');
-  assertPublishedRepository(publication, ctx);
-  const currentRef = await getRef(ctx, publication.branch);
-  if (currentRef.object.sha !== publication.commitSha) throw httpError(409, 'The agent branch moved after publication. Refresh task status before opening a pull request.');
-  const existing = await listPullRequests(ctx, 'open', publication.branch);
-  const duplicate = existing.find((pr: any) => pr.base === publication.baseBranch);
-  if (duplicate) {
-    const pullRequest = await getAgentPullRequest(ctx, duplicate.number);
-    await persistAgentPullRequest(task, ownerId, pullRequest);
-    return { pullRequest, message: `Pull request #${duplicate.number} already exists.` };
-  }
-  const description = [
-    String(task.description || ''), '',
-    'Generated by FLOAT background agent. Review the changes and checks before merging.',
-    '', `Agent task: ${task.id}`,
-  ].join('\n').slice(0, 60_000);
-  const pr = await github(ctx, '/pulls', { method: 'POST', body: {
-    title: String(task.name || 'FLOAT agent changes').slice(0, 256), body: description,
-    head: publication.branch, base: publication.baseBranch, draft: false,
-  } });
-  const pullRequest = await summarizeAgentPullRequest(ctx, pr);
-  await persistAgentPullRequest(task, ownerId, pullRequest);
-  return { pullRequest, message: `Created pull request #${pr.number}.` };
-}
-
-export async function refreshAgentTaskPullRequest(task: any, ownerId: string): Promise<Record<string, unknown>> {
-  const ctx = await loadContext(String(task.projectId || ''), ownerId, true);
-  assertAgentProjectLink(task, ownerId, ctx);
-  const publication = task.github;
-  if (!publication?.branch || !publication.pullRequest?.number) throw httpError(409, 'This agent task does not have a saved pull request.');
-  assertPublishedRepository(publication, ctx);
-  const pr = await github(ctx, '/pulls/' + encodeURIComponent(String(publication.pullRequest.number)));
-  if (pr.head?.ref !== publication.branch || pr.base?.ref !== publication.baseBranch) throw httpError(409, 'The saved pull request no longer matches this agent branch.');
-  const pullRequest = await summarizeAgentPullRequest(ctx, pr);
-  await persistAgentPullRequest(task, ownerId, pullRequest);
-  return { pullRequest, message: 'Pull request status refreshed from GitHub.' };
-}
-
-export function assertSafeAgentReviewEvent(event: string): 'COMMENT' {
-  if (String(event).toUpperCase() === 'APPROVE') {
-    throw httpError(
-      403,
-      'Agents are not permitted to submit an APPROVE review on their own pull request. Only a human reviewer may approve or merge pull requests; agents may only post COMMENT reviews.'
-    );
-  }
-  return 'COMMENT';
-}
-
-export async function approveAgentTaskPullRequest(task: any, ownerId: string): Promise<Record<string, unknown>> {
-  // Phase 7 Safety Rule: Agents may open PRs and comment on PR diffs; only a human may approve or merge.
-  assertSafeAgentReviewEvent('APPROVE');
-  throw httpError(403, 'Agents cannot approve their own pull requests.');
-}
-
-export async function commentOnAgentTaskPullRequest(
-  task: any,
-  ownerId: string,
-  reviewBody?: string
-): Promise<Record<string, unknown>> {
-  const ctx = await loadContext(String(task.projectId || ''), ownerId, true);
-  assertAgentProjectLink(task, ownerId, ctx);
-  const publication = task.github;
-  const savedPr = publication?.pullRequest;
-  if (!publication?.branch || !savedPr?.number) throw httpError(409, 'This agent task has no pull request to comment on.');
-  assertPublishedRepository(publication, ctx);
-  const pr = await github(ctx, '/pulls/' + encodeURIComponent(String(savedPr.number)));
-  if (pr.head?.ref !== publication.branch || pr.base?.ref !== publication.baseBranch || pr.state !== 'open' || pr.merged_at) {
-    throw httpError(409, 'The pull request is no longer open for this agent branch.');
-  }
-  const safeEvent = assertSafeAgentReviewEvent('COMMENT');
-  const body = (reviewBody || 'FLOAT AI automated review comment on agent pull request changes. Human review and approval required before merging.').slice(0, 30_000);
-  await github(ctx, `/pulls/${encodeURIComponent(String(savedPr.number))}/reviews`, {
-    method: 'POST',
-    body: { event: safeEvent, body }
-  });
-  const pullRequest = await summarizeAgentPullRequest(ctx, await github(ctx, '/pulls/' + encodeURIComponent(String(savedPr.number))));
-  await persistAgentPullRequest(task, ownerId, pullRequest);
-  return { pullRequest, event: safeEvent, message: `Submitted a review comment on pull request #${savedPr.number}.` };
-}
-
-export async function mergeAgentTaskPullRequest(task: any, ownerId: string, confirmed: boolean): Promise<Record<string, unknown>> {
-  const ctx = await loadContext(String(task.projectId || ''), ownerId, true);
-  assertAgentProjectLink(task, ownerId, ctx);
-  if (!confirmed) throw httpError(400, 'Explicit user confirmation is required before merging an agent pull request.');
-  const publication = task.github;
-  const savedPr = publication?.pullRequest;
-  if (!publication?.branch || !savedPr?.number || !savedPr?.url) throw httpError(409, 'This agent task has no pull request to merge.');
-  assertPublishedRepository(publication, ctx);
-  if (publication.branch === ctx.link!.defaultBranch || publication.baseBranch !== ctx.link!.defaultBranch) throw httpError(400, 'Agent pull requests must target the linked default branch from a separate agent branch.');
-  const pr = await github(ctx, '/pulls/' + encodeURIComponent(String(savedPr.number)));
-  if (pr.head?.ref !== publication.branch || pr.base?.ref !== publication.baseBranch || pr.merged_at || pr.state !== 'open') throw httpError(409, 'The pull request is no longer open for this agent branch. Refresh its status.');
-  if (pr.mergeable === false) throw httpError(409, 'GitHub reports a merge conflict. Resolve it in GitHub and refresh before trying again.');
-  const response = await github(ctx, '/pulls/' + encodeURIComponent(String(savedPr.number)) + '/merge', { method: 'PUT', body: { sha: pr.head.sha, merge_method: 'merge' } });
-  if (!response?.merged) throw httpError(409, response?.message || 'GitHub did not confirm that the pull request was merged.');
-  const pullRequest = { ...savedPr, state: 'closed', merged: true, mergedAt: Date.now(), mergeSha: response.sha, reviewState: savedPr.reviewState || 'unknown' };
-  await persistAgentPullRequest(task, ownerId, pullRequest);
-  return { pullRequest, message: `GitHub confirmed pull request #${savedPr.number} merged.` };
-}
-
-function assertAgentProjectLink(task: any, ownerId: string, ctx: GitContext): void {
-  if (task.ownerId !== ownerId || task.projectId !== ctx.projectId) throw httpError(403, 'Agent task does not belong to this user and project.');
-}
-function assertPublishedRepository(publication: any, ctx: GitContext): void {
-  if (publication.repository !== `${ctx.link!.repositoryOwner}/${ctx.link!.repositoryName}`) throw httpError(409, 'The project’s linked GitHub repository changed after this task was published.');
-}
-function agentChanges(task: any): any[] {
-  const changes = task.result?.changeSet?.changes;
-  if (!Array.isArray(changes)) throw httpError(409, 'This agent task has no saved proposal.');
-  return changes.filter(change => change && change.status !== 'rejected' && change.status !== 'failed');
-}
-async function persistAgentPullRequest(task: any, ownerId: string, pullRequest: any): Promise<void> {
-  const publication = { ...task.github, pullRequest };
-  if (!await updateAgentTaskGitHubState(String(task.id), ownerId, String(task.projectId), publication)) throw httpError(409, 'Agent task ownership changed before pull request status could be saved.');
-}
-async function getAgentPullRequest(ctx: GitContext, number: number): Promise<Record<string, unknown>> {
-  const pr = await github(ctx, '/pulls/' + encodeURIComponent(String(number)));
-  return summarizeAgentPullRequest(ctx, pr);
-}
-async function summarizeAgentPullRequest(ctx: GitContext, pr: any): Promise<Record<string, unknown>> {
-  const reviews = await github(ctx, `/pulls/${encodeURIComponent(String(pr.number))}/reviews?per_page=100`);
-  const latestByUser = new Map<string, string>();
-  if (Array.isArray(reviews)) for (const review of reviews) {
-    if (review.user?.login && ['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED'].includes(review.state)) latestByUser.set(review.user.login, review.state);
-  }
-  const states = [...latestByUser.values()];
-  const reviewState = states.includes('CHANGES_REQUESTED') ? 'changes_requested' : states.includes('APPROVED') ? 'approved' : states.length ? 'commented' : 'review_required';
-  return {
-    number: pr.number, title: pr.title, state: pr.state, url: pr.html_url, draft: !!pr.draft,
-    merged: !!pr.merged_at, mergedAt: pr.merged_at || null, mergeable: pr.mergeable,
-    head: pr.head?.ref, base: pr.base?.ref, headSha: pr.head?.sha,
-    reviewState, updatedAt: pr.updated_at,
-  };
-}
 
 gitRouter.get('/', requireAuth, async (req: any, res: Response) => {
   try {
@@ -422,320 +209,6 @@ gitRouter.get('/pull-requests/:number/files', requireAuth, async (req: any, res:
   } catch (error: any) { sendFailure(res, error); }
 });
 
-export interface PullRequestDiffFile {
-  filename: string;
-  status: string;
-  additions: number;
-  deletions: number;
-  patch: string;
-}
-
-export interface PullRequestReviewFinding {
-  file: string;
-  severity: 'info' | 'warning' | 'critical';
-  message: string;
-}
-
-export function analyzePullRequestDiff(files: PullRequestDiffFile[]): {
-  findings: PullRequestReviewFinding[];
-  markdownReport: string;
-  event: 'COMMENT';
-} {
-  const findings: PullRequestReviewFinding[] = [];
-  let totalAdditions = 0;
-  let totalDeletions = 0;
-
-  for (const file of files) {
-    totalAdditions += file.additions || 0;
-    totalDeletions += file.deletions || 0;
-    const patch = file.patch || '';
-    const addedLines = patch
-      .split('\n')
-      .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
-      .map((line) => line.slice(1));
-
-    const addedText = addedLines.join('\n');
-    if (/(?:api[_-]?key|secret|private[_-]?key|password)\s*[:=]\s*['"][A-Za-z0-9_\-]{12,}['"]/i.test(addedText)) {
-      findings.push({
-        file: file.filename,
-        severity: 'critical',
-        message: 'Potential hardcoded credential or secret detected in added lines.'
-      });
-    }
-    if (/\beval\s*\(|new\s+Function\s*\(/i.test(addedText)) {
-      findings.push({
-        file: file.filename,
-        severity: 'warning',
-        message: 'Dynamic code evaluation (`eval` or `new Function`) detected; verify input sanitization.'
-      });
-    }
-    if (/console\.log\s*\(/i.test(addedText) && !/test|spec|script/i.test(file.filename)) {
-      findings.push({
-        file: file.filename,
-        severity: 'info',
-        message: 'Debug `console.log` statement added in production module.'
-      });
-    }
-    if (/TODO|FIXME|HACK/i.test(addedText)) {
-      findings.push({
-        file: file.filename,
-        severity: 'info',
-        message: 'Unresolved TODO/FIXME marker introduced in diff.'
-      });
-    }
-    if ((file.additions || 0) > 400) {
-      findings.push({
-        file: file.filename,
-        severity: 'warning',
-        message: `Large change (${file.additions} additions); consider focused unit tests.`
-      });
-    }
-  }
-
-  const lines: string[] = [
-    '### FLOAT AI Automated Code Review (`COMMENT`)',
-    '',
-    `Reviewed **${files.length}** changed file(s) (**+${totalAdditions}** / **-${totalDeletions}** lines).`,
-    '_Note: Automated reviews are posted as `COMMENT` only. A human reviewer must approve and merge this pull request._',
-    ''
-  ];
-
-  if (findings.length === 0) {
-    lines.push('#### Findings', '- No critical security issues, hardcoded secrets, or high-risk patterns were detected in the patch.');
-  } else {
-    lines.push('#### Findings');
-    for (const f of findings) {
-      const badge = f.severity === 'critical' ? '[CRITICAL]' : f.severity === 'warning' ? '[WARNING]' : '[INFO]';
-      lines.push(`- **${badge}** \`${f.file}\`: ${f.message}`);
-    }
-  }
-
-  return {
-    findings,
-    markdownReport: lines.join('\n'),
-    event: assertSafeAgentReviewEvent('COMMENT')
-  };
-}
-
-export function synthesizeCommitMessageFromDiff(
-  changes: Change[],
-  patches: Array<{ path: string; status: string; patch: string }>
-): { message: string; subject: string; body: string } {
-  if (!changes.length) {
-    return {
-      subject: 'chore: update workspace files',
-      body: '',
-      message: 'chore: update workspace files'
-    };
-  }
-  const added = changes.filter((c) => c.status === 'added');
-  const modified = changes.filter((c) => c.status === 'modified');
-  const deleted = changes.filter((c) => c.status === 'deleted');
-
-  let prefix = 'feat';
-  if (added.length === 0 && modified.length > 0 && deleted.length === 0) {
-    const allTests = modified.every((c) => /test|spec/i.test(c.path));
-    const allDocs = modified.every((c) => /\.md$/i.test(c.path));
-    prefix = allTests ? 'test' : allDocs ? 'docs' : 'update';
-  } else if (deleted.length > 0 && added.length === 0 && modified.length === 0) {
-    prefix = 'chore';
-  }
-
-  const primaryPaths = changes.slice(0, 3).map((c) => c.path.split('/').pop() || c.path);
-  const moreSuffix = changes.length > 3 ? ` and ${changes.length - 3} more file(s)` : '';
-  const verb = added.length > 0 && modified.length === 0 ? 'add' : deleted.length > 0 && added.length === 0 && modified.length === 0 ? 'remove' : 'update';
-  const subject = `${prefix}: ${verb} ${primaryPaths.join(', ')}${moreSuffix}`.slice(0, 72);
-
-  const bodyLines = changes.slice(0, 15).map((c) => `- ${c.status}: ${c.path}`);
-  if (patches.length > 0) {
-    let addedCount = 0;
-    let removedCount = 0;
-    for (const p of patches) {
-      for (const l of (p.patch || '').split('\n')) {
-        if (l.startsWith('+') && !l.startsWith('+++')) addedCount++;
-        else if (l.startsWith('-') && !l.startsWith('---')) removedCount++;
-      }
-    }
-    bodyLines.push('', `Diff stats: +${addedCount} / -${removedCount} lines across ${changes.length} file(s).`);
-  }
-  const body = bodyLines.join('\n');
-  const message = `${subject}\n\n${body}`.slice(0, 500);
-  return { subject, body, message };
-}
-
-export function synthesizePullRequestDescriptionFromDiff(options: {
-  branch: string;
-  baseBranch: string;
-  changes: Change[];
-  patches: Array<{ path: string; status: string; patch: string }>;
-  conflicts: string[];
-}): { title: string; body: string; hasConflicts: boolean; conflicts: string[] } {
-  const { branch, baseBranch, changes, patches, conflicts } = options;
-  const commitSynth = synthesizeCommitMessageFromDiff(changes, patches);
-  const title = changes.length > 0 ? commitSynth.subject : `Merge ${branch} into ${baseBranch}`;
-
-  const sections: string[] = [
-    '## Summary',
-    ` merges \`${branch}\` into \`${baseBranch}\` with **${changes.length}** changed file(s).`,
-    '',
-    '## Changed Files'
-  ];
-
-  if (changes.length === 0) {
-    sections.push('- _No uncommitted local file differences relative to branch base._');
-  } else {
-    for (const c of changes.slice(0, 30)) {
-      sections.push(`- \`${c.path}\` (${c.status})`);
-    }
-  }
-
-  sections.push('', '## Conflict Check vs `' + baseBranch + '`');
-  if (conflicts.length > 0) {
-    sections.push(`⚠️ **Detected ${conflicts.length} potential conflict(s) with \`${baseBranch}\`:**`);
-    for (const file of conflicts) {
-      sections.push(`- \`${file}\``);
-    }
-  } else {
-    sections.push(`✅ No overlapping file conflicts detected against \`${baseBranch}\`.`);
-  }
-
-  return {
-    title,
-    body: sections.join('\n'),
-    hasConflicts: conflicts.length > 0,
-    conflicts
-  };
-}
-
-// Generate commit message from workspace diff
-gitRouter.post('/generate-commit-message', requireAuth, async (req: any, res: Response) => {
-  try {
-    const ctx = await loadContext(req.params.projectId, req.user.uid, true);
-    assertNotDetachedHead(ctx.link!.branch);
-    const local = projectFiles(ctx.project.files);
-    let changes = compareWorkspace(local, ctx.link!.baseFiles);
-    const stagedFilter = Array.isArray(req.body?.stagedPaths) ? new Set(req.body.stagedPaths.map(String)) : null;
-    if (stagedFilter && stagedFilter.size > 0) {
-      changes = changes.filter((c) => stagedFilter.has(c.path));
-    }
-    const patches: Array<{ path: string; status: string; patch: string }> = [];
-    for (const change of changes.slice(0, 20)) {
-      const before = ctx.link!.baseFiles[change.path] ? await getBlob(ctx, ctx.link!.baseFiles[change.path].sha) : '';
-      const after = change.status === 'deleted' ? '' : local.get(change.path) || '';
-      patches.push({
-        path: change.path,
-        status: change.status,
-        patch: createTwoFilesPatch('a/' + change.path, 'b/' + change.path, before, after, 'base', 'workspace')
-      });
-    }
-    const generated = synthesizeCommitMessageFromDiff(changes, patches);
-    res.json({
-      message: generated.message,
-      subject: generated.subject,
-      body: generated.body,
-      changesCount: changes.length
-    });
-  } catch (error: any) { sendFailure(res, error); }
-});
-
-// Generate PR description and detect conflicts against remote default branch
-gitRouter.post('/generate-pr-description', requireAuth, async (req: any, res: Response) => {
-  try {
-    const ctx = await loadContext(req.params.projectId, req.user.uid, true);
-    assertNotDetachedHead(ctx.link!.branch);
-    const baseBranch = validateBranch(String(req.body?.base || ctx.link!.defaultBranch || 'main'));
-    const local = projectFiles(ctx.project.files);
-    const changes = compareWorkspace(local, ctx.link!.baseFiles);
-
-    // Check conflicts against remote baseBranch
-    let conflicts: string[] = [];
-    try {
-      const baseRef = await getRef(ctx, baseBranch);
-      const baseRemoteFiles = await getTree(ctx, baseRef.object.sha);
-      const remoteChangesOnBase = compareRemote(baseRemoteFiles, ctx.link!.baseFiles);
-      const remoteChangedSet = new Set(remoteChangesOnBase.map((c) => c.path));
-      conflicts = changes
-        .map((c) => c.path)
-        .filter((filePath) =>
-          remoteChangedSet.has(filePath) &&
-          (local.has(filePath) ? gitBlobSha(local.get(filePath)!) : null) !== (baseRemoteFiles[filePath]?.sha || null)
-        );
-    } catch {
-      // Best-effort remote base conflict check
-    }
-
-    const patches: Array<{ path: string; status: string; patch: string }> = [];
-    for (const change of changes.slice(0, 20)) {
-      const before = ctx.link!.baseFiles[change.path] ? await getBlob(ctx, ctx.link!.baseFiles[change.path].sha) : '';
-      const after = change.status === 'deleted' ? '' : local.get(change.path) || '';
-      patches.push({
-        path: change.path,
-        status: change.status,
-        patch: createTwoFilesPatch('a/' + change.path, 'b/' + change.path, before, after, 'base', 'workspace')
-      });
-    }
-
-    const generated = synthesizePullRequestDescriptionFromDiff({
-      branch: ctx.link!.branch,
-      baseBranch,
-      changes,
-      patches,
-      conflicts
-    });
-    res.json(generated);
-  } catch (error: any) { sendFailure(res, error); }
-});
-
-// AI code-review endpoint that comments on a PR diff (NEVER submits APPROVE)
-const handlePullRequestAiReview = async (req: any, res: Response) => {
-  try {
-    const ctx = await loadContext(req.params.projectId, req.user.uid, true);
-    const prNumber = parseInt(req.params.number, 10);
-    if (!Number.isInteger(prNumber) || prNumber <= 0) throw httpError(400, 'Invalid pull request number.');
-
-    if (req.body?.event && String(req.body.event).toUpperCase() === 'APPROVE') {
-      assertSafeAgentReviewEvent('APPROVE');
-    }
-
-    const files = await github(ctx, `/pulls/${encodeURIComponent(String(prNumber))}/files?per_page=100`);
-    if (!Array.isArray(files)) throw httpError(502, 'GitHub returned an invalid pull request files response.');
-
-    const diffFiles: PullRequestDiffFile[] = files.map((f: any) => ({
-      filename: String(f.filename || ''),
-      status: String(f.status || 'modified'),
-      additions: Number(f.additions || 0),
-      deletions: Number(f.deletions || 0),
-      patch: String(f.patch || '')
-    }));
-
-    const analysis = analyzePullRequestDiff(diffFiles);
-    const safeEvent = assertSafeAgentReviewEvent('COMMENT');
-
-    const submitToGitHub = req.body?.submitToGitHub !== false;
-    if (submitToGitHub) {
-      await github(ctx, `/pulls/${encodeURIComponent(String(prNumber))}/reviews`, {
-        method: 'POST',
-        body: {
-          event: safeEvent,
-          body: analysis.markdownReport
-        }
-      });
-    }
-
-    res.json({
-      pullNumber: prNumber,
-      event: safeEvent,
-      findings: analysis.findings,
-      reviewBody: analysis.markdownReport,
-      submittedToGitHub: submitToGitHub,
-      message: `Posted AI code review comment on PR #${prNumber}.`
-    });
-  } catch (error: any) { sendFailure(res, error); }
-};
-
-gitRouter.post('/pull-requests/:number/ai-review', requireAuth, handlePullRequestAiReview);
-gitRouter.post('/pulls/:number/ai-review', requireAuth, handlePullRequestAiReview);
-
 gitRouter.post('/operations', requireAuth, async (req: any, res: Response) => {
   const write = (event: Record<string, unknown>) => {
     if (!res.destroyed && !res.writableEnded) res.write('data: ' + JSON.stringify(event) + '\n\n');
@@ -761,6 +234,11 @@ async function loadContext(projectId: string, ownerId: string, requireLink: bool
   if (!snapshot.exists) throw httpError(404, 'Project not found. Save the workspace before using GitHub or GitLab.');
   const project = snapshot.data()!;
   if (project.ownerId !== ownerId) throw httpError(403, 'You do not own this project.');
+  const savedFileGeneration = project.fileStorageVersion === 2 && typeof project.fileGeneration === 'string'
+    ? project.fileGeneration
+    : undefined;
+  const savedLegacyFileValue = savedFileGeneration ? undefined : JSON.stringify(project.files);
+  project.files = await loadProjectFileTreeAdmin(projectId, project);
   const linkSnapshot = await links().doc(projectId).get();
   const link = linkSnapshot.exists ? linkSnapshot.data() as GitLink : undefined;
   if (link && link.ownerId !== ownerId) throw httpError(403, 'Repository authorization does not belong to this account.');
@@ -774,7 +252,7 @@ async function loadContext(projectId: string, ownerId: string, requireLink: bool
     throw httpError(401, `Connect ${provider === 'gitlab' ? 'GitLab' : 'GitHub'} in Settings → Integrations.`);
   }
 
-  const ctx: GitContext = { ownerId, projectId, projectRef, project, link, connection };
+  const ctx: GitContext = { ownerId, projectId, projectRef, project, savedFileGeneration, savedLegacyFileValue, link, connection };
   if (link && provider === 'github') ctx.repository = await github(ctx, '');
   if (link && provider === 'gitlab') {
     ctx.repository = {
@@ -922,7 +400,6 @@ async function deleteBranch(body: any, ctx: GitContext, progress: (stage: string
 }
 
 async function createCommit(body: any, ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {
-  assertNotDetachedHead(ctx.link!.branch);
   const message = String(body.message || '').trim();
   if (body.confirmed !== true) throw httpError(400, 'Review the changes and explicitly confirm before creating a commit.');
   if (!message || message.length > 500) throw httpError(400, 'Commit message must contain 1 to 500 characters.');
@@ -987,7 +464,6 @@ async function discardChanges(body: any, ctx: GitContext, progress: (stage: stri
 }
 
 async function pushCommit(ctx: GitContext, progress: (stage: string, message: string) => void): Promise<Record<string, unknown>> {
-  assertNotDetachedHead(ctx.link!.branch);
   const pending = ctx.link!.pendingCommit;
   if (!pending) throw httpError(409, 'Create and confirm a commit before pushing.');
   progress('push-check', 'Verifying the remote branch still points to the commit parent.');
@@ -1153,57 +629,10 @@ function githubHeaders(token: string): HeadersInit {
   return { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'FLOAT-AI' };
 }
 
-export function assertNotDetachedHead(branch?: string | null): void {
-  const trimmed = String(branch || '').trim();
-  if (!trimmed || trimmed === 'HEAD' || trimmed.startsWith('detached') || /^[0-9a-f]{40}$/i.test(trimmed)) {
-    throw httpError(
-      409,
-      'Workspace is in a detached HEAD state. Create or switch to a named branch before committing, pushing, or opening a pull request.'
-    );
-  }
-}
-
-export async function refreshGitProviderTokenIfSupported(
-  connection: StoredIntegrationConnection
-): Promise<boolean> {
-  const refreshToken = (connection as any).refreshToken;
-  if (!refreshToken) return false;
-  try {
-    if (connection.provider === 'github' && process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
-      const res = await fetch('https://github.com/login/oauth/access_token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          client_id: process.env.GITHUB_CLIENT_ID,
-          client_secret: process.env.GITHUB_CLIENT_SECRET,
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken
-        }),
-        signal: AbortSignal.timeout(10_000)
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && typeof data.access_token === 'string' && data.access_token) {
-        connection.accessToken = data.access_token;
-        if (typeof data.refresh_token === 'string') (connection as any).refreshToken = data.refresh_token;
-        connection.status = 'connected';
-        await saveIntegrationConnection(connection).catch(() => undefined);
-        return true;
-      }
-    }
-  } catch {
-    // Fall through to expireToken
-  }
-  return false;
-}
-
 async function expireToken(connection: StoredIntegrationConnection): Promise<never> {
-  const refreshed = await refreshGitProviderTokenIfSupported(connection);
-  if (refreshed) {
-    throw httpError(401, 'GitHub access token was refreshed. Please retry your Git operation now.');
-  }
   connection.status = 'expired';
   await saveIntegrationConnection(connection).catch(() => undefined);
-  throw httpError(401, 'GitHub authorization expired or was revoked. Reconnect GitHub in Settings → Integrations and retry.');
+  throw httpError(401, 'GitHub authorization expired or was revoked. Reconnect GitHub and retry.');
 }
 
 function repoPath(link: GitLink): string { return encodeURIComponent(link.repositoryOwner) + '/' + encodeURIComponent(link.repositoryName); }
@@ -1286,14 +715,42 @@ function preservedProjectFiles(raw: unknown): FileNode[] {
 }
 
 async function saveWorkspaceAndLink(ctx: GitContext, files: Map<string, string>, link: GitLink): Promise<void> {
-  const serialized = JSON.stringify(mapToTree(files, preservedProjectFiles(ctx.project.files)));
-  // Firestore limits each document to 1 MiB; reserve room for project metadata.
-  if (Buffer.byteLength(serialized, 'utf8') > 950_000) throw httpError(413, 'Workspace snapshot is too large to persist safely in the FLOAT project store.');
+  const previousGeneration = ctx.project.fileStorageVersion === 2 && typeof ctx.project.fileGeneration === 'string'
+    ? ctx.project.fileGeneration
+    : undefined;
+  const serialized = serializeProjectFileTree(mapToTree(files, preservedProjectFiles(ctx.project.files)));
+  if (serialized.ok === false) throw httpError(422, 'Workspace snapshot could not be serialized safely.');
+  const generation = randomUUID();
+  await writeProjectFileTreeAdmin(ctx.projectId, ctx.ownerId, generation, serialized.chunks);
   const linkRef = links().doc(ctx.projectId);
-  await adminDb.runTransaction(async transaction => {
-    transaction.update(ctx.projectRef, { files: serialized, updatedAt: FieldValue.serverTimestamp() });
-    transaction.set(linkRef, link);
-  });
+  try {
+    await adminDb.runTransaction(async transaction => {
+      const current = await transaction.get(ctx.projectRef);
+      if (!current.exists || current.get('ownerId') !== ctx.ownerId) throw httpError(409, 'Project ownership changed during the Git operation.');
+      const unchanged = ctx.savedFileGeneration
+        ? current.get('fileStorageVersion') === 2 && current.get('fileGeneration') === ctx.savedFileGeneration
+        : current.get('fileStorageVersion') !== 2 && JSON.stringify(current.get('files')) === ctx.savedLegacyFileValue;
+      if (!unchanged) throw httpError(409, 'Workspace changed while the Git operation was running. Review the current workspace and retry.');
+      transaction.update(ctx.projectRef, {
+        fileStorageVersion: 2,
+        fileGeneration: generation,
+        fileChunkCount: serialized.chunks.length,
+        fileBytes: serialized.byteLength,
+        fileSnapshotComplete: true,
+        files: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      transaction.set(linkRef, link);
+    });
+  } catch (error) {
+    await deleteProjectContentGenerationAdmin(ctx.projectId, generation).catch(() => {});
+    throw error;
+  }
+  if (previousGeneration && previousGeneration !== generation) {
+    await deleteProjectContentGenerationAdmin(ctx.projectId, previousGeneration).catch((error) => {
+      console.warn('A previous project content generation could not be cleaned up:', error);
+    });
+  }
 }
 
 function shaId(value: string): string { return createHash('sha1').update(value).digest('hex').slice(0, 24); }

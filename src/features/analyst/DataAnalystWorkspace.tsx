@@ -33,7 +33,6 @@ export function DataAnalystWorkspace() {
   const [inputQuery, setInputQuery] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentSteps, setCurrentSteps] = useState<AgentProgressStep[]>([]);
-  const [activeStepIndex, setActiveStepIndex] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -198,32 +197,15 @@ export function DataAnalystWorkspace() {
     setIsAnalyzing(true);
     setErrorMsg(null);
 
-    // Initial progressive steps
+    // Keep progress truthful until the server returns completed work.
     const initialSteps: AgentProgressStep[] = [
-      { id: '1', title: 'Inspect & Profile Dataset', description: 'Checking column statistics & data types', status: 'running' },
-      { id: '2', title: 'Formulate Statistical Hypothesis', description: 'Generating reference Python reproduction script', status: 'pending' },
-      { id: '3', title: 'Execute Deterministic Statistical Aggregation', description: 'Computing column distributions, means, medians, and extremes', status: 'pending' },
-      { id: '4', title: 'Synthesize Interactive Visualizations', description: 'Formatting multi-series chart payloads', status: 'pending' },
-      { id: '5', title: 'Compile Executive Findings & Caveats', description: 'Assembling strategic takeaways and limitations', status: 'pending' },
+      { id: '1', title: 'Analyze dataset', description: 'Waiting for the analysis service', status: 'running' },
+      { id: '2', title: 'Compute descriptive statistics', description: 'Computed from the uploaded CSV', status: 'pending' },
+      { id: '3', title: 'Build charts', description: 'Aggregated from parsed dataset values', status: 'pending' },
+      { id: '4', title: 'Request model findings', description: `Using selected model ${selectedModel}`, status: 'pending' },
+      { id: '5', title: 'Assemble report', description: 'Combining model output and computed values', status: 'pending' },
     ];
     setCurrentSteps(initialSteps);
-    setActiveStepIndex(0);
-
-    // Progressive step simulation ticker while request is computing
-    const stepTimer = setInterval(() => {
-      setCurrentSteps((prev) => {
-        const next = [...prev];
-        const runningIdx = next.findIndex((s) => s.status === 'running');
-        if (runningIdx !== -1) {
-          next[runningIdx].status = 'completed';
-          if (runningIdx + 1 < next.length) {
-            next[runningIdx + 1].status = 'running';
-            setActiveStepIndex(runningIdx + 1);
-          }
-        }
-        return next;
-      });
-    }, 900);
 
     try {
       const response = await apiFetch('/api/analyst/query', {
@@ -238,27 +220,25 @@ export function DataAnalystWorkspace() {
         }),
       });
 
-      clearInterval(stepTimer);
-
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        const detail = errJson.setupStep ? `${errJson.error} (${errJson.setupStep})` : errJson.error;
-        throw new Error(detail || `HTTP ${response.status}`);
+        throw new Error(errJson.error || `HTTP ${response.status}`);
       }
 
       const data = await response.json();
 
-      // Mark all steps completed
-      const finalizedSteps = (data.steps || initialSteps).map((s: AgentProgressStep) => ({
-        ...s,
-        status: 'completed' as const,
-      }));
+      if (!data.report || typeof data.report.summary !== 'string' || !data.report.summary.trim()) {
+        throw new Error('The analyst service returned an incomplete report. Please retry.');
+      }
+      const finalizedSteps = Array.isArray(data.steps)
+        ? data.steps as AgentProgressStep[]
+        : initialSteps.map((step) => ({ ...step, status: 'completed' as const }));
       setCurrentSteps(finalizedSteps);
 
       const agentMessage: AnalystMessage = {
         id: `agent_${Date.now()}`,
         role: 'agent',
-        content: `I have completed the analysis for your query: "${queryText.trim()}". Review the executive summary, dynamic charts, and deterministic statistical output below.`,
+        content: `I have completed the analysis for your query: "${queryText.trim()}". Review the computed metrics, charts, and model findings below.`,
         steps: finalizedSteps,
         report: data.report,
         createdAt: Date.now(),
@@ -266,8 +246,6 @@ export function DataAnalystWorkspace() {
 
       setMessages((prev) => [...prev, agentMessage]);
     } catch (err: any) {
-      clearInterval(stepTimer);
-      setInputQuery(queryText);
       setErrorMsg(err.message || 'Analysis run failed');
       setCurrentSteps((prev) => prev.map((s) => (s.status === 'running' ? { ...s, status: 'error' as const } : s)));
     } finally {
@@ -289,15 +267,15 @@ export function DataAnalystWorkspace() {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
-                Data Analyst Agent
+                AI Data Analysis
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Statistical Engine Ready
+                CSV analysis active
               </span>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-[#8B949E]">
-              Dataset profiling, deterministic statistical aggregation, and interactive chart synthesis
+              CSV statistics, model-assisted findings, and interactive chart synthesis
             </p>
           </div>
         </div>
@@ -502,11 +480,9 @@ export function DataAnalystWorkspace() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-blue-400 flex items-center gap-1.5">
                     <Loader2 size={13} className="animate-spin text-blue-400" />
-                    <span>Agent Running in Python Sandbox...</span>
+                    <span>Analyzing dataset and requesting model findings…</span>
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400">
-                    Step {activeStepIndex + 1} of {currentSteps.length}
-                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">Selected model: {selectedModel}</span>
                 </div>
 
                 <div className="space-y-1.5">
@@ -592,7 +568,7 @@ export function DataAnalystWorkspace() {
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-1.5 leading-relaxed">
                   Select a suggested question on the left or type your own custom analytical prompt.
-                  The agent will inspect your dataset, run code in the OpenAI Python sandbox, and output interactive charts and reports.
+                  FLOAT computes descriptive statistics from the CSV and asks the selected model for evidence-based findings.
                 </p>
               </div>
             </div>

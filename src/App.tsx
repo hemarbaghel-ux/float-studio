@@ -5,8 +5,6 @@ import { useAuthStore } from './store/authStore';
 import { LandingPage } from './features/landing/LandingPage';
 import { ModelsPage } from './features/models/ModelsPage';
 import { ModelsFilteredPage } from './features/models/ModelsFilteredPage';
-import { ModelsEvalsPage } from './features/models/ModelsEvalsPage';
-import { EvalsPage } from './features/evals/EvalsPage';
 import { UsageDashboard } from './features/models/UsageDashboard';
 import { ModelDetailsPage } from './features/models/ModelDetailsPage';
 import { OnboardingFlow } from './features/onboarding/OnboardingFlow';
@@ -31,6 +29,7 @@ import { SettingsPage } from './features/settings/SettingsPage';
 import { ProfilePage } from './features/profile/ProfilePage';
 import { DownloadPage } from './features/download/DownloadPage';
 import { PrivacyPolicyPage } from './features/resources/PrivacyPolicyPage';
+import { RetiredEvaluationPage } from './features/resources/RetiredEvaluationPage';
 import { useConsentStore } from './store/consentStore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './lib/firebase';
@@ -57,7 +56,6 @@ export default function App() {
         const url = new URL(anchor.href);
         if (
           url.pathname.startsWith('/models') || 
-          url.pathname.startsWith('/evals') || 
           url.pathname.startsWith('/pricing') || 
           url.pathname.startsWith('/checkout') || 
           url.pathname.startsWith('/resources') || 
@@ -69,7 +67,6 @@ export default function App() {
           url.pathname === '/workspace' ||
           url.pathname === '/ide' ||
           url.pathname === '/projects' ||
-          url.pathname === '/automations' ||
           url.pathname === '/integrations' ||
           url.pathname === '/git-sync' ||
           url.pathname === '/dashboard/git-sync' ||
@@ -133,6 +130,10 @@ export default function App() {
     );
   }
 
+  if (currentPath === '/evals' || currentPath === '/models/evals') {
+    return <RetiredEvaluationPage />;
+  }
+
   if (currentPath.startsWith('/models/gpt/') && currentPath.length > '/models/gpt/'.length) {
     return <ModelDetailsPage providerId="openai" modelId={currentPath.replace('/models/gpt/', '')} />;
   }
@@ -140,11 +141,11 @@ export default function App() {
     return <UsageDashboard />;
   }
   if (currentPath === '/models/gpt') {
-    return <ModelsFilteredPage providerId="openai" title="OpenAI Models" description="Explore verified OpenAI models across coding, reasoning, and agentic workflows." />;
+    return <ModelsFilteredPage providerId="openai" title="OpenAI Models" description="Explore the two models configured in FLOAT. Provider account access is checked at runtime." />;
   }
 
   // Deep-link direct model details: /models/:modelId
-  if (currentPath.startsWith('/models/') && !['/models/usage', '/models/evals', '/models/gpt'].includes(currentPath)) {
+  if (currentPath.startsWith('/models/') && !['/models/usage', '/models/gpt'].includes(currentPath)) {
     const rawId = currentPath.replace('/models/', '');
     const parts = rawId.split('/');
     if (parts.length === 2 && parts[0] && parts[1]) {
@@ -152,14 +153,6 @@ export default function App() {
     } else if (parts.length === 1 && parts[0]) {
       return <ModelDetailsPage providerId="openai" modelId={parts[0]} />;
     }
-  }
-
-  if (currentPath === '/models/evals') {
-    return <ModelsEvalsPage />;
-  }
-
-  if (currentPath === '/evals') {
-    return <EvalsPage />;
   }
 
   if (currentPath === '/pricing' || currentPath.startsWith('/pricing')) {
@@ -261,9 +254,6 @@ export default function App() {
   }
   if (currentPath === '/integrations') {
     return <Dashboard initialTab="integrations" />;
-  }
-  if (currentPath === '/automations') {
-    return <Dashboard initialTab="automations" />;
   }
   if (currentPath === '/projects') {
     return <Dashboard initialTab="projects" />;

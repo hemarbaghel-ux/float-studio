@@ -78,7 +78,7 @@ export function PricingDropdown({ currentPath }: PricingDropdownProps) {
               </div>
               <div className="flex flex-col">
                 <span className="font-medium text-slate-900 dark:text-white">{t('pricing.plan_pro', 'Pro')}</span>
-                <span className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('pricing.sub_pro', 'For individual developers building seriously with AI agents.')}</span>
+                <span className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('pricing.sub_pro', 'For individual developers building with AI assistance.')}</span>
               </div>
             </a>
             
@@ -106,7 +106,7 @@ export function PricingDropdown({ currentPath }: PricingDropdownProps) {
               </div>
               <div className="flex flex-col">
                 <span className="font-medium text-slate-900 dark:text-white">{t('pricing.plan_ultimate', 'Ultimate')}</span>
-                <span className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('pricing.sub_ultimate', 'For power users and teams running advanced agentic workflows.')}</span>
+                <span className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('pricing.sub_ultimate', 'For power users and teams working across projects.')}</span>
               </div>
             </a>
             

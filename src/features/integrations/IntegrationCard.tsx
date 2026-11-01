@@ -247,8 +247,9 @@ export function IntegrationCard({
                                       return;
                                     }
                                     const { setProject, saveProject } = useIDEStore.getState();
-                                    setProject(result.projectName || repo.name, result.files, result.projectId);
-                                    await saveProject();
+                                    setProject(result.projectName || repo.name, result.files, result.projectId, 'cloud');
+                                    const saveResult = await saveProject();
+                                    if (saveResult.status !== 'synced') throw new Error(saveResult.message);
                                     setShowManage(false);
                                   } catch (err: any) {
                                     alert(err.message || 'Import failed.');

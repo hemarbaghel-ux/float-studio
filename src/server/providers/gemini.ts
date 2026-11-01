@@ -1,27 +1,13 @@
-import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import {
   AIProviderAdapter,
   AIProviderRequest,
   AIProviderResponse,
   AIProviderError,
-  ProviderHealthCheckResult,
-  ToolCallDefinition,
-  ExecutedToolCall
+  ProviderHealthCheckResult
 } from './base';
-import { AgentRunner } from '../agent/agentRunner';
-import { PerModelHealthEntry } from './openai';
-
-export const CONFIGURED_GEMINI_HEALTH_MODELS = ['gemini-4-argon'] as const;
-
-function sanitizeGeminiErrorMessage(msg: string): string {
-  return msg.replace(/AIza[0-9A-Za-z\-_]{20,}/g, 'AIza[REDACTED]');
-}
 
 export function normalizeGeminiError(error: any): AIProviderError {
-  if (error instanceof AIProviderError) {
-    return error;
-  }
-
   let rawObj = error;
   if (typeof error === 'string') {
     try {
@@ -29,121 +15,78 @@ export function normalizeGeminiError(error: any): AIProviderError {
     } catch {}
   }
 
-  const rawMsg =
-    rawObj?.error?.message ||
-    rawObj?.message ||
-    rawObj?.msg ||
-    (typeof error === 'string' ? error : String(error));
-  const msg = sanitizeGeminiErrorMessage(String(rawMsg || 'Unknown Gemini error'));
-  const status = error?.status ?? error?.statusCode ?? rawObj?.error?.code;
-  const upstreamCode = rawObj?.error?.status ?? error?.code ?? error?.type;
+  const msg = rawObj?.message || rawObj?.msg || (typeof error === 'string' ? error : String(error));
+  const status = error?.status || error?.statusCode;
 
   if (
     rawObj?.type === 'cancelation' ||
     rawObj?.type === 'cancelled' ||
     rawObj?.name === 'AbortError' ||
-    error?.name === 'AbortError' ||
-    /operation is manually canceled/i.test(msg) ||
-    /aborted|cancel/i.test(msg)
+    /cancel/i.test(msg) ||
+    /operation is manually canceled/i.test(msg)
   ) {
-    const err = new AIProviderError('Operation was cancelled.', 'INVALID_REQUEST', 'Google Gemini', 499, {
-      status: 499,
-      code: 'cancelled',
-      message: msg
-    });
+    const err = new AIProviderError('Operation was cancelled.', 'INVALID_REQUEST', 'Google Gemini', 499);
     (err as any).name = 'AbortError';
     (err as any).type = 'cancelation';
     return err;
   }
 
-  if (
-    status === 503 && /not configured|missing.*GEMINI_API_KEY/i.test(msg) ||
-    upstreamCode === 'NOT_CONFIGURED'
-  ) {
+  if (/API_KEY_INVALID|unauthorized|permission_denied|401|403/i.test(msg) || status === 401 || status === 403) {
     return new AIProviderError(
-      msg || 'Google Gemini is not configured on the FLOAT server. Set GEMINI_API_KEY in the server environment.',
-      'NOT_CONFIGURED',
-      'Google Gemini',
-      503,
-      { status: 503, code: 'not_configured', message: msg, original: msg }
-    );
-  }
-
-  if (
-    status === 401 ||
-    status === 403 ||
-    /API_KEY_INVALID|unauthorized|permission_denied|unauthenticated|401|403/i.test(msg)
-  ) {
-    const resolvedStatus = status === 403 ? 403 : 401;
-    return new AIProviderError(
-      `Gemini authentication failed (${resolvedStatus}): ${msg}`,
+      "Gemini authentication failed. The server-side GEMINI_API_KEY is invalid, unauthorized, or expired.",
       'AUTH_ERROR',
       'Google Gemini',
-      resolvedStatus,
-      { status: resolvedStatus, code: upstreamCode || 'auth_error', message: msg, original: msg }
+      401,
+      { original: msg }
     );
   }
 
-  if (
-    status === 404 ||
-    /no longer available|not[- ]?found|404|deprecated model|models\/.* is not found/i.test(msg)
-  ) {
+  if (/no longer available|not[- ]?found|404|deprecated model|models\/.* is not found/i.test(msg) || status === 404) {
     return new AIProviderError(
-      `Gemini model not available (404): ${msg}`,
-      'MODEL_NOT_AVAILABLE',
+      "The selected Gemini model is not recognized or no longer available. Please select an active model such as Gemini 2.0 Flash.",
+      'MODEL_NOT_FOUND',
       'Google Gemini',
       404,
-      { status: 404, code: upstreamCode || 'model_not_available', message: msg, original: msg }
+      { original: msg }
     );
   }
 
-  if (
-    status === 429 ||
-    /resource_exhausted|quota|429|exceeded quota|rate[- ]?limit/i.test(msg)
-  ) {
+  if (/resource_exhausted|quota|429|exceeded quota/i.test(msg) || status === 429) {
     return new AIProviderError(
-      `Gemini rate limit or quota exceeded (429): ${msg} Please wait or switch models in the model selector.`,
-      'RATE_LIMITED',
+      "Provider rate limit or quota exceeded. Please wait a moment before trying again, or switch models in the model selector.",
+      'QUOTA_EXCEEDED',
       'Google Gemini',
       429,
-      { status: 429, code: upstreamCode || 'rate_limited', message: msg, original: msg }
+      { original: msg }
     );
   }
 
-  if (
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504 ||
-    /high demand|spikes in demand|500|502|503|504|service unavailable|temporarily unavailable|internal error/i.test(msg)
-  ) {
-    const resolvedStatus = typeof status === 'number' && status >= 500 ? status : 503;
+  if (/high demand|spikes in demand|503|service unavailable|temporarily unavailable/i.test(msg) || status === 503) {
     return new AIProviderError(
-      `Gemini upstream server error (${resolvedStatus}, temporary high demand): ${msg}`,
+      "This Gemini model is currently experiencing temporary high demand from Google. Please retry shortly.",
       'PROVIDER_ERROR',
       'Google Gemini',
-      resolvedStatus,
-      { status: resolvedStatus, code: upstreamCode || 'provider_error', message: msg, original: msg }
+      503,
+      { original: msg }
     );
   }
 
-  if (status === 400 || /invalid_argument|invalid request|bad request/i.test(msg)) {
+  if (/invalid_argument|invalid request|bad request/i.test(msg) || status === 400) {
     return new AIProviderError(
-      `Invalid request for Gemini model (400): ${msg}`,
+      `Invalid request for Gemini model: ${msg}`,
       'INVALID_REQUEST',
       'Google Gemini',
       400,
-      { status: 400, code: upstreamCode || 'invalid_argument', message: msg, original: msg }
+      { original: msg }
     );
   }
 
-  const fallbackStatus = typeof status === 'number' ? status : 502;
   return new AIProviderError(
     msg || 'An unexpected error occurred with the Gemini provider.',
     'PROVIDER_ERROR',
     'Google Gemini',
-    fallbackStatus,
-    { status: fallbackStatus, code: upstreamCode || 'provider_error', message: msg, original: msg }
+    status || 500,
+    { original: msg }
   );
 }
 
@@ -153,167 +96,85 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
 
   isConfigured(): boolean {
     const key = process.env.GEMINI_API_KEY;
-    return Boolean(
-      key &&
-      key.trim().length > 0 &&
-      !key.includes('MY_GEMINI_API_KEY') &&
-      !key.includes('replace_with')
-    );
+    return Boolean(key && key.trim().length > 0 && !key.includes('MY_GEMINI_API_KEY'));
   }
 
-  private getClient(): GoogleGenAI {
+  async checkHealth(): Promise<ProviderHealthCheckResult> {
     if (!this.isConfigured()) {
-      throw new AIProviderError(
-        'GEMINI_API_KEY is not configured on the FLOAT server.',
-        'NOT_CONFIGURED',
-        'Google Gemini',
-        503,
-        { status: 503, code: 'not_configured', message: 'GEMINI_API_KEY is not configured.' }
-      );
-    }
-    return new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY!.trim(),
-      httpOptions: {
-        timeout: 120_000,
-        headers: { 'User-Agent': 'aistudio-build' }
-      }
-    });
-  }
-
-  formatTools(tools?: ToolCallDefinition[]): Array<{ functionDeclarations: any[] }> | undefined {
-    if (!tools || tools.length === 0) return undefined;
-    return [
-      {
-        functionDeclarations: tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters
-            ? {
-                type: Type.OBJECT,
-                properties: (t.parameters.properties || {}) as any,
-                required: Array.isArray(t.parameters.required) ? t.parameters.required : []
-              }
-            : { type: Type.OBJECT, properties: {}, required: [] }
-        }))
-      }
-    ];
-  }
-
-  private buildGenerationConfig(request: AIProviderRequest, apiModel: string, signal?: AbortSignal): Record<string, any> {
-    const config: Record<string, any> = {};
-    if (request.systemInstruction) {
-      config.systemInstruction = request.systemInstruction;
-    }
-    const formattedTools = this.formatTools(request.tools);
-    if (formattedTools) {
-      config.tools = formattedTools;
-    }
-    if (signal) {
-      config.abortSignal = signal;
-    }
-    // For gemini-4-argon, use ThinkingLevel (never thinkingBudget, which causes a 400 error).
-    if (request.reasoningEffort && apiModel === 'gemini-4-argon') {
-      const levelMap: Record<string, ThinkingLevel> = {
-        low: ThinkingLevel.LOW,
-        medium: ThinkingLevel.MEDIUM,
-        high: ThinkingLevel.HIGH
-      };
-      config.thinkingConfig = {
-        thinkingLevel: levelMap[request.reasoningEffort] || ThinkingLevel.HIGH
-      };
-    }
-    return config;
-  }
-
-  async checkHealth(): Promise<ProviderHealthCheckResult & { models: Record<string, PerModelHealthEntry> }> {
-    const modelsReport: Record<string, PerModelHealthEntry> = {};
-
-    if (!this.isConfigured()) {
-      for (const modelId of CONFIGURED_GEMINI_HEALTH_MODELS) {
-        modelsReport[modelId] = {
-          status: 'error',
-          code: 'NOT_CONFIGURED',
-          statusCode: 503,
-          message: 'GEMINI_API_KEY is not configured on the FLOAT server.'
-        };
-      }
       return {
         provider: 'Google Gemini',
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gemini-4-argon',
-        accessibleModelIds: [],
-        models: modelsReport
+        defaultModel: 'gemini-3.8-flash'
       };
     }
 
-    const ai = this.getClient();
-    const accessibleModelIds: string[] = [];
-    let anyAuthenticated = false;
-    let firstError: string | undefined;
-
-    for (const modelId of CONFIGURED_GEMINI_HEALTH_MODELS) {
-      try {
-        await ai.models.generateContent({
-          model: modelId,
-          contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
-          config: { maxOutputTokens: 1 }
-        });
-        modelsReport[modelId] = { status: 'ok', statusCode: 200 };
-        accessibleModelIds.push(modelId);
-        anyAuthenticated = true;
-      } catch (err: any) {
-        const normalized = normalizeGeminiError(err);
-        if (normalized.code !== 'AUTH_ERROR') {
-          anyAuthenticated = true;
-        }
-        if (!firstError) {
-          firstError = normalized.message;
-        }
-        modelsReport[modelId] = {
-          status: 'error',
-          code: normalized.code,
-          statusCode: normalized.statusCode,
-          message: normalized.message
-        };
-      }
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      return {
+        provider: 'Google Gemini',
+        configured: true,
+        authenticated: true,
+        modelAvailable: true,
+        defaultModel: 'gemini-3.8-flash'
+      };
+    } catch (err: any) {
+      const normalized = normalizeGeminiError(err);
+      return {
+        provider: 'Google Gemini',
+        configured: true,
+        authenticated: false,
+        modelAvailable: false,
+        defaultModel: 'gemini-3.8-flash',
+        error: normalized.message
+      };
     }
-
-    return {
-      provider: 'Google Gemini',
-      configured: true,
-      authenticated: anyAuthenticated,
-      modelAvailable: accessibleModelIds.length > 0,
-      defaultModel: 'gemini-4-argon',
-      accessibleModelIds,
-      models: modelsReport,
-      ...(accessibleModelIds.length === 0 && firstError ? { error: firstError } : {})
-    };
   }
 
-  private extractToolCalls(functionCalls?: any[]): ExecutedToolCall[] | undefined {
-    if (!Array.isArray(functionCalls) || functionCalls.length === 0) return undefined;
-    return functionCalls.map((call, idx) => ({
-      id: call.id || `gemini_call_${idx + 1}`,
-      name: call.name,
-      arguments: (call.args && typeof call.args === 'object' ? call.args : {}) as Record<string, any>
-    }));
+  private resolveApiModel(model: string): string {
+    // Map obsolete model identifiers to active gemini-3.8-flash
+    if (
+      model === 'gemini-2.5-flash' ||
+      model === 'gemini-2.0-flash' ||
+      model === 'gemini-1.5-flash' ||
+      model === 'gemini-1.5-pro' ||
+      model === 'gemini-3.1-flash-lite' ||
+      model === 'composer-2.5' ||
+      model === 'muse-spark-1.3' ||
+      model === 'auto'
+    ) {
+      return 'gemini-3.8-flash';
+    }
+    if (model === 'gemini-2.5-pro') {
+      return 'gemini-3.1-pro-preview';
+    }
+    return model;
   }
 
-  async generateContent(request: AIProviderRequest, signal?: AbortSignal): Promise<AIProviderResponse> {
-    if (signal?.aborted) {
-      const abortErr = new Error('Operation was cancelled.');
-      abortErr.name = 'AbortError';
-      throw normalizeGeminiError(abortErr);
+  async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
+    if (!this.isConfigured()) {
+      throw new AIProviderError(
+        'GEMINI_API_KEY is not configured on the FLOAT server.',
+        'AUTH_ERROR',
+        'Google Gemini',
+        401
+      );
     }
-
-    const ai = this.getClient();
-    const apiModel = (request.apiModelId || request.model || 'gemini-4-argon').trim();
 
     try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
       const contents = this.normalizeMessages(request.messages);
-      const config = this.buildGenerationConfig(request, apiModel, signal);
+      const apiModel = this.resolveApiModel(request.apiModelId || request.model);
+
+      const config: Record<string, any> = {};
+      if (request.systemInstruction) {
+        config.systemInstruction = request.systemInstruction;
+      }
+      if (request.reasoningEffort && apiModel.includes('2.0-flash')) {
+        const budgetMap = { low: 1024, medium: 4096, high: 8192 };
+        config.thinkingConfig = { thinkingBudget: budgetMap[request.reasoningEffort] || 4096 };
+      }
 
       const response = await ai.models.generateContent({
         model: apiModel,
@@ -321,26 +182,12 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         config
       });
 
-      if (signal?.aborted) {
-        const abortErr = new Error('Operation was cancelled.');
-        abortErr.name = 'AbortError';
-        throw normalizeGeminiError(abortErr);
-      }
+      const usage = response.usageMetadata ? {
+        inputTokens: response.usageMetadata.promptTokenCount || 0,
+        outputTokens: response.usageMetadata.candidatesTokenCount || 0
+      } : undefined;
 
-      const usage = response.usageMetadata
-        ? {
-            inputTokens: response.usageMetadata.promptTokenCount || 0,
-            outputTokens: response.usageMetadata.candidatesTokenCount || 0
-          }
-        : undefined;
-
-      const toolCalls = this.extractToolCalls(response.functionCalls);
-
-      return {
-        text: response.text || '',
-        ...(toolCalls ? { toolCalls } : {}),
-        usage
-      };
+      return { text: response.text || '', usage };
     } catch (err: any) {
       throw normalizeGeminiError(err);
     }
@@ -351,20 +198,35 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
+    if (!this.isConfigured()) {
+      throw new AIProviderError(
+        'GEMINI_API_KEY is not configured on the FLOAT server.',
+        'AUTH_ERROR',
+        'Google Gemini',
+        401
+      );
+    }
+
     if (signal?.aborted) {
       return { text: '' };
     }
 
-    const ai = this.getClient();
-    const apiModel = (request.apiModelId || request.model || 'gemini-4-argon').trim();
-
     let fullText = '';
     let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
-    const collectedToolCalls: ExecutedToolCall[] = [];
 
     try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
       const contents = this.normalizeMessages(request.messages);
-      const config = this.buildGenerationConfig(request, apiModel, signal);
+      const apiModel = this.resolveApiModel(request.apiModelId || request.model);
+
+      const config: Record<string, any> = {};
+      if (request.systemInstruction) {
+        config.systemInstruction = request.systemInstruction;
+      }
+      if (request.reasoningEffort && (apiModel.includes('2.0-flash') || apiModel.includes('3.8-flash'))) {
+        const budgetMap = { low: 1024, medium: 4096, high: 8192 };
+        config.thinkingConfig = { thinkingBudget: budgetMap[request.reasoningEffort] || 4096 };
+      }
 
       const responseStream = await ai.models.generateContentStream({
         model: apiModel,
@@ -381,12 +243,6 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
           fullText += delta;
           onChunk(delta);
         }
-        if (Array.isArray(chunk.functionCalls) && chunk.functionCalls.length > 0) {
-          const calls = this.extractToolCalls(chunk.functionCalls);
-          if (calls) {
-            collectedToolCalls.push(...calls);
-          }
-        }
         if (chunk.usageMetadata) {
           finalUsage = {
             inputTokens: chunk.usageMetadata.promptTokenCount || 0,
@@ -395,18 +251,10 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         }
       }
 
-      return {
-        text: fullText,
-        ...(collectedToolCalls.length > 0 ? { toolCalls: collectedToolCalls } : {}),
-        usage: finalUsage
-      };
+      return { text: fullText, usage: finalUsage };
     } catch (err: any) {
       if (signal?.aborted) {
-        return {
-          text: fullText,
-          ...(collectedToolCalls.length > 0 ? { toolCalls: collectedToolCalls } : {}),
-          usage: finalUsage
-        };
+        return { text: fullText, usage: finalUsage };
       }
       throw normalizeGeminiError(err);
     }
@@ -414,38 +262,17 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
 
   private normalizeMessages(messages: any): any {
     if (!messages) return [];
-    if (typeof messages === 'string') return [{ role: 'user', parts: [{ text: messages }] }];
+    if (typeof messages === 'string') return messages;
     if (Array.isArray(messages)) {
-      return messages.map((msg) => {
+      return messages.map(msg => {
         if (typeof msg === 'string') {
           return { role: 'user', parts: [{ text: msg }] };
         }
         if (msg && typeof msg === 'object') {
-          if (Array.isArray(msg.parts)) {
-            return {
-              role: msg.role === 'assistant' || msg.role === 'model' ? 'model' : 'user',
-              parts: msg.parts
-            };
+          if (msg.parts) {
+            return msg;
           }
-          if (msg.content !== undefined) {
-            if (Array.isArray(msg.content)) {
-              const parts = msg.content.map((part: any) => {
-                if (typeof part === 'string') return { text: part };
-                if (part?.type === 'text') return { text: part.text || '' };
-                if (part?.type === 'image_url' && part.image_url?.url) {
-                  const match = /^data:([^;]+);base64,(.+)$/.exec(part.image_url.url);
-                  if (match) {
-                    return { inlineData: { mimeType: match[1], data: match[2] } };
-                  }
-                }
-                if (part?.inlineData) return { inlineData: part.inlineData };
-                return { text: JSON.stringify(part) };
-              });
-              return {
-                role: msg.role === 'assistant' || msg.role === 'model' ? 'model' : 'user',
-                parts
-              };
-            }
+          if (msg.content) {
             return {
               role: msg.role === 'assistant' || msg.role === 'model' ? 'model' : 'user',
               parts: [{ text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) }]
@@ -464,91 +291,4 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     return messages;
   }
 
-  async runAgentLoop(
-    req: any,
-    res: any,
-    model: string,
-    prompt: string,
-    virtualFiles: any[]
-  ): Promise<void> {
-    if (!this.isConfigured()) {
-      throw new AIProviderError(
-        'GEMINI_API_KEY is not configured on the FLOAT server.',
-        'NOT_CONFIGURED',
-        'Google Gemini',
-        503
-      );
-    }
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-
-    const abortController = new AbortController();
-    res.on('close', () => {
-      if (!res.writableEnded) abortController.abort();
-    });
-
-    const sendEvent = (type: string, data: any) => {
-      if (abortController.signal.aborted || res.destroyed || res.writableEnded) return;
-      res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
-    };
-
-    try {
-      const apiModel = (model || 'gemini-4-argon').trim();
-      const result = await AgentRunner.run({
-        model: apiModel,
-        prompt,
-        virtualFiles,
-        projectName: req.body?.projectName || 'Workspace',
-        projectId: req.body?.projectId || 'default-project',
-        userId: req.user?.uid || 'user',
-        systemInstruction: req.body?.systemInstruction,
-        onEvent: (event) => {
-          sendEvent('event', event);
-        },
-        onDelta: (delta) => {
-          sendEvent('delta', { text: delta });
-        },
-        signal: abortController.signal
-      });
-
-      sendEvent('result', {
-        text: result.text,
-        changeSet: result.changeSet,
-        checkpointId: req.body?.checkpointId
-      });
-    } catch (error: any) {
-      if (!abortController.signal.aborted) {
-        const normalized = normalizeGeminiError(error);
-        const isCancelled = normalized.name === 'AbortError' || (normalized as any).type === 'cancelation';
-        if (isCancelled) {
-          sendEvent('event', {
-            type: 'cancelled',
-            message: 'Agent execution was stopped by user.'
-          });
-          sendEvent('result', {
-            text: '*(Agent task stopped)*',
-            changeSet: null
-          });
-        } else {
-          console.error('Agent Loop Error:', normalized.message);
-          sendEvent('event', {
-            type: 'failed',
-            message: normalized.message
-          });
-          sendEvent('delta', { text: `\n\n**Agent Execution Stopped**: ${normalized.message}` });
-          sendEvent('result', {
-            text: `**Agent Execution Stopped**: ${normalized.message}`,
-            changeSet: null
-          });
-        }
-      }
-    } finally {
-      res.end();
-    }
-  }
 }

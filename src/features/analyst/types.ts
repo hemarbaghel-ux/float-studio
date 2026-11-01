@@ -56,27 +56,21 @@ export interface ReportMetric {
   description?: string;
 }
 
-export interface GeneratedSandboxFile {
-  fileId?: string;
-  containerId?: string;
-  filename?: string;
-  url?: string;
-  type: 'image' | 'file';
-}
-
 export interface ExecutiveReport {
   id: string;
   title: string;
   summary: string;
   keyMetrics: ReportMetric[];
   charts: ChartData[];
-  generatedFiles?: GeneratedSandboxFile[];
-  pythonCode: string;
-  pythonOutput: string;
+  providerUsed?: string;
+  rowsAnalyzed?: number;
+  computationMethod?: string;
+  pythonCode?: string;
+  pythonOutput?: string;
   caveats: string[];
   recommendations: string[];
   generatedAt: number;
-  modelUsed: 'GPT-6 Astra' | 'GPT-6 Sol' | 'GPT-6.1 Sol' | string;
+  modelUsed: 'GPT-6 Astra' | 'GPT-6.1 Sol' | string;
 }
 
 export interface AnalystMessage {

@@ -19,22 +19,10 @@ export interface ModelCapability {
   longContext?: boolean;
 }
 
-export interface CloudAgentConfig {
-  remoteUrl?: string;
-  environmentId?: string;
-  sessionId?: string;
-  sessionStatus?: 'connected' | 'connecting' | 'fallback' | 'disconnected';
-  fallbackStrategy?: string;
-  execServerCommand?: string;
-  fallbackModel?: string;
-  mode?: 'preview' | 'cloud_agent';
-}
-
 export interface AIModel {
   id: string;
   exactModelId?: string;
   apiModelId?: string;
-  cloudAgentConfig?: CloudAgentConfig;
   fallbackModel?: string;
   providerId: ProviderId;
   provider?: string;
@@ -68,42 +56,6 @@ export interface AIModel {
   availabilityDetails?: string;
 }
 
-export interface AgentPermission {
-  readFiles: boolean;
-  searchCode: boolean;
-  createFiles: boolean;
-  modifyFiles: boolean;
-  renameFiles: boolean;
-  deleteFiles: boolean;
-  terminal: boolean;
-  webResearch: boolean;
-}
-
-export interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  systemInstructions: string;
-  defaultModel: string; // model id or 'auto' (primary model)
-  fallbackModel?: string; // fallback model id
-  allowedModels: string[]; // array of model ids or '*'
-  tools: string[]; // array of tool names
-  permissions: AgentPermission;
-  mode: 'ask' | 'edit' | 'agent' | 'plan';
-  status?: 'AVAILABLE' | 'COMING_SOON' | 'BETA';
-}
-
-export interface AgentModelAssignment {
-  id?: string;
-  ownerId: string;
-  agentId: string;
-  primaryModel: string;
-  fallbackModel: string;
-  createdAt?: any;
-  updatedAt?: any;
-}
-
 export interface ProviderStatus {
   enabled: boolean;
   configured: boolean;
@@ -126,7 +78,6 @@ export interface ModelUsage {
   latency?: number;
   success: boolean;
   taskId?: string;
-  agentId?: string;
 }
 
 export interface ModelPricing {
@@ -155,7 +106,6 @@ export interface ModelRequest {
   messages: any[]; // standard message format
   systemInstruction?: string;
   tools?: any[];
-  agentId?: string;
   taskId?: string;
   conversationId?: string;
   dataSharingAllowed?: boolean;

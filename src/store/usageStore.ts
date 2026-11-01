@@ -24,8 +24,18 @@ export interface ModelUsageRecord {
 interface UsageStore {
   records: ModelUsageRecord[];
   addRecord: (record: Omit<ModelUsageRecord, 'requestId' | 'timestamp'>) => void;
-  setRecords: (records: ModelUsageRecord[]) => void;
   clearRecords: () => void;
+}
+
+/** Removes synthetic preview records written by older app versions. */
+export function sanitizeUsageRecords(value: unknown): ModelUsageRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((record): record is ModelUsageRecord => Boolean(
+    record &&
+    typeof record === 'object' &&
+    !String((record as ModelUsageRecord).requestId || '').startsWith('sample-req-') &&
+    (record as ModelUsageRecord).userId !== 'preview-developer'
+  ));
 }
 
 export const useUsageStore = create<UsageStore>()(
@@ -42,11 +52,15 @@ export const useUsageStore = create<UsageStore>()(
           }
         ]
       })),
-      setRecords: (records) => set({ records }),
       clearRecords: () => set({ records: [] })
     }),
     {
-      name: 'float-usage-storage'
+      name: 'float-usage-storage',
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(persistedState as Partial<UsageStore>),
+        records: sanitizeUsageRecords((persistedState as Partial<UsageStore> | undefined)?.records)
+      })
     }
   )
 );

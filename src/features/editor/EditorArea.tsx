@@ -6,7 +6,7 @@ import { Breadcrumbs } from './Breadcrumbs';
 import { Columns, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-import { DiffReviewModal } from '../agent/DiffReviewModal';
+import { DiffReviewModal } from '../proposals/DiffReviewModal';
 
 export function EditorArea() {
   const { openTabs, activeFileId, files, reviewChangeSet, setReviewChangeSet } = useIDEStore();

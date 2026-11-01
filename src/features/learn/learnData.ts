@@ -51,7 +51,7 @@ export const LEARN_CATEGORIES = [
   { id: 'reference', label: 'Reference & Glossary' },
 ] as const;
 
-export const START_HERE_ARTICLES = [
+const ALL_START_HERE_ARTICLES = [
   {
     slug: 'agentic-development',
     title: 'Agentic Development',
@@ -90,7 +90,25 @@ export const START_HERE_ARTICLES = [
   }
 ];
 
-export const LEARN_ARTICLES: Record<string, LearnArticle> = {
+const RETIRED_AGENT_LEARN_SLUGS = new Set([
+  'agentic-development',
+  'agents',
+  'agent-workflows',
+  'prompting',
+  'automation',
+  'tutorials/build-your-first-agent',
+  'tutorials/build-a-feature',
+  'tutorials/review-and-test-code',
+  'tutorials/connect-github',
+]);
+
+const containsRetiredAgentCopy = (value: unknown) => /\b(?:agents?|agentic|subagents?)\b/i.test(JSON.stringify(value));
+
+export const START_HERE_ARTICLES = ALL_START_HERE_ARTICLES.filter(
+  (article) => !RETIRED_AGENT_LEARN_SLUGS.has(article.slug) && !containsRetiredAgentCopy(article),
+);
+
+const ALL_LEARN_ARTICLES: Record<string, LearnArticle> = {
   'agentic-development': {
     slug: 'agentic-development',
     title: 'Agentic Development Fundamentals',
@@ -181,7 +199,7 @@ Agentic development inverts this dynamic. An agent is given an objective—such 
       {
         id: 'diff-driven-development',
         heading: 'Diff-Driven Development: The Foundation of Trust',
-        content: `When developers collaborate with other humans, they do not simply replace entire files; they create pull requests and inspect diffs. FLOAT treats AI agents the same way.
+        content: `Code changes are easier to verify when they are shown as diffs before application.
 
 Proposed changes are calculated as unified diffs against the current working checkpoint. This guarantees:
 - **Zero Accidental Overwrites**: Changes outside the requested scope are immediately visible.
@@ -194,17 +212,15 @@ Proposed changes are calculated as unified diffs against the current working che
   'getting-started': {
     slug: 'getting-started',
     title: 'Getting Started with FLOAT',
-    subtitle: 'Navigating the Workspace, Editor, AI Panel, and Modes',
+    subtitle: 'Navigating the Workspace, Editor, AI Chat, and Project Files',
     category: 'Foundations',
     readTime: '6 min read',
     level: 'Foundational',
     updatedAt: 'March 2026',
-    summary: 'A complete practical guide to the FLOAT workspace. Learn how the Monaco editor, file tree, activity bar, and AI interaction modes work harmoniously together.',
-    prevSlug: 'agentic-development',
-    nextSlug: 'agents',
+    summary: 'A practical guide to the FLOAT workspace, including the editor, file tree, activity bar, and AI chat.',
     keyTakeaways: [
       'FLOAT uses Monaco Editor for full VS Code keybinding, syntax highlighting, and language services.',
-      'The AI panel supports four distinct modes: Ask, Plan, Edit, and Agent.',
+      'Use AI chat to ask questions or request a reviewable code proposal.',
       'Active editor tabs automatically provide file context to the AI model.',
       'All user-owned projects and code states are securely persisted in Cloud Firestore.'
     ],
@@ -217,27 +233,7 @@ Proposed changes are calculated as unified diffs against the current working che
 - **Activity Bar (Left)**: Quick switches between File Explorer, Search, Source Control (Git), Problems, and Extension Integrations.
 - **File Explorer & Tabs**: Browse and organize project files. Click any file to open it in an editor tab.
 - **Monaco Code Editor (Center)**: The industrial-standard editor powering syntax highlighting, IntelliSense, error markers, and multi-file tabs.
-- **AI Workspace Panel (Right)**: The primary command center for interacting with your AI agent, selecting models, and reviewing proposed diffs.`
-      },
-      {
-        id: 'mode-selection',
-        heading: 'Choosing the Right Mode: Ask, Plan, Edit, Agent',
-        content: `Rather than a one-size-fits-all chatbot, FLOAT provides specialized operational modes:
-
-- **Ask**: Use when you need to understand existing code, query algorithms, or trace API contracts. It is guaranteed read-only.
-- **Plan**: Use before undertaking complex features. The model asks clarifying questions and creates a numbered task breakdown.
-- **Edit**: Trigger with \`Cmd+K\` (or \`Ctrl+K\` on Windows) directly within the editor to transform selected lines.
-- **Agent**: Use for end-to-end tasks like "Implement user password reset with email verification and unit tests."`,
-        codeSnippet: {
-          language: 'markdown',
-          filename: 'mode-comparison.md',
-          code: `| Mode    | Can Edit Files? | Steps Limit | Best For                                    |
-|---------|-----------------|-------------|---------------------------------------------|
-| Ask     | No              | 1 turn      | Codebase queries, explaining algorithms     |
-| Plan    | No              | 1-3 turns   | Architectural specs, dependency analysis    |
-| Edit    | Yes (Single)    | 1 turn      | Targeted refactors, inline fixes            |
-| Agent   | Yes (Multi)     | Multi-step  | End-to-end feature builds, bug repair loops |`
-        }
+- **AI Workspace Panel (Right)**: The AI chat panel for selecting a model, asking questions, and reviewing proposed code changes.`
       },
       {
         id: 'keyboard-shortcuts',
@@ -423,8 +419,8 @@ FLOAT solves this using multi-tiered context assembly:
 
   'models': {
     slug: 'models',
-    title: 'Selecting and Routing Models for Agentic Tasks',
-    subtitle: 'Gemini 2.5 Flash, GPT-4o, Claude 3.7 Sonnet, and Smart Provider Routing',
+    title: 'Selecting a Model for AI Chat',
+    subtitle: 'GPT-6 Astra, GPT-6.1 Sol, and server-side provider access',
     category: 'Deep Dives',
     readTime: '7 min read',
     level: 'Intermediate',
@@ -785,7 +781,13 @@ Watch the step tracker:
   }
 };
 
-export const GLOSSARY_TERMS: GlossaryTerm[] = [
+export const LEARN_ARTICLES: Record<string, LearnArticle> = Object.fromEntries(
+  Object.entries(ALL_LEARN_ARTICLES).filter(([slug, article]) =>
+    !RETIRED_AGENT_LEARN_SLUGS.has(slug) && !containsRetiredAgentCopy(article),
+  ),
+);
+
+const ALL_GLOSSARY_TERMS: GlossaryTerm[] = [
   {
     term: 'Agent',
     slug: 'agent',
@@ -958,3 +960,18 @@ export const GLOSSARY_TERMS: GlossaryTerm[] = [
     relatedSlugs: ['tools-and-integrations', 'agentic-development']
   }
 ];
+
+const RETIRED_AGENT_GLOSSARY_SLUGS = new Set([
+  'agent',
+  'agentic-workflow',
+  'checkpoint',
+  'multi-agent-orchestration',
+  'react',
+  'rollback',
+  'step-budget',
+  'tool-calling',
+]);
+
+export const GLOSSARY_TERMS = ALL_GLOSSARY_TERMS.filter(
+  (term) => !RETIRED_AGENT_GLOSSARY_SLUGS.has(term.slug) && !containsRetiredAgentCopy(term),
+);

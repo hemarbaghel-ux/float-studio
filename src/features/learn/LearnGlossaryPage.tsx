@@ -56,7 +56,7 @@ export function LearnGlossaryPage() {
             Developer Glossary
           </h1>
           <p className="text-base text-slate-600 dark:text-[#A1A1AA] max-w-2xl leading-relaxed">
-            Essential terminology for agentic software engineering, LLM reasoning, codebase context systems, and automated evaluation metrics.
+            Essential terminology for software development, language models, and codebase context.
           </p>
         </div>
 

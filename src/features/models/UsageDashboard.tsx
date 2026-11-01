@@ -1,16 +1,14 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Activity, DollarSign, Cpu, Clock, BarChart3, TrendingUp, Search, Sparkles } from 'lucide-react';
+import { ArrowLeft, Activity, DollarSign, Cpu, Clock, BarChart3, TrendingUp, Search } from 'lucide-react';
 import { useUsageStore } from '../../store/usageStore';
 import { INITIAL_MODELS } from '../ai/registry';
 import { FloatLogo } from '../../components/FloatLogo';
 import { TokenUsageChart } from './TokenUsageChart';
-import { generateSampleUsageData } from './sampleUsageData';
 
 export function UsageDashboard() {
-  const { records, setRecords, clearRecords } = useUsageStore();
+  const { records } = useUsageStore();
   const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | '90d' | 'all'>('7d');
   const [providerFilter, setProviderFilter] = useState<'all' | 'openai' | 'google' | 'anthropic' | 'xai'>('all');
-  const [isSampleData, setIsSampleData] = useState(false);
 
   // Filter records based on timeRange and provider
   const filteredRecords = useMemo(() => {
@@ -62,17 +60,6 @@ export function UsageDashboard() {
     }));
   }, [filteredRecords]);
 
-  const handleLoadSampleData = () => {
-    const sample = generateSampleUsageData();
-    setRecords(sample);
-    setIsSampleData(true);
-  };
-
-  const handleClearData = () => {
-    clearRecords();
-    setIsSampleData(false);
-  };
-
   return (
     <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A08] text-slate-900 dark:text-white flex flex-col font-sans">
       <header className="h-14 border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-6 bg-white dark:bg-[#0A0A08] shrink-0 sticky top-0 z-10">
@@ -85,7 +72,6 @@ export function UsageDashboard() {
           <nav className="flex items-center gap-4">
             <a href="/models" className="text-sm font-medium text-slate-500 hover:text-slate-900 dark:text-[#A1A1AA] dark:hover:text-white transition-colors">Hub</a>
             <a href="/models/usage" className="text-sm font-medium text-slate-900 dark:text-white transition-colors">Usage</a>
-            <a href="/models/evals" className="text-sm font-medium text-slate-500 hover:text-slate-900 dark:text-[#A1A1AA] dark:hover:text-white transition-colors">Evals</a>
           </nav>
         </div>
       </header>
@@ -195,9 +181,6 @@ export function UsageDashboard() {
             records={filteredRecords}
             timeRange={timeRange}
             providerFilter={providerFilter}
-            onLoadSampleData={handleLoadSampleData}
-            onClearData={handleClearData}
-            isSampleData={isSampleData}
           />
 
           {/* COST BY MODEL TABLE */}
@@ -232,7 +215,7 @@ export function UsageDashboard() {
               <Activity size={28} className="text-slate-300 dark:text-slate-600 mb-3" />
               <h3 className="text-base font-medium text-slate-900 dark:text-white mb-1">No usage data for this filter</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md">
-                Start making AI requests in the editor or load sample preview data above to see your model breakdown.
+                Completed provider responses with returned usage metadata will appear here.
               </p>
             </div>
           )}

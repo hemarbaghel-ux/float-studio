@@ -1,18 +1,17 @@
 import { useEvalStore } from '../../store/evalStore';
 import { useEffect } from 'react';
 import React, { useState } from 'react';
-import { LayoutDashboard, CheckSquare, PlayCircle, Cpu, Bot, BarChart, Settings } from 'lucide-react';
+import { LayoutDashboard, CheckSquare, PlayCircle, Cpu, BarChart, Settings } from 'lucide-react';
 import { EvalsOverview } from './EvalsOverview';
 import { EvalsDashboard } from './EvalsDashboard';
 import { EvalsTasks } from './EvalsTasks';
 import { EvalsRuns } from './EvalsRuns';
 import { EvalsModels } from './EvalsModels';
-import { EvalsAgents } from './EvalsAgents';
 import { EvalsBenchmarks } from './EvalsBenchmarks';
 import { EvalsSettings } from './EvalsSettings';
 import { FloatLogo } from '../../components/FloatLogo';
 
-type EvalTab = 'overview' | 'tasks' | 'runs' | 'models' | 'agents' | 'benchmarks' | 'settings';
+type EvalTab = 'overview' | 'tasks' | 'runs' | 'models' | 'benchmarks' | 'settings';
 
 export function EvalsWorkspace() {
   const [activeTab, setActiveTab] = useState<EvalTab>('overview');
@@ -43,7 +42,6 @@ export function EvalsWorkspace() {
           <TabItem icon={CheckSquare} label="Tasks" isActive={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} />
           <TabItem icon={PlayCircle} label="Runs" isActive={activeTab === 'runs'} onClick={() => setActiveTab('runs')} />
           <TabItem icon={Cpu} label="Models" isActive={activeTab === 'models'} onClick={() => setActiveTab('models')} />
-          <TabItem icon={Bot} label="Agents" isActive={activeTab === 'agents'} onClick={() => setActiveTab('agents')} />
           <TabItem icon={BarChart} label="Benchmarks" isActive={activeTab === 'benchmarks'} onClick={() => setActiveTab('benchmarks')} />
           <TabItem icon={Settings} label="Settings" isActive={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
         </div>
@@ -55,7 +53,6 @@ export function EvalsWorkspace() {
         {activeTab === 'tasks' && <EvalsTasks />}
         {activeTab === 'runs' && <EvalsRuns />}
         {activeTab === 'models' && <EvalsModels />}
-        {activeTab === 'agents' && <EvalsAgents />}
         {activeTab === 'benchmarks' && <EvalsBenchmarks />}
         {activeTab === 'settings' && <EvalsSettings />}
       </div>

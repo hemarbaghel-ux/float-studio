@@ -35,8 +35,7 @@ export interface VerifyProjectOwnershipOptions {
    *   Used for all `/api/projects/:projectId/*` routes (executions, proposals, code search,
    *   validation, git, rules, reviews, diagnostics, automations, memories) and project-scoped
    *   skills/MCP configurations. Missing projects return 404.
-   * - `true`: Supports an unsaved/ephemeral local workspace ONLY on `/api/ai/chat`, `/api/ai/agent`,
-   *   and `/api/ai/plan`. Always checks Firestore first so a persisted project with that ID owned
+    * - `true`: Supports an unsaved/ephemeral local workspace ONLY on `/api/ai/chat`. Always checks Firestore first so a persisted project with that ID owned
    *   by another user is rejected with 403. If unpersisted in Firestore, isolates the ephemeral
    *   workspace per user so it cannot access or collide with another user's resources.
    */

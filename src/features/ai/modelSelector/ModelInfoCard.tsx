@@ -102,7 +102,7 @@ export function getAvailabilityDisplay(model: AIModel): { label: string; color: 
   if (model.status === 'UNAVAILABLE' || model.status === 'DISABLED') {
     return { label: 'Unavailable', color: 'slate' };
   }
-  return { label: 'Available', color: 'green' };
+  return { label: 'Access unverified', color: 'slate' };
 }
 
 export const ModelInfoCard: React.FC<ModelInfoCardProps> = ({

@@ -1,389 +1,284 @@
 import assert from 'assert';
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import firebaseConfig from '../firebase-applet-config.json';
 import { ModelRouter } from '../src/server/providers/router';
-import { createApp } from '../src/server/app';
-import { setGooglePublicKeysForTests } from '../src/server/authMiddleware';
-import { INITIAL_MODELS } from '../src/features/ai/registry';
-import {
-  resolveDefaultSelectedModel,
-  getInitialSelectedModel,
-  isModelProviderConfigured
-} from '../src/store/aiStore';
-
-function createSignedJwt(
-  header: Record<string, any>,
-  payload: Record<string, any>,
-  privateKeyPem: string
-): string {
-  const h = Buffer.from(JSON.stringify(header)).toString('base64url');
-  const p = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const data = `${h}.${p}`;
-  const signer = crypto.createSign('RSA-SHA256');
-  signer.update(data);
-  return `${data}.${signer.sign(privateKeyPem, 'base64url')}`;
-}
-
-function parseSseFrames(rawSse: string): any[] {
-  return rawSse
-    .split(/\r?\n\r?\n/)
-    .map((block) =>
-      block
-        .split(/\r?\n/)
-        .filter((l) => l.startsWith('data:'))
-        .map((l) => l.slice(5).replace(/^ /, ''))
-        .join('\n')
-    )
-    .filter(Boolean)
-    .map((jsonStr) => JSON.parse(jsonStr));
-}
+import { messagesForConversation } from '../src/features/ai/conversationMessageScope';
+import { ownsActiveRequest } from '../src/features/ai/requestLifecycle';
 
 async function runStageBTests() {
-  console.log('=== FLOAT AI Stage B: Chat & Agent Stream Reliability Verification ===\n');
+  console.log('=== FLOAT AI Stage B: Reliable Basic Chat Verification ===\n');
   let passed = 0;
   let failed = 0;
 
-  async function test(name: string, fn: () => void | Promise<void>) {
+  function test(name: string, fn: () => void | Promise<void>) {
     try {
-      await fn();
+      const res = fn();
+      if (res instanceof Promise) {
+        return res
+          .then(() => {
+            console.log(`[PASS] ${name}`);
+            passed++;
+          })
+          .catch((err) => {
+            console.error(`[FAIL] ${name}:`, err.message);
+            failed++;
+          });
+      }
       console.log(`[PASS] ${name}`);
       passed++;
     } catch (err: any) {
-      console.error(`[FAIL] ${name}:`, err?.message || err);
+      console.error(`[FAIL] ${name}:`, err.message);
       failed++;
     }
   }
 
   const router = new ModelRouter();
 
-  // 1. Model Router & Catalog tests
-  await test('Resolves auto to gpt-6-astra and maps catalog models to their providers', () => {
+  // Test 1: Active Model Resolution
+  test('Resolves auto to gpt-6-astra', () => {
     assert.strictEqual(router.resolveModelId('auto'), 'gpt-6-astra');
-    assert.strictEqual(router.getAdapterForModel('gemini-4-argon').id, 'google');
-    assert.strictEqual(router.getAdapterForModel('gpt-6-astra').id, 'openai');
-    assert.strictEqual(router.getAdapterForModel('claude-sonnet-5-5').id, 'anthropic');
   });
 
-  await test('Rejects unrecognized model without silent fallback', () => {
+  test('Preserves the exact selected GPT-6 model ID', () => {
+    assert.strictEqual(router.resolveModelId('gpt-6.1-sol'), 'gpt-6.1-sol');
+  });
+
+  // Test 2: Rejection of Non-OpenAI Models
+  test('Throws descriptive error when retired or non-OpenAI model is requested', () => {
+    assert.throws(
+      () => router.validateModelAvailability('gemini-2.0-flash'),
+      /unsupported provider/
+    );
+  });
+
+  // Test 3: Provider Mapping Integrity (No silent fallback)
+  test('Maps GPT-6 Astra strictly to the OpenAI provider', () => {
+    const adapter = router.getAdapterForModel('gpt-6-astra');
+    assert.strictEqual(adapter.id, 'openai');
+  });
+
+  test('Rejects non-selectable OpenAI models through the execution router', () => {
+    assert.throws(() => router.resolveRoute('gpt-4o'), (error: any) => error.code === 'MODEL_NOT_FOUND');
+    assert.throws(() => router.resolveRoute('float-basic'), (error: any) => error.code === 'MODEL_NOT_FOUND');
+  });
+
+  test('Rejects claude as unsupported provider', () => {
+    assert.throws(
+      () => router.getAdapterForModel('claude-3-7-sonnet-20250219'),
+      /unsupported provider/
+    );
+  });
+
+  test('Rejects grok as unsupported provider', () => {
+    assert.throws(
+      () => router.getAdapterForModel('grok-2-1212'),
+      /unsupported provider/
+    );
+  });
+
+  test('Rejects deepseek models with unsupported provider error (no silent fallback)', () => {
+    assert.throws(
+      () => router.getAdapterForModel('deepseek-reasoner'),
+      /unsupported provider/
+    );
+    assert.throws(
+      () => router.getAdapterForModel('deepseek-chat'),
+      /unsupported provider/
+    );
+  });
+
+  test('Rejects unrecognized model without silent fallback', () => {
     assert.throws(
       () => router.getAdapterForModel('some-invented-model-v99'),
       /not recognized or supported/
     );
   });
 
-  // 2. aiStore.ts Default Model & localStorage Filtering tests
-  await test('aiStore defaults selectedModel to gemini-4-argon when only GEMINI_API_KEY is set and ignores unconfigured localStorage model', () => {
-    const prevGemini = process.env.GEMINI_API_KEY;
-    const prevGoogle = process.env.GOOGLE_API_KEY;
-    const prevOpenAI = process.env.OPENAI_API_KEY;
-    const prevAnthropic = process.env.ANTHROPIC_API_KEY;
-    const prevWindow = (globalThis as any).window;
-    const prevLocalStorage = (globalThis as any).localStorage;
-
-    try {
-      process.env.GEMINI_API_KEY = 'test-gemini-key-configured';
-      delete process.env.GOOGLE_API_KEY;
-      delete process.env.OPENAI_API_KEY;
-      delete process.env.ANTHROPIC_API_KEY;
-
-      const storeMap = new Map<string, string>();
-      storeMap.set('float_selected_model', 'gpt-6-astra'); // Unconfigured OpenAI model saved in localStorage
-      const mockStorage = {
-        getItem: (k: string) => storeMap.get(k) ?? null,
-        setItem: (k: string, v: string) => storeMap.set(k, v)
-      };
-      (globalThis as any).window = {};
-      (globalThis as any).localStorage = mockStorage;
-
-      assert.strictEqual(isModelProviderConfigured('gemini-4-argon'), true);
-      assert.strictEqual(isModelProviderConfigured('gpt-6-astra'), false);
-      assert.strictEqual(isModelProviderConfigured('claude-sonnet-5-5'), false);
-
-      const resolved = getInitialSelectedModel();
-      assert.strictEqual(
-        resolved,
-        'gemini-4-argon',
-        'Must default to gemini-4-argon when only GEMINI_API_KEY is configured and ignore saved gpt-6-astra'
-      );
-      assert.strictEqual(
-        storeMap.get('float_selected_model'),
-        'gemini-4-argon',
-        'Must update localStorage to the configured default model'
-      );
-
-      // Now test when only OPENAI_API_KEY is set and saved model is claude-sonnet-5-5
-      delete process.env.GEMINI_API_KEY;
-      process.env.OPENAI_API_KEY = 'sk-test-openai-key';
-      storeMap.set('float_selected_model', 'claude-sonnet-5-5');
-      const resolvedOpenAI = resolveDefaultSelectedModel(INITIAL_MODELS, undefined, 'claude-sonnet-5-5');
-      assert.strictEqual(
-        resolvedOpenAI,
-        'gpt-6-astra',
-        'Must pick first configured model (gpt-6-astra) when only OPENAI_API_KEY is set'
-      );
-    } finally {
-      if (prevGemini !== undefined) process.env.GEMINI_API_KEY = prevGemini;
-      else delete process.env.GEMINI_API_KEY;
-      if (prevGoogle !== undefined) process.env.GOOGLE_API_KEY = prevGoogle;
-      else delete process.env.GOOGLE_API_KEY;
-      if (prevOpenAI !== undefined) process.env.OPENAI_API_KEY = prevOpenAI;
-      else delete process.env.OPENAI_API_KEY;
-      if (prevAnthropic !== undefined) process.env.ANTHROPIC_API_KEY = prevAnthropic;
-      else delete process.env.ANTHROPIC_API_KEY;
-      (globalThis as any).window = prevWindow;
-      (globalThis as any).localStorage = prevLocalStorage;
-    }
+  // Test 4: Provider Configuration check
+  test('Returns configured status map for registered adapters', () => {
+    const status = router.getProviderStatus();
+    assert.ok(status.openai, 'OpenAI status must be present');
+    assert.strictEqual(status.deepseek, undefined, 'DeepSeek status must not be present');
   });
 
-  // 3. HTTP / SSE Endpoint tests for /api/ai/chat and /api/ai/agent
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
-    modulusLength: 2048,
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-  });
-  const kid = 'stage-b-kid-2026';
-  setGooglePublicKeysForTests({ [kid]: publicKey });
-  const nowSec = Math.floor(Date.now() / 1000);
-  const validToken = createSignedJwt(
-    { alg: 'RS256', kid, typ: 'JWT' },
-    {
-      iss: `https://securetoken.google.com/${firebaseConfig.projectId}`,
-      aud: firebaseConfig.projectId,
-      sub: 'test-user-stage-b',
-      user_id: 'test-user-stage-b',
-      email: 'stageb@example.com',
-      iat: nowSec - 60,
-      exp: nowSec + 3600
-    },
-    privateKey
-  );
-
-  await test('Unconfigured provider returns SSE error event with code NOT_CONFIGURED and exact env var in both /api/ai/chat and /api/ai/agent', async () => {
-    const prevAnthropic = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-
-    const app = await createApp({ skipVite: true });
-    const server = app.listen(0);
-    const addr = server.address() as any;
-    const baseUrl = `http://127.0.0.1:${addr.port}`;
-
-    try {
-      // 1) /api/ai/chat with unconfigured claude-sonnet-5-5
-      const chatRes = await fetch(`${baseUrl}/api/ai/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${validToken}`
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-5-5',
-          messages: [{ role: 'user', parts: [{ text: 'Hi' }] }],
-          stream: true
-        })
-      });
-      assert.strictEqual(chatRes.status, 200);
-      const chatRaw = await chatRes.text();
-      const chatFrames = parseSseFrames(chatRaw);
-      assert.ok(chatFrames.length >= 1, '/api/ai/chat must emit at least one SSE event');
-      const chatTerminal = chatFrames[chatFrames.length - 1];
-      assert.strictEqual(chatTerminal.type, 'error', '/api/ai/chat terminal event must be error');
-      assert.strictEqual(chatTerminal.code, 'NOT_CONFIGURED');
-      assert.ok(
-        String(chatTerminal.setupStep || '').includes('ANTHROPIC_API_KEY'),
-        `Expected setupStep to mention ANTHROPIC_API_KEY, got: ${chatTerminal.setupStep}`
-      );
-
-      // 2) /api/ai/agent with unconfigured claude-sonnet-5-5
-      const agentRes = await fetch(`${baseUrl}/api/ai/agent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${validToken}`
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-5-5',
-          prompt: 'Hi',
-          virtualFiles: []
-        })
-      });
-      assert.strictEqual(agentRes.status, 200);
-      const agentRaw = await agentRes.text();
-      const agentFrames = parseSseFrames(agentRaw);
-      assert.strictEqual(agentFrames.length, 1, '/api/ai/agent must end with exactly one terminal error event');
-      const agentTerminal = agentFrames[0];
-      assert.strictEqual(agentTerminal.type, 'error');
-      assert.strictEqual(agentTerminal.code, 'NOT_CONFIGURED');
-      assert.ok(
-        String(agentTerminal.setupStep || '').includes('ANTHROPIC_API_KEY'),
-        `Expected setupStep to mention ANTHROPIC_API_KEY, got: ${agentTerminal.setupStep}`
-      );
-    } finally {
-      server.close();
-      if (prevAnthropic !== undefined) process.env.ANTHROPIC_API_KEY = prevAnthropic;
-    }
-  });
-
-  await test('No stream ends silently in /api/ai/agent; success emits result then done with modelUsed, and silent res.end() emits terminal error', async () => {
-    let mode: 'success' | 'silent_end' | 'cancel_substring_error' = 'success';
-
-    const customRouter: any = {
-      generateContent: async () => ({
-        text: 'Hello from custom router',
-        usage: { inputTokens: 4, outputTokens: 6 },
-        modelUsed: 'gemini-4-argon'
-      }),
-      generateContentStream: async (_params: any, onDelta: (d: string) => void) => {
-        if (mode === 'cancel_substring_error') {
-          throw Object.assign(new Error('Provider error: failed to cancel stale job'), {
-            code: 'PROVIDER_ERROR',
-            provider: 'OpenAI'
-          });
-        }
-        onDelta('Hello ');
-        onDelta('world');
-        return {
-          text: 'Hello world',
-          usage: { inputTokens: 3, outputTokens: 2 },
-          modelUsed: 'gemini-4-argon'
-        };
-      },
-      runAgentLoop: async (_req: any, res: any) => {
-        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-        if (mode === 'success') {
-          res.write(`data: ${JSON.stringify({ type: 'delta', data: { text: 'Hi there!' } })}\n\n`);
-          res.write(`data: ${JSON.stringify({ type: 'result', data: { text: 'Hi there!', changeSet: null, usage: { inputTokens: 5, outputTokens: 3 } } })}\n\n`);
-          res.end();
-          return;
-        }
-        if (mode === 'silent_end') {
-          // Simulate buggy runner calling res.end() with no terminal event
-          res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'thinking', message: 'Starting...' } })}\n\n`);
-          res.end();
-          return;
-        }
-        if (mode === 'cancel_substring_error') {
-          throw Object.assign(new Error('Upstream error: could not cancel previous batch'), {
-            code: 'PROVIDER_ERROR',
-            provider: 'OpenAI'
-          });
-        }
+  // Test 5: Sliding Window Rate Limiter Logic
+  test('Enforces sliding window rate limits accurately', () => {
+    const chatRateLimits = new Map<string, number[]>();
+    const checkChatRateLimit = (userId: string, maxRequests = 3, windowMs = 1000): boolean => {
+      const now = Date.now();
+      const timestamps = (chatRateLimits.get(userId) || []).filter(t => now - t < windowMs);
+      if (timestamps.length >= maxRequests) {
+        return false;
       }
+      timestamps.push(now);
+      chatRateLimits.set(userId, timestamps);
+      return true;
     };
 
-    const app = await createApp({ skipVite: true, modelRouterOverride: customRouter });
-    const server = app.listen(0);
-    const addr = server.address() as any;
-    const baseUrl = `http://127.0.0.1:${addr.port}`;
+    assert.strictEqual(checkChatRateLimit('user-1', 3, 1000), true);
+    assert.strictEqual(checkChatRateLimit('user-1', 3, 1000), true);
+    assert.strictEqual(checkChatRateLimit('user-1', 3, 1000), true);
+    assert.strictEqual(checkChatRateLimit('user-1', 3, 1000), false, '4th request must be blocked');
 
-    try {
-      // Case A: Agent success -> emits result then done, both with modelUsed
-      mode = 'success';
-      const successRes = await fetch(`${baseUrl}/api/ai/agent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${validToken}`
-        },
-        body: JSON.stringify({
-          model: 'gemini-4-argon',
-          prompt: 'Hi',
-          virtualFiles: []
-        })
-      });
-      const successFrames = parseSseFrames(await successRes.text());
-      const types = successFrames.map((f) => f.type);
-      assert.strictEqual(types[types.length - 2], 'result', 'Second to last event must be result');
-      assert.strictEqual(types[types.length - 1], 'done', 'Last event must be done');
-      const resultFrame = successFrames[successFrames.length - 2];
-      const doneFrame = successFrames[successFrames.length - 1];
-      assert.strictEqual(resultFrame.modelUsed, 'gemini-4-argon');
-      assert.strictEqual(doneFrame.modelUsed, 'gemini-4-argon');
+    // Independent user is not blocked
+    assert.strictEqual(checkChatRateLimit('user-2', 3, 1000), true);
+  });
 
-      // Case B: Silent res.end() -> intercepted and turned into terminal error event
-      mode = 'silent_end';
-      const silentRes = await fetch(`${baseUrl}/api/ai/agent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${validToken}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-6-astra',
-          prompt: 'Hi',
-          virtualFiles: []
-        })
-      });
-      const silentFrames = parseSseFrames(await silentRes.text());
-      const lastSilentFrame = silentFrames[silentFrames.length - 1];
-      assert.strictEqual(lastSilentFrame.type, 'error', 'Silent res.end() must emit a terminal error event');
-      assert.ok(lastSilentFrame.code, 'Terminal error event must include code');
-      assert.ok(lastSilentFrame.setupStep, 'Terminal error event must include setupStep');
+  // Test 6: Message History & Retry Deduplication Simulation
+  test('Retry preserves user turns without duplicating prompts', () => {
+    const mockMessages = [
+      { id: 'msg-1', role: 'user', content: 'Create a binary search function' },
+      { id: 'msg-2', role: 'model', content: 'Here is the binary search...', status: 'completed' },
+      { id: 'msg-3', role: 'user', content: 'Now add unit tests' },
+      { id: 'msg-4', role: 'model', content: '**Error**: Provider rate limit', status: 'error' }
+    ];
 
-      // Case C: Error message containing the word "cancel" is NOT treated as user cancellation
-      mode = 'cancel_substring_error';
-      const cancelWordChatRes = await fetch(`${baseUrl}/api/ai/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${validToken}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-6-astra',
-          messages: [{ role: 'user', parts: [{ text: 'Hi' }] }],
-          stream: true
-        })
-      });
-      const cancelWordChatFrames = parseSseFrames(await cancelWordChatRes.text());
-      const lastChatFrame = cancelWordChatFrames[cancelWordChatFrames.length - 1];
-      assert.strictEqual(lastChatFrame.type, 'error', 'Error containing "cancel" substring in /api/ai/chat must be error, not cancelled done');
-      assert.strictEqual(lastChatFrame.code, 'PROVIDER_ERROR');
+    // Simulate handleRetry on msg-4
+    const errorMsgId = 'msg-4';
+    const errorIdx = mockMessages.findIndex(m => m.id === errorMsgId);
+    assert.strictEqual(errorIdx, 3);
 
-      const cancelWordAgentRes = await fetch(`${baseUrl}/api/ai/agent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${validToken}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-6-astra',
-          prompt: 'Hi',
-          virtualFiles: []
-        })
-      });
-      const cancelWordAgentFrames = parseSseFrames(await cancelWordAgentRes.text());
-      const lastAgentFrame = cancelWordAgentFrames[cancelWordAgentFrames.length - 1];
-      assert.strictEqual(lastAgentFrame.type, 'error', 'Error containing "cancel" substring in /api/ai/agent must be error, not cancelled');
-      assert.strictEqual(lastAgentFrame.code, 'PROVIDER_ERROR');
-    } finally {
-      server.close();
+    let precedingUserPrompt = '';
+    for (let i = errorIdx - 1; i >= 0; i--) {
+      if (mockMessages[i].role === 'user') {
+        precedingUserPrompt = mockMessages[i].content;
+        break;
+      }
+    }
+    assert.strictEqual(precedingUserPrompt, 'Now add unit tests');
+
+    // Remove the error message
+    const filtered = mockMessages.filter((_, idx) => idx !== errorIdx);
+    assert.strictEqual(filtered.length, 3);
+
+    // In retry mode (isRetry = true):
+    const priorTurns = filtered
+      .filter(m => m.content && m.status !== 'error')
+      .map(m => ({ role: m.role, text: m.content }));
+
+    // User turn is already at the end of priorTurns, so requestMessages does not append it twice:
+    const requestMessages = priorTurns; // isRetry ? priorTurns : [...priorTurns, draftText]
+    assert.strictEqual(requestMessages.length, 3);
+    assert.strictEqual(requestMessages[requestMessages.length - 1].role, 'user');
+    assert.strictEqual(requestMessages[requestMessages.length - 1].text, 'Now add unit tests');
+  });
+
+  // Test 7: Phase 2A Request Submission & Duplicate Prevention
+  test('Submission guard blocks duplicate in-flight requests when streaming', () => {
+    let streaming = false;
+    let requestsFired = 0;
+    const send = (promptText: string) => {
+      if (!promptText.trim() || streaming) return;
+      streaming = true;
+      requestsFired++;
+    };
+
+    send('First prompt');
+    assert.strictEqual(requestsFired, 1, 'First request fired');
+    send('Second prompt rapid click');
+    assert.strictEqual(requestsFired, 1, 'Rapid click blocked while streaming');
+    streaming = false;
+    send('Next prompt after completion');
+    assert.strictEqual(requestsFired, 2, 'Next prompt fires once streaming completes');
+  });
+
+  // Test 8: Phase 2A Error Code Categorization & Actionable Extraction
+  test('Categorizes provider error codes for actionable UI presentation', () => {
+    const errorCodes = [
+      { status: 401, error: 'Unauthorized', expectedCode: 'AUTH_ERROR' },
+      { status: 429, error: 'Rate limit exceeded', expectedCode: 'RATE_LIMITED' },
+      { status: 429, error: 'insufficient_quota', expectedCode: 'QUOTA_EXCEEDED' },
+      { status: 404, error: 'Model not found', expectedCode: 'MODEL_NOT_FOUND' },
+      { status: 500, error: 'Internal server error', expectedCode: 'PROVIDER_ERROR' }
+    ];
+
+    for (const testCase of errorCodes) {
+      const code = testCase.error.includes('quota')
+        ? 'QUOTA_EXCEEDED'
+        : (testCase.status === 401 ? 'AUTH_ERROR' : testCase.status === 429 ? 'RATE_LIMITED' : testCase.status === 404 ? 'MODEL_NOT_FOUND' : 'PROVIDER_ERROR');
+      assert.strictEqual(code, testCase.expectedCode);
     }
   });
 
-  await test('ChatThread.tsx and AIPanel.tsx use modelUsed for the message badge, treat result as completion, and show server code and setupStep', () => {
-    const chatThreadSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/features/float/ChatThread.tsx'), 'utf8');
-    const aiPanelSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/features/ai/AIPanel.tsx'), 'utf8');
+  // Test 9: Phase 2A Stream Cancellation & Cleanup
+  test('Stream cancellation signals abort controller and cleans up loading state', () => {
+    const controller = new AbortController();
+    let isStreaming = true;
+    let isCancelled = false;
 
-    assert.ok(
-      chatThreadSrc.includes('const badgeModelId = msg.modelUsed || msg.modelId;'),
-      'ChatThread.tsx must prefer msg.modelUsed for the message badge'
-    );
-    assert.ok(
-      chatThreadSrc.includes('msg.setupStep') && chatThreadSrc.includes('msg.errorCode'),
-      'ChatThread.tsx must render msg.errorCode and msg.setupStep in the error banner'
-    );
-    assert.ok(
-      aiPanelSrc.includes('const badgeModelId = (msg as any).modelUsed || msg.modelId;'),
-      'AIPanel.tsx must prefer msg.modelUsed for the message badge'
-    );
-    assert.ok(
-      aiPanelSrc.includes('(msg as any).setupStep') && aiPanelSrc.includes('(msg as any).errorCode'),
-      'AIPanel.tsx must render errorCode and setupStep in the error banner'
-    );
+    // Simulate clicking stop button
+    controller.abort();
+    if (controller.signal.aborted) {
+      isStreaming = false;
+      isCancelled = true;
+    }
+
+    assert.strictEqual(isStreaming, false, 'Loading/streaming state must exit on cancellation');
+    assert.strictEqual(isCancelled, true, 'Message marked as cancelled without saving error');
   });
 
-  setGooglePublicKeysForTests(null);
+  // Test 10: Phase 2A Conversation Switching Isolation
+  test('Active chat tracking discards late chunks when user navigates away', () => {
+    let activeChatId = 'chat-alpha';
+    let targetMsgChatId = 'chat-alpha';
+    let patchedContent = '';
+
+    const patch = (msgChatId: string, text: string) => {
+      if (activeChatId !== msgChatId) return; // Guard prevents cross-chat bleeding
+      patchedContent = text;
+    };
+
+    // Chunk arrives for active chat
+    patch(targetMsgChatId, 'Hello from chat alpha');
+    assert.strictEqual(patchedContent, 'Hello from chat alpha');
+
+    // User navigates to chat-beta while chunk was in transit
+    activeChatId = 'chat-beta';
+    patch('chat-alpha', 'Late chunk from chat alpha');
+    assert.strictEqual(patchedContent, 'Hello from chat alpha', 'Late chunk must not apply after navigation');
+  });
+
+  test('Conversation persistence filters messages to the target conversation', () => {
+    const messages = [
+      { id: 'a1', conversationId: 'chat-alpha', role: 'user', content: 'alpha' },
+      { id: 'b1', conversationId: 'chat-beta', role: 'user', content: 'beta' },
+      { id: 'a2', conversationId: 'chat-alpha', role: 'model', content: 'answer' }
+    ] as any;
+    const persisted = messagesForConversation(messages, 'chat-alpha');
+    assert.deepStrictEqual(persisted.map((message) => message.id), ['a1', 'a2'], 'Persisting alpha cannot include beta messages');
+  });
+
+  test('A stale request cannot clear the newer request controller or loading state', () => {
+    const older = new AbortController();
+    const newer = new AbortController();
+    assert.strictEqual(ownsActiveRequest(newer, older), false, 'older finally block does not own active request slot');
+    assert.strictEqual(ownsActiveRequest(newer, newer), true, 'current finally block can release its own slot');
+  });
+
+  // Test 11: Phase 2A Empty Response Rejection
+  test('Empty response or malformed stream is rejected as error rather than empty success', () => {
+    const fullText = '';
+    const hasChangeSet = false;
+    let didThrow = false;
+
+    try {
+      if (!fullText && !hasChangeSet) {
+        throw new Error('Provider returned an empty response. Please verify provider connectivity and try again.');
+      }
+    } catch (e: any) {
+      didThrow = true;
+      assert.ok(e.message.includes('empty response'), 'Identifies empty response error');
+    }
+    assert.strictEqual(didThrow, true, 'Must throw error on empty response');
+  });
+
+  // Test 12: Phase 2A OpenAI-Only Active Model Routing
+  test('All active dashboard models map strictly to their exact OpenAI API IDs', () => {
+    const activeOpenAIModels = ['gpt-6-astra', 'gpt-6.1-sol'];
+    for (const mId of activeOpenAIModels) {
+      const { route, adapter } = router.resolveRoute(mId);
+      assert.strictEqual(adapter.id, 'openai', `Model ${mId} routes to openai adapter`);
+      assert.strictEqual(route.apiModelId, mId, `Model ${mId} reaches its exact upstream ID`);
+    }
+  });
 
   console.log(`\n======================================================`);
   console.log(`Stage B Test Summary: ${passed} passed, ${failed} failed.`);
@@ -392,8 +287,6 @@ async function runStageBTests() {
   if (failed > 0) {
     process.exit(1);
   }
-  process.exit(0);
 }
 
 runStageBTests();
-

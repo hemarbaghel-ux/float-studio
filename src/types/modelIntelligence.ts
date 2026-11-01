@@ -1,6 +1,6 @@
 export type SourceType = 'official_provider' | 'independent_benchmark' | 'float_evaluation';
 export type ModelProviderId = 'openai' | 'auto';
-export type TrustworthyModelStatus = 'AVAILABLE' | 'NOT_CONFIGURED' | 'CONFIG_REQUIRED' | 'UNAVAILABLE';
+export type TrustworthyModelStatus = 'AVAILABLE' | 'NOT_CONFIGURED' | 'CONFIG_REQUIRED' | 'UNAVAILABLE' | 'UNVERIFIED';
 
 export interface VerifiedSource {
   name: string;
@@ -80,5 +80,5 @@ export interface VerifiedModel {
   pricing: VerifiedPricing;
   benchmarks: VerifiedBenchmarkResult[];
   limitations: string[];
-  lastVerified: string;
+  lastVerified?: string;
 }

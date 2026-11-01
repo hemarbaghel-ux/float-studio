@@ -1,22 +1,21 @@
 import React from 'react';
-import { 
-  ArrowLeft, 
-  Brain, 
-  Cpu, 
-  Zap, 
-  Eye, 
-  Wrench, 
-  Shield, 
-  Check, 
-  Info, 
-  ExternalLink, 
-  AlertCircle, 
-  CheckCircle2, 
-  Clock, 
-  Layers, 
-  Coins, 
+import {
+  ArrowLeft,
+  Brain,
+  Cpu,
+  Zap,
+  Eye,
+  Wrench,
+  Shield,
+  Check,
+  Info,
+  ExternalLink,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Layers,
+  Coins,
   Scale,
-  Sparkles,
   Lock
 } from 'lucide-react';
 import { AIModel } from '../../types/ai';
@@ -36,7 +35,16 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
   const { providerStatus } = useModelIntelligenceStore();
 
   const providerInfo = providerStatus[model.providerId];
-  const isAvailable = model.status === 'AVAILABLE' || (providerInfo && providerInfo.configured);
+  const modelAccess = providerInfo?.modelAccess?.[model.id];
+  const availabilityLabel = modelAccess?.status === 'listed'
+    ? 'Model ID Listed · Generation Unverified'
+    : modelAccess?.status === 'not_listed'
+      ? 'Model ID Not Listed'
+      : modelAccess?.status === 'configuration_required' || (providerInfo && !providerInfo.configured)
+        ? 'Server Configuration Required'
+        : providerInfo?.configured
+          ? 'Generation Access Unverified'
+          : 'Model Access Unverified';
 
   const getStatusBadge = () => {
     if (model.tier === 'Free') {
@@ -47,18 +55,10 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
         </span>
       );
     }
-    if (isAvailable) {
-      return (
-        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
-          <CheckCircle2 size={13} className="text-emerald-400" />
-          Available in FLOAT
-        </span>
-      );
-    }
     return (
       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-950/80 border border-amber-500/40 text-amber-300">
         <Lock size={13} className="text-amber-400" />
-        Configuration Required
+        {availabilityLabel}
       </span>
     );
   };
@@ -66,11 +66,11 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
   return (
     <div className="max-w-5xl mx-auto w-full pb-16">
       {/* Navigation Breadcrumb */}
-      <button 
-        onClick={onBack} 
+      <button
+        onClick={onBack}
         className="flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white mb-6 transition-colors group cursor-pointer"
       >
-        <ArrowLeft size={16} className="group-hover:-translate-x-0.5 transition-transform" /> 
+        <ArrowLeft size={16} className="group-hover:-translate-x-0.5 transition-transform" />
         Back to Model Intelligence
       </button>
 
@@ -117,24 +117,14 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
               </a>
             )}
 
-            {isAvailable ? (
-              <button 
-                onClick={onSelect}
-                className="flex items-center justify-center gap-2 px-6 py-2.5 bg-white hover:bg-slate-100 text-black rounded-lg text-xs font-semibold transition-all shadow-md cursor-pointer"
-              >
-                <Check size={14} />
-                Select for Workspace
-              </button>
-            ) : (
-              <button 
-                onClick={onSelect}
-                title="Select model for workspace (server-side API key required for execution)"
-                className="flex items-center justify-center gap-2 px-5 py-2.5 bg-[#21262D] hover:bg-[#2A313C] text-slate-300 rounded-lg text-xs font-medium border border-[#30363D] transition-colors cursor-pointer"
-              >
-                <Lock size={13} className="text-amber-400" />
-                Select Model (Key Required)
-              </button>
-            )}
+            <button
+              onClick={onSelect}
+              title="Select the model; a real provider request is required to verify generation access."
+              className="flex items-center justify-center gap-2 px-5 py-2.5 bg-[#21262D] hover:bg-[#2A313C] text-slate-300 rounded-lg text-xs font-medium border border-[#30363D] transition-colors cursor-pointer"
+            >
+              <Lock size={13} className="text-amber-400" />
+              Select Model · Access Unverified
+            </button>
           </div>
         </div>
 
@@ -143,9 +133,9 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
           <Info size={16} className="text-purple-400 shrink-0 mt-0.5" />
           <div className="text-[#8B949E] leading-relaxed">
             <span className="text-slate-200 font-semibold">FLOAT Availability Verification: </span>
-            {verified?.availabilityDetails || (isAvailable 
-              ? 'Active and connected in FLOAT server runtime.' 
-              : `To activate, configure ${model.providerId.toUpperCase()}_API_KEY on the server.`
+            {modelAccess?.detail || verified?.availabilityDetails || (providerInfo?.configured
+              ? `Credentials are configured for ${providerInfo.name}; a real generation request has not verified this model.`
+              : `Configure the server-side ${model.providerId.toUpperCase()} provider credential to attempt a model request.`
             )}
           </div>
         </div>
@@ -154,7 +144,7 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
         <div className="mt-6">
           <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Neutral Overview</h2>
           <p className="text-sm text-slate-300 leading-relaxed max-w-4xl">
-            {verified?.description || model.description || "Provider-documented model for autonomous development and reasoning."}
+            {verified?.description || model.description || "Provider-documented model for coding and reasoning requests."}
           </p>
         </div>
       </div>
@@ -169,7 +159,7 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
               <h2 className="text-sm font-bold text-white uppercase tracking-wider">Official API Pricing</h2>
             </div>
             {verified?.pricing?.sourceUrl && (
-              <a 
+              <a
                 href={verified.pricing.sourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -208,7 +198,7 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
               <div>
                 <span className="text-xs text-[#8B949E]">Cached Input</span>
                 <p className="text-base font-bold text-white mt-0.5">
-                  {verified?.pricing?.cachedInputCostPer1M != null 
+                  {verified?.pricing?.cachedInputCostPer1M != null
                     ? `$${verified.pricing.cachedInputCostPer1M.toFixed(3)}`
                     : 'Not supported'}
                   {verified?.pricing?.cachedInputCostPer1M != null && (
@@ -350,56 +340,6 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
           </div>
         )}
       </div>
-
-      {/* Cloud Agent & Remote Codex Execution Configuration */}
-      {(verified?.cloudAgentConfig || model.cloudAgentConfig) && (
-        <div className="bg-[#12161F] border border-purple-800/40 rounded-2xl p-6 shadow-md mb-8">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles size={16} className="text-purple-400" />
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Cloud Agent & Remote Execution Configuration</h2>
-          </div>
-          <div className="space-y-3 text-xs">
-            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
-              <span className="text-[#8B949E] block mb-1">Remote Agent Connect Endpoint</span>
-              <code className="text-purple-300 font-mono text-[11px] break-all">
-                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.remoteUrl}
-              </code>
-            </div>
-            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[#8B949E]">Attached Active Session</span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/60 border border-emerald-700/50 text-emerald-400">
-                  Connected & Active
-                </span>
-              </div>
-              <code className="text-emerald-300 font-mono text-[11px] break-all block">
-                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.sessionId || 'Auto-Provisioned Session'}
-              </code>
-            </div>
-            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
-              <span className="text-[#8B949E] block mb-1">Codex Environment Identifier</span>
-              <code className="text-slate-200 font-mono text-[11px] break-all">
-                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.environmentId}
-              </code>
-            </div>
-            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D]">
-              <span className="text-[#8B949E] block mb-1">Execution Server Command</span>
-              <code className="text-emerald-300 font-mono text-[11px] block break-all bg-black/40 p-2 rounded">
-                {(verified?.cloudAgentConfig || model.cloudAgentConfig)?.execServerCommand}
-              </code>
-            </div>
-            <div className="p-3 rounded-xl bg-[#0D1117] border border-[#21262D] flex items-center justify-between">
-              <div>
-                <span className="text-[#8B949E] block">Upstream Fallback Model</span>
-                <span className="text-white font-medium">GPT-4o (Frontier Upstream)</span>
-              </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-900/40 border border-purple-700/50 text-purple-300">
-                Automatic Upstream Fallback
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Limitations & Caveats */}
       {verified?.limitations && verified.limitations.length > 0 && (

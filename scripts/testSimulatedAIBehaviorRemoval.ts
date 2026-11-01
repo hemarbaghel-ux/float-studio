@@ -1,5 +1,6 @@
 import { OpenAIAdapter } from '../src/server/providers/openai';
 import { AIProviderError } from '../src/server/providers/base';
+import { streamGeminiContent } from '../src/services/gemini';
 
 let passed = 0;
 let failed = 0;
@@ -42,17 +43,17 @@ async function runTests() {
     missingKeyGenError = err;
   }
   assert(missingKeyGenError instanceof AIProviderError, 'generateContent without key throws AIProviderError');
-  assert((missingKeyGenError?.code as string) === 'NOT_CONFIGURED', 'Error code is NOT_CONFIGURED');
-  assert(missingKeyGenError?.statusCode === 503, 'HTTP status is 503');
+  assert(missingKeyGenError?.code === 'AUTH_ERROR', 'Error code is AUTH_ERROR');
+  assert(missingKeyGenError?.statusCode === 401, 'HTTP status is 401');
   assert(missingKeyGenError?.message.includes('not configured'), 'Error message is actionable and mentions configuration');
 
   // 1.2 generateContentStream without credentials
   let missingKeyStreamError: any = null;
-  const streamedChunks: string[] = [];
+  let streamedChunks: string[] = [];
   try {
     await unconfiguredAdapter.generateContentStream(
       {
-        model: 'gpt-6-sol',
+        model: 'gpt-6.1-sol',
         messages: [{ role: 'user', content: 'Debug this concurrency error' }]
       },
       (chunk) => { streamedChunks.push(chunk); }
@@ -61,8 +62,8 @@ async function runTests() {
     missingKeyStreamError = err;
   }
   assert(missingKeyStreamError instanceof AIProviderError, 'generateContentStream without key throws AIProviderError');
-  assert((missingKeyStreamError?.code as string) === 'NOT_CONFIGURED', 'Streaming error code is NOT_CONFIGURED');
-  assert(missingKeyStreamError?.statusCode === 503, 'Streaming status is 503');
+  assert(missingKeyStreamError?.code === 'AUTH_ERROR', 'Streaming error code is AUTH_ERROR');
+  assert(missingKeyStreamError?.statusCode === 401, 'Streaming status is 401');
   assert(streamedChunks.length === 0, 'Zero chunks streamed on missing credentials (no fabricated text)');
 
   // Test Suite 2: Upstream 401 (Invalid Key) Must Throw Actionable Error
@@ -70,13 +71,11 @@ async function runTests() {
   process.env.OPENAI_API_KEY = 'sk-invalid-key-for-test-mock';
   const mock401Adapter = new OpenAIAdapter();
   (mock401Adapter as any).getClient = () => ({
-    chat: {
-      completions: {
-        create: async () => {
-          const err: any = new Error('Incorrect API key provided: sk-invalid-key-for-test-mock');
-          err.status = 401;
-          throw err;
-        }
+    responses: {
+      create: async () => {
+        const err: any = new Error('Incorrect API key provided: sk-invalid-key-for-test-mock');
+        err.status = 401;
+        throw err;
       }
     }
   });
@@ -96,7 +95,7 @@ async function runTests() {
   assert(invalidKeyGenError?.message.includes('authentication failed'), 'Message accurately describes auth failure');
 
   let invalidKeyStreamError: any = null;
-  const invalidStreamedChunks: string[] = [];
+  let invalidStreamedChunks: string[] = [];
   try {
     await mock401Adapter.generateContentStream(
       {
@@ -112,17 +111,15 @@ async function runTests() {
   assert(invalidKeyStreamError?.code === 'AUTH_ERROR', 'Streaming 401 code is AUTH_ERROR');
   assert(invalidStreamedChunks.length === 0, 'Zero chunks streamed on 401 error (no fabricated output)');
 
-  // Test Suite 3: Upstream Rate Limit / Quota Exceeded (429) Must Throw RATE_LIMITED
+  // Test Suite 3: Upstream Rate Limit / Quota Exceeded (429) Must Throw
   console.log('\n--- Test Suite 3: Upstream Quota/Rate Limit (429) Must Throw ---');
   const mock429Adapter = new OpenAIAdapter();
   (mock429Adapter as any).getClient = () => ({
-    chat: {
-      completions: {
-        create: async () => {
-          const err: any = new Error('You exceeded your current quota, please check your plan and billing details.');
-          err.status = 429;
-          throw err;
-        }
+    responses: {
+      create: async () => {
+        const err: any = new Error('You exceeded your current quota, please check your plan and billing details.');
+        err.status = 429;
+        throw err;
       }
     }
   });
@@ -130,21 +127,23 @@ async function runTests() {
   let quotaError: any = null;
   try {
     await mock429Adapter.generateContent({
-      model: 'gpt-6-sol',
+      model: 'gpt-6.1-sol',
       messages: [{ role: 'user', content: 'Design architecture' }]
     });
   } catch (err: any) {
     quotaError = err;
   }
   assert(quotaError instanceof AIProviderError, 'Quota exceeded throws AIProviderError');
-  assert(quotaError?.code === 'RATE_LIMITED', 'Error code is RATE_LIMITED');
+  assert(quotaError?.code === 'QUOTA_EXCEEDED', 'Error code is QUOTA_EXCEEDED');
   assert(quotaError?.statusCode === 429, 'Status is 429');
+  assert(quotaError?.message.includes('quota exceeded'), 'Error message informs user of quota');
 
   // Test Suite 4: Explicit Demo Mode (Visibly Identified & No Fabricated Tokens)
   console.log('\n--- Test Suite 4: Explicit Demo Mode Handling ---');
   delete process.env.OPENAI_API_KEY;
   const demoAdapter = new OpenAIAdapter();
 
+  // 4.1 Demo mode non-streaming
   const demoRes = await demoAdapter.generateContent({
     model: 'gpt-6-astra',
     messages: [{ role: 'user', content: 'Build a React dashboard' }],
@@ -153,6 +152,38 @@ async function runTests() {
   assert(demoRes.isSimulated === true, 'demoMode sets isSimulated: true');
   assert(demoRes.text.includes('[SIMULATED DEMO RESPONSE]'), 'Demo output visibly contains [SIMULATED DEMO RESPONSE] banner');
   assert(demoRes.usage === undefined, 'Demo response does NOT fabricate token usage (usage is undefined)');
+
+  // 4.2 Demo mode streaming
+  let demoStreamChunks: string[] = [];
+  const demoStreamRes = await demoAdapter.generateContentStream(
+    {
+      model: 'gpt-6.1-sol',
+      messages: [{ role: 'user', content: 'Deep reasoning on algorithms' }],
+      demoMode: true
+    },
+    (chunk) => { demoStreamChunks.push(chunk); }
+  );
+  assert(demoStreamRes.isSimulated === true, 'Streaming demoMode sets isSimulated: true');
+  assert(demoStreamRes.text.includes('[SIMULATED DEMO RESPONSE]'), 'Streaming output visibly contains [SIMULATED DEMO RESPONSE] banner');
+  assert(demoStreamRes.usage === undefined, 'Streaming demo does NOT fabricate token usage');
+  assert(demoStreamChunks.length > 0, 'Demo chunks were delivered progressively');
+  assert(demoStreamChunks.join('').includes('[SIMULATED DEMO RESPONSE]'), 'Accumulated stream contains disclosure banner');
+
+  // Legacy Gemini-only client compatibility path must fail explicitly; it cannot
+  // synthesize a response or return text when the provider is not in the router.
+  let retiredGeminiError: any = null;
+  const retiredGeminiChunks: string[] = [];
+  try {
+    await streamGeminiContent({
+      prompt: 'Build a calculator',
+      model: 'gemini-3.8-flash',
+      onChunk: (chunk) => { retiredGeminiChunks.push(chunk); }
+    });
+  } catch (err: any) {
+    retiredGeminiError = err;
+  }
+  assert(retiredGeminiError?.code === 'UNSUPPORTED_PROVIDER', 'Unregistered Gemini model returns explicit unsupported-provider error');
+  assert(retiredGeminiChunks.length === 0, 'Retired Gemini client never fabricates a completed assistant response');
 
   // Restore original environment
   if (originalKey !== undefined) process.env.OPENAI_API_KEY = originalKey;

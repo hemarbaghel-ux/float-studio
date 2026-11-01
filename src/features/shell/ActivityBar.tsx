@@ -1,5 +1,5 @@
 import React from 'react';
-import { Files, Search, Settings, MessageSquare, Terminal, Bot, BarChart2, ShieldAlert, Cpu, Sun, Moon, CheckCircle2, GitBranch } from 'lucide-react';
+import { Files, Search, Settings, MessageSquare, Terminal, Sun, Moon, CheckCircle2, GitBranch } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { cn } from '../../lib/utils';
 import { FloatLogo } from '../../components/FloatLogo';
@@ -82,24 +82,6 @@ export function ActivityBar() {
           isActive={rightSidebarOpen} 
           onClick={toggleRightSidebar} 
           title="AI Assistant" 
-        />
-        <ActivityIcon 
-           icon={Cpu} 
-           isActive={activeWorkspace === 'agents'} 
-           onClick={() => setActiveWorkspace(activeWorkspace === 'agents' ? 'code' : 'agents')} 
-           title="Agent Command Center" 
-         />
-        <ActivityIcon 
-           icon={BarChart2} 
-           isActive={activeWorkspace === 'evals'} 
-           onClick={() => setActiveWorkspace(activeWorkspace === 'evals' ? 'code' : 'evals')} 
-           title="Evals" 
-         />
-        <ActivityIcon 
-           icon={Bot} 
-          isActive={false} 
-          onClick={() => document.dispatchEvent(new Event('open-agent-manager'))} 
-          title="Agent Manager" 
         />
         <ActivityIcon 
           id="main-nav-theme-toggle"

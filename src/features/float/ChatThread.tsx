@@ -3,34 +3,30 @@ import ReactMarkdown from 'react-markdown';
 import {
   ArrowUp, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Copy, FileCode2, FilePlus2, FileX2, Files, History,
   Loader2, Play, RotateCcw, Square, Terminal as TerminalIcon, Trash2, X, Download, Save,
-  AlertCircle, KeyRound, ExternalLink, Code2,
+  AlertCircle, ExternalLink, Code2,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../lib/firebase';
+import { loadProjectFileTree } from '../../services/projectCloudRepository';
 import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
 import { useAuthStore } from '../../store/authStore';
 import { ConsentService } from '../../services/consentService';
 import { ConversationService } from '../../services/conversationService';
+import { conversationSyncStatusLabel, mapThreadMessagesForCloud, type ConversationSyncResult } from '../../services/conversationCloudMessages';
 import { runPythonCode } from '../../services/pythonRunner';
 import { flattenFileTree } from '../../lib/utils';
-import type { AIContextItem, ChangeSet, FileNode } from '../../types';
+import type { ChangeSet, FileNode } from '../../types';
 import { ModelSelector } from '../ai/ModelSelector';
-import { AgentSelector } from '../ai/AgentSelector';
-import { AGENT_SYSTEM_PROMPT, diffRows, diffStats, parseSegments, type Segment } from './chatParsing';
-import { filesToMap, exportZip, parseStoredFiles } from './projectIO';
+import { DiffReviewModal } from '../proposals/DiffReviewModal';
+import { createAssistantProposal } from '../proposals/proposalWorkflow';
+import { CODING_ASSISTANT_SYSTEM_PROMPT, diffRows, diffStats, parseSegments, type Segment } from './chatParsing';
+import { buildChatContextItems } from './chatContext';
+import { filesToMap, exportZip } from './projectIO';
 import { sandboxFs } from './workspaceFs';
 import { isShellCommand, runShell } from './sandbox';
-import { useCloudSession } from './cloudSessionStore';
 import { AttachMenu, SlashMenu, slashMatches } from './ComposerExtras';
-import { CloudSessionBanner } from './CloudSession';
 import { ChatFeedbackButtons } from './ChatFeedbackButtons';
-import {
-  streamFloatAgentMessage,
-  getFloatAgentConfig,
-  type StreamStatusUpdate,
-} from '../../services/floatAgent';
-import { ApiConfigModal } from '../settings/ApiConfigModal';
 
 type ChangeStatus = 'pending' | 'accepted' | 'rejected';
 
@@ -44,15 +40,11 @@ interface ThreadMessage {
   /** model messages: path -> status, plus the file content before the change was accepted */
   changes?: Record<string, { status: ChangeStatus; before?: string | null }>;
   changeSet?: ChangeSet;
-  agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   error?: string;
   errorCode?: string;
-  errorProvider?: string;
-  setupStep?: string;
   cancelled?: boolean;
   latencyMs?: number;
   modelId?: string;
-  modelUsed?: string;
 }
 
 const MAX_CHECKPOINTS = 12;
@@ -111,19 +103,20 @@ export function ChatThread({ chatId }: { chatId: string }) {
   const projectId = useIDEStore((s) => s.projectId);
   const projectName = useIDEStore((s) => s.projectName);
   const files = useIDEStore((s) => s.files);
-  const { selectedModel, setSelectedModel, selectedAgent, setSelectedAgent, agents } = useAIStore();
+  const { selectedModel, setSelectedModel } = useAIStore();
   const [loadingProject, setLoadingProject] = useState(projectId !== chatId);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ThreadMessage[]>(() => ownerId ? loadThread(chatId, ownerId) : []);
+  const [cloudSaveStatus, setCloudSaveStatus] = useState<{ chatId: string; result: { status: 'saving' } | ConversationSyncResult } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(() => !ownerId || loadThread(chatId, ownerId).length === 0);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [reviewingChangeSet, setReviewingChangeSet] = useState<ChangeSet | null>(null);
   const [drawer, setDrawer] = useState<'files' | 'terminal' | null>(null);
   const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
-  const [showApiConfig, setShowApiConfig] = useState(false);
-  const [agentStreamStatus, setAgentStreamStatus] = useState<StreamStatusUpdate | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const cloudSaveAttemptRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const startedRef = useRef(false);
@@ -134,11 +127,6 @@ export function ChatThread({ chatId }: { chatId: string }) {
     activeChatIdRef.current = chatId;
   }, [chatId]);
 
-  useEffect(() => {
-    const handleOpen = () => setShowApiConfig(true);
-    document.addEventListener('open-api-config-modal', handleOpen);
-    return () => document.removeEventListener('open-api-config-modal', handleOpen);
-  }, []);
 
   // Load the project when opening /chat/:id directly (refresh / shared link)
   useEffect(() => {
@@ -155,9 +143,10 @@ export function ChatThread({ chatId }: { chatId: string }) {
       setLoadingProject(false);
       return () => { cancelled = true; };
     }
-    if (useIDEStore.getState().projectId === chatId) {
+    const workspaceState = useIDEStore.getState();
+    if (workspaceState.projectId === chatId && workspaceState.projectLoadedFromCloud) {
       setLoadingProject(false);
-      return;
+      return () => { cancelled = true; };
     }
     setLoadingProject(true);
     (async () => {
@@ -166,7 +155,9 @@ export function ChatThread({ chatId }: { chatId: string }) {
         if (cancelled) return;
         if (!snap.exists()) throw new Error('This chat was not found. It may have been deleted.');
         const data = snap.data() as any;
-        useIDEStore.getState().setProject(data.name || 'Untitled Project', parseStoredFiles(data.files), chatId);
+        const projectFiles = await loadProjectFileTree(db, chatId, data);
+        if (cancelled) return;
+        useIDEStore.getState().setProject(data.name || 'Untitled Project', projectFiles, chatId, 'cloud');
       } catch (e: any) {
         if (!cancelled) setLoadError(e?.message || 'Could not load this chat.');
       } finally {
@@ -210,10 +201,9 @@ export function ChatThread({ chatId }: { chatId: string }) {
             checkpoint: message.checkpoint,
             changes: message.changes,
             changeSet: message.changeSet,
-            agentEvents: message.agentEvents,
             error: message.error,
             cancelled: message.cancelled,
-            latencyMs: (message as any).latencyMs,
+            latencyMs: message.latency,
             modelId: (message as any).modelId,
           })));
         }
@@ -227,20 +217,10 @@ export function ChatThread({ chatId }: { chatId: string }) {
 
   useEffect(() => {
     if (messagesBelongToPreviousAccount || !ownerId || historyLoading || streaming || messages.length === 0) return;
+    const attempt = ++cloudSaveAttemptRef.current;
+    setCloudSaveStatus({ chatId, result: { status: 'saving' } });
     const timer = setTimeout(() => {
-      const persisted = messages.slice(-24).map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-        timestamp: message.createdAt,
-        changes: message.changes,
-        changeSet: message.changeSet,
-        agentEvents: message.agentEvents,
-        error: message.error,
-        cancelled: message.cancelled,
-        latencyMs: message.latencyMs,
-        modelId: message.modelId,
-      }));
+      const persisted = mapThreadMessagesForCloud(messages);
       void ConversationService.syncToCloud({
         id: chatId,
         projectId: chatId,
@@ -248,6 +228,10 @@ export function ChatThread({ chatId }: { chatId: string }) {
         createdAt: persisted[0]?.timestamp || Date.now(),
         updatedAt: Date.now(),
         messages: persisted,
+      }).then((result) => {
+        if (activeChatIdRef.current === chatId && cloudSaveAttemptRef.current === attempt) {
+          setCloudSaveStatus({ chatId, result });
+        }
       });
     }, 700);
     return () => clearTimeout(timer);
@@ -269,8 +253,6 @@ export function ChatThread({ chatId }: { chatId: string }) {
       const prompt = text.trim();
       if (!prompt || streaming || historyLoading) return;
       const user = auth.currentUser;
-      const activeAgent = agents.find((agent) => agent.id === selectedAgent);
-      const useToolAgent = activeAgent?.mode === 'agent' || activeAgent?.mode === 'edit';
       const history = opts.retryOf ? messages.slice(0, messages.findIndex((m) => m.id === opts.retryOf)) : messages;
       const startTime = Date.now();
       const userMsg: ThreadMessage = {
@@ -297,85 +279,23 @@ export function ChatThread({ chatId }: { chatId: string }) {
 
       const patch = (p: Partial<ThreadMessage>) => setMessages((prev) => prev.map((m) => (m.id === modelMsg.id ? { ...m, ...p } : m)));
 
-      // Only use direct client fallback session when explicitly using float-agent without a signed-in user
-      const isAgentSession = selectedAgent === 'float-agent' && !user;
-
-      if (isAgentSession) {
-        abortRef.current = new AbortController();
-        const historyForAgent = base
-          .filter((m) => m.content && !m.error)
-          .map((m) => ({
-            role: m.role,
-            content: m.content,
-          }));
-
-        let full = '';
-        try {
-          const finalOutput = await streamFloatAgentMessage({
-            prompt,
-            modelId: selectedModel,
-            conversationHistory: historyForAgent,
-            signal: abortRef.current.signal,
-            onChunk: (_chunk, fullText) => {
-              full = fullText;
-              const currentElapsed = Date.now() - startTime;
-              patch({ content: full, latencyMs: currentElapsed });
-            },
-            onStatus: (status) => {
-              setAgentStreamStatus(status);
-            },
-          });
-
-          const totalElapsed = Date.now() - startTime;
-          const pending: Record<string, { status: ChangeStatus }> = {};
-          for (const seg of parseSegments(finalOutput)) {
-            if (seg.kind !== 'text') pending[seg.path] = { status: 'pending' };
-          }
-          patch({ content: finalOutput, changes: pending, latencyMs: totalElapsed });
-        } catch (e: any) {
-          if (activeChatIdRef.current !== chatId) return;
-          if (e?.name === 'AbortError') {
-            patch({ cancelled: true });
-          } else {
-            setInput((prev) => prev || prompt);
-            patch({
-              error: e?.message || String(e),
-              errorCode: e?.code,
-              errorProvider: e?.provider,
-              setupStep: e?.setupStep
-            });
-          }
-        } finally {
-          if (activeChatIdRef.current === chatId) {
-            abortRef.current = null;
-            setStreaming(false);
-            setAgentStreamStatus(null);
-          }
-        }
-        return;
-      }
-
       try {
         if (!user) throw new Error('Please sign in to chat with FLOAT.');
         const token = await user.getIdToken();
-        const map = filesToMap(useIDEStore.getState().files);
-        const mentioned = new Set(Array.from(prompt.matchAll(/@([\w./-]+)/g)).map((m) => m[1]).filter((p) => p in map));
-        // Never send credential files, traversal paths, or private key material to a model.
-        const contextItems: AIContextItem[] = Object.entries(map)
-          .filter(([path]) => isSafeWorkspacePath(path))
-          .map(([path, content]) => ({
-          id: path,
-          type: mentioned.has(path) ? 'attachment' : 'file',
-          name: path,
-          path,
-          content,
-        }));
+        const workspaceState = useIDEStore.getState();
+        const activeFile = flattenFileTree(workspaceState.files).find((file) => file.id === workspaceState.activeFileId);
+        const contextItems = buildChatContextItems(
+          prompt,
+          workspaceState.files,
+          chatId,
+          activeFile?.path || activeFile?.name,
+        );
         const requestMessages = [
           ...base.filter((m) => m.content && !m.error).map((m) => ({ role: m.role, parts: [{ text: m.content }] })),
           { role: 'user', parts: [{ text: prompt }] },
         ];
         abortRef.current = new AbortController();
-        const res = await fetch(useToolAgent ? '/api/ai/agent' : '/api/ai/chat', {
+        const res = await fetch('/api/ai/chat', {
           method: 'POST',
           signal: abortRef.current.signal,
           headers: {
@@ -383,22 +303,11 @@ export function ChatThread({ chatId }: { chatId: string }) {
             Authorization: `Bearer ${token}`,
             'X-Float-Data-Sharing': ConsentService.isSharingAllowed() ? 'true' : 'false',
           },
-          body: JSON.stringify(useToolAgent ? {
-            prompt: `${prompt}${contextItems.filter((item) => item.type === 'attachment').map((item) => `\n\n--- ${item.path} ---\n${item.content}`).join('')}`,
-            conversationHistory: base.filter((message) => message.content && !message.error)
-              .slice(-12)
-              .map((message) => ({ role: message.role, content: message.content })),
-            virtualFiles: flattenFileTree(useIDEStore.getState().files).filter((file) => isSafeWorkspacePath(file.path)),
-            model: selectedModel,
-            agentId: selectedAgent,
-            systemInstruction: activeAgent?.systemInstructions,
-            projectName: useIDEStore.getState().projectName || 'Project Workspace',
-            projectId: chatId,
-          } : {
+          body: JSON.stringify({
             messages: requestMessages,
             model: selectedModel,
             reasoningEffort: useAIStore.getState().selectedEffort,
-            systemInstruction: activeAgent?.systemInstructions || AGENT_SYSTEM_PROMPT,
+            systemInstruction: CODING_ASSISTANT_SYSTEM_PROMPT,
             contextItems,
             projectName: useIDEStore.getState().projectName || 'Project Workspace',
             projectId: chatId,
@@ -407,12 +316,10 @@ export function ChatThread({ chatId }: { chatId: string }) {
         });
         if (!res.ok || !res.body) {
           const err = await res.json().catch(() => ({}));
-          const errorMsg = err.message || err.error || `HTTP ${res.status}`;
+          const errorMsg = err.error || `HTTP ${res.status}`;
           const errCode = err.code || (res.status === 401 ? 'AUTH_ERROR' : res.status === 429 ? 'RATE_LIMITED' : 'PROVIDER_ERROR');
           const errorObj = new Error(errorMsg);
           (errorObj as any).code = errCode;
-          (errorObj as any).provider = err.provider;
-          (errorObj as any).setupStep = err.setupStep;
           throw errorObj;
         }
         const reader = res.body.getReader();
@@ -420,9 +327,6 @@ export function ChatThread({ chatId }: { chatId: string }) {
         let buffer = '';
         let full = '';
         let receivedDone = false;
-        let actualModelUsed = selectedModel;
-        const agentEvents: NonNullable<ThreadMessage['agentEvents']> = [];
-        let finalChangeSet: ChangeSet | undefined;
 
         const processEvent = (evt: string) => {
           const dataLines = evt
@@ -439,61 +343,16 @@ export function ChatThread({ chatId }: { chatId: string }) {
           }
 
           const currentElapsed = Date.now() - startTime;
-          if (data.type === 'context_info') {
-            return;
-          } else if (useToolAgent && data.type === 'event') {
-            const event = data.data || {};
-            agentEvents.push(event);
-            patch({ agentEvents: [...agentEvents], latencyMs: currentElapsed });
-            if (event.type === 'failed') {
-              const failErr = new Error(event.message || 'Agent execution failed.');
-              (failErr as any).code = event.code || data.code || 'PROVIDER_ERROR';
-              (failErr as any).provider = event.provider || data.provider;
-              (failErr as any).setupStep = event.setupStep || data.setupStep;
-              throw failErr;
-            }
-          } else if (useToolAgent && data.type === 'delta') {
-            full += data.data?.text || data.text || '';
-            patch({ content: full, agentEvents: [...agentEvents], latencyMs: currentElapsed });
-          } else if (useToolAgent && data.type === 'result') {
-            receivedDone = true;
-            actualModelUsed = data.modelUsed || data.data?.modelUsed || actualModelUsed;
-            finalChangeSet = data.data?.changeSet;
-            full = data.data?.text || full;
-            patch({
-              content: full,
-              changeSet: finalChangeSet,
-              agentEvents: [...agentEvents],
-              latencyMs: currentElapsed,
-              modelUsed: actualModelUsed,
-              modelId: actualModelUsed
-            });
-          } else if (data.type === 'delta') {
+          if (data.type === 'delta') {
             if (typeof data.text !== 'string') throw new Error('FLOAT returned an invalid text chunk.');
             full += data.text;
             patch({ content: full, latencyMs: currentElapsed });
           } else if (data.type === 'done') {
             receivedDone = true;
-            actualModelUsed = data.modelUsed || actualModelUsed;
             if (typeof data.text === 'string' && data.text.length >= full.length) full = data.text;
-            patch({
-              content: full,
-              cancelled: !!data.cancelled,
-              latencyMs: currentElapsed,
-              modelUsed: actualModelUsed,
-              modelId: actualModelUsed
-            });
+            patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
           } else if (data.type === 'error') {
-            const errMsg = typeof data.message === 'string'
-              ? data.message
-              : typeof data.error === 'string'
-              ? data.error
-              : 'Generation failed.';
-            const streamErr = new Error(errMsg);
-            (streamErr as any).code = data.code || 'PROVIDER_ERROR';
-            (streamErr as any).provider = data.provider;
-            (streamErr as any).setupStep = data.setupStep;
-            throw streamErr;
+            throw new Error(typeof data.error === 'string' ? data.error : 'Generation failed.');
           } else {
             throw new Error(`FLOAT returned an unknown streaming event: ${String(data.type || 'missing type')}.`);
           }
@@ -521,32 +380,37 @@ export function ChatThread({ chatId }: { chatId: string }) {
         }
         const totalElapsed = Date.now() - startTime;
         if (activeChatIdRef.current !== chatId) return;
-        if (!full && !finalChangeSet) {
+        if (!full) {
           throw new Error('Provider returned an empty response. Please verify provider connectivity and try again.');
         }
         const pending: Record<string, { status: ChangeStatus }> = {};
-        for (const seg of parseSegments(full)) if (seg.kind !== 'text') pending[seg.path] = { status: 'pending' };
-        patch({
-          content: full,
-          changes: pending,
-          changeSet: finalChangeSet,
-          agentEvents: agentEvents.length ? agentEvents : undefined,
-          latencyMs: totalElapsed,
-          modelUsed: actualModelUsed,
-          modelId: actualModelUsed
-        });
+        const responseSegments = parseSegments(full);
+        for (const seg of responseSegments) if (seg.kind !== 'text') pending[seg.path] = { status: 'pending' };
+        patch({ content: full, changes: pending });
+
+        if (responseSegments.some((segment) => segment.kind !== 'text')) {
+          const currentWorkspace = useIDEStore.getState();
+          const saveResult = await currentWorkspace.saveProject();
+          if (saveResult.status !== 'synced') throw new Error(saveResult.message);
+          if (activeChatIdRef.current !== chatId) return;
+          const savedWorkspace = useIDEStore.getState();
+          if (!savedWorkspace.projectId) throw new Error('Save this workspace before creating a code proposal.');
+          const changeSet = await createAssistantProposal({
+            responseText: full,
+            prompt,
+            projectId: savedWorkspace.projectId,
+            conversationId: chatId,
+            files: savedWorkspace.files,
+            token
+          });
+          if (changeSet && activeChatIdRef.current === chatId) patch({ changeSet });
+        }
       } catch (e: any) {
         if (activeChatIdRef.current !== chatId) return;
         if (e?.name === 'AbortError') {
           patch({ cancelled: true });
         } else {
-          setInput((prev) => prev || prompt);
-          patch({
-            error: e?.message || String(e),
-            errorCode: e?.code,
-            errorProvider: e?.provider,
-            setupStep: e?.setupStep
-          });
+          patch({ error: e?.message || String(e), errorCode: e?.code });
         }
       } finally {
         if (activeChatIdRef.current === chatId) {
@@ -555,7 +419,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
         }
       }
     },
-    [messages, streaming, historyLoading, selectedModel, selectedAgent, agents, chatId],
+    [messages, streaming, historyLoading, selectedModel, chatId],
   );
 
   // Auto-send the prompt typed on the home screen
@@ -597,7 +461,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
     if ((proposalChange?.operation === 'modify' || proposalChange?.operation === 'delete') &&
         proposalChange.originalContent !== undefined && before !== proposalChange.originalContent) {
       setMessages((prev) => prev.map((item) => item.id === msgId
-        ? { ...item, error: `Cannot apply ${seg.path}: it changed after this proposal was generated. Ask the agent to review the latest file.` }
+        ? { ...item, error: `Cannot apply ${seg.path}: it changed after this proposal was generated. Ask FLOAT AI to review the latest file.` }
         : item));
       return;
     }
@@ -729,7 +593,6 @@ export function ChatThread({ chatId }: { chatId: string }) {
             }}
           />
           <HeaderButton icon={Download} label="Export" onClick={() => void exportZip(projectName || 'project', useIDEStore.getState().files)} />
-          <HeaderButton icon={KeyRound} label="API Config" onClick={() => setShowApiConfig(true)} />
         </div>
 
         {/* messages */}
@@ -769,10 +632,10 @@ export function ChatThread({ chatId }: { chatId: string }) {
                   chatId={chatId}
                   msg={m}
                   streaming={streaming && m.id === messages[messages.length - 1]?.id}
-                  streamStatus={streaming && m.id === messages[messages.length - 1]?.id ? agentStreamStatus : null}
                   onAccept={(seg) => applySegment(m.id, seg)}
                   onReject={(seg) => seg.kind !== 'text' && setChange(m.id, seg.path, 'rejected')}
                   onUndo={(seg) => undoSegment(m.id, seg, m.changes?.[seg.kind === 'text' ? '' : seg.path]?.before)}
+                  onReviewProposal={() => m.changeSet && setReviewingChangeSet(m.changeSet)}
                 />
               ),
             )}
@@ -782,7 +645,11 @@ export function ChatThread({ chatId }: { chatId: string }) {
         {/* composer */}
         <div className="shrink-0 px-4 pb-4">
           <div className="max-w-3xl mx-auto">
-            <CloudSessionBanner />
+            {cloudSaveStatus?.chatId === chatId && (
+              <div role="status" className={`px-1 pb-1 text-[11px] ${cloudSaveStatus.result.status === 'synced' ? 'text-slate-400 dark:text-[#6E7681]' : 'text-amber-700 dark:text-amber-300'}`}>
+                {cloudSaveStatus.result.status === 'saving' ? 'Saving conversation…' : conversationSyncStatusLabel(cloudSaveStatus.result)}
+              </div>
+            )}
             <div className="relative bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 rounded-2xl shadow-lg focus-within:border-slate-400 dark:focus-within:border-white/30">
               <SlashMenu prompt={input} index={Math.min(slashIndex, Math.max(0, slashItems.length - 1))} onPick={(t) => setInput(t)} />
               {mention && mentionItems.length > 0 && (
@@ -821,15 +688,6 @@ export function ChatThread({ chatId }: { chatId: string }) {
                       setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}${Object.keys(added).slice(0, 3).map((p) => `@${p}`).join(' ')} `);
                     }}
                   />
-                  <AgentSelector
-                    activeAgentId={selectedAgent}
-                    onAgentChange={(id) => {
-                      setSelectedAgent(id);
-                      const agent = agents.find((item) => item.id === id);
-                      if (agent?.defaultModel) setSelectedModel(agent.defaultModel);
-                    }}
-                    onAgentManagerOpen={() => document.dispatchEvent(new Event('open-agent-manager'))}
-                  />
                   <ModelSelector activeModelId={selectedModel} onModelChange={setSelectedModel} placement="top" variant="composer" />
                 </div>
                 {streaming ? (
@@ -864,8 +722,19 @@ export function ChatThread({ chatId }: { chatId: string }) {
         </aside>
       )}
 
-      {/* Settings / API Config modal */}
-      <ApiConfigModal isOpen={showApiConfig} onClose={() => setShowApiConfig(false)} />
+      {reviewingChangeSet && (
+        <DiffReviewModal
+          changeSet={reviewingChangeSet}
+          onClose={() => setReviewingChangeSet(null)}
+          onChangeSetUpdated={(updated) => {
+            setReviewingChangeSet(updated);
+            setMessages((prev) => prev.map((message) => message.changeSet?.id === updated.id
+              ? { ...message, changeSet: updated }
+              : message));
+          }}
+        />
+      )}
+
     </div>
   );
 }
@@ -886,15 +755,15 @@ function HeaderButton({ icon: Icon, label, onClick, active }: { icon: any; label
 /* ----------------------------------------------------------------------------------------- */
 
 function AssistantMessage({
-  chatId, msg, streaming, streamStatus, onAccept, onReject, onUndo,
+  chatId, msg, streaming, onAccept, onReject, onUndo, onReviewProposal,
 }: {
   chatId: string;
   msg: ThreadMessage;
   streaming: boolean;
-  streamStatus?: StreamStatusUpdate | null;
   onAccept: (seg: Segment) => void;
   onReject: (seg: Segment) => void;
   onUndo: (seg: Segment) => void;
+  onReviewProposal: () => void;
 }) {
   const segments = useMemo(() => {
     if (!msg.changeSet?.changes.length) return parseSegments(msg.content);
@@ -910,23 +779,18 @@ function AssistantMessage({
   const edits = segments.filter((s) => s.kind !== 'text') as Exclude<Segment, { kind: 'text' }>[];
   const pending = edits.filter((s) => (msg.changes?.[s.path]?.status ?? 'pending') === 'pending' && (s.kind === 'delete' || s.complete));
 
-  const badgeModelId = msg.modelUsed || msg.modelId;
-  const matchedModel = badgeModelId
-    ? models.find((m) => m.id === badgeModelId || m.apiModelId === badgeModelId)
-    : undefined;
-
   return (
     <div className="flex flex-col gap-2.5">
-      {(badgeModelId || (msg.latencyMs !== undefined && msg.latencyMs > 0)) && (
+      {(msg.modelId || (msg.latencyMs !== undefined && msg.latencyMs > 0)) && (
         <div className="flex items-center gap-2 px-0.5 text-[11px] text-slate-500 dark:text-[#8B949E]">
-          {badgeModelId && (
-            <span
-              data-testid="msg-model-badge"
-              data-model-used={badgeModelId}
-              className="font-semibold text-slate-700 dark:text-[#C9D1D9] inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10"
-            >
+          {msg.modelId && (
+            <span className="font-semibold text-slate-700 dark:text-[#C9D1D9] inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-              {matchedModel?.shortName || matchedModel?.displayName || badgeModelId}
+              {msg.modelId === 'gpt-6-astra'
+                ? 'GPT-6 Astra'
+                : msg.modelId === 'gpt-6.1-sol'
+                ? 'GPT-6.1 Sol'
+                : (models.find((m) => m.id === msg.modelId)?.shortName || models.find((m) => m.id === msg.modelId)?.displayName || msg.modelId)}
             </span>
           )}
           {msg.latencyMs !== undefined && msg.latencyMs > 0 && (
@@ -945,35 +809,7 @@ function AssistantMessage({
           )}
         </div>
       )}
-      {!!msg.agentEvents?.length && (
-        <div className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50/70 dark:bg-white/[0.02] px-3 py-2">
-          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 dark:text-[#8B949E]">
-            {streaming ? <Loader2 size={11} className="animate-spin text-blue-500" /> : <Check size={11} className="text-emerald-500" />}
-            Agent activity · {msg.agentEvents.length} step{msg.agentEvents.length === 1 ? '' : 's'}
-          </div>
-          <div className="flex flex-col gap-1">
-            {msg.agentEvents.slice(-4).map((event, index) => (
-              <div key={`${index}-${event.message}`} className="truncate text-[11px] text-slate-500 dark:text-[#8B949E]">
-                {event.message || event.action || event.type || 'Working…'}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {streaming && streamStatus && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-purple-500/10 dark:bg-purple-500/15 border border-purple-200/80 dark:border-purple-800/50 text-xs text-purple-900 dark:text-purple-200">
-          <Loader2 size={13} className="animate-spin text-purple-600 dark:text-purple-400 shrink-0" />
-          <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
-            <span className="font-semibold">{streamStatus.message}</span>
-            {streamStatus.detail && (
-              <span className="text-[11px] text-purple-700/80 dark:text-purple-300/80 font-mono">
-                · {streamStatus.detail}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-      {segments.length === 0 && streaming && !streamStatus && (
+      {segments.length === 0 && streaming && (
         <div className="flex items-center gap-2 text-xs text-slate-400">
           <Loader2 size={12} className="animate-spin" /> Thinking…
         </div>
@@ -992,8 +828,15 @@ function AssistantMessage({
             onAccept={() => onAccept(seg)}
             onReject={() => onReject(seg)}
             onUndo={() => onUndo(seg)}
+            reviewOnly
           />
         ),
+      )}
+      {msg.changeSet && !streaming && (
+        <div className="rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50/70 dark:bg-blue-950/20 px-3 py-2.5 flex items-center gap-3">
+          <span className="flex-1 text-xs text-slate-700 dark:text-[#C9D1D9]">{msg.changeSet.changes.length} file changes are saved as a review proposal. Workspace files are unchanged.</span>
+          <button onClick={onReviewProposal} className="px-2.5 py-1 rounded-md bg-slate-900 dark:bg-white text-white dark:text-black text-xs font-semibold cursor-pointer">Review diff</button>
+        </div>
       )}
       {!streaming && pending.length > 1 && (
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-white/10 px-3 py-2 text-xs">
@@ -1008,25 +851,21 @@ function AssistantMessage({
         <div className="rounded-xl border border-rose-200 dark:border-rose-500/20 bg-rose-50/80 dark:bg-rose-950/20 p-3.5 text-xs text-rose-800 dark:text-rose-300 flex flex-col gap-2">
           <div className="flex items-start gap-2">
             <AlertCircle size={15} className="shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
-            <div className="flex-1 flex flex-col gap-1">
-              <div className="flex items-center flex-wrap gap-1.5">
-                {msg.errorCode && (
-                  <span className="px-1.5 py-0.5 rounded bg-rose-200/70 dark:bg-rose-900/50 font-mono text-[10px] font-semibold">
-                    {msg.errorCode}
-                  </span>
-                )}
-                {msg.errorProvider && (
-                  <span className="text-[11px] font-semibold opacity-80">
-                    {msg.errorProvider}
-                  </span>
-                )}
-              </div>
-              <div className="font-medium leading-relaxed">{msg.error}</div>
-            </div>
+            <div className="flex-1 font-medium leading-relaxed">{msg.error}</div>
           </div>
-          {msg.setupStep && (
-            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-700 dark:text-slate-300">
-              {msg.setupStep}
+          {msg.errorCode === 'AUTH_ERROR' && (
+            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400 flex items-center justify-between">
+              <span>Configure server-side <code className="px-1 py-0.5 rounded bg-slate-200 dark:bg-white/10 font-mono text-[10px]">OPENAI_API_KEY</code> to enable live OpenAI chat completions.</span>
+            </div>
+          )}
+          {msg.errorCode === 'QUOTA_EXCEEDED' && (
+            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400">
+              Your upstream AI account quota has been exhausted. Check your OpenAI billing or switch to another available model.
+            </div>
+          )}
+          {msg.errorCode === 'RATE_LIMITED' && (
+            <div className="mt-1 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 text-[11px] text-slate-600 dark:text-slate-400">
+              Rate limit exceeded. Please wait a few seconds before retrying your prompt.
             </div>
           )}
         </div>
@@ -1198,7 +1037,7 @@ function extractText(node: React.ReactNode): string {
 }
 
 function FileChangeCard({
-  seg, status, streaming, onAccept, onReject, onUndo,
+  seg, status, streaming, onAccept, onReject, onUndo, reviewOnly = false,
 }: {
   seg: Exclude<Segment, { kind: 'text' }>;
   status: ChangeStatus;
@@ -1206,6 +1045,7 @@ function FileChangeCard({
   onAccept: () => void;
   onReject: () => void;
   onUndo: () => void;
+  reviewOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const current = fileContent(seg.path);
@@ -1235,7 +1075,7 @@ function FileChangeCard({
           )}
           {isDelete && <span className="text-[11px] text-rose-500">delete</span>}
         </button>
-        {!writing && !streaming && status === 'pending' && (
+        {!reviewOnly && !writing && !streaming && status === 'pending' && (
           <>
             <button onClick={onReject} className="px-2 py-1 rounded-md text-[11px] text-slate-600 dark:text-[#C9D1D9] hover:bg-slate-100 dark:hover:bg-white/10 cursor-pointer">Reject</button>
             <button onClick={onAccept} className="px-2 py-1 rounded-md text-[11px] bg-slate-900 dark:bg-white text-white dark:text-black font-semibold flex items-center gap-1 cursor-pointer">
@@ -1243,13 +1083,13 @@ function FileChangeCard({
             </button>
           </>
         )}
-        {status === 'accepted' && (
+        {!reviewOnly && status === 'accepted' && (
           <span className="flex items-center gap-1.5 text-[11px] text-emerald-600">
             <Check size={11} /> Applied
             <button onClick={onUndo} className="ml-1 text-slate-400 hover:text-slate-800 dark:hover:text-white underline cursor-pointer">Undo</button>
           </span>
         )}
-        {status === 'rejected' && (
+        {!reviewOnly && status === 'rejected' && (
           <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
             Rejected
             <button onClick={onAccept} className="underline hover:text-slate-800 dark:hover:text-white cursor-pointer">Apply anyway</button>
@@ -1348,8 +1188,6 @@ function FilesPanel({ paths }: { paths: string[] }) {
 }
 
 function MiniTerminal() {
-  const active = useCloudSession((s) => s.active);
-  const openModal = useCloudSession((s) => s.openModal);
   const [lines, setLines] = useState<{ type: 'cmd' | 'out' | 'err'; text: string }[]>([]);
   const [cmd, setCmd] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1375,8 +1213,6 @@ function MiniTerminal() {
         if (target && code === undefined) throw new Error(`python: can't open file '${target}'`);
         const res = await runPythonCode(code ?? '', Object.entries(map).map(([path, content]) => ({ path, content })));
         setLines((l) => [...l, { type: res.success ? 'out' : 'err', text: (res.success ? res.output : res.error) || '' }]);
-      } else if (!active) {
-        setLines((l) => [...l, { type: 'err', text: 'Shell commands need the browser worker. Enable it below to continue.' }]);
       } else if (isShellCommand(c) || c === 'help') {
         const { output, code } = await runShell(c, sandboxFs());
         if (output) setLines((l) => [...l, { type: code === 0 ? 'out' : 'err', text: output }]);
@@ -1394,7 +1230,7 @@ function MiniTerminal() {
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[#0A0A0A] text-[#C9D1D9] font-mono text-[11px]">
       <div className="flex-1 overflow-y-auto p-3 space-y-1">
-        <div className="text-[#6E7681]">{active ? 'Browser worker ready. Try: npm test, node index.js, ls, help. Python: python main.py' : 'Python runs in Pyodide (python main.py). Enable the browser worker for node and supported shell commands.'}</div>
+        <div className="text-[#6E7681]">Python runs in Pyodide (python main.py). Supported browser sandbox commands: ls, cat, pwd, help.</div>
         {lines.map((l, i) => (
           <div key={i} className={`whitespace-pre-wrap break-words ${l.type === 'cmd' ? 'text-white' : l.type === 'err' ? 'text-rose-400' : ''}`}>
             {l.type === 'cmd' ? `$ ${l.text}` : l.text}
@@ -1424,14 +1260,9 @@ function MiniTerminal() {
             }
           }}
           disabled={busy}
-          placeholder={active ? 'npm test' : 'python main.py'}
+          placeholder="python main.py"
           className="flex-1 bg-transparent focus:outline-none placeholder:text-[#484F58]"
         />
-        {!active && (
-          <button onClick={openModal} className="flex items-center gap-1 rounded bg-white/10 px-2 py-0.5 text-[10px] text-white hover:bg-white/20 cursor-pointer">
-            <Play size={10} /> Start session
-          </button>
-        )}
       </div>
     </div>
   );

@@ -75,11 +75,11 @@ export function PricingPage() {
       name: 'Hobby',
       price: '$0',
       period: 'forever',
-      description: 'The foundation for exploring AI coding and daily development.',
+      description: 'The foundation for AI-assisted coding and daily development.',
       badge: null,
       highlight: false,
       features: [
-        'FLOAT Basic & Gemini 3.1 Flash Lite access',
+        'GPT-6 Astra and GPT-6.1 Sol model selection',
         'Monaco editor & multi-language syntax',
         'Tab autocomplete & ghost-text completions',
         'Ctrl+K / Cmd+K inline AI coding assistant',
@@ -92,17 +92,15 @@ export function PricingPage() {
       name: 'Pro',
       price: billingPeriod === 'annual' ? '$16' : '$20',
       period: billingPeriod === 'annual' ? 'per month (billed annually)' : 'per month',
-      description: 'For engineers who rely on AI agents to plan, code, and review every day.',
+      description: 'For engineers who use AI chat and review code changes every day.',
       badge: 'Most Popular',
       highlight: true,
       features: [
-        '500 Fast Frontier Model queries (Claude 3.5 Sonnet, GPT-4o, Gemini 2.5 Pro)',
-        'Unlimited everyday Flash model assistance',
-        'Multi-file Composer & Agent Mode',
-        'Structured Plan Mode with approval gates',
-        'Subagent parallel task orchestration',
-        'Automatic codebase-wide index & semantic retrieval',
-        'Sandboxed terminal sessions & test execution',
+        'GPT-6 Astra and GPT-6.1 Sol model selection',
+        'AI chat with selected workspace context',
+        'Reviewable code proposals',
+        'Single-file code editing with explicit approval',
+        'Workspace search and file context',
         'Priority server queue & zero data retention'
       ]
     },
@@ -119,7 +117,7 @@ export function PricingPage() {
         '1,200 Fast Frontier queries per seat/month',
         'Centralized team billing & seat administration',
         'Shared team rules (.float/rules/ & .cursorrules)',
-        'Repository pull request review automations',
+        'GitHub repository connection (when configured)',
         'Model usage analytics & governance controls',
         'SOC2 compliance mode & enterprise security'
       ]
@@ -309,9 +307,9 @@ export function PricingPage() {
                 <Building2 size={20} />
               </div>
               <div>
-                <h4 className="font-semibold text-slate-900 dark:text-white mb-1">Bring Your Own Key (BYOK)</h4>
+                <h4 className="font-semibold text-slate-900 dark:text-white mb-1">Server-side model access</h4>
                 <p className="text-xs text-slate-500 dark:text-[#8B949E] leading-relaxed">
-                  Connect your own Google Gemini, OpenAI, Anthropic, or xAI keys in settings to pay providers directly at raw API rates.
+                  Provider credentials stay on the server and are never entered or stored in the browser.
                 </p>
               </div>
             </div>
@@ -337,7 +335,7 @@ export function PricingPage() {
                 What happens when I exhaust my Fast Frontier queries?
               </div>
               <p className="text-slate-500 dark:text-[#8B949E] leading-relaxed">
-                You never lose access to coding. You continue to receive unlimited everyday queries powered by fast models like Gemini 3.1 Flash Lite and FLOAT Basic.
+                Model availability depends on server-side provider configuration and access to the selected model.
               </p>
             </div>
             <div className="p-4 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121210]">
@@ -345,7 +343,7 @@ export function PricingPage() {
                 How do I switch AI models?
               </div>
               <p className="text-slate-500 dark:text-[#8B949E] leading-relaxed">
-                Use the model picker in the AI Composer or Command Palette to switch seamlessly between Claude 3.5 Sonnet, GPT-4o, Gemini 2.5 Pro, and Grok.
+                Use the model picker in the AI chat composer to select GPT-6 Astra or GPT-6.1 Sol. Requests require server-side provider configuration and access to that model.
               </p>
             </div>
           </div>

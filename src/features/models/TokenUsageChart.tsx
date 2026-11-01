@@ -12,15 +12,12 @@ import {
   Legend
 } from 'recharts';
 import { ModelUsageRecord } from '../../store/usageStore';
-import { BarChart3, TrendingUp, Sparkles, Layers, RefreshCw, Trash2, Cpu, ArrowUpRight } from 'lucide-react';
+import { BarChart3, TrendingUp, Layers, RefreshCw, Cpu, ArrowUpRight } from 'lucide-react';
 
 interface TokenUsageChartProps {
   records: ModelUsageRecord[];
   timeRange: '24h' | '7d' | '30d' | '90d' | 'all';
-  providerFilter: 'all' | 'openai' | 'google' | 'anthropic' | 'xai';
-  onLoadSampleData?: () => void;
-  onClearData?: () => void;
-  isSampleData?: boolean;
+  providerFilter: 'all' | 'openai' | 'google' | 'anthropic' | 'xai' | 'unknown';
 }
 
 export const PROVIDER_CONFIG: Record<string, { name: string; color: string; fillGradient: string }> = {
@@ -43,6 +40,11 @@ export const PROVIDER_CONFIG: Record<string, { name: string; color: string; fill
     name: 'xAI',
     color: '#8B5CF6', // Purple
     fillGradient: '#8B5CF6'
+  },
+  unknown: {
+    name: 'Unknown provider',
+    color: '#94A3B8',
+    fillGradient: '#94A3B8'
   }
 };
 
@@ -50,9 +52,6 @@ export function TokenUsageChart({
   records,
   timeRange,
   providerFilter,
-  onLoadSampleData,
-  onClearData,
-  isSampleData = false
 }: TokenUsageChartProps) {
   const [chartType, setChartType] = useState<'bar' | 'area'>('bar');
   const [metricType, setMetricType] = useState<'provider' | 'type'>('provider'); // 'provider' = by provider, 'type' = input vs output
@@ -64,7 +63,7 @@ export function TokenUsageChart({
     if (p.includes('openai') || p.includes('gpt') || p.includes('o1') || p.includes('o3')) return 'openai';
     if (p.includes('anthropic') || p.includes('claude')) return 'anthropic';
     if (p.includes('xai') || p.includes('grok')) return 'xai';
-    return 'google';
+    return 'unknown';
   };
 
   // Build daily aggregated time series
@@ -87,6 +86,7 @@ export function TokenUsageChart({
         openai: number;
         anthropic: number;
         xai: number;
+        unknown: number;
         inputTokens: number;
         outputTokens: number;
         total: number;
@@ -105,6 +105,7 @@ export function TokenUsageChart({
           openai: 0,
           anthropic: 0,
           xai: 0,
+          unknown: 0,
           inputTokens: 0,
           outputTokens: 0,
           total: 0,
@@ -121,7 +122,7 @@ export function TokenUsageChart({
         });
         if (slotIdx >= 0) {
           const p = getProviderKey(r.provider);
-          slots[slotIdx][p as 'google' | 'openai' | 'anthropic' | 'xai'] += r.totalTokens;
+          slots[slotIdx][p as 'google' | 'openai' | 'anthropic' | 'xai' | 'unknown'] += r.totalTokens;
           slots[slotIdx].inputTokens += r.inputTokens;
           slots[slotIdx].outputTokens += r.outputTokens;
           slots[slotIdx].total += r.totalTokens;
@@ -142,6 +143,7 @@ export function TokenUsageChart({
       openai: number;
       anthropic: number;
       xai: number;
+      unknown: number;
       inputTokens: number;
       outputTokens: number;
       total: number;
@@ -165,6 +167,7 @@ export function TokenUsageChart({
         openai: 0,
         anthropic: 0,
         xai: 0,
+        unknown: 0,
         inputTokens: 0,
         outputTokens: 0,
         total: 0,
@@ -180,7 +183,7 @@ export function TokenUsageChart({
       const bucket = daysMap.get(key);
       if (bucket) {
         const p = getProviderKey(r.provider);
-        bucket[p as 'google' | 'openai' | 'anthropic' | 'xai'] += r.totalTokens;
+        bucket[p as 'google' | 'openai' | 'anthropic' | 'xai' | 'unknown'] += r.totalTokens;
         bucket.inputTokens += r.inputTokens;
         bucket.outputTokens += r.outputTokens;
         bucket.total += r.totalTokens;
@@ -196,7 +199,7 @@ export function TokenUsageChart({
   const chartSummary = useMemo(() => {
     let totalTokens = 0;
     let peakDay = { date: '—', tokens: 0 };
-    const providerTotals: Record<string, number> = { google: 0, openai: 0, anthropic: 0, xai: 0 };
+    const providerTotals: Record<string, number> = { google: 0, openai: 0, anthropic: 0, xai: 0, unknown: 0 };
 
     dailyData.forEach(d => {
       totalTokens += d.total;
@@ -207,15 +210,16 @@ export function TokenUsageChart({
       providerTotals.openai += d.openai;
       providerTotals.anthropic += d.anthropic;
       providerTotals.xai += d.xai;
+      providerTotals.unknown += d.unknown;
     });
 
     const activeDaysCount = dailyData.filter(d => d.total > 0).length || 1;
     const dailyAvg = Math.round(totalTokens / dailyData.length);
 
-    let topProvider = { name: 'Google', share: 0 };
+    let topProvider = { name: 'Unknown provider', share: 0 };
     if (totalTokens > 0) {
       let maxToks = 0;
-      let topKey = 'google';
+      let topKey = 'unknown';
       Object.entries(providerTotals).forEach(([p, val]) => {
         if (val > maxToks) {
           maxToks = val;
@@ -329,11 +333,6 @@ export function TokenUsageChart({
               <Cpu className="w-5 h-5 text-purple-600 dark:text-purple-400" />
               Daily Token Consumption by Provider
             </h3>
-            {isSampleData && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                Sample Preview Data
-              </span>
-            )}
           </div>
           <p className="text-xs text-slate-500 dark:text-[#8B949E]">
             Daily aggregated token volume across model providers (Google, OpenAI, Anthropic, xAI).
@@ -471,6 +470,9 @@ export function TokenUsageChart({
                     {(providerFilter === 'all' || providerFilter === 'xai') && (
                       <Bar dataKey="xai" name="xAI" stackId="a" fill={PROVIDER_CONFIG.xai.color} radius={[4, 4, 0, 0]} />
                     )}
+                    {(providerFilter === 'all' || providerFilter === 'unknown') && (
+                      <Bar dataKey="unknown" name="Unknown provider" stackId="a" fill={PROVIDER_CONFIG.unknown.color} radius={[4, 4, 0, 0]} />
+                    )}
                   </>
                 ) : (
                   <>
@@ -497,6 +499,10 @@ export function TokenUsageChart({
                   <linearGradient id="gradXAI" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={PROVIDER_CONFIG.xai.color} stopOpacity={0.4} />
                     <stop offset="95%" stopColor={PROVIDER_CONFIG.xai.color} stopOpacity={0.0} />
+                  </linearGradient>
+                  <linearGradient id="gradUnknown" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={PROVIDER_CONFIG.unknown.color} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={PROVIDER_CONFIG.unknown.color} stopOpacity={0.0} />
                   </linearGradient>
                   <linearGradient id="gradInput" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4} />
@@ -541,6 +547,9 @@ export function TokenUsageChart({
                     {(providerFilter === 'all' || providerFilter === 'xai') && (
                       <Area type="monotone" dataKey="xai" name="xAI" stackId="1" stroke={PROVIDER_CONFIG.xai.color} fill="url(#gradXAI)" />
                     )}
+                    {(providerFilter === 'all' || providerFilter === 'unknown') && (
+                      <Area type="monotone" dataKey="unknown" name="Unknown provider" stackId="1" stroke={PROVIDER_CONFIG.unknown.color} fill="url(#gradUnknown)" />
+                    )}
                   </>
                 ) : (
                   <>
@@ -563,41 +572,10 @@ export function TokenUsageChart({
             <p className="text-xs text-slate-500 dark:text-[#8B949E] max-w-sm mb-4">
               Real-time API token consumption will automatically appear here as you prompt AI models in the editor or chat.
             </p>
-            {onLoadSampleData && (
-              <button
-                type="button"
-                onClick={onLoadSampleData}
-                className="px-3.5 py-1.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <Sparkles size={13} />
-                <span>Load Sample Preview Data</span>
-              </button>
-            )}
           </div>
         )}
       </div>
 
-      {/* SAMPLE DATA BANNER / CLEAR CONTROLS */}
-      {isSampleData && (
-        <div className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl text-xs">
-          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
-            <Sparkles size={14} className="text-amber-600 dark:text-amber-400 shrink-0" />
-            <span>
-              <strong>Sample Preview Active:</strong> Demonstrating 14-day token consumption across Google, OpenAI, Anthropic, and xAI. Real requests in the editor will log authentic user data.
-            </span>
-          </div>
-          {onClearData && (
-            <button
-              type="button"
-              onClick={onClearData}
-              className="px-2.5 py-1 text-[11px] font-medium text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-white bg-amber-100 dark:bg-amber-500/20 rounded-md hover:bg-amber-200 dark:hover:bg-amber-500/30 transition-colors flex items-center gap-1 shrink-0 ml-3 cursor-pointer"
-            >
-              <Trash2 size={12} />
-              <span>Clear Sample Data</span>
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

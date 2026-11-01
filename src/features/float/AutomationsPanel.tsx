@@ -87,7 +87,7 @@ function Editor({ initial, onClose }: { initial?: Partial<Automation>; onClose: 
             <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nightly dependency audit" />
           </label>
           <label className="block">
-            <span className="mb-1 block text-[11px] font-semibold text-slate-500 dark:text-[#8B949E]">Instructions for the agent</span>
+            <span className="mb-1 block text-[11px] font-semibold text-slate-500 dark:text-[#8B949E]">Instructions for the model</span>
             <textarea className={`${input} min-h-[96px] resize-y`} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Check for outdated packages and summarize the risk..." />
           </label>
           <div>
@@ -122,7 +122,7 @@ function Editor({ initial, onClose }: { initial?: Partial<Automation>; onClose: 
           </div>
           <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-[#C9D1D9] cursor-pointer">
             <input type="checkbox" checked={includeWorkspace} onChange={(e) => setInclude(e.target.checked)} />
-            Include the active workspace files as context
+            Include relevant, non-sensitive workspace excerpts
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] font-semibold text-slate-500 dark:text-[#8B949E]">Slack webhook (optional)</span>
@@ -171,7 +171,7 @@ export function AutomationsPanel() {
             <span>Automations Engine</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Developer Automations</h2>
-          <p className="text-sm text-slate-500 dark:text-[#8B949E] mt-1">Run agent tasks on a schedule or on demand, with results posted here and to Slack.</p>
+          <p className="text-sm text-slate-500 dark:text-[#8B949E] mt-1">Run model prompts on a schedule or on demand. Automations produce reports and do not edit files or run commands.</p>
           {!ownerId && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Sign in to create and run automations. Your saved automations are scoped to your account on this browser.</p>}
         </div>
         <button
