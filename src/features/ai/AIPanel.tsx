@@ -15,6 +15,7 @@ import { cn, flattenFileTree } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
 import { ChangeSet, AIMessage, AIContextItem } from '../../types';
 import { DiffReviewModal } from '../proposals/DiffReviewModal';
+import { MultiFileDiffCard } from '../composer/MultiFileDiffCard';
 import { ModelSelector } from './ModelSelector';
 import { ProjectFilePickerModal } from './ProjectFilePickerModal';
 import { CodebaseSearchModal } from './CodebaseSearchModal';
@@ -1511,50 +1512,16 @@ export function AIPanel() {
                   </div>
                 )}
 
-                {/* Proposed Changes Banner */}
+                {/* Proposed Changes Multi-File Diff Card (Cursor Composer UX) */}
                 {msg.changeSet && (
-                  <div className="mt-2 w-full max-w-[92%]">
-                    <div className="bg-white dark:bg-[#111111] border border-slate-200 dark:border-[#2A2A2A] rounded-xl overflow-hidden shadow-sm">
-                      <div className="bg-slate-50 dark:bg-[#141414] border-b border-slate-200 dark:border-[#2A2A2A] px-3.5 py-2 text-xs font-semibold flex justify-between items-center text-slate-800 dark:text-[#C9D1D9]">
-                        <span>Proposed Changes</span>
-                        <span className="text-slate-400 dark:text-[#8B949E] font-normal">{msg.changeSet.changes.length} files</span>
-                      </div>
-                      <div className="p-3 text-xs">
-                        {msg.changeSet.changes.map((c: any, i: number) => (
-                          <div key={i} className="flex items-center justify-between py-1">
-                            <span className="text-slate-800 dark:text-[#C9D1D9] font-mono truncate mr-2">{c.path}</span>
-                            <span className={cn(
-                              "px-1.5 py-0.5 rounded text-[10px] uppercase font-bold",
-                              c.operation === 'create' ? 'bg-emerald-500/20 text-emerald-600 dark:text-[#7EE787]' :
-                              c.operation === 'delete' ? 'bg-red-500/20 text-red-500' :
-                              'bg-amber-500/20 text-amber-600 dark:text-[#FFA657]'
-                            )}>
-                              {c.operation}
-                            </span>
-                          </div>
-                        ))}
-                        <div className="mt-3 flex gap-2">
-                          {msg.changeSet.status === 'pending' || msg.changeSet.status === 'pending_review' || msg.changeSet.status === 'stale' ? (
-                            <button
-                              type="button"
-                              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:text-black dark:hover:bg-slate-200 rounded-md transition-colors font-medium cursor-pointer shadow-xs flex items-center justify-center gap-1.5 text-xs"
-                              onClick={() => setReviewingChangeSet(msg.changeSet!)}
-                            >
-                              <span>Review Diffs ({msg.changeSet.changes.length})</span>
-                            </button>
-                          ) : (
-                            <div className={cn(
-                              "flex-1 py-1.5 text-center rounded-md font-medium text-xs capitalize",
-                              msg.changeSet.status === 'applied' ? "bg-emerald-500/20 text-emerald-600 dark:text-[#7EE787]" :
-                              msg.changeSet.status === 'partially_applied' ? "bg-purple-500/20 text-purple-600 dark:text-purple-400" :
-                              "bg-red-500/20 text-red-500"
-                            )}>
-                              Changes {msg.changeSet.status.replace('_', ' ')}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                  <div className="mt-2 w-full max-w-[96%]">
+                    <MultiFileDiffCard
+                      changeSet={msg.changeSet}
+                      onOpenFullReview={(cs) => setReviewingChangeSet(cs)}
+                      onUpdated={(updated) => {
+                        updateAiMessage(msg.id, { changeSet: updated });
+                      }}
+                    />
                   </div>
                 )}
 

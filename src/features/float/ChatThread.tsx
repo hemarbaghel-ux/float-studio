@@ -19,6 +19,7 @@ import { flattenFileTree } from '../../lib/utils';
 import type { ChangeSet, FileNode } from '../../types';
 import { ModelSelector } from '../ai/ModelSelector';
 import { DiffReviewModal } from '../proposals/DiffReviewModal';
+import { MultiFileDiffCard } from '../composer/MultiFileDiffCard';
 import { createAssistantProposal } from '../proposals/proposalWorkflow';
 import { CODING_ASSISTANT_SYSTEM_PROMPT, diffRows, diffStats, parseSegments, type Segment } from './chatParsing';
 import { buildChatContextItems } from './chatContext';
@@ -833,10 +834,10 @@ function AssistantMessage({
         ),
       )}
       {msg.changeSet && !streaming && (
-        <div className="rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50/70 dark:bg-blue-950/20 px-3 py-2.5 flex items-center gap-3">
-          <span className="flex-1 text-xs text-slate-700 dark:text-[#C9D1D9]">{msg.changeSet.changes.length} file changes are saved as a review proposal. Workspace files are unchanged.</span>
-          <button onClick={onReviewProposal} className="px-2.5 py-1 rounded-md bg-slate-900 dark:bg-white text-white dark:text-black text-xs font-semibold cursor-pointer">Review diff</button>
-        </div>
+        <MultiFileDiffCard
+          changeSet={msg.changeSet}
+          onOpenFullReview={onReviewProposal}
+        />
       )}
       {!streaming && pending.length > 1 && (
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-white/10 px-3 py-2 text-xs">
