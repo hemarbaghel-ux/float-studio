@@ -9,7 +9,7 @@ import {
   File as FileIcon, RotateCcw, AlertCircle, ChevronDown,
   Trash2, MessageSquare, Check, Sparkles, Upload, Search,
   FileCode, Layers, ChevronUp, Copy, Edit2, Link, ArrowRight,
-  PanelRightClose
+  PanelRightClose, Play, Terminal as TerminalIcon
 } from 'lucide-react';
 import { cn, flattenFileTree } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
@@ -36,6 +36,9 @@ function CodeBlock({ node, inline, className, children, ...props }: any) {
   const lang = match ? match[1] : '';
   const text = String(children).replace(/\n$/, '');
   const [copied, setCopied] = useState(false);
+  const [running, setRunning] = useState(false);
+
+  const isTerminal = ['bash', 'sh', 'shell', 'zsh', 'terminal', 'cmd'].includes(lang.toLowerCase());
 
   const handleCopy = () => {
     if (navigator?.clipboard?.writeText) {
@@ -45,20 +48,56 @@ function CodeBlock({ node, inline, className, children, ...props }: any) {
     }
   };
 
+  const handleRun = async () => {
+    setRunning(true);
+    const store = useIDEStore.getState();
+    if (!store.bottomPanelOpen) {
+      store.toggleBottomPanel();
+    }
+    store.setBottomPanelTab('terminal');
+    store.addTerminalEntry({ type: 'command', content: text });
+    try {
+      const { runShell } = await import('../float/sandbox');
+      const { sandboxFs } = await import('../float/workspaceFs');
+      const { output, code } = await runShell(text, sandboxFs());
+      if (output) {
+        store.addTerminalEntry({ type: code === 0 ? 'output' : 'error', content: output });
+      }
+    } catch (err: any) {
+      store.addTerminalEntry({ type: 'error', content: `Error: ${err?.message || err}` });
+    } finally {
+      setRunning(false);
+    }
+  };
+
   if (!inline && (match || text.includes('\n'))) {
     return (
       <div className="my-2 rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 bg-slate-950 text-slate-100 dark:bg-[#121212] dark:text-[#E6EDF3] text-xs shadow-xs">
         <div className="flex items-center justify-between px-3 py-1 bg-slate-900/90 dark:bg-white/5 border-b border-slate-800 dark:border-white/5 text-[10px] text-slate-400">
           <span className="font-mono lowercase tracking-wide">{lang || 'code'}</span>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="flex items-center gap-1 hover:text-white transition-colors cursor-pointer text-[10px] py-0.5 px-1.5 rounded hover:bg-white/10"
-            title="Copy code block"
-          >
-            {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-            <span>{copied ? 'Copied' : 'Copy'}</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            {isTerminal && (
+              <button
+                type="button"
+                onClick={handleRun}
+                disabled={running}
+                className="flex items-center gap-1 text-slate-300 hover:text-emerald-400 transition-colors cursor-pointer text-[10px] py-0.5 px-1.5 rounded hover:bg-white/10"
+                title="Run in Terminal"
+              >
+                {running ? <Loader2 size={10} className="animate-spin text-emerald-400" /> : <Play size={10} className="text-emerald-400 fill-emerald-400" />}
+                <span>{running ? 'Running…' : 'Run'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-1 hover:text-white transition-colors cursor-pointer text-[10px] py-0.5 px-1.5 rounded hover:bg-white/10"
+              title="Copy code block"
+            >
+              {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+              <span>{copied ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
         </div>
         <pre className="p-3 overflow-x-auto scrollbar-thin text-xs font-mono leading-relaxed">
           <code>{text}</code>
