@@ -27,8 +27,8 @@ jobs:
       - name: TypeScript static check (lint)
         run: npm run lint
 
-      - name: Run full verification suite (Chat, Models, Persistence, Security)
-        run: npm test
-
       - name: Production build (client + server bundles)
         run: npm run build
+
+      - name: Run full verification suite (Chat, Models, Persistence, Security)
+        run: npm test
