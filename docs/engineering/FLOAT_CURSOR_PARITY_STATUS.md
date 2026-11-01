@@ -264,3 +264,13 @@ Finish Phase 1 acceptance by adding per-model authentication/access checks and e
 - `scripts/testProposalFinalization.ts` covers saved-content verification, non-mutating failures, partial approvals, idempotent retries, project generation tracking, and owner checks. Phase 5 proposal tests now cover this post-save contract rather than the disconnected status-only apply path.
 - Verification: focused finalization tests 11/11; Phase 5 proposal suite 20/20; Phase 7 suite 26/26; tenant isolation suite 6/6; `npm test`, `npm run lint`, and `npm run build` exited 0. Build retains the large JavaScript chunk warning. `git diff --check` pending.
 - Firestore transaction behavior is not emulator/live verified in this environment. Local tests verify finalization policy; they do not establish Firestore transaction execution. No provider call, commit, push, or deployment was made.
+
+## Continuation update — Cursor-class multi-file diff review cards and composer proposal integration
+
+- Replaced the simple "Review diffs" modal button in both the IDE AI panel (`src/features/ai/AIPanel.tsx`) and full-screen chat (`src/features/float/ChatThread.tsx`) with an interactive, inline multi-file proposal card (`src/features/composer/MultiFileDiffCard.tsx`).
+- Proposals display aggregate file counts and diff statistics (`+N -N`), with dedicated action bars for "Accept All" (`Ctrl+Enter`), "Reject All" (`Esc`), and full side-by-side Monaco diff inspection.
+- Individual file changes feature collapsible unified diff snippets showing additions and deletions directly within the stream, alongside per-file "Accept" toggles.
+- Approvals apply file modifications to the local project buffer, require a confirmed cloud snapshot sync (`saveProject()`), and finalize proposal records against the authenticated server endpoint (`/api/projects/:id/proposals/:proposalId/apply`).
+- Rejections dispatch authenticated cancellation requests via `rejectProposalRequest` without mutating workspace files.
+- Added regression test `scripts/testComposerMultiFileDiff.ts` verifying file presence, action bar controls, cloud save gating, per-file acceptance, and keyboard accessibility hints; integrated into the standard `npm test` suite (now 51 suites).
+- Verification: `npm.cmd run lint` exited 0; all 51 test suites in `npm.cmd test` passed with 0 errors; `npm.cmd run build` produced Vite client and Node server bundles cleanly.
