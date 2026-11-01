@@ -13,6 +13,7 @@ import { SearchPanel } from '../search/SearchPanel';
 import { GitPanel } from '../git/GitPanel';
 import { CommandPalette } from '../command-palette/CommandPalette';
 import { SettingsModal } from '../settings/SettingsModal';
+import { StatusBar } from './StatusBar';
 
 
 export function IDEWorkspace() {
@@ -119,7 +120,7 @@ export function IDEWorkspace() {
     <div className="float-ide-workspace h-screen w-full max-w-full overflow-hidden bg-slate-100 dark:bg-[#000000] text-slate-800 dark:text-[#C9D1D9] flex flex-col font-sans selection:bg-slate-300 dark:selection:bg-white/20 relative">
       <Header />
       
-      <div className="flex-1 flex min-w-0 h-[calc(100vh-2.5rem)] overflow-hidden relative">
+      <div className="flex-1 flex min-w-0 min-h-0 overflow-hidden relative">
         <ActivityBar />
         
         <div className="flex-1 flex min-w-0 h-full overflow-hidden relative">
@@ -151,6 +152,7 @@ export function IDEWorkspace() {
         </div>
       </div>
 
+      <StatusBar />
       <CommandPalette />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
