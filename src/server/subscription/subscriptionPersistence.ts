@@ -135,10 +135,138 @@ export async function recordProcessedWebhookEvent(eventId: string, eventType: st
   }
 }
 
+export interface UserUsageSummary {
+  userId: string;
+  monthKey: string;
+  totalQueries: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
+  updatedAt: number;
+}
+
+export const PLAN_MONTHLY_QUERY_LIMITS: Record<SubscriptionPlanId, number> = {
+  free: 50,
+  pro: 500,
+  business: 1200,
+  ultimate: 3500
+};
+
+const memoryUsage = new Map<string, UserUsageSummary>();
+
+function currentMonthKey(timestamp = Date.now()): string {
+  const d = new Date(timestamp);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+export async function recordTokenUsage(params: {
+  userId: string;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+}): Promise<UserUsageSummary> {
+  const { userId, inputTokens, outputTokens } = params;
+  const monthKey = currentMonthKey();
+  const key = `${userId}:${monthKey}`;
+  const existing = memoryUsage.get(key) || {
+    userId,
+    monthKey,
+    totalQueries: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalTokens: 0,
+    updatedAt: Date.now()
+  };
+
+  const inTok = Math.max(0, Math.floor(Number(inputTokens) || 0));
+  const outTok = Math.max(0, Math.floor(Number(outputTokens) || 0));
+  const updated: UserUsageSummary = {
+    userId,
+    monthKey,
+    totalQueries: existing.totalQueries + 1,
+    totalInputTokens: existing.totalInputTokens + inTok,
+    totalOutputTokens: existing.totalOutputTokens + outTok,
+    totalTokens: existing.totalTokens + inTok + outTok,
+    updatedAt: Date.now()
+  };
+  memoryUsage.set(key, updated);
+
+  if (hasAdminCredentials() && userId) {
+    try {
+      await adminDb.collection('userTokenUsage').doc(key).set(updated, { merge: true });
+    } catch {
+      // Best-effort mirror to Firestore
+    }
+  }
+  return updated;
+}
+
+export async function getUserUsageSummary(userId: string): Promise<UserUsageSummary> {
+  const monthKey = currentMonthKey();
+  const key = `${userId}:${monthKey}`;
+  const fallback: UserUsageSummary = memoryUsage.get(key) || {
+    userId,
+    monthKey,
+    totalQueries: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalTokens: 0,
+    updatedAt: Date.now()
+  };
+
+  if (!hasAdminCredentials() || !userId) {
+    return fallback;
+  }
+
+  try {
+    const snap = await adminDb.collection('userTokenUsage').doc(key).get();
+    if (!snap.exists) return fallback;
+    const data = snap.data() as Partial<UserUsageSummary>;
+    const merged: UserUsageSummary = {
+      userId,
+      monthKey,
+      totalQueries: Math.max(fallback.totalQueries, Number(data?.totalQueries || 0)),
+      totalInputTokens: Math.max(fallback.totalInputTokens, Number(data?.totalInputTokens || 0)),
+      totalOutputTokens: Math.max(fallback.totalOutputTokens, Number(data?.totalOutputTokens || 0)),
+      totalTokens: Math.max(fallback.totalTokens, Number(data?.totalTokens || 0)),
+      updatedAt: Number(data?.updatedAt || fallback.updatedAt)
+    };
+    memoryUsage.set(key, merged);
+    return merged;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function checkPlanLimit(userId: string): Promise<{
+  allowed: boolean;
+  planId: SubscriptionPlanId;
+  monthlyLimit: number;
+  usedQueries: number;
+  remainingQueries: number;
+  usage: UserUsageSummary;
+}> {
+  const sub = await getUserSubscription(userId);
+  const effectivePlan: SubscriptionPlanId =
+    sub.status === 'active' || sub.status === 'trialing' ? sub.planId : 'free';
+  const monthlyLimit = PLAN_MONTHLY_QUERY_LIMITS[effectivePlan] ?? PLAN_MONTHLY_QUERY_LIMITS.free;
+  const usage = await getUserUsageSummary(userId);
+  const remainingQueries = Math.max(0, monthlyLimit - usage.totalQueries);
+  return {
+    allowed: usage.totalQueries < monthlyLimit,
+    planId: effectivePlan,
+    monthlyLimit,
+    usedQueries: usage.totalQueries,
+    remainingQueries,
+    usage
+  };
+}
+
 // Reset memory state (useful for isolated unit tests)
 export function resetSubscriptionMemoryState(): void {
   memorySubscriptions.clear();
   memoryProcessedEvents.clear();
+  memoryUsage.clear();
 }
 
 export const clearSubscriptionCache = resetSubscriptionMemoryState;

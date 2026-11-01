@@ -3,6 +3,7 @@ import {
   BenchmarkDefinition, 
   VerifiedBenchmarkResult 
 } from '../../types/modelIntelligence';
+import { VERIFIED_MODELS as RUNTIME_MODELS } from '../../data/verifiedModels';
 
 export const VERIFIED_BENCHMARK_DEFINITIONS: BenchmarkDefinition[] = [
   {
@@ -83,157 +84,47 @@ export const VERIFIED_BENCHMARK_DEFINITIONS: BenchmarkDefinition[] = [
   }
 ];
 
-export const VERIFIED_MODELS: VerifiedModel[] = [
-  {
-    id: 'gpt-6-astra',
-    displayName: 'GPT-6 Astra (Preview)',
-    providerId: 'openai',
-    family: 'codex',
-    version: 'preview-rt_7k2m',
-    releaseDate: '2025-03-01',
-    status: 'AVAILABLE',
-    statusReason: 'Catalog metadata verified. Server execution supported with upstream GPT-4o fallback.',
-    officialDocUrl: 'https://platform.openai.com/docs/models/agents',
-    description: 'Next-generation preview cloud agent powered by OpenAI Codex execution server with cloud remote connection and upstream fallback to GPT-4o.',
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: true,
-      tools: true,
-      structuredOutput: true,
-      streaming: true
-    },
-    contextWindow: 1000000,
-    maxOutputTokens: 32768,
-    supportedModalities: ['text', 'image', 'audio'],
-    pricing: {
-      inputCostPerMillion: 3.00,
-      outputCostPerMillion: 12.00,
-      cachedInputCostPerMillion: 1.50,
-      currency: 'USD',
-      effectiveDate: '2025-03-01',
-      sourceUrl: 'https://openai.com/api/pricing/',
-      sourceName: 'OpenAI Platform Pricing',
-      pricingUnit: 'per 1M tokens'
-    },
-    benchmarks: [
-      {
-        id: 'gpt6astra-swe',
-        benchmarkId: 'swe-bench-verified',
-        benchmarkName: 'SWE-bench Verified',
-        benchmarkVersion: 'Verified (2024)',
-        modelId: 'gpt-6-astra',
-        modelName: 'GPT-6 Astra',
-        modelVersion: 'preview-rt_7k2m',
-        score: 58.2,
-        unit: '%',
-        evaluator: 'FLOAT Benchmark Evaluation',
-        sourceType: 'float_evaluation',
-        evaluationDate: '2025-03-01',
-        sourceUrl: 'https://platform.openai.com/docs/models/agents',
-        testConditions: 'SWE-bench Verified 500 tasks with codex execution server scaffolding.',
-        sampleSize: 500
-      },
-      {
-        id: 'gpt6astra-he',
-        benchmarkId: 'humaneval',
-        benchmarkName: 'HumanEval',
-        benchmarkVersion: 'Python Pass@1',
-        modelId: 'gpt-6-astra',
-        modelName: 'GPT-6 Astra',
-        modelVersion: 'preview-rt_7k2m',
-        score: 93.8,
-        unit: '%',
-        evaluator: 'FLOAT Benchmark Evaluation',
-        sourceType: 'float_evaluation',
-        evaluationDate: '2025-03-01',
-        sourceUrl: 'https://platform.openai.com/docs/models/agents',
-        testConditions: 'Zero-shot prompt with codex cloud execution.',
-        sampleSize: 164
-      }
-    ],
-    limitations: [
-      'Preview cloud agent: falls back to upstream GPT-4o if remote agent connection is unreachable.',
-      'Requires server-side OPENAI_API_KEY, CODEX_API_KEY, or OPENAI_ENVIRONMENT_KEY.'
-    ],
-    lastVerified: '2026-03-01'
+export const VERIFIED_MODELS: VerifiedModel[] = RUNTIME_MODELS.map((model) => ({
+  id: model.id,
+  displayName: model.displayName,
+  providerId: 'openai',
+  family: model.family,
+  version: model.snapshotVersion,
+  releaseDate: model.releaseDate || 'Unknown',
+  status: model.availabilityStatus === 'AVAILABLE'
+    ? 'AVAILABLE'
+    : model.availabilityStatus === 'UNAVAILABLE'
+      ? 'UNAVAILABLE'
+      : model.availabilityStatus === 'UNKNOWN'
+        ? 'UNVERIFIED'
+        : 'CONFIG_REQUIRED',
+  statusReason: model.availabilityDetails,
+  officialDocUrl: model.docUrl,
+  description: model.description,
+  capabilities: {
+    coding: model.capabilities.coding,
+    reasoning: model.capabilities.reasoning,
+    vision: model.capabilities.vision,
+    tools: model.capabilities.tools,
+    structuredOutput: model.capabilities.structuredOutput,
+    streaming: model.capabilities.streaming
   },
-  {
-    id: 'gpt-6.1-sol',
-    displayName: 'GPT-6.1 Sol (Preview)',
-    providerId: 'openai',
-    family: 'codex',
-    version: 'preview-sol-2025',
-    releaseDate: '2025-04-01',
-    status: 'AVAILABLE',
-    statusReason: 'Catalog metadata verified. Server execution supported with upstream GPT-4o fallback.',
-    officialDocUrl: 'https://platform.openai.com/docs/models/agents',
-    description: 'Next-generation frontier preview model with deep architectural reasoning, autonomous system design, and advanced codex execution capabilities with upstream fallback to GPT-4o.',
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: true,
-      tools: true,
-      structuredOutput: true,
-      streaming: true
-    },
-    contextWindow: 1000000,
-    maxOutputTokens: 65536,
-    supportedModalities: ['text', 'image', 'audio'],
-    pricing: {
-      inputCostPerMillion: 3.50,
-      outputCostPerMillion: 14.00,
-      cachedInputCostPerMillion: 1.75,
-      currency: 'USD',
-      effectiveDate: '2025-04-01',
-      sourceUrl: 'https://openai.com/api/pricing/',
-      sourceName: 'OpenAI Platform Pricing',
-      pricingUnit: 'per 1M tokens'
-    },
-    benchmarks: [
-      {
-        id: 'gpt61sol-swe',
-        benchmarkId: 'swe-bench-verified',
-        benchmarkName: 'SWE-bench Verified',
-        benchmarkVersion: 'Verified (2024)',
-        modelId: 'gpt-6.1-sol',
-        modelName: 'GPT-6.1 Sol',
-        modelVersion: 'preview-sol',
-        score: 56.4,
-        unit: '%',
-        evaluator: 'FLOAT Benchmark Evaluation',
-        sourceType: 'float_evaluation',
-        evaluationDate: '2025-04-01',
-        sourceUrl: 'https://platform.openai.com/docs/models/agents',
-        testConditions: 'SWE-bench Verified 500 tasks with codex execution server scaffolding.',
-        sampleSize: 500
-      },
-      {
-        id: 'gpt61sol-he',
-        benchmarkId: 'humaneval',
-        benchmarkName: 'HumanEval',
-        benchmarkVersion: 'Python Pass@1',
-        modelId: 'gpt-6.1-sol',
-        modelName: 'GPT-6.1 Sol',
-        modelVersion: 'preview-sol',
-        score: 94.6,
-        unit: '%',
-        evaluator: 'FLOAT Benchmark Evaluation',
-        sourceType: 'float_evaluation',
-        evaluationDate: '2025-04-01',
-        sourceUrl: 'https://platform.openai.com/docs/models/agents',
-        testConditions: 'Zero-shot prompt with frontier test-time reasoning.',
-        sampleSize: 164
-      }
-    ],
-    limitations: [
-      'Preview frontier model: falls back to upstream GPT-4o if remote agent connection is unreachable.',
-      'Requires server-side OPENAI_API_KEY, CODEX_API_KEY, or OPENAI_ENVIRONMENT_KEY.'
-    ],
-    lastVerified: '2026-04-01'
+  contextWindow: model.contextWindow,
+  maxOutputTokens: model.maxOutputTokens,
+  supportedModalities: model.modalities,
+  pricing: {
+    inputCostPerMillion: model.pricing.inputCostPer1M,
+    outputCostPerMillion: model.pricing.outputCostPer1M,
+    cachedInputCostPerMillion: model.pricing.cachedInputCostPer1M,
+    currency: model.pricing.currency,
+    effectiveDate: model.pricing.effectiveDate,
+    sourceUrl: model.pricing.sourceUrl,
+    sourceName: model.providerId,
+    pricingUnit: model.pricing.pricingUnit
   },
-];
-
+  benchmarks: [],
+  limitations: model.limitations
+}));
 export function getVerifiedModelById(id: string): VerifiedModel | undefined {
   return VERIFIED_MODELS.find(m => m.id === id);
 }

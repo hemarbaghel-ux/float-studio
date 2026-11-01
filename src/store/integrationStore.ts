@@ -139,17 +139,33 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
   fetchIntegrations: async () => {
     try {
       const token = await auth.currentUser?.getIdToken();
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+
+      const parseJsonSafe = async <T>(res: Response | null | undefined, fallback: T): Promise<T> => {
+        if (!res || !res.ok) return fallback;
+        const contentType = res.headers?.get?.('content-type') || '';
+        if (contentType && !contentType.includes('application/json')) {
+          return fallback;
+        }
+        try {
+          return (await res.json()) as T;
+        } catch {
+          return fallback;
+        }
+      };
 
       const [configRes, connRes] = await Promise.all([
-        fetch('/api/integrations/status'),
-        token 
-          ? fetch('/api/integrations/connections', { headers })
-          : Promise.resolve({ ok: true, json: async () => ({ connections: [] }) } as any)
+        fetch('/api/integrations/status', { headers: { Accept: 'application/json' } }).catch(() => null),
+        token
+          ? fetch('/api/integrations/connections', { headers }).catch(() => null)
+          : Promise.resolve(null)
       ]);
 
-      const config = configRes.ok ? await configRes.json() : { configuredProviders: [], providers: {} };
-      const conns = connRes.ok ? await connRes.json() : { connections: [] };
+      const config = await parseJsonSafe(configRes, { configuredProviders: [], providers: {} });
+      const conns = await parseJsonSafe(connRes, { connections: [] });
 
       set({
         configuredProviders: config.configuredProviders || [],
@@ -158,7 +174,7 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
         loading: false
       });
     } catch (e) {
-      console.error('Failed to fetch integrations', e);
+      console.warn('Failed to fetch integrations:', e);
       set({ loading: false });
     }
   },
@@ -166,11 +182,22 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
   getAuthUrl: async (provider: IntegrationProvider) => {
     try {
       const token = await auth.currentUser?.getIdToken();
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
       const params = new URLSearchParams();
       if (origin) params.set('origin', origin);
       const res = await fetch(`/api/integrations/${provider}/auth-url?${params.toString()}`, { headers });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return {
+          configured: false,
+          callbackUrl: `/api/integrations/${provider}/callback`,
+          message: `Unexpected server response (${res.status})`
+        };
+      }
       return await res.json();
     } catch (err: any) {
       return {
@@ -188,8 +215,12 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
         return { success: false, repositories: [], error: 'Authentication required. Please sign in.' };
       }
       const res = await fetch(`/api/integrations/${provider}/repositories`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return { success: false, repositories: [], error: `Failed to fetch repositories (${res.status})` };
+      }
       const data = await res.json();
       if (!res.ok) {
         return { success: false, repositories: [], error: data.error || 'Failed to fetch repositories' };
@@ -212,8 +243,12 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
       }
       const query = branch ? `?branch=${encodeURIComponent(branch)}` : '';
       const res = await fetch(`/api/integrations/${provider}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits${query}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return { success: false, commits: [], error: `Failed to fetch commits (${res.status})` };
+      }
       const data = await res.json();
       if (!res.ok) {
         return { success: false, commits: [], error: data.error || 'Failed to fetch commits' };
@@ -234,8 +269,12 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
         return { success: false, files: [], error: 'Authentication required. Please sign in.' };
       }
       const res = await fetch(`/api/integrations/${provider}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(sha)}/diff`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return { success: false, files: [], error: `Failed to fetch commit diff (${res.status})` };
+      }
       const data = await res.json();
       if (!res.ok) {
         return { success: false, files: [], error: data.error || 'Failed to fetch commit diff' };
@@ -262,7 +301,7 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
       }
       return false;
     } catch (e) {
-      console.error('Failed to disconnect integration', e);
+      console.warn('Failed to disconnect integration:', e);
       return false;
     }
   }

@@ -369,7 +369,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     const state = get();
     const requestSequence = ++projectSaveSequence;
     const ownerId = auth.currentUser?.uid ?? null;
-    let currentProjectId = state.projectId;
+    let currentProjectId: string = state.projectId || '';
 
     if (!currentProjectId || currentProjectId === 'default-python-workspace') {
       currentProjectId = uuidv4();
@@ -387,7 +387,8 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       }, ownerId);
     }
 
-    if (!state.projectName) {
+    const projectName = state.projectName;
+    if (!projectName) {
       return { status: 'local-only', reason: 'no-project', message: 'No named workspace is available to sync.' };
     }
     if (!auth.currentUser) {
@@ -470,7 +471,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
             throw error;
           }
           transaction.update(projectRef, {
-            name: state.projectName,
+            name: projectName,
             ...manifest,
             fileSnapshotComplete: true,
             files: deleteField(),
@@ -486,11 +487,11 @@ export const useIDEStore = create<IDEState>((set, get) => ({
           projectRef = doc(db, 'projects', currentProjectId);
           saveStoredProject({
             projectId: currentProjectId,
-            projectName: state.projectName,
+            projectName,
             files: state.files,
             openTabs: state.openTabs,
             activeFileId: state.activeFileId
-          }, ownerId);
+          }, user.uid);
         }
 
         await runTransaction(db, async (transaction) => {

@@ -14,6 +14,28 @@ export interface DiffStats {
   deletions: number;
 }
 
+export interface DiffHunkLine {
+  type: 'context' | 'add' | 'del';
+  content: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
+}
+
+export interface DiffHunk {
+  id: string;
+  index: number;
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  additions: number;
+  deletions: number;
+  originalLines: string[];
+  proposedLines: string[];
+  lines: DiffHunkLine[];
+}
+
 export interface ProposalChange {
   path: string;
   operation: ChangeOperation;

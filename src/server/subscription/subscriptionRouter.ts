@@ -11,7 +11,9 @@ import {
 } from './stripeService';
 import {
   SubscriptionPlanId,
-  getUserSubscription
+  getUserSubscription,
+  checkPlanLimit,
+  recordTokenUsage
 } from './subscriptionPersistence';
 
 export const subscriptionRouter = Router();
@@ -42,6 +44,7 @@ subscriptionRouter.get('/status', requireAuth, async (req: any, res: Response) =
 
     const subscription = await getUserSubscription(userId);
     const planConfig = FLOAT_PLANS[subscription.planId] || FLOAT_PLANS.free;
+    const planLimitStatus = await checkPlanLimit(userId);
 
     res.json({
       subscription: {
@@ -49,11 +52,54 @@ subscriptionRouter.get('/status', requireAuth, async (req: any, res: Response) =
         planName: planConfig.name,
         monthlyPrice: planConfig.monthlyPrice,
         currency: planConfig.currency
+      },
+      usage: planLimitStatus.usage,
+      limits: {
+        monthlyLimit: planLimitStatus.monthlyLimit,
+        usedQueries: planLimitStatus.usedQueries,
+        remainingQueries: planLimitStatus.remainingQueries,
+        allowed: planLimitStatus.allowed
       }
     });
   } catch (err: any) {
     console.error('Error fetching subscription status:', err);
     res.status(500).json({ error: err.message || 'Failed to fetch subscription status.' });
+  }
+});
+
+/**
+ * Record or retrieve real token usage for the authenticated user
+ */
+subscriptionRouter.get('/usage', requireAuth, async (req: any, res: Response) => {
+  try {
+    const userId = req.user?.uid;
+    if (!userId) {
+      return res.status(401).json({ error: 'User is not authenticated.' });
+    }
+    const status = await checkPlanLimit(userId);
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch usage.' });
+  }
+});
+
+subscriptionRouter.post('/usage', requireAuth, async (req: any, res: Response) => {
+  try {
+    const userId = req.user?.uid;
+    if (!userId) {
+      return res.status(401).json({ error: 'User is not authenticated.' });
+    }
+    const { modelId, inputTokens, outputTokens } = req.body || {};
+    await recordTokenUsage({
+      userId,
+      modelId: String(modelId || 'gpt-6-sol'),
+      inputTokens: Number(inputTokens || 0),
+      outputTokens: Number(outputTokens || 0)
+    });
+    const status = await checkPlanLimit(userId);
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to record token usage.' });
   }
 });
 

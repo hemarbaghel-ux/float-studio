@@ -81,8 +81,17 @@ export const getConfiguredProviders = () => {
 // 1. Integration Status & Setup Information
 integrationsRouter.get('/status', (req: Request, res: Response) => {
   const configured = getConfiguredProviders();
-  const base = getBaseAppUrl(req);
+  let base = 'http://localhost:3000';
+  try {
+    base = getBaseAppUrl(req);
+  } catch {
+    const host = req?.headers.host;
+    if (host && !/[\s,/@]/.test(host)) {
+      base = `${host.includes('localhost') ? 'http' : 'https'}://${host}`;
+    }
+  }
 
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.json({
     configuredProviders: configured,
     providers: {
@@ -537,7 +546,7 @@ integrationsRouter.get('/github/repositories/:owner/:repo/archive', requireAuth,
   }
 
   try {
-    const encodedRef = ref ? `/${ref.split('/').map((part) => encodeURIComponent(part)).join('/')}` : '';
+    const encodedRef = ref ? `/${ref.split('/').map((part: string) => encodeURIComponent(part)).join('/')}` : '';
     const path = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zipball${encodedRef}`;
     const upstream = await fetch(path, {
       headers: {

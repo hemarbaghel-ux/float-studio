@@ -113,7 +113,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'claude-3-5-sonnet-20241022'
+        defaultModel: 'claude-sonnet-5-5'
       };
     }
 
@@ -124,7 +124,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: true,
         modelAvailable: true,
-        defaultModel: 'claude-3-5-sonnet-20241022'
+        defaultModel: 'claude-sonnet-5-5'
       };
     } catch (err: any) {
       const normalized = normalizeAnthropicError(err);
@@ -133,7 +133,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'claude-3-5-sonnet-20241022',
+        defaultModel: 'claude-sonnet-5-5',
         error: normalized.message
       };
     }
@@ -141,10 +141,12 @@ export class AnthropicAdapter implements AIProviderAdapter {
 
   private resolveApiModel(model: string): string {
     const mapping: Record<string, string> = {
-      'claude-opus-5.5': 'claude-3-opus-20240229',
-      'claude-opus-5': 'claude-3-opus-20240229',
-      'claude-fable-5.1': 'claude-3-7-sonnet-20250219',
-      'claude-sonnet-5.5': 'claude-3-5-sonnet-20241022'
+      'claude-sonnet-5-5': process.env.FLOAT_ANTHROPIC_MODEL_SONNET?.trim() || 'claude-sonnet-5-5',
+      'claude-opus-5-5': process.env.FLOAT_ANTHROPIC_MODEL_OPUS?.trim() || 'claude-opus-5-5',
+      'claude-haiku-5-5': process.env.FLOAT_ANTHROPIC_MODEL_HAIKU?.trim() || 'claude-haiku-5-5',
+      'claude-opus-5.5': 'claude-opus-5-5',
+      'claude-sonnet-5.5': 'claude-sonnet-5-5',
+      'claude-haiku-5.5': 'claude-haiku-5-5'
     };
     return mapping[model] || model;
   }

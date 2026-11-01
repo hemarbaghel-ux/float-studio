@@ -7,80 +7,77 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
 dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
 
-// Server-wide resilience: intercept benign client cancellation signals
-const originalConsoleError = console.error;
-console.error = (...args: any[]) => {
-  const msg = args.map(a => typeof a === 'string' ? a : (a?.message || a?.msg || JSON.stringify(a || ''))).join(' ');
-  if (
-    msg.includes('operation is manually canceled') ||
-    msg.includes('cancelation') ||
-    msg.includes('Disconnecting idle stream') ||
-    msg.includes('Timed out waiting for new targets') ||
-    msg.includes("GrpcConnection RPC 'Listen' stream")
-  ) {
-    return;
-  }
-  originalConsoleError.apply(console, args);
-};
+/**
+ * Checks whether an error is a known client request AbortError from an aborted HTTP/SSE stream.
+ */
+export function isKnownRequestAbortError(err: any): boolean {
+  if (!err || typeof err !== 'object') return false;
+  return (
+    err.name === 'AbortError' &&
+    (err.code === 'ABORT_ERR' ||
+      typeof err.message === 'string' &&
+      (err.message.includes('The operation was aborted') ||
+        err.message.includes('This operation was aborted') ||
+        err.message.includes('Request aborted')))
+  );
+}
 
 process.on('unhandledRejection', (reason: any) => {
-  const reasonStr = typeof reason === 'string'
-    ? reason
-    : (reason?.message || reason?.msg || JSON.stringify(reason || ''));
-
-  const isCancellation =
-    reason?.type === 'cancelation' ||
-    reason?.type === 'cancelled' ||
-    reason?.name === 'AbortError' ||
-    reasonStr.includes('operation is manually canceled') ||
-    reasonStr.includes('cancelation') ||
-    /cancel/i.test(reasonStr);
-
-  if (isCancellation) {
+  if (isKnownRequestAbortError(reason)) {
     return;
   }
-
-  originalConsoleError('Unhandled Rejection:', reason);
+  console.error('[FLOAT Server] Unhandled Rejection:', reason);
 });
 
 process.on('uncaughtException', (err: any) => {
-  const errStr = typeof err === 'string'
-    ? err
-    : (err?.message || err?.msg || JSON.stringify(err || ''));
-
-  const isCancellation =
-    err?.type === 'cancelation' ||
-    err?.type === 'cancelled' ||
-    err?.name === 'AbortError' ||
-    errStr.includes('operation is manually canceled') ||
-    errStr.includes('cancelation') ||
-    /cancel/i.test(errStr);
-
-  if (isCancellation) {
+  if (isKnownRequestAbortError(err)) {
     return;
   }
-
   // Allow EADDRINUSE retry logic in server.listen to recover without crashing process
   if (err?.code === 'EADDRINUSE') {
-    console.warn('EADDRINUSE encountered, allowing retry handler to recover.');
+    console.warn('[FLOAT Server] EADDRINUSE encountered, allowing retry handler to recover.');
     return;
   }
-
-  originalConsoleError('Uncaught Exception:', err);
+  console.error('[FLOAT Server] Uncaught Exception:', err);
 });
 
+let activeServer: any = null;
+let activeShutdownFn: ((server?: any) => Promise<any>) | null = null;
 let isShuttingDown = false;
-function handleGracefulShutdown(signal: string) {
+
+export async function handleGracefulShutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log(`\n  🛑 Received ${signal}. Shutting down FLOAT AI Studio gracefully...`);
-  setTimeout(() => {
+  console.log(`\n  🛑 Received ${signal}. Closing HTTP server and stopping active executions...`);
+
+  const forceExitTimer = setTimeout(() => {
     process.exit(0);
-  }, 250).unref();
+  }, 5000);
+  forceExitTimer.unref?.();
+
+  try {
+    if (activeShutdownFn) {
+      const result = await activeShutdownFn(activeServer);
+      console.log(
+        `  ✓ Graceful shutdown complete (stoppedProcesses=${result?.stoppedProcesses ?? 0}).`
+      );
+    } else if (activeServer && typeof activeServer.close === 'function') {
+      await new Promise<void>((resolve) => activeServer.close(() => resolve()));
+    }
+  } catch (shutdownErr) {
+    console.error('[FLOAT Server] Error during graceful shutdown:', shutdownErr);
+  } finally {
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  }
 }
 
-process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => {
+  void handleGracefulShutdown('SIGTERM');
+});
+process.on('SIGINT', () => {
+  void handleGracefulShutdown('SIGINT');
+});
 
 async function bootstrap() {
   console.log('\n  🚀 Starting FLOAT AI Studio...');
@@ -104,18 +101,22 @@ async function bootstrap() {
       process.env.NODE_ENV = process.env.NODE_ENV || 'production';
       const mod = await import(pathToFileURL(distBundle).href);
       const start = mod.startServer || mod.default?.startServer;
+      activeShutdownFn = mod.gracefulShutdownServer || mod.default?.gracefulShutdownServer || null;
       if (typeof start === 'function') {
-        await start();
+        activeServer = await start();
         return;
       }
     }
   }
 
-  const { startServer } = await import('./src/server/app.ts');
-  await startServer();
+  const appMod = await import('./src/server/app.ts');
+  activeShutdownFn = appMod.gracefulShutdownServer;
+  activeServer = await appMod.startServer();
 }
 
-bootstrap().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+if (process.argv[1] && /(?:^|[\\/])server\.ts$/.test(process.argv[1])) {
+  bootstrap().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}

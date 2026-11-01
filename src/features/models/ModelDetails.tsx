@@ -1,20 +1,20 @@
 import React from 'react';
-import { 
-  ArrowLeft, 
-  Brain, 
-  Cpu, 
-  Zap, 
-  Eye, 
-  Wrench, 
-  Shield, 
-  Check, 
-  Info, 
-  ExternalLink, 
-  AlertCircle, 
-  CheckCircle2, 
-  Clock, 
-  Layers, 
-  Coins, 
+import {
+  ArrowLeft,
+  Brain,
+  Cpu,
+  Zap,
+  Eye,
+  Wrench,
+  Shield,
+  Check,
+  Info,
+  ExternalLink,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Layers,
+  Coins,
   Scale,
   Lock
 } from 'lucide-react';
@@ -66,11 +66,11 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
   return (
     <div className="max-w-5xl mx-auto w-full pb-16">
       {/* Navigation Breadcrumb */}
-      <button 
-        onClick={onBack} 
+      <button
+        onClick={onBack}
         className="flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white mb-6 transition-colors group cursor-pointer"
       >
-        <ArrowLeft size={16} className="group-hover:-translate-x-0.5 transition-transform" /> 
+        <ArrowLeft size={16} className="group-hover:-translate-x-0.5 transition-transform" />
         Back to Model Intelligence
       </button>
 
@@ -159,7 +159,7 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
               <h2 className="text-sm font-bold text-white uppercase tracking-wider">Official API Pricing</h2>
             </div>
             {verified?.pricing?.sourceUrl && (
-              <a 
+              <a
                 href={verified.pricing.sourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -198,10 +198,10 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
               <div>
                 <span className="text-xs text-[#8B949E]">Cached Input</span>
                 <p className="text-base font-bold text-white mt-0.5">
-                  {verified?.pricing?.cachedInputCostPer1M !== undefined 
+                  {verified?.pricing?.cachedInputCostPer1M != null
                     ? `$${verified.pricing.cachedInputCostPer1M.toFixed(3)}`
                     : 'Not supported'}
-                  {verified?.pricing?.cachedInputCostPer1M !== undefined && (
+                  {verified?.pricing?.cachedInputCostPer1M != null && (
                     <span className="text-xs font-normal text-[#8B949E] ml-1">/ 1M tokens</span>
                   )}
                 </p>

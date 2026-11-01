@@ -538,7 +538,7 @@ export class EvalEngine {
     
     // Step 1: Clean repository snapshot isolation
     run.activity?.push({ type: 'info', message: 'Step 1/8: Creating clean repository snapshot isolation', timestamp: Date.now() });
-    const snapshotFiles = task.files.map(f => ({ path: f.path, content: f.content }));
+    const snapshotFiles = (task.files ?? []).map(f => ({ path: f.path, content: f.content }));
     let filesReadCount = snapshotFiles.length;
     let filesChangedCount = 0;
 
@@ -713,7 +713,7 @@ export class EvalEngine {
       const code = match[2];
 
       if (!matchedPath || matchedPath.length > 50 || matchedPath === 'python' || matchedPath === 'ts') {
-        matchedPath = task.files[0]?.path || 'solution.py';
+        matchedPath = task.files?.[0]?.path || 'solution.py';
       }
 
       const existingFile = originalFiles.find(f => f.path === matchedPath) || originalFiles[0];

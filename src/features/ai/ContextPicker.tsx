@@ -191,7 +191,7 @@ export function ContextPicker({ query, trigger = '@', onSelect, onClose }: Conte
       suggestions.push({
         id: 'context-diff',
         type: 'diff',
-        label: '@diff',
+        label: '@git-diff',
         sublabel: `Changed files summary (${changesCount})`,
         icon: <GitCommit size={13} className="text-rose-500 shrink-0" />,
         item: {
@@ -202,9 +202,24 @@ export function ContextPicker({ query, trigger = '@', onSelect, onClose }: Conte
         }
       });
     }
+  } else {
+    // Also provide @git-diff option even when inspecting local workspace modifications
+    suggestions.push({
+      id: 'context-git-diff-local',
+      type: 'diff',
+      label: '@git-diff',
+      sublabel: 'Current working tree diff summary',
+      icon: <GitCommit size={13} className="text-rose-500 shrink-0" />,
+      item: {
+        type: 'attachment',
+        name: 'Git Working Tree Diff',
+        content: `Active Workspace Files (${allNodes.filter(n => n.type === 'file').length}):\n${allNodes.filter(n => n.type === 'file').map(n => `[FILE] ${n.path} (${(n.content || '').length} chars)`).join('\n')}`,
+        sizeBytes: 800
+      }
+    });
   }
 
-  // 4. Docs context (@docs) for popular libraries & custom frameworks
+  // 4. Docs context (@docs) for popular libraries & custom URLs
   const docsCatalogs = [
     { name: 'React', url: 'https://react.dev', desc: 'React 19, hooks, and server components' },
     { name: 'Next.js', url: 'https://nextjs.org/docs', desc: 'App Router, layouts, routing, SSR' },
@@ -212,6 +227,25 @@ export function ContextPicker({ query, trigger = '@', onSelect, onClose }: Conte
     { name: 'TypeScript', url: 'https://www.typescriptlang.org/docs', desc: 'Type definitions, generics, tsconfig' },
     { name: 'Node.js', url: 'https://nodejs.org/docs', desc: 'Runtime APIs, buffers, streams, fs' }
   ];
+
+  if (cleanQuery.startsWith('docs ') || cleanQuery.startsWith('http://') || cleanQuery.startsWith('https://')) {
+    const customUrl = cleanQuery.replace(/^docs\s+/i, '').trim();
+    if (customUrl.startsWith('http://') || customUrl.startsWith('https://')) {
+      suggestions.push({
+        id: `docs-custom-${customUrl}`,
+        type: 'docs',
+        label: `@docs ${customUrl}`,
+        sublabel: 'Reference custom documentation URL',
+        icon: <BookOpen size={13} className="text-cyan-500 shrink-0" />,
+        item: {
+          type: 'attachment',
+          name: `@docs ${customUrl}`,
+          content: `Documentation Reference URL: ${customUrl}\nFollow the API conventions and documentation from ${customUrl}.`,
+          sizeBytes: 300
+        }
+      });
+    }
+  }
 
   for (const doc of docsCatalogs) {
     suggestions.push({
@@ -251,18 +285,26 @@ export function ContextPicker({ query, trigger = '@', onSelect, onClose }: Conte
     });
   }
 
-  // 6. Project & User Rules (@rules)
+  // 6. Project & User Rules (@rules) — includes AGENTS.md, .cursorrules, .floatrules if present in workspace
+  const ruleFiles = allNodes.filter(n =>
+    n.type === 'file' &&
+    (n.path === 'AGENTS.md' || n.path === '.cursorrules' || n.path === '.floatrules' || n.path.startsWith('.cursor/rules/') || n.path.startsWith('.float/rules/'))
+  );
+  const rulesContent = ruleFiles.length > 0
+    ? ruleFiles.map(rf => `--- ${rf.path} ---\n${rf.content || ''}`).join('\n\n')
+    : `[Project & Architectural Rules]\n1. Reliability before complexity.\n2. TypeScript strict mode and modular components.\n3. Human review before destructive file modifications or git operations.\n4. Secure defaults and clean tenant isolation.`;
+
   suggestions.push({
     id: 'context-rules',
     type: 'rules',
     label: '@rules',
-    sublabel: 'Project standards, guidelines, and rules',
+    sublabel: ruleFiles.length > 0 ? `Loaded ${ruleFiles.map(r => r.path).join(', ')}` : 'Project standards, guidelines, and rules',
     icon: <ShieldCheck size={13} className="text-emerald-500 shrink-0" />,
     item: {
       type: 'attachment',
       name: 'Project & Workspace Rules',
-      content: `[Project & Architectural Rules]\n1. Reliability before complexity.\n2. TypeScript strict mode and modular components.\n3. Human review before destructive file modifications or git operations.\n4. Secure defaults and clean tenant isolation.`,
-      sizeBytes: 300
+      content: rulesContent,
+      sizeBytes: rulesContent.length
     }
   });
 

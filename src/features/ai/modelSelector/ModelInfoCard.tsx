@@ -87,8 +87,8 @@ export function getAvailabilityDisplay(model: AIModel): { label: string; color: 
     if (a.includes('avail') || a === 'ready') {
       return { label: model.availability, color: 'green' };
     }
-    if (a.includes('config') || a.includes('setup')) {
-      return { label: model.availability, color: 'amber' };
+    if (a.includes('config') || a.includes('setup') || a.includes('add key')) {
+      return { label: 'Add key to enable', color: 'amber' };
     }
     return { label: model.availability, color: 'slate' };
   }
@@ -97,7 +97,7 @@ export function getAvailabilityDisplay(model: AIModel): { label: string; color: 
     return { label: 'Available', color: 'green' };
   }
   if (model.status === 'CONFIG_REQUIRED' || model.status === 'PROVIDER_SUPPORTED_NOT_CONFIGURED') {
-    return { label: 'Not configured', color: 'amber' };
+    return { label: 'Add key to enable', color: 'amber' };
   }
   if (model.status === 'UNAVAILABLE' || model.status === 'DISABLED') {
     return { label: 'Unavailable', color: 'slate' };

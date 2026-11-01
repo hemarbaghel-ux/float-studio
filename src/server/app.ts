@@ -1034,6 +1034,16 @@ export async function startServer() {
   return server;
 }
 
+export async function gracefulShutdownServer(server?: any): Promise<{ stoppedProcesses: number }> {
+  const stoppedProcesses = await projectProcessManager.shutdownAll();
+  if (server?.listening && typeof server.close === 'function') {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error?: Error) => error ? reject(error) : resolve());
+    });
+  }
+  return { stoppedProcesses };
+}
+
 // Auto start for direct TypeScript development execution or the compiled Cloud Run entry.
 if (process.argv[1] && /(?:^|[\\/])(app\.ts|server\.cjs)$/.test(process.argv[1])) {
   startServer();

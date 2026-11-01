@@ -117,7 +117,8 @@ milestone9Router.get('/skills', requireAuth, asyncRoute(async (req: any, res) =>
       return res.status(check.status).json({ error: check.error });
     }
   }
-  res.json({ skills: SkillsService.getAllSkills(req.user.uid, projectId) });
+  const skills = await SkillsService.getAllSkillsDurable(req.user.uid, projectId);
+  res.json({ skills });
 }));
 
 milestone9Router.post('/skills', requireAuth, asyncRoute(async (req: any, res) => {
@@ -136,7 +137,7 @@ milestone9Router.post('/skills', requireAuth, asyncRoute(async (req: any, res) =
     }
   }
   try {
-    const registered = SkillsService.registerSkill(
+    const registered = await SkillsService.registerSkillDurable(
       {
         ...skill,
         id: skillId,
@@ -156,16 +157,16 @@ milestone9Router.post('/skills', requireAuth, asyncRoute(async (req: any, res) =
   }
 }));
 
-milestone9Router.delete('/skills/:skillId', requireAuth, (req: any, res) => {
+milestone9Router.delete('/skills/:skillId', requireAuth, asyncRoute(async (req: any, res) => {
   if (SkillsService.isBuiltInSkillId(req.params.skillId)) {
     return res.status(403).json({ error: 'Cannot delete built-in system skill.' });
   }
-  const deleted = SkillsService.deleteSkill(req.params.skillId, req.user.uid);
+  const deleted = await SkillsService.deleteSkillDurable(req.params.skillId, req.user.uid);
   if (!deleted) {
     return res.status(404).json({ error: 'Custom skill not found.' });
   }
   res.json({ success: true });
-});
+}));
 
 // ==========================================
 // 3. MCP API
@@ -283,26 +284,69 @@ milestone9Router.post('/mcp/execute', requireAuth, asyncRoute(async (req: any, r
 // ==========================================
 // 4. TERMINAL SESSIONS API
 // ==========================================
-milestone9Router.get('/projects/:projectId/terminals', requireAuth, (req: any, res) => {
-  res.json({ terminals: TerminalService.listSessions(req.params.projectId, req.user.uid) });
-});
+milestone9Router.get('/terminal/:sessionId', requireAuth, asyncRoute(async (req: any, res) => {
+  const { checkTerminalRuntimeStatus, TERMINAL_SETUP_STEPS } = await import('./terminal/terminalWsServer');
+  const sessionId = String(req.params.sessionId || '').trim();
+  const requestedProjectId = req.query?.projectId ? String(req.query.projectId).trim() : undefined;
 
-milestone9Router.post('/projects/:projectId/terminals', requireAuth, (req: any, res) => {
-  const terminal = TerminalService.createSession(req.params.projectId, req.user.uid, req.body?.name);
+  let session = await TerminalService.getSessionDurable(sessionId, req.user.uid);
+  if (!session && requestedProjectId) {
+    const ownership = await verifyProjectOwnership(requestedProjectId, req.user.uid, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status).json({ error: ownership.error });
+    }
+    session = await TerminalService.createSessionDurable(requestedProjectId, req.user.uid, `Terminal (${sessionId})`);
+  }
+
+  if (!session) {
+    return res.status(404).json({ error: 'Terminal session not found or access denied.' });
+  }
+
+  const ownership = await verifyProjectOwnership(session.projectId, req.user.uid, { allowMissing: true });
+  if (!ownership.allowed) {
+    return res.status(ownership.status).json({ error: ownership.error });
+  }
+
+  const runtime = await checkTerminalRuntimeStatus();
+  if (!runtime.configured) {
+    return res.status(503).json({
+      configured: false,
+      code: 'TERMINAL_NOT_CONFIGURED',
+      error: runtime.error || 'Terminal not configured: Docker sandbox or node-pty is unavailable.',
+      setupSteps: runtime.setupSteps || TERMINAL_SETUP_STEPS,
+      sessionId: session.id,
+      projectId: session.projectId
+    });
+  }
+
+  return res.json({
+    configured: true,
+    session,
+    wsPath: `/api/terminal/${encodeURIComponent(session.id)}`
+  });
+}));
+
+milestone9Router.get('/projects/:projectId/terminals', requireAuth, asyncRoute(async (req: any, res) => {
+  const terminals = await TerminalService.listSessionsDurable(req.params.projectId, req.user.uid);
+  res.json({ terminals });
+}));
+
+milestone9Router.post('/projects/:projectId/terminals', requireAuth, asyncRoute(async (req: any, res) => {
+  const terminal = await TerminalService.createSessionDurable(req.params.projectId, req.user.uid, req.body?.name);
   res.json({ terminal });
-});
+}));
 
-milestone9Router.delete('/projects/:projectId/terminals/:terminalId', requireAuth, (req: any, res) => {
-  const deleted = TerminalService.deleteSession(req.params.terminalId, req.user.uid);
+milestone9Router.delete('/projects/:projectId/terminals/:terminalId', requireAuth, asyncRoute(async (req: any, res) => {
+  const deleted = await TerminalService.deleteSessionDurable(req.params.terminalId, req.user.uid);
   res.json({ success: deleted });
-});
+}));
 
-milestone9Router.post('/projects/:projectId/terminals/:terminalId/command', requireAuth, (req: any, res) => {
+milestone9Router.post('/projects/:projectId/terminals/:terminalId/command', requireAuth, asyncRoute(async (req: any, res) => {
   const { command, stdout, stderr, exitCode } = req.body || {};
   if (typeof command !== 'string') {
     return res.status(400).json({ error: 'Command string is required.' });
   }
-  const updated = TerminalService.appendExecution(
+  const updated = await TerminalService.appendExecutionDurable(
     req.params.terminalId,
     req.user.uid,
     command,
@@ -314,7 +358,7 @@ milestone9Router.post('/projects/:projectId/terminals/:terminalId/command', requ
     return res.status(404).json({ error: 'Terminal session not found.' });
   }
   res.json({ terminal: updated });
-});
+}));
 
 // ==========================================
 // 5. MEMORY API
@@ -429,18 +473,19 @@ milestone9Router.delete('/projects/:projectId/diagnostics', requireAuth, (req: a
 // ==========================================
 // 9. EXECUTION POLICY API
 // ==========================================
-milestone9Router.get('/policy', requireAuth, (req: any, res) => {
-  res.json({ mode: ExecutionPolicyManager.getPolicyMode(req.user.uid) });
-});
+milestone9Router.get('/policy', requireAuth, asyncRoute(async (req: any, res) => {
+  const mode = await ExecutionPolicyManager.getPolicyModeDurable(req.user.uid);
+  res.json({ mode });
+}));
 
-milestone9Router.post('/policy', requireAuth, (req: any, res) => {
+milestone9Router.post('/policy', requireAuth, asyncRoute(async (req: any, res) => {
   const { mode } = req.body || {};
   if (!['safe', 'review', 'allowlist', 'manual', 'sandboxed'].includes(mode)) {
     return res.status(400).json({ error: 'Invalid execution policy mode.' });
   }
-  ExecutionPolicyManager.setPolicyMode(req.user.uid, mode as ExecutionPolicyMode);
+  await ExecutionPolicyManager.setPolicyModeDurable(req.user.uid, mode as ExecutionPolicyMode);
   res.json({ success: true, mode });
-});
+}));
 
 // ==========================================
 // 10. RETIRED BROWSER AGENT API

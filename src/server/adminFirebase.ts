@@ -74,7 +74,7 @@ export function hasAdminCredentials(): boolean {
 // or FIREBASE_SERVICE_ACCOUNT_JSON.
 const existing = getApps().find((app) => app.name === 'float-admin');
 const serviceAccount = parseServiceAccountFromEnv();
-const adminApp = existing || initializeApp(
+export const adminApp = existing || initializeApp(
   serviceAccount
     ? { credential: cert(serviceAccount as any), projectId: firebaseConfig.projectId }
     : hasAdminCredentials()

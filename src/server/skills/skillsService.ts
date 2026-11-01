@@ -1,16 +1,26 @@
 /**
- * FLOAT AI - Reusable Skills System (Milestone 9)
+ * FLOAT AI - Reusable Skills System (Milestone 9 / Phase 4 Durable State)
  *
  * Implements modular skill packages containing targeted domain instructions,
  * permitted tool subsets, and relevance matchers.
  *
  * Security & Budget guarantees:
+ * - Custom skills are persisted to server-only Firestore (`server_custom_skills`)
  * - Skills are selectively matched against prompt intent/keywords (never dumped wholesale)
  * - Custom skills are strictly partitioned by userId (and optional projectId) so tenants
  *   cannot poison global built-in skills or other users' prompt contexts
  * - Tools assigned to skills cannot bypass tool authorization or execution policies
  * - Skills cannot read or leak sensitive credentials
  */
+
+import {
+  DEFAULT_TTL_MS,
+  deleteServerDocDurable,
+  getServerDocDurable,
+  isDurableFirestoreActive,
+  listServerDocsDurable,
+  saveServerDocDurable
+} from '../durableState';
 
 export type FloatSkillPermission = 'read' | 'write' | 'network' | 'git';
 
@@ -121,8 +131,13 @@ export const BUILT_IN_SKILLS: ReadonlyArray<FloatSkill> = Object.freeze([
   })
 ]);
 
+const COLLECTION = 'server_custom_skills';
 const BUILT_IN_SKILL_IDS = new Set(BUILT_IN_SKILLS.map(s => s.id));
 const DEFAULT_TEST_NAMESPACE = '__unscoped_test__';
+
+function skillDocId(ownerKey: string, skillId: string): string {
+  return `${ownerKey}__${skillId}`.replace(/[^a-zA-Z0-9_\-.]/g, '_');
+}
 
 export class SkillsService {
   // userId -> (skillId -> FloatSkill)
@@ -152,6 +167,18 @@ export class SkillsService {
       enabled: skill.enabled !== false
     };
     bucket.set(stored.id, stored);
+    if (isDurableFirestoreActive()) {
+      void saveServerDocDurable(COLLECTION, skillDocId(ownerKey, stored.id), ownerKey, stored, DEFAULT_TTL_MS * 4).catch(() => undefined);
+    }
+    return stored;
+  }
+
+  static async registerSkillDurable(skill: FloatSkill, userId?: string): Promise<FloatSkill> {
+    const stored = this.registerSkill(skill, userId);
+    const ownerKey = (userId || skill.userId || DEFAULT_TEST_NAMESPACE).trim();
+    if (isDurableFirestoreActive()) {
+      await saveServerDocDurable(COLLECTION, skillDocId(ownerKey, stored.id), ownerKey, stored, DEFAULT_TTL_MS * 4);
+    }
     return stored;
   }
 
@@ -169,11 +196,50 @@ export class SkillsService {
     return custom;
   }
 
+  static async getSkillDurable(id: string, userId?: string, projectId?: string): Promise<FloatSkill | undefined> {
+    const builtIn = BUILT_IN_SKILLS.find(s => s.id === id);
+    if (builtIn) return builtIn;
+
+    const ownerKey = (userId || DEFAULT_TEST_NAMESPACE).trim();
+    if (isDurableFirestoreActive()) {
+      const persisted = await getServerDocDurable<FloatSkill>(COLLECTION, skillDocId(ownerKey, id), ownerKey);
+      if (persisted) {
+        if (persisted.projectId && projectId && persisted.projectId !== projectId) {
+          return undefined;
+        }
+        let bucket = this.customSkillsByUser.get(ownerKey);
+        if (!bucket) {
+          bucket = new Map<string, FloatSkill>();
+          this.customSkillsByUser.set(ownerKey, bucket);
+        }
+        bucket.set(persisted.id, persisted);
+        return persisted;
+      }
+    }
+    return this.getSkill(id, userId, projectId);
+  }
+
   static deleteSkill(id: string, userId: string): boolean {
     if (!userId || BUILT_IN_SKILL_IDS.has(id)) return false;
-    const bucket = this.customSkillsByUser.get(userId.trim());
-    if (!bucket) return false;
-    return bucket.delete(id);
+    const ownerKey = userId.trim();
+    const bucket = this.customSkillsByUser.get(ownerKey);
+    const deleted = bucket ? bucket.delete(id) : false;
+    if (isDurableFirestoreActive()) {
+      void deleteServerDocDurable(COLLECTION, skillDocId(ownerKey, id), ownerKey).catch(() => undefined);
+    }
+    return deleted;
+  }
+
+  static async deleteSkillDurable(id: string, userId: string): Promise<boolean> {
+    if (!userId || BUILT_IN_SKILL_IDS.has(id)) return false;
+    const ownerKey = userId.trim();
+    if (isDurableFirestoreActive()) {
+      const remoteDeleted = await deleteServerDocDurable(COLLECTION, skillDocId(ownerKey, id), ownerKey);
+      const bucket = this.customSkillsByUser.get(ownerKey);
+      const localDeleted = bucket ? bucket.delete(id) : false;
+      return remoteDeleted || localDeleted;
+    }
+    return this.deleteSkill(id, userId);
   }
 
   static getAllSkills(userId?: string, projectId?: string): FloatSkill[] {
@@ -193,6 +259,24 @@ export class SkillsService {
       list.push(custom);
     }
     return list;
+  }
+
+  static async getAllSkillsDurable(userId?: string, projectId?: string): Promise<FloatSkill[]> {
+    const ownerKey = (userId || DEFAULT_TEST_NAMESPACE).trim();
+    if (isDurableFirestoreActive()) {
+      const persisted = await listServerDocsDurable<FloatSkill>(COLLECTION, ownerKey);
+      let bucket = this.customSkillsByUser.get(ownerKey);
+      if (!bucket) {
+        bucket = new Map<string, FloatSkill>();
+        this.customSkillsByUser.set(ownerKey, bucket);
+      }
+      for (const s of persisted) {
+        if (s && s.id && !BUILT_IN_SKILL_IDS.has(s.id)) {
+          bucket.set(s.id, s);
+        }
+      }
+    }
+    return this.getAllSkills(userId, projectId);
   }
 
   /**
@@ -224,6 +308,11 @@ export class SkillsService {
 
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, maxSkills).map(s => s.skill);
+  }
+
+  static async selectRelevantSkillsDurable(prompt: string, maxSkills = 2, userId?: string, projectId?: string): Promise<FloatSkill[]> {
+    await this.getAllSkillsDurable(userId, projectId);
+    return this.selectRelevantSkills(prompt, maxSkills, userId, projectId);
   }
 
   /**

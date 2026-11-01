@@ -33,9 +33,30 @@ const MAX_FILES = 500;
 const MAX_WORKSPACE_BYTES = 10 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
-const EXECUTION_UID = Number(process.env.FLOAT_EXECUTION_UID || (typeof process.getuid === 'function' ? process.getuid() : 1000));
-const EXECUTION_GID = Number(process.env.FLOAT_EXECUTION_GID || (typeof process.getgid === 'function' ? process.getgid() : 1000));
 const SENSITIVE_PATH = /(^|\/)(\.env(?:$|[./])|id_rsa(?:$|\.)|id_ed25519(?:$|\.))|\.(pem|key|p12|pfx|keystore)$/i;
+
+function resolveExecutionUid(): number {
+  if (process.env.FLOAT_EXECUTION_UID) {
+    return Number(process.env.FLOAT_EXECUTION_UID);
+  }
+  const hostUid = typeof process.getuid === 'function' ? process.getuid() : 1000;
+  return hostUid > 0 ? hostUid : 1000;
+}
+
+function resolveExecutionGid(): number {
+  if (process.env.FLOAT_EXECUTION_GID) {
+    return Number(process.env.FLOAT_EXECUTION_GID);
+  }
+  const hostGid = typeof process.getgid === 'function' ? process.getgid() : 1000;
+  return hostGid > 0 ? hostGid : 1000;
+}
+
+export type LiveExecutionListener = (info: {
+  ownerId: string;
+  projectId: string;
+  command: string;
+  event: ExecutionEvent;
+}) => void;
 
 /**
  * Executes inside an ephemeral, network-isolated Docker container. The API
@@ -44,8 +65,28 @@ const SENSITIVE_PATH = /(^|\/)(\.env(?:$|[./])|id_rsa(?:$|\.)|id_ed25519(?:$|\.)
  */
 export class ProjectProcessManager {
   private readonly active = new Map<string, ActiveExecution>();
+  private readonly liveListeners = new Set<LiveExecutionListener>();
+
+  onLiveExecutionEvent(listener: LiveExecutionListener): () => void {
+    this.liveListeners.add(listener);
+    return () => {
+      this.liveListeners.delete(listener);
+    };
+  }
+
+  emitLiveExecutionEvent(ownerId: string, projectId: string, command: string, event: ExecutionEvent): void {
+    for (const listener of this.liveListeners) {
+      try {
+        listener({ ownerId, projectId, command, event });
+      } catch {
+        // Ignore listener errors
+      }
+    }
+  }
 
   get available(): boolean {
+    const uid = resolveExecutionUid();
+    const gid = resolveExecutionGid();
     return Boolean(
       process.env.FLOAT_DOCKER_BIN &&
       /^.+@sha256:[a-f0-9]{64}$/i.test(process.env.FLOAT_EXECUTION_IMAGE || '') &&
@@ -54,10 +95,62 @@ export class ProjectProcessManager {
       process.env.DOCKER_CERT_PATH &&
       process.env.FLOAT_EXECUTION_SHARED_DIR &&
       path.isAbsolute(process.env.FLOAT_EXECUTION_SHARED_DIR) &&
-      Number.isSafeInteger(EXECUTION_UID) && EXECUTION_UID > 0 &&
-      Number.isSafeInteger(EXECUTION_GID) && EXECUTION_GID > 0 &&
-      (typeof process.getuid !== 'function' || process.getuid() === EXECUTION_UID)
+      Number.isSafeInteger(uid) && uid > 0 &&
+      Number.isSafeInteger(gid) && gid > 0 &&
+      (typeof process.getuid !== 'function' || process.getuid() === uid || process.getuid() === 0)
     );
+  }
+
+  async prepareWorkspaceDirectory(files: ExecutionFile[] = []): Promise<string> {
+    if (!this.available) {
+      throw new Error('Isolated project execution is not configured.');
+    }
+    await ensurePrivateSharedDirectory(process.env.FLOAT_EXECUTION_SHARED_DIR!);
+    const root = await mkdtemp(path.join(process.env.FLOAT_EXECUTION_SHARED_DIR!, 'float-workspace-'));
+    await chmod(root, 0o700);
+    let totalBytes = 0;
+    for (const file of files) {
+      const relativePath = validateRelativePath(file.path);
+      if (SENSITIVE_PATH.test(relativePath)) continue;
+      const content = typeof file.content === 'string' ? file.content : '';
+      totalBytes += Buffer.byteLength(content, 'utf8');
+      if (totalBytes > MAX_WORKSPACE_BYTES) throw new Error('Workspace snapshot exceeds 10 MB.');
+      const target = path.join(root, relativePath);
+      if (!target.startsWith(`${root}${path.sep}`)) throw new Error('Workspace file path escaped its sandbox.');
+      await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+      await writeFile(target, content, { flag: 'wx', mode: 0o600 });
+    }
+    return root;
+  }
+
+  buildInteractiveContainerArgs(containerName: string, workspaceRoot: string, cwd = '/'): {
+    dockerBin: string;
+    args: string[];
+    env: NodeJS.ProcessEnv;
+  } {
+    if (!this.available) {
+      throw new Error('Isolated project execution is not configured.');
+    }
+    const uid = resolveExecutionUid();
+    const gid = resolveExecutionGid();
+    const image = process.env.FLOAT_EXECUTION_IMAGE!;
+    const dockerBin = process.env.FLOAT_DOCKER_BIN!;
+    const safeSubdir = cwd && cwd !== '/' ? cwd.replace(/^\/+/, '').replace(/\.\./g, '') : '';
+    const workdir = safeSubdir ? `/workspace/${safeSubdir}` : '/workspace';
+    const args = [
+      'run', '-it', '--rm', '--name', containerName,
+      '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
+      '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${uid}:${gid}`,
+      '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
+      '--mount', `type=bind,src=${workspaceRoot},dst=/workspace`, '--workdir', workdir,
+      '--env', 'HOME=/tmp', '--env', 'TERM=xterm-256color',
+      image, '/bin/sh'
+    ];
+    return {
+      dockerBin,
+      args,
+      env: dockerEnvironment()
+    };
   }
 
   async execute(request: ExecutionRequest): Promise<CommandResult> {
@@ -79,6 +172,10 @@ export class ProjectProcessManager {
   }
 
   start(request: ExecutionRequest, onEvent: (event: ExecutionEvent) => void): { executionId: string; done: Promise<void> } {
+    const emitEvent = (event: ExecutionEvent) => {
+      onEvent(event);
+      this.emitLiveExecutionEvent(request.ownerId, request.projectId, request.command, event);
+    };
     if (!this.available) throw new Error('Isolated project execution is not configured. Configure a pinned image, dedicated TLS-secured remote Docker runner, and a shared execution directory.');
     if (!request.command.trim() || request.command.length > 4000) throw new Error('Command must contain 1 to 4000 characters.');
     if (!Array.isArray(request.files) || request.files.length > MAX_FILES) throw new Error(`Workspace snapshot exceeds the ${MAX_FILES} file limit.`);
@@ -146,7 +243,7 @@ export class ProjectProcessManager {
         const args = [
           'run', '--rm', '--name', containerName,
           '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
-          '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${EXECUTION_UID}:${EXECUTION_GID}`,
+          '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${resolveExecutionUid()}:${resolveExecutionGid()}`,
           '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
           '--mount', `type=bind,src=${root},dst=/workspace`, '--workdir=/workspace',
           '--env', 'HOME=/tmp', '--env', 'CI=true',
@@ -154,34 +251,35 @@ export class ProjectProcessManager {
         ];
         if (cancelled) {
           settled = true;
-          onEvent({ type: 'started', executionId });
-          onEvent({ type: 'completed', status: 'cancelled', exitCode: null, durationMs: Date.now() - startedAt });
+          emitEvent({ type: 'started', executionId });
+          emitEvent({ type: 'completed', status: 'cancelled', exitCode: null, durationMs: Date.now() - startedAt });
           return;
         }
-        child = spawn(docker, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: dockerEnvironment() });
-        execution.child = child;
+        const spawnedChild = spawn(docker, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: dockerEnvironment() });
+        child = spawnedChild;
+        execution.child = spawnedChild;
 
-        onEvent({ type: 'started', executionId });
+        emitEvent({ type: 'started', executionId });
         const emit = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
           outputBytes += chunk.byteLength;
           if (outputBytes > MAX_OUTPUT_BYTES) {
             void execution.cancel();
             return;
           }
-          onEvent({ type: 'output', stream, text: chunk.toString('utf8') });
+          emitEvent({ type: 'output', stream, text: chunk.toString('utf8') });
         };
-        child.stdout?.on('data', (chunk: Buffer) => emit('stdout', chunk));
-        child.stderr?.on('data', (chunk: Buffer) => emit('stderr', chunk));
+        spawnedChild.stdout?.on('data', (chunk: Buffer) => emit('stdout', chunk));
+        spawnedChild.stderr?.on('data', (chunk: Buffer) => emit('stderr', chunk));
 
         const timer = setTimeout(() => {
           timedOut = true;
           void execution.cancel();
         }, timeout);
         const exitCode = await new Promise<number | null>((resolve, reject) => {
-          child.once('error', reject);
-          child.once('close', code => resolve(code));
+          spawnedChild.once('error', reject);
+          spawnedChild.once('close', code => resolve(code));
         }).catch(error => {
-          onEvent({ type: 'error', message: `Could not start isolated execution: ${error.message || String(error)}` });
+          emitEvent({ type: 'error', message: `Could not start isolated execution: ${error.message || String(error)}` });
           return null;
         }).finally(() => clearTimeout(timer));
 
@@ -196,11 +294,11 @@ export class ProjectProcessManager {
           deletedFiles = [...originalFiles.keys()].filter(file => !outputPaths.has(file));
         }
         settled = true;
-        onEvent({ type: 'completed', status, exitCode, durationMs: Date.now() - startedAt, changedFiles, deletedFiles });
+        emitEvent({ type: 'completed', status, exitCode, durationMs: Date.now() - startedAt, changedFiles, deletedFiles });
       } catch (error: any) {
         settled = true;
-        onEvent({ type: 'error', message: error.message || 'Project execution failed.' });
-        onEvent({ type: 'completed', status: cancelled ? 'cancelled' : 'failed', exitCode: null, durationMs: Date.now() - startedAt });
+        emitEvent({ type: 'error', message: error.message || 'Project execution failed.' });
+        emitEvent({ type: 'completed', status: cancelled ? 'cancelled' : 'failed', exitCode: null, durationMs: Date.now() - startedAt });
       } finally {
         this.active.delete(executionId);
         if (root) await rm(root, { recursive: true, force: true }).catch(() => undefined);
@@ -216,6 +314,12 @@ export class ProjectProcessManager {
     if (!execution || execution.ownerId !== ownerId || execution.projectId !== projectId) return false;
     await execution.cancel();
     return true;
+  }
+
+  async shutdownAll(): Promise<number> {
+    const running = Array.from(this.active.values());
+    await Promise.allSettled(running.map(exec => exec.cancel()));
+    return running.length;
   }
 }
 

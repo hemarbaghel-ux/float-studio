@@ -1,7 +1,8 @@
 /**
- * FLOAT AI - Advanced Terminal Session Manager (Milestone 9)
+ * FLOAT AI - Advanced Terminal Session Manager (Milestone 9 / Phase 4 Durable State)
  *
  * Provides isolated terminal sessions with:
+ * - Durable Firestore persistence (`server_terminal_sessions`) with TTL (`expiresAt`)
  * - Multi-session tracking
  * - Bounded output buffer (prevents memory exhaustion)
  * - Secrets sanitization in stdout/stderr
@@ -10,10 +11,20 @@
  * - Command history tracking
  */
 
+import {
+  DEFAULT_TTL_MS,
+  deleteServerDocDurable,
+  getServerDocDurable,
+  isDurableFirestoreActive,
+  listServerDocsDurable,
+  saveServerDocDurable
+} from '../durableState';
+
 export interface TerminalSession {
   id: string;
   projectId: string;
   userId: string;
+  ownerId?: string;
   name: string;
   cwd: string;
   createdAt: number;
@@ -32,10 +43,12 @@ export interface TerminalExecutionResult {
   cancelled?: boolean;
 }
 
+const COLLECTION = 'server_terminal_sessions';
 const MAX_OUTPUT_BUFFER_CHARS = 32000;
-const SENSITIVE_TOKEN_REGEX = /(?:ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{82}|sk-[a-zA-Z0-9]{48}|AIzaSy[a-zA-Z0-9_-]{33}|[a-zA-Z0-9_-]{32,}:[a-zA-Z0-9_-]{32,})/g;
+const SENSITIVE_TOKEN_REGEX = /(?:ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{82}|sk-(?:proj-|live-|test-)?[a-zA-Z0-9_-]{20,}|sk_(?:live|test)_[a-zA-Z0-9]{16,}|AIzaSy[a-zA-Z0-9_-]{33}|Bearer\s+eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}|xox[baprs]-[a-zA-Z0-9-]{10,}|[a-zA-Z0-9_-]{32,}:[a-zA-Z0-9_-]{32,})/g;
 
-function sanitizeTerminalOutput(text: string): string {
+export function sanitizeTerminalOutput(text: string): string {
+  if (!text) return '';
   return text.replace(SENSITIVE_TOKEN_REGEX, '[REDACTED_SECRET]');
 }
 
@@ -48,6 +61,7 @@ export class TerminalService {
       id,
       projectId,
       userId,
+      ownerId: userId,
       name: name || `Terminal ${this.sessions.size + 1}`,
       cwd: '/',
       createdAt: Date.now(),
@@ -58,6 +72,17 @@ export class TerminalService {
     };
 
     this.sessions.set(id, session);
+    if (isDurableFirestoreActive()) {
+      void saveServerDocDurable(COLLECTION, id, userId, session, DEFAULT_TTL_MS).catch(() => undefined);
+    }
+    return session;
+  }
+
+  static async createSessionDurable(projectId: string, userId: string, name?: string): Promise<TerminalSession> {
+    const session = this.createSession(projectId, userId, name);
+    if (isDurableFirestoreActive()) {
+      await saveServerDocDurable(COLLECTION, session.id, userId, session, DEFAULT_TTL_MS);
+    }
     return session;
   }
 
@@ -67,16 +92,57 @@ export class TerminalService {
     return session;
   }
 
+  static async getSessionDurable(id: string, userId: string): Promise<TerminalSession | undefined> {
+    if (isDurableFirestoreActive()) {
+      const persisted = await getServerDocDurable<TerminalSession>(COLLECTION, id, userId);
+      if (persisted && persisted.userId === userId) {
+        this.sessions.set(id, persisted);
+        return persisted;
+      }
+    }
+    return this.getSession(id, userId);
+  }
+
   static listSessions(projectId: string, userId: string): TerminalSession[] {
     return Array.from(this.sessions.values()).filter(
       s => s.projectId === projectId && s.userId === userId
     );
   }
 
+  static async listSessionsDurable(projectId: string, userId: string): Promise<TerminalSession[]> {
+    if (isDurableFirestoreActive()) {
+      const persisted = await listServerDocsDurable<TerminalSession>(COLLECTION, userId, projectId);
+      for (const s of persisted) {
+        if (s.userId === userId) {
+          this.sessions.set(s.id, s);
+        }
+      }
+      return persisted.filter(s => s.projectId === projectId && s.userId === userId);
+    }
+    return this.listSessions(projectId, userId);
+  }
+
   static deleteSession(id: string, userId: string): boolean {
     const session = this.sessions.get(id);
     if (!session || session.userId !== userId) return false;
-    return this.sessions.delete(id);
+    const deleted = this.sessions.delete(id);
+    if (deleted && isDurableFirestoreActive()) {
+      void deleteServerDocDurable(COLLECTION, id, userId).catch(() => undefined);
+    }
+    return deleted;
+  }
+
+  static async deleteSessionDurable(id: string, userId: string): Promise<boolean> {
+    if (isDurableFirestoreActive()) {
+      const deletedRemote = await deleteServerDocDurable(COLLECTION, id, userId);
+      const local = this.sessions.get(id);
+      if (local && local.userId === userId) {
+        this.sessions.delete(id);
+        return true;
+      }
+      return deletedRemote;
+    }
+    return this.deleteSession(id, userId);
   }
 
   /**
@@ -107,7 +173,26 @@ export class TerminalService {
     }
 
     session.lastActive = Date.now();
+    if (isDurableFirestoreActive()) {
+      void saveServerDocDurable(COLLECTION, session.id, userId, session, DEFAULT_TTL_MS).catch(() => undefined);
+    }
     return session;
+  }
+
+  static async appendExecutionDurable(
+    sessionId: string,
+    userId: string,
+    command: string,
+    stdout: string,
+    stderr: string,
+    exitCode: number
+  ): Promise<TerminalSession | undefined> {
+    await this.getSessionDurable(sessionId, userId);
+    const updated = this.appendExecution(sessionId, userId, command, stdout, stderr, exitCode);
+    if (updated && isDurableFirestoreActive()) {
+      await saveServerDocDurable(COLLECTION, updated.id, userId, updated, DEFAULT_TTL_MS);
+    }
+    return updated;
   }
 
   /**
@@ -124,7 +209,20 @@ export class TerminalService {
 
     session.cwd = norm.startsWith('/') ? norm : `/${norm}`;
     session.lastActive = Date.now();
+    if (isDurableFirestoreActive()) {
+      void saveServerDocDurable(COLLECTION, session.id, userId, session, DEFAULT_TTL_MS).catch(() => undefined);
+    }
     return { success: true, cwd: session.cwd };
+  }
+
+  static async changeDirectoryDurable(sessionId: string, userId: string, newCwd: string): Promise<{ success: boolean; cwd: string; error?: string }> {
+    await this.getSessionDurable(sessionId, userId);
+    const result = this.changeDirectory(sessionId, userId, newCwd);
+    const session = this.getSession(sessionId, userId);
+    if (result.success && session && isDurableFirestoreActive()) {
+      await saveServerDocDurable(COLLECTION, session.id, userId, session, DEFAULT_TTL_MS);
+    }
+    return result;
   }
 
   static clear(): void {

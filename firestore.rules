@@ -337,5 +337,71 @@ service cloud.firestore {
     match /processedWebhookEvents/{eventId} {
       allow read, write: if false; // Strictly server-side
     }
+
+    match /userTokenUsage/{usageId} {
+      allow read, write: if false; // Strictly server-side token usage metering
+    }
+
+    // Server-only durable state & background worker collections (Admin SDK only; browser access strictly denied)
+    match /codeProposals/{proposalId} {
+      allow read, write: if false;
+      match /chunks/{chunkId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /server_proposals/{proposalId} {
+      allow read, write: if false;
+    }
+
+    match /server_terminal_sessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /server_custom_skills/{skillId} {
+      allow read, write: if false;
+    }
+
+    match /server_execution_policies/{userId} {
+      allow read, write: if false;
+    }
+
+    match /server_cloud_agent_sessions/{userId} {
+      allow read, write: if false;
+    }
+
+    match /server_rate_limits/{rateLimitKey} {
+      allow read, write: if false;
+    }
+
+    match /agentTasks/{taskId} {
+      allow read, write: if false;
+    }
+
+    match /agentTaskEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /agentTaskResults/{taskId} {
+      allow read, write: if false;
+    }
+
+    match /agentTaskWorkspaces/{taskId} {
+      allow read, write: if false;
+      match /chunks/{chunkId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /agentProjectLeases/{leaseId} {
+      allow read, write: if false;
+    }
+
+    match /server_checkpoints/{checkpointId} {
+      allow read, write: if false;
+      match /chunks/{chunkId} {
+        allow read, write: if false;
+      }
+    }
   }
 }

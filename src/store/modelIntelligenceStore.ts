@@ -1,13 +1,13 @@
 import { create } from 'zustand';
-import { 
-  VERIFIED_MODELS, 
-  VerifiedModel, 
-  AvailabilityStatus 
+import {
+  VERIFIED_MODELS,
+  VerifiedModel,
+  AvailabilityStatus
 } from '../data/verifiedModels';
-import { 
-  VERIFIED_BENCHMARK_DEFINITIONS, 
-  VERIFIED_BENCHMARK_SCORES, 
-  VerifiedBenchmarkDefinition, 
+import {
+  VERIFIED_BENCHMARK_DEFINITIONS,
+  VERIFIED_BENCHMARK_SCORES,
+  VerifiedBenchmarkDefinition,
   VerifiedBenchmarkScore,
   EvaluatorType
 } from '../data/verifiedBenchmarks';
@@ -143,7 +143,7 @@ export const useModelIntelligenceStore = create<ModelIntelligenceState>((set, ge
           return;
         }
         const providers: Record<string, ProviderServerStatus> = data?.providers || {};
-        
+
         // A configured credential only proves configuration is present. Model access
         // remains unknown until that exact upstream model has been verified.
         const updatedModels = get().models.map(model => {
@@ -234,11 +234,13 @@ export const useModelIntelligenceStore = create<ModelIntelligenceState>((set, ge
 
     // Normalization per 1M tokens: tokens / 1,000,000 * rate
     const uncachedTokens = Math.max(0, inTokens - cacheTokens);
-    const inputCost = (uncachedTokens / 1_000_000) * model.pricing.inputCostPer1M;
-    const outputCost = (outTokens / 1_000_000) * model.pricing.outputCostPer1M;
-    const cachedRate = model.pricing.cachedInputCostPer1M !== undefined 
-      ? model.pricing.cachedInputCostPer1M 
-      : model.pricing.inputCostPer1M * 0.5;
+    const inRate = model.pricing.inputCostPer1M ?? 0;
+    const outRate = model.pricing.outputCostPer1M ?? 0;
+    const inputCost = (uncachedTokens / 1_000_000) * inRate;
+    const outputCost = (outTokens / 1_000_000) * outRate;
+    const cachedRate = model.pricing.cachedInputCostPer1M != null
+      ? model.pricing.cachedInputCostPer1M
+      : inRate * 0.5;
     const cachedCost = (cacheTokens / 1_000_000) * cachedRate;
 
     return {

@@ -1,5 +1,5 @@
 /**
- * FLOAT AI - Authoritative Tool Approval & Execution Policy System (Milestone 9)
+ * FLOAT AI - Authoritative Tool Approval & Execution Policy System (Milestone 9 / Phase 4 Durable State)
  *
  * Execution Modes:
  * - 'safe': Read-only operations automatically permitted. Mutating operations strictly blocked.
@@ -16,7 +16,14 @@
  * - Production deployment
  */
 
-export type ExecutionPolicyMode = 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed';
+import {
+  DEFAULT_TTL_MS,
+  getServerDocDurable,
+  isDurableFirestoreActive,
+  saveServerDocDurable
+} from '../durableState';
+
+export type ExecutionPolicyMode = 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed' | 'auto';
 
 export interface ToolExecutionRequest {
   toolName: string;
@@ -32,6 +39,8 @@ export interface PolicyDecision {
   reason: string;
 }
 
+const COLLECTION = 'server_execution_policies';
+
 export class ExecutionPolicyManager {
   private static defaultMode: ExecutionPolicyMode = 'review';
   private static userModes = new Map<string, ExecutionPolicyMode>();
@@ -44,10 +53,43 @@ export class ExecutionPolicyManager {
 
   static setPolicyMode(userId: string, mode: ExecutionPolicyMode): void {
     this.userModes.set(userId, mode);
+    if (isDurableFirestoreActive()) {
+      void saveServerDocDurable(
+        COLLECTION,
+        userId,
+        userId,
+        { id: userId, userId, mode, updatedAt: Date.now() },
+        DEFAULT_TTL_MS * 4
+      ).catch(() => undefined);
+    }
+  }
+
+  static async setPolicyModeDurable(userId: string, mode: ExecutionPolicyMode): Promise<void> {
+    this.userModes.set(userId, mode);
+    if (isDurableFirestoreActive()) {
+      await saveServerDocDurable(
+        COLLECTION,
+        userId,
+        userId,
+        { id: userId, userId, mode, updatedAt: Date.now() },
+        DEFAULT_TTL_MS * 4
+      );
+    }
   }
 
   static getPolicyMode(userId: string): ExecutionPolicyMode {
     return this.userModes.get(userId) || this.defaultMode;
+  }
+
+  static async getPolicyModeDurable(userId: string): Promise<ExecutionPolicyMode> {
+    if (isDurableFirestoreActive()) {
+      const persisted = await getServerDocDurable<{ mode?: ExecutionPolicyMode }>(COLLECTION, userId, userId);
+      if (persisted?.mode && ['safe', 'review', 'allowlist', 'manual', 'sandboxed', 'auto'].includes(persisted.mode)) {
+        this.userModes.set(userId, persisted.mode);
+        return persisted.mode;
+      }
+    }
+    return this.getPolicyMode(userId);
   }
 
   static addAllowedTool(toolName: string): void {
@@ -60,6 +102,15 @@ export class ExecutionPolicyManager {
 
   static isToolAllowed(toolName: string): boolean {
     return this.toolAllowlist.has(toolName);
+  }
+
+  static clearCacheForTests(): void {
+    this.userModes.clear();
+  }
+
+  static async evaluateDurable(request: ToolExecutionRequest): Promise<PolicyDecision> {
+    await this.getPolicyModeDurable(request.userId);
+    return this.evaluate(request);
   }
 
   /**
@@ -126,6 +177,13 @@ export class ExecutionPolicyManager {
           permitted: false,
           requiresHumanApproval: true,
           reason: `Tool "${request.toolName}" is not on the active allowlist; requires approval.`
+        };
+
+      case 'auto':
+        return {
+          permitted: true,
+          requiresHumanApproval: false,
+          reason: 'Auto mode permits non-destructive workspace operations inside the isolated sandbox.'
         };
 
       case 'sandboxed':

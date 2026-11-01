@@ -787,11 +787,12 @@ export function AIPanel() {
       }
 
       // Record token analytics only when genuine usage is returned by upstream API
-      if (finalUsage && typeof finalUsage.inputTokens === 'number' && typeof finalUsage.outputTokens === 'number') {
+      const usage = finalUsage as { inputTokens: number; outputTokens: number } | undefined;
+      if (usage && typeof usage.inputTokens === 'number' && typeof usage.outputTokens === 'number') {
         try {
           const activeModelObj = INITIAL_MODELS.find(m => m.id === selectedModel);
-          const inToks = finalUsage.inputTokens;
-          const outToks = finalUsage.outputTokens;
+          const inToks = usage.inputTokens;
+          const outToks = usage.outputTokens;
           const inCost = ((activeModelObj?.pricing?.inputCost || 0) / 1000000) * inToks;
           const outCost = ((activeModelObj?.pricing?.outputCost || 0) / 1000000) * outToks;
 
