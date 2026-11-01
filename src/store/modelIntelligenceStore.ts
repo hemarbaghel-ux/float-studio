@@ -15,6 +15,11 @@ import {
 export interface ProviderServerStatus {
   name: string;
   configured: boolean;
+  modelAccess?: Record<string, {
+    upstreamModelId: string;
+    status: 'listed' | 'not_listed' | 'unverified' | 'configuration_required';
+    detail: string;
+  }>;
 }
 
 export interface WorkloadPreset {
@@ -120,7 +125,7 @@ export const useModelIntelligenceStore = create<ModelIntelligenceState>((set, ge
   fetchProviderStatus: async () => {
     set({ isLoadingStatus: true });
     try {
-      const res = await fetch('/api/ai/models/status', {
+      const res = await fetch('/api/ai/health', {
         headers: { Accept: 'application/json' },
       });
       if (res.ok) {
@@ -139,19 +144,24 @@ export const useModelIntelligenceStore = create<ModelIntelligenceState>((set, ge
         }
         const providers: Record<string, ProviderServerStatus> = data?.providers || {};
         
-        // Dynamically update model availability statuses based on server provider status
+        // A configured credential only proves configuration is present. Model access
+        // remains unknown until that exact upstream model has been verified.
         const updatedModels = get().models.map(model => {
           const providerInfo = providers[model.providerId];
+          const modelAccess = providerInfo?.modelAccess?.[model.id];
           let status: AvailabilityStatus = model.availabilityStatus;
           let details = model.availabilityDetails;
 
           if (providerInfo) {
-            if (providerInfo.configured) {
-              status = 'AVAILABLE';
-              details = `Verified active in FLOAT runtime via ${providerInfo.name} integration.`;
+            if (modelAccess) {
+              status = 'UNKNOWN';
+              details = modelAccess.detail;
+            } else if (providerInfo.configured) {
+              status = 'UNKNOWN';
+              details = `Server credentials are configured for ${providerInfo.name}; access to this model has not been verified.`;
             } else {
               status = 'CONFIG_REQUIRED';
-              details = `Provider-supported architecture. Server-side API key (${model.providerId.toUpperCase()}_API_KEY) is required.`;
+              details = `${providerInfo.name} is not configured on the server. A server-side provider credential is required.`;
             }
           }
 

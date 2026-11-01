@@ -33,7 +33,7 @@ export function LearnHeader({ currentPath, articleTitle, categoryTitle, onOpenMo
 
   const navLinks = [
     { label: 'Overview', href: '/learn' },
-    { label: 'Agentic Development', href: '/learn/agentic-development' },
+    { label: 'Workspace Guide', href: '/learn/getting-started' },
     { label: 'Getting Started', href: '/learn/getting-started' },
     { label: 'Tutorials', href: '/learn/tutorials' },
     { label: 'Glossary', href: '/learn/glossary' },

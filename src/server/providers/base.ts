@@ -39,6 +39,9 @@ export interface ExecutedToolCall {
 export interface AIProviderRequest {
   model: string;
   apiModelId?: string;
+  apiProtocol?: 'responses' | 'chat_completions';
+  /** Server-selected hard output limit for the resolved model. */
+  maxOutputTokens?: number;
   messages: any[];
   systemInstruction?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
@@ -64,9 +67,15 @@ export interface ProviderHealthCheckResult {
   provider: string;
   configured: boolean;
   authenticated: boolean;
+  /** True only after a genuine generation request succeeds; a model listing is not enough. */
   modelAvailable: boolean;
   defaultModel?: string;
   accessibleModelIds?: string[];
+  modelAccess?: Record<string, {
+    upstreamModelId: string;
+    status: 'listed' | 'not_listed' | 'unverified' | 'configuration_required';
+    detail: string;
+  }>;
   error?: string;
 }
 
@@ -81,11 +90,4 @@ export interface AIProviderAdapter {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse>;
-  runAgentLoop?(
-    req: any,
-    res: any,
-    model: string,
-    prompt: string,
-    virtualFiles: any[]
-  ): Promise<void>;
 }

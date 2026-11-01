@@ -11,7 +11,7 @@ import {
   getCertRefreshCountForTests
 } from '../src/server/authMiddleware';
 import { normalizeGitPath, validateBranch } from '../src/server/github/gitRouter';
-import { sanitizeProposalPath } from '../src/server/agent/proposalService';
+import { sanitizeProposalPath } from '../src/server/proposals/proposalService';
 import { EvalEngine } from '../src/server/evalEngine';
 import {
   verifyProjectOwnership,
@@ -25,12 +25,6 @@ import {
   clearSubscriptionCache,
   resetSubscriptionMemoryState
 } from '../src/server/subscription/subscriptionPersistence';
-import {
-  GPT6_ASTRA_CLOUD_CONFIG,
-  getUserCloudSessionConfig,
-  updateUserCloudSessionConfig,
-  resetUserCloudSessionsForTests
-} from '../src/server/providers/cloudAgentConfig';
 import { checkEndpointRateLimit, resetEndpointRateLimitsForTests } from '../src/server/app';
 import { checkAnalystRateLimit, resetAnalystRateLimitsForTests } from '../src/server/analystRouter';
 
@@ -300,20 +294,6 @@ async function runSecurityAudit() {
 
   const serverAppContent = fs.readFileSync(path.resolve(process.cwd(), 'src/server/app.ts'), 'utf8');
   check(!serverAppContent.includes("from '../lib/firebase'") && !serverAppContent.includes("from 'firebase/firestore'"), 'src/server/app.ts does not import client Firebase SDK');
-
-  // --- Phase A: Cloud Session Per-User Isolation & Shell Injection Prevention ---
-  resetUserCloudSessionsForTests();
-  const badEnvUpdate = updateUserCloudSessionConfig('user_alice_123', {
-    environmentId: "env_bad'; rm -rf / #"
-  });
-  check(badEnvUpdate.ok === false, 'rejects shell metacharacters in cloud session environmentId');
-
-  const aliceSessionUpdate = updateUserCloudSessionConfig('user_alice_123', {
-    sessionId: 'sess_alice_custom_1',
-    environmentId: 'ccarenv_alice_custom_1'
-  });
-  check(aliceSessionUpdate.ok === true, 'accepts valid alphanumeric cloud session identifiers for user_alice');
-  check(getUserCloudSessionConfig('user_bob_456').sessionId === GPT6_ASTRA_CLOUD_CONFIG.sessionId, 'user_alice cloud session update does not mutate user_bob or global config');
 
   // --- Phase A: Rate Limiting & Subscription Cache Clear ---
   resetEndpointRateLimitsForTests();

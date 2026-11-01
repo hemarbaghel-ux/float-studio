@@ -28,7 +28,6 @@ export function ResourcesFooter() {
           <a href="/features" onClick={(e) => { e.preventDefault(); handleNav('/features'); }} className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors text-xs cursor-pointer">Feature Catalog</a>
           <a href="/" onClick={(e) => { e.preventDefault(); handleNav('/'); }} className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors text-xs cursor-pointer">Workspace</a>
           <a href="/models" onClick={(e) => { e.preventDefault(); handleNav('/models'); }} className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors text-xs cursor-pointer">AI Models</a>
-          <a href="/models/evals" onClick={(e) => { e.preventDefault(); handleNav('/models/evals'); }} className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors text-xs cursor-pointer">Evaluations</a>
           <a href="/pricing" onClick={(e) => { e.preventDefault(); handleNav('/pricing'); }} className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors text-xs cursor-pointer">Pricing</a>
         </div>
 

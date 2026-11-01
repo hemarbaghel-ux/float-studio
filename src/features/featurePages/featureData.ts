@@ -8,6 +8,9 @@ import { advancedFeatures } from './data/advancedFeatures';
 
 export * from './types';
 
+const containsRetiredAgentCopy = (feature: FeatureDetail) =>
+  /\b(?:agents?|agentic|subagents?)\b/i.test(JSON.stringify(feature));
+
 export const ALL_FEATURES: FeatureDetail[] = [
   ...lifecycleFeatures,
   ...engineeringFeatures,
@@ -15,7 +18,10 @@ export const ALL_FEATURES: FeatureDetail[] = [
   ...surfacesFeatures,
   ...codebaseFeatures,
   ...advancedFeatures,
-];
+].filter((feature) =>
+  !['agents', 'multiple-models', 'cli', 'other-surfaces', 'web-mobile'].includes(feature.slug) &&
+  !containsRetiredAgentCopy(feature),
+);
 
 export const FEATURE_CATEGORIES = [
   {
@@ -35,26 +41,22 @@ export const FEATURE_CATEGORIES = [
   },
   {
     title: 'Everywhere You Work',
-    description: 'FLOAT currently runs in a browser. Native desktop, CLI, mobile, and remote agent surfaces are not available.',
+    description: 'FLOAT currently runs in a browser. Native desktop, CLI, mobile, and remote execution surfaces are not available.',
     slugs: ['desktop', 'cli', 'other-surfaces', 'web-mobile'],
   },
   {
     title: 'Understands Your Codebase',
-    description: 'Choose configured models and search current workspace files. Parallel subagents and team-wide rules are preview concepts.',
+    description: 'Choose a configured model and search current workspace files. Team-wide rules are a preview concept.',
     slugs: ['multiple-models', 'team-rules', 'codebase-search'],
   },
   {
-    title: 'Autonomous & Enterprise Platform',
-    description: 'The browser coding agent and model selection are available. Hosted cloud execution and enterprise controls are not.',
-    slugs: ['agents', 'model-routing', 'enterprise'],
+    title: 'Model & Workspace Platform',
+    description: 'Select a configured model and use the browser workspace. Hosted cloud execution and enterprise controls are not available.',
+    slugs: ['model-routing', 'enterprise'],
   },
 ];
 
 export const CURRENT_RELEASE_FEATURES: Record<string, { summary: string; limits: string }> = {
-  agents: {
-    summary: 'Ask the coding agent to inspect project context and propose changes across files. Review the proposal before applying it.',
-    limits: 'Tasks depend on a configured model provider. Code runs in the browser runtime; FLOAT does not provide a remote host shell or hosted cloud agents.',
-  },
   plan: {
     summary: 'Use the PLAN chat mode to ask a model for an implementation plan before editing.',
     limits: 'Planning is a model response. It does not automatically run a background multi-phase workflow.',
@@ -69,7 +71,7 @@ export const CURRENT_RELEASE_FEATURES: Record<string, { summary: string; limits:
   },
   'multiple-models': {
     summary: 'Choose among the models exposed by configured providers in the model selector.',
-    limits: 'Provider credentials and model availability are deployment-dependent. FLOAT does not run parallel subagents across models.',
+    limits: 'Provider credentials and model availability are deployment-dependent. FLOAT sends requests only to the selected model.',
   },
   'model-routing': {
     summary: 'Select a model explicitly or use Auto to select the configured default model.',

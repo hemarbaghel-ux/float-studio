@@ -3,26 +3,9 @@ import { auth } from '../../lib/firebase';
 import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
 import { ConsentService } from '../../services/consentService';
-import { filesToMap } from './projectIO';
 import { isAutomationOwnedBy, useAutomations, type Automation } from './automationStore';
-
-const MAX_CONTEXT_CHARS = 40_000;
+import { buildAutomationChatRequest } from './automationRequest';
 const inFlight = new Set<string>();
-
-function workspaceContext(): string {
-  const { files, projectName } = useIDEStore.getState();
-  const map = filesToMap(files || []);
-  let out = `Workspace: ${projectName || 'Project'}\n`;
-  for (const [path, content] of Object.entries(map)) {
-    const block = `\n--- ${path} ---\n${content}\n`;
-    if (out.length + block.length > MAX_CONTEXT_CHARS) {
-      out += `\n(... truncated: more files not included ...)\n`;
-      break;
-    }
-    out += block;
-  }
-  return out;
-}
 
 async function notifySlack(webhook: string, a: Automation, status: string, output: string) {
   try {
@@ -48,7 +31,14 @@ export async function runAutomation(id: string): Promise<void> {
   const runId = store.startRun(id);
   try {
     const token = await user.getIdToken();
-    const prompt = a.includeWorkspace ? `${a.prompt}\n\nUse this workspace as context:\n${workspaceContext()}` : a.prompt;
+    const workspace = useIDEStore.getState();
+    const requestBody = buildAutomationChatRequest({
+      automation: a,
+      files: workspace.files,
+      projectId: workspace.projectId,
+      projectName: workspace.projectName,
+      model: useAIStore.getState().selectedModel,
+    });
     const res = await fetch('/api/ai/chat', {
       method: 'POST',
       headers: {
@@ -56,18 +46,12 @@ export async function runAutomation(id: string): Promise<void> {
         Authorization: `Bearer ${token}`,
         'X-Float-Data-Sharing': ConsentService.isSharingAllowed() ? 'true' : 'false',
       },
-      body: JSON.stringify({
-        messages: [{ role: 'user', parts: [{ text: prompt }] }],
-        model: useAIStore.getState().selectedModel,
-        systemInstruction:
-          'You are FLOAT, running as a background automation. Complete the task and reply with a concise, well-structured report in Markdown. Do not ask follow-up questions.',
-        projectName: useIDEStore.getState().projectName || 'Project Workspace',
-        stream: false,
-      }),
+      body: JSON.stringify(requestBody),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    const text = (data.text || '').trim() || '(The model returned an empty response.)';
+    const text = typeof data.text === 'string' ? data.text.trim() : '';
+    if (!text) throw new Error('The model returned an empty response. Please try again.');
     useAutomations.getState().finishRun(id, runId, 'success', text);
     if (a.slackWebhook) await notifySlack(a.slackWebhook, a, 'finished', text);
   } catch (err: any) {

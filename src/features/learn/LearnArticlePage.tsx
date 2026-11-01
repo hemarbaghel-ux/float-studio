@@ -435,7 +435,7 @@ export function LearnArticlePage({ slug }: LearnArticlePageProps) {
             <div>
               <div className="text-base font-semibold mb-1">Try this in FLOAT</div>
               <div className="text-xs text-slate-300 dark:text-[#A1A1AA]">
-                Apply these concepts directly in the Monaco IDE with autonomous agents.
+                Apply these concepts in the FLOAT workspace with AI chat and reviewable code proposals.
               </div>
             </div>
             <button

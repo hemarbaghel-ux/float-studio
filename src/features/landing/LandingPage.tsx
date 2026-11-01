@@ -9,8 +9,6 @@ import { PricingDropdown } from '../../components/PricingDropdown';
 import { ResourcesDropdown } from '../../components/ResourcesDropdown';
 import { LanguageDropdown } from '../../components/LanguageDropdown';
 import { useTranslation } from '../../components/LanguageProvider';
-import { InteractiveCodeHeroDemo } from './InteractiveCodeHeroDemo';
-import { InteractiveTerminalShowcase } from './InteractiveTerminalShowcase';
 import { TestimonialsSection } from './TestimonialsSection';
 
 export function LandingPage() {
@@ -113,7 +111,7 @@ export function LandingPage() {
           Build with an AI coding workspace that understands your code.
         </h1>
         <p className="text-lg md:text-xl text-slate-600 dark:text-[#A1A1AA] max-w-2xl mb-8 leading-relaxed">
-          Ask. Plan. Edit. Review. Validate. Experience autonomous multi-file workflows with staged proposal diffs and full human control.
+          Ask questions about your code, work with project files, and review proposed changes before applying them.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-14 w-full">
@@ -131,10 +129,6 @@ export function LandingPage() {
           </a>
         </div>
 
-        {/* Interactive Code / Diff Hero Demo */}
-        <div className="w-full relative">
-          <InteractiveCodeHeroDemo onOpenWorkspace={() => handleStart('signup')} />
-        </div>
       </main>
 
       {/* Cursor Parity Feature 1: Tab Autocomplete & Inline AI (Cmd+K) */}
@@ -224,45 +218,6 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Feature: Agents turn ideas into code */}
-      <section className="py-24 max-w-6xl mx-auto px-6 grid md:grid-cols-2 gap-16 items-center border-t border-slate-200 dark:border-white/5">
-        <div>
-          <h2 className="text-3xl font-medium tracking-tight mb-4 text-slate-900 dark:text-white">
-            {t('features.agents.title', 'Agents turn ideas into code')}
-          </h2>
-          <p className="text-slate-600 dark:text-[#A1A1AA] text-lg mb-8">
-            {t('features.agents.desc', 'Accelerate development by handing off tasks to FLOAT, while you focus on making decisions.')}
-          </p>
-          <a
-            href="/learn/agentic-development"
-            onClick={(e) => {
-              e.preventDefault();
-              window.history.pushState({}, '', '/learn/agentic-development');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            }}
-            className="text-[#FF5F56] hover:text-[#FF5F56]/80 font-medium flex items-center gap-2 cursor-pointer transition-colors"
-          >
-            {t('features.agents.cta', 'Learn about agentic development')} <ArrowRight size={16} />
-          </a>
-        </div>
-        <div className="bg-white dark:bg-[#161410] rounded-xl border border-slate-200 dark:border-white/5 p-4 aspect-[4/3] flex items-center justify-center relative overflow-hidden shadow-sm">
-           {/* Abstract Mockup */}
-           <div className="absolute inset-4 bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 rounded-lg p-4 flex flex-col gap-4 text-left">
-             <div className="text-sm font-medium text-slate-900 dark:text-white">{t('preview.plan_mission_control', 'Plan Mission Control')}</div>
-             <div className="text-sm text-slate-600 dark:text-[#A1A1AA]">{t('features.agents.mock_prompt', "let's build a mission control interface, similar to the expose-style window manager on macOS")}</div>
-             <div className="mt-4 p-4 bg-white dark:bg-[#161410] rounded border border-slate-200 dark:border-white/5 flex flex-col gap-3">
-               <div className="text-xs font-medium text-slate-500 dark:text-[#A1A1AA]">{t('features.agents.mock_q_title', 'Questions')}</div>
-               <div className="text-sm text-slate-900 dark:text-white">{t('features.agents.mock_question', 'How should Mission Control be triggered?')}</div>
-               <div className="flex flex-col gap-2">
-                 <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-[#A1A1AA]"><span className="w-5 h-5 bg-slate-200 dark:bg-white/10 rounded flex items-center justify-center text-xs text-slate-900 dark:text-white">1</span> {t('features.agents.mock_opt1', 'Gesture (swipe up with 3 fingers)')}</div>
-                 <div className="flex items-center gap-2 text-sm text-slate-900 dark:text-white"><span className="w-5 h-5 bg-[#FF5F56] rounded flex items-center justify-center text-xs text-white">2</span> {t('features.agents.mock_opt2', 'Keyboard shortcut (e.g. CMD+F3)')}</div>
-                 <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-[#A1A1AA]"><span className="w-5 h-5 bg-slate-200 dark:bg-white/10 rounded flex items-center justify-center text-xs text-slate-900 dark:text-white">3</span> {t('features.agents.mock_opt3', 'Both keyboard and button')}</div>
-               </div>
-             </div>
-           </div>
-        </div>
-      </section>
-
       {/* Feature: Full development lifecycle */}
       <section className="py-24 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5">
         <h2 className="text-3xl font-medium tracking-tight mb-2 text-slate-900 dark:text-white">
@@ -272,34 +227,7 @@ export function LandingPage() {
           {t('features.lifecycle.desc', 'FLOAT supports every phase from planning to writing to reviewing code.')}
         </p>
 
-        <div className="grid md:grid-cols-3 gap-6 text-left">
-          <div className="flex flex-col gap-6">
-            <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.lifecycle.plan_title', 'Plan')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.lifecycle.plan_desc', 'For complex tasks, FLOAT asks clarifying questions, builds a plan, then executes in the background.')}</p>
-              <a
-                href="/features/plan"
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.history.pushState({}, '', '/features/plan');
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }}
-                className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
-              >
-                {t('features.lifecycle.learn_more', 'Learn more')} <ArrowRight size={14} />
-              </a>
-            </div>
-            <div className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl flex-1 p-6 relative overflow-hidden h-64 shadow-xs">
-               <div className="absolute inset-x-4 bottom-4 top-4 bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 rounded-lg p-4">
-                 <div className="text-xs font-medium text-slate-900 dark:text-white mb-2">{t('features.agents.mock_question', 'How should Mission Control be opened?')}</div>
-                 <div className="flex flex-col gap-2">
-                   <div className="text-[10px] text-slate-600 dark:text-[#A1A1AA] flex items-center gap-1"><span className="bg-slate-200 dark:bg-white/10 px-1 rounded text-slate-900 dark:text-white">1</span> {t('features.agents.mock_opt1', 'Gesture (swipe up with 3 fingers)')}</div>
-                   <div className="text-[10px] text-[#FF5F56] flex items-center gap-1"><span className="bg-[#FF5F56]/20 px-1 rounded">2</span> {t('features.agents.mock_opt2', 'Keyboard shortcut (e.g. CMD+F3)')}</div>
-                   <div className="text-[10px] text-slate-600 dark:text-[#A1A1AA] flex items-center gap-1"><span className="bg-slate-200 dark:bg-white/10 px-1 rounded text-slate-900 dark:text-white">3</span> {t('features.agents.mock_opt3', 'Both keyboard and button')}</div>
-                 </div>
-               </div>
-            </div>
-          </div>
+        <div className="grid md:grid-cols-2 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.lifecycle.design_title', 'Design')}</h3>
@@ -374,7 +302,7 @@ export function LandingPage() {
           {t('features.engineering.desc', 'FLOAT edits files, runs terminal commands, searches the web, and more.')}
         </p>
 
-        <div className="grid md:grid-cols-3 gap-6 text-left">
+        <div className="grid md:grid-cols-2 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.engineering.terminal_title', 'Terminal')}</h3>
@@ -461,21 +389,6 @@ export function LandingPage() {
           </div>
         </div>
 
-        {/* Interactive Terminal Showcase */}
-        <div className="mt-14 pt-12 border-t border-slate-200 dark:border-white/5 text-left">
-          <div className="mb-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-600 dark:text-cyan-400 text-xs font-semibold uppercase tracking-wider mb-2">
-              CLI &amp; Orchestration
-            </div>
-            <h3 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white mb-2">
-              Interactive Terminal &amp; CLI Workflow Showcase
-            </h3>
-            <p className="text-sm text-slate-600 dark:text-[#A1A1AA] max-w-2xl">
-              Deterministic simulation of FLOAT's workspace indexing, rule verification, and automated test runners. Experience real-time progress without local shell access.
-            </p>
-          </div>
-          <InteractiveTerminalShowcase onOpenWorkspace={() => handleStart('signup')} />
-        </div>
       </section>
 
       {/* Feature: Extend */}
@@ -487,7 +400,7 @@ export function LandingPage() {
           {t('features.extend.desc', 'Give FLOAT your existing context, and add custom capabilities.')}
         </p>
 
-        <div className="grid md:grid-cols-3 gap-6 text-left">
+        <div className="grid md:grid-cols-2 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
               <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.extend.plugins_title', 'Plugins')}</h3>
@@ -589,171 +502,20 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Feature: Everywhere you work */}
-      <section className="py-24 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5">
-        <h2 className="text-3xl font-medium tracking-tight mb-2 text-slate-900 dark:text-white">
-          {t('features.everywhere.title', 'Everywhere you work')}
-        </h2>
-        <p className="text-slate-600 dark:text-[#A1A1AA] text-xl mb-16">{t('features.everywhere.desc', 'One agent across every surface.')}</p>
-
-        <div className="grid md:grid-cols-4 gap-6 text-left">
-          {/* Desktop */}
-          <div className="flex flex-col gap-4">
-            <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.everywhere.desktop_title', 'Desktop')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.everywhere.desktop_desc', 'Manual to agentic coding, in one familiar editor.')}</p>
-              <a
-                href="/features/desktop"
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.history.pushState({}, '', '/features/desktop');
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }}
-                className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
-              >
-                {t('features.lifecycle.learn_more', 'Learn more')} <ArrowRight size={14} />
-              </a>
-            </div>
-            <div className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-t-xl flex-1 pt-6 px-4 h-64 overflow-hidden border-b-0 shadow-xs">
-               <div className="w-full h-full bg-slate-50 dark:bg-[#1E1C18] rounded-t-lg border border-slate-200 dark:border-white/10 p-4 border-b-0 text-xs text-slate-900 dark:text-white">
-                 <div className="mb-4 text-slate-500 dark:text-[#A1A1AA]">{t('features.everywhere.desktop_mock_prompt', "let's add a spotlight-style search")}</div>
-                 <div className="flex flex-col gap-1 text-slate-500 dark:text-[#A1A1AA]">
-                   <div><span className="text-slate-900 dark:text-white font-medium">{t('preview.read', 'Read')}</span> App.tsx, Menu.tsx</div>
-                   <div><span className="text-slate-900 dark:text-white font-medium">{t('features.engineering.git_mock_7', 'Searched')}</span> {t('features.everywhere.desktop_mock_search', '⌘K shortcut handlers')}</div>
-                   <div><span className="text-slate-900 dark:text-white font-medium">{t('preview.read', 'Edited')}</span> {t('features.everywhere.desktop_mock_edit', 'Search.tsx')}</div>
-                 </div>
-                 <div className="mt-4 text-slate-800 dark:text-white font-medium">{t('features.everywhere.desktop_mock_done', 'Done. Press ⌘K to search files, actions, and...')}</div>
-               </div>
-            </div>
-          </div>
-          {/* CLI */}
-          <div className="flex flex-col gap-4">
-            <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.everywhere.cli_title', 'CLI')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.everywhere.cli_desc', 'Run agents in any terminal, script, or editor.')}</p>
-              <a
-                href="/features/cli"
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.history.pushState({}, '', '/features/cli');
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }}
-                className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
-              >
-                {t('features.lifecycle.learn_more', 'Learn more')} <ArrowRight size={14} />
-              </a>
-            </div>
-            <div className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-t-xl flex-1 pt-6 px-4 h-64 overflow-hidden border-b-0 shadow-xs">
-               <div className="w-full h-full bg-slate-900 dark:bg-[#0A0A0A] rounded-t-lg border border-slate-800 dark:border-white/10 p-4 border-b-0 font-mono text-[10px] text-slate-300 dark:text-[#A1A1AA]">
-                 <div className="text-white font-bold mb-2">{t('features.everywhere.cli_mock_title', 'FLOAT Agent')}</div>
-                 <div className="mb-4 text-slate-400">~/float/float-web</div>
-                 <div className="text-white font-bold mb-4">{t('features.everywhere.cli_mock_task', 'Bioinformatics Tools')}</div>
-                 <div className="mb-4 text-slate-200">{t('features.everywhere.cli_mock_text', "Add affine gap alignment. We only have linear alignment but I need Gotoh's algorithm for proper handling of indels. Also fix the...")}</div>
-                 <div className="flex items-center gap-2 mb-2"><div className="w-2 h-2 rounded-full bg-white/20" /> {t('features.everywhere.cli_mock_thought', 'Thought 5s')}</div>
-                 <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-white/20" /> {t('features.everywhere.cli_mock_read', 'Read bio/sequence_alignment.py')}</div>
-               </div>
-            </div>
-          </div>
-          {/* Other Surfaces */}
-          <div className="flex flex-col gap-4">
-            <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.everywhere.other_title', 'Other Surfaces')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.everywhere.other_desc', 'Start agents from GitHub, Slack, Linear, JetBrains IDEs, and more.')}</p>
-              <a
-                href="/features/other-surfaces"
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.history.pushState({}, '', '/features/other-surfaces');
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }}
-                className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
-              >
-                {t('features.lifecycle.learn_more', 'Learn more')} <ArrowRight size={14} />
-              </a>
-            </div>
-            <div className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-t-xl flex-1 pt-6 px-4 h-64 overflow-hidden border-b-0 shadow-xs">
-               <div className="w-full h-full bg-slate-50 dark:bg-[#1E1C18] rounded-t-lg border border-slate-200 dark:border-white/10 p-4 border-b-0 flex flex-col gap-4 text-[10px]">
-                 <div className="flex gap-2">
-                   <div className="w-6 h-6 rounded-full bg-slate-300 dark:bg-white/20 shrink-0" />
-                   <div>
-                     <div className="flex gap-2"><span className="text-slate-900 dark:text-white font-bold">leerob</span><span className="text-slate-500 dark:text-[#A1A1AA]">{t('features.everywhere.other_mock_ago5', '5m ago')}</span></div>
-                     <div className="text-slate-700 dark:text-white">{t('features.everywhere.other_mock_pr', '@float can you review this PR?')}</div>
-                   </div>
-                 </div>
-                 <div className="flex gap-2">
-                   <div className="w-6 h-6 rounded bg-purple-600 text-white shrink-0 flex items-center justify-center font-bold text-[8px]">FL</div>
-                   <div className="w-full">
-                     <div className="flex gap-2"><span className="text-slate-900 dark:text-white font-bold">FLOAT <span className="bg-slate-200 dark:bg-white/10 px-1 rounded font-normal text-[8px]">{t('features.everywhere.other_mock_bot', 'bot')}</span></span><span className="text-slate-500 dark:text-[#A1A1AA]">{t('features.everywhere.other_mock_reviewed', 'reviewed 3m ago')}</span></div>
-                     <div className="mt-2 bg-slate-900 dark:bg-[#0A0A0A] p-2 rounded border border-slate-800 dark:border-white/5 font-mono text-[8px] text-slate-300 dark:text-[#A1A1AA] overflow-hidden whitespace-nowrap">
-                       <div className="text-white">src/vs/workbench/composer/...</div>
-                       <div className="text-red-400">3292 - {'{selectedMode().k...'}</div>
-                       <div className="text-green-400">3293 + {'{composerOpenMode...'}</div>
-                     </div>
-                   </div>
-                 </div>
-               </div>
-            </div>
-          </div>
-          {/* Web & Mobile */}
-          <div className="flex flex-col gap-4">
-            <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.everywhere.web_title', 'Web & Mobile')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.everywhere.web_desc', 'Run cloud agents from your browser or phone.')}</p>
-              <a
-                href="/features/web-mobile"
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.history.pushState({}, '', '/features/web-mobile');
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }}
-                className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
-              >
-                {t('features.lifecycle.learn_more', 'Learn more')} <ArrowRight size={14} />
-              </a>
-            </div>
-            <div className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-t-xl flex-1 pt-6 px-4 h-64 overflow-hidden border-b-0 flex justify-center shadow-xs">
-               <div className="w-[80%] h-full bg-slate-50 dark:bg-[#1E1C18] rounded-t-3xl border-4 border-slate-800 dark:border-black p-4 border-b-0 text-[10px] flex flex-col gap-4">
-                 <div className="flex items-center justify-between px-2">
-                   <div className="w-4 h-4 bg-purple-600 rounded-sm transform rotate-45" />
-                   <div className="flex gap-4 font-bold text-slate-900 dark:text-white"><span className="border-b-2 border-slate-900 dark:border-white pb-1">{t('features.everywhere.web_agent', 'Agent')}</span><span className="text-slate-500 dark:text-[#A1A1AA]">{t('features.everywhere.web_dashboard', 'Dashboard')}</span></div>
-                 </div>
-                 <div className="font-bold text-slate-500 dark:text-[#A1A1AA] mt-2">{t('features.everywhere.web_today', 'Today')}</div>
-                 <div className="flex flex-col gap-3">
-                   <div className="flex items-start gap-2">
-                     <div className="mt-1 animate-spin text-slate-500 dark:text-[#A1A1AA]">⚙️</div>
-                     <div>
-                       <div className="text-slate-900 dark:text-white font-bold">{t('features.everywhere.web_task1_title', 'Vercel streaming SDK functionality')}</div>
-                       <div className="text-slate-500 dark:text-[#A1A1AA] truncate">{t('features.everywhere.web_task1_desc', 'Analyzing codebase · dashboard-ui')}</div>
-                     </div>
-                   </div>
-                   <div className="flex items-start gap-2">
-                     <div className="mt-1 animate-spin text-slate-500 dark:text-[#A1A1AA]">⚙️</div>
-                     <div>
-                       <div className="text-slate-900 dark:text-white font-bold">{t('features.everywhere.web_task2_title', 'Model selector dropdown')}</div>
-                       <div className="text-slate-500 dark:text-[#A1A1AA] truncate">{t('features.everywhere.web_task2_desc', 'Planning next moves · stripe-landing')}</div>
-                     </div>
-                   </div>
-                 </div>
-               </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* Feature: Codebase understanding */}
       <section className="py-24 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5">
         <h2 className="text-3xl font-medium tracking-tight mb-2 text-slate-900 dark:text-white">
-          {t('features.codebase.title', 'Understands your codebase, no matter the size')}
+          {t('features.codebase.title', 'Find and attach codebase context')}
         </h2>
         <p className="text-slate-600 dark:text-[#A1A1AA] text-xl mb-16">
-          {t('features.codebase.desc', 'FLOAT deeply learns your codebase before writing a single line.')}
+          {t('features.codebase.desc', 'Search project files and attach relevant context to an AI chat.')}
         </p>
 
-        <div className="grid md:grid-cols-3 gap-6 text-left">
+        <div className="grid md:grid-cols-2 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.codebase.models_title', 'Multiple models')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.codebase.models_desc', 'Subagents run in parallel to explore your codebase, with each one using the best model for the task.')}</p>
+              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">Choose a model</h3>
+              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">Select GPT-6 Astra or GPT-6.1 Sol for a chat. Model access depends on server configuration.</p>
               <a
                 href="/features/multiple-models"
                 onClick={(e) => {
@@ -767,29 +529,11 @@ export function LandingPage() {
               </a>
             </div>
             <div className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl flex-1 p-4 h-64 overflow-hidden shadow-xs">
-               <div className="text-xs text-slate-500 dark:text-[#A1A1AA] mb-4 flex items-center justify-between">{t('features.codebase.models_mock_started', 'Started 4 subagents')} <span>∨</span></div>
-               <div className="flex flex-col gap-2">
-                 <div className="bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 p-3 rounded-lg flex items-center gap-3">
-                   <div className="animate-spin text-slate-500 dark:text-[#A1A1AA]">⚙️</div>
-                   <div>
-                     <div className="text-sm font-medium text-slate-900 dark:text-white">{t('features.codebase.models_mock_task1', 'Set up model architecture')}</div>
-                     <div className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('features.codebase.models_mock_task1_sub', 'Editing files')}</div>
-                   </div>
-                 </div>
-                 <div className="bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 p-3 rounded-lg flex items-center gap-3">
-                   <div className="animate-spin text-slate-500 dark:text-[#A1A1AA]">⚙️</div>
-                   <div>
-                     <div className="text-sm font-medium text-slate-900 dark:text-white">{t('features.codebase.models_mock_task2', 'Mission Control Interface')}</div>
-                     <div className="text-[10px] text-slate-500 dark:text-[#A1A1AA]">{t('features.codebase.models_mock_task2_sub', 'Building dashboard')}</div>
-                   </div>
-                 </div>
-                 <div className="bg-slate-50 dark:bg-[#161410] border border-slate-200 dark:border-white/5 p-3 rounded-lg flex items-center gap-3 opacity-60">
-                   <div className="text-slate-500 dark:text-[#A1A1AA]">⚙️</div>
-                   <div>
-                     <div className="text-sm font-medium text-slate-900 dark:text-white">{t('features.codebase.models_mock_task3', 'Add evaluation metrics')}</div>
-                   </div>
-                 </div>
-               </div>
+                <div className="flex flex-col gap-3">
+                  <div className="bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 p-3 rounded-lg text-sm text-slate-900 dark:text-white">GPT-6 Astra</div>
+                  <div className="bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 p-3 rounded-lg text-sm text-slate-900 dark:text-white">GPT-6.1 Sol</div>
+                  <p className="text-xs text-slate-500 dark:text-[#A1A1AA]">Access is determined by the configured provider account.</p>
+                </div>
             </div>
           </div>
           <div className="flex flex-col gap-6">
@@ -822,8 +566,8 @@ export function LandingPage() {
           </div>
           <div className="flex flex-col gap-6">
             <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.codebase.search_title', 'Fast codebase search')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('features.codebase.search_desc', 'Designed for large codebases, FLOAT uses Instant Grep to search millions of files in milliseconds.')}</p>
+              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('features.codebase.search_title', 'Search project files')}</h3>
+              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">Find text and code references in the current project.</p>
               <a
                 href="/features/codebase-search"
                 onClick={(e) => {
@@ -861,7 +605,7 @@ export function LandingPage() {
         <div className="grid md:grid-cols-3 gap-4 text-left">
           {[
             ['Work with your project', 'Browse files and edit code in the workspace.'],
-            ['Choose an AI provider', 'Connect a provider key in settings and use the models available to your account.'],
+                  ['Use server-configured AI', 'Choose GPT-6 Astra or GPT-6.1 Sol. Access depends on the server provider configuration.'],
             ['Review before applying', 'Inspect proposed code changes and validation output before accepting them.'],
           ].map(([title, description]) => (
             <div key={title} className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl p-6">
@@ -872,13 +616,13 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Feature: Best Model / Agents / Enterprise */}
+      {/* Feature: Models and workspace */}
       <section className="py-24 max-w-6xl mx-auto px-6 border-t border-slate-200 dark:border-white/5">
-        <div className="grid md:grid-cols-3 gap-6 text-left">
+        <div className="grid md:grid-cols-2 gap-6 text-left">
           <div className="flex flex-col gap-6">
             <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('cards.best_model_title', 'Use the best model for every task')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('cards.best_model_desc', 'Connect a supported AI provider and choose from the models available to your account.')}</p>
+              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">Choose a model</h3>
+              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">Select GPT-6 Astra or GPT-6.1 Sol. Access depends on the server provider configuration.</p>
               <a
                 href="/features/multiple-models"
                 onClick={(e) => {
@@ -894,74 +638,19 @@ export function LandingPage() {
             <div className="bg-white dark:bg-[#161410] border border-slate-200 dark:border-white/5 rounded-xl flex-1 p-6 h-[400px] flex items-center justify-center shadow-xs">
                <div className="w-full bg-slate-50 dark:bg-[#1E1C18] border border-slate-200 dark:border-white/10 rounded-lg shadow-2xl overflow-hidden text-sm relative pb-[200px]">
                  <div className="p-3 border-b border-slate-200 dark:border-white/10 flex items-center justify-between text-slate-500 dark:text-[#A1A1AA]">
-                   <div>{t('cards.ask_float', 'Ask FLOAT to plan or build anything')}</div>
+                    <div>Ask FLOAT about your code</div>
                  </div>
                  <div className="p-3 flex items-center justify-between">
                    <div className="flex items-center gap-2 bg-slate-200/70 dark:bg-white/5 px-2 py-1 rounded text-slate-900 dark:text-white">
-                     <span>∞ Agent ∨</span>
-                     <span className="text-slate-500 dark:text-[#A1A1AA]">{t('cards.auto', 'Auto')} ∨</span>
+                      <span>GPT-6 Astra ∨</span>
                    </div>
                    <div className="w-6 h-6 bg-slate-900 dark:bg-white text-white dark:text-black rounded-full flex items-center justify-center font-bold">↑</div>
                  </div>
                  {/* Dropdown popup */}
                  <div className="absolute bottom-16 left-24 right-8 bg-white dark:bg-[#2A2824] border border-slate-200 dark:border-white/10 rounded-lg shadow-2xl py-2 z-10 flex flex-col text-slate-800 dark:text-white">
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5 flex justify-between"><span>{t('cards.auto', 'Auto')} <span className="text-slate-400 dark:text-[#A1A1AA] text-xs">{t('cards.suggested', 'Suggested')}</span></span><span>✓</span></div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">GPT-4o</div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">o3-mini</div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">GPT-4o mini</div>
-                   <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">o1</div>
+                    <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5 flex justify-between"><span>GPT-6 Astra</span><span>✓</span></div>
+                    <div className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-white/5">GPT-6.1 Sol</div>
                  </div>
-               </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-6">
-            <div>
-              <h3 className="font-medium text-lg mb-2 text-slate-900 dark:text-white">{t('cards.autonomous_title', 'Review AI-assisted code changes')}</h3>
-              <p className="text-slate-600 dark:text-[#A1A1AA] text-sm mb-4">{t('cards.autonomous_desc', 'Use FLOAT’s coding workspace to ask for changes, inspect the proposed diff, and decide what to apply.')}</p>
-              <a
-                href="/features/agents"
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.history.pushState({}, '', '/features/agents');
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }}
-                className="text-[#FF5F56] text-sm font-medium flex items-center gap-1 hover:text-[#FF5F56]/80 transition-colors cursor-pointer"
-              >
-                {t('cards.autonomous_cta', 'Explore the workspace')} <ArrowRight size={14} />
-              </a>
-            </div>
-            <div className="bg-slate-100 dark:bg-[#3A3930] border border-slate-200 dark:border-white/5 rounded-xl flex-1 pt-8 px-8 h-[400px] flex justify-center overflow-hidden border-b-0 shadow-xs">
-               <div className="w-[85%] h-full bg-white dark:bg-[#161410] rounded-t-[3rem] border-8 border-slate-300 dark:border-[#1E1C18] p-6 border-b-0 relative shadow-md text-left">
-                  {/* Dynamic Island */}
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 w-1/3 h-5 bg-slate-800 dark:bg-[#1E1C18] rounded-full" />
-                  <div className="mt-8">
-                    <h4 className="text-xl font-bold text-slate-900 dark:text-white mb-6">{t('cards.all_repos', 'All Repos')}</h4>
-                    <div className="text-xs text-slate-500 dark:text-[#A1A1AA] font-bold mb-4">{t('cards.recents', 'Recents')}</div>
-                    <div className="flex flex-col gap-6">
-                      <div className="flex gap-3">
-                        <div className="text-purple-600 dark:text-[#A1A1AA] mt-0.5">❖</div>
-                        <div>
-                          <div className="text-slate-900 dark:text-white font-bold text-sm">{t('cards.repo_task1', 'Fix sign-in redirect on iOS')}</div>
-                          <div className="text-xs text-slate-500 dark:text-[#A1A1AA]">{t('cards.working', 'Working')} • float/mobile</div>
-                        </div>
-                      </div>
-                      <div className="flex gap-3">
-                        <div className="text-purple-600 dark:text-[#A1A1AA] mt-0.5">❖</div>
-                        <div>
-                          <div className="text-slate-900 dark:text-white font-bold text-sm">{t('cards.repo_task2', 'Add rate limits to public routes')}</div>
-                          <div className="text-xs text-slate-500 dark:text-[#A1A1AA]">{t('cards.working', 'Working')} • float/api</div>
-                        </div>
-                      </div>
-                      <div className="flex gap-3">
-                        <div className="text-purple-600 dark:text-[#A1A1AA] mt-0.5">❖</div>
-                        <div>
-                          <div className="text-slate-900 dark:text-white font-bold text-sm">{t('cards.repo_task3', 'Cache repository search results')}</div>
-                          <div className="text-xs text-slate-500 dark:text-[#A1A1AA]">{t('cards.working', 'Working')} • float/web</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
                </div>
             </div>
           </div>
@@ -1025,7 +714,6 @@ export function LandingPage() {
             <a href="/features" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Features</a>
             <a href="/pricing" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">{t('footer.pricing', 'Pricing')}</a>
             <a href="/models" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Models</a>
-            <a href="/evals" className="text-slate-600 dark:text-[#A1A1AA] hover:text-slate-900 dark:hover:text-white transition-colors">Evaluations</a>
           </div>
           <div className="flex flex-col gap-4">
             <h4 className="text-slate-900 dark:text-white font-semibold mb-2">{t('footer.resources', 'Resources')}</h4>

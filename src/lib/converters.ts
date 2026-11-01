@@ -1,42 +1,5 @@
 import { FirestoreDataConverter, QueryDocumentSnapshot, SnapshotOptions, DocumentData, serverTimestamp } from 'firebase/firestore';
 import { EvalTask } from '../types';
-import { AgentModelAssignment } from '../types/ai';
-
-export const agentAssignmentConverter: FirestoreDataConverter<AgentModelAssignment> = {
-  toFirestore(assignment: AgentModelAssignment): DocumentData {
-    const data: DocumentData = {
-      ownerId: assignment.ownerId,
-      agentId: assignment.agentId,
-      primaryModel: assignment.primaryModel,
-      fallbackModel: assignment.fallbackModel || '',
-      updatedAt: serverTimestamp()
-    };
-
-    if (assignment.createdAt) {
-      data.createdAt = assignment.createdAt;
-    } else {
-      data.createdAt = serverTimestamp();
-    }
-
-    return data;
-  },
-  fromFirestore(
-    snapshot: QueryDocumentSnapshot,
-    options: SnapshotOptions
-  ): AgentModelAssignment {
-    const data = snapshot.data(options)!;
-    return {
-      id: snapshot.id,
-      ownerId: data.ownerId,
-      agentId: data.agentId,
-      primaryModel: data.primaryModel,
-      fallbackModel: data.fallbackModel || '',
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt
-    };
-  }
-};
-
 export const evalTaskConverter: FirestoreDataConverter<EvalTask> = {
   toFirestore(task: EvalTask): DocumentData {
     const data: DocumentData = {

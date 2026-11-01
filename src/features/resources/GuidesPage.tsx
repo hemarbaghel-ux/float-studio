@@ -56,8 +56,8 @@ export function GuidesPage() {
           ]
         },
         {
-          heading: '2. Understanding the Modes',
-          body: 'FLOAT provides four modes to suit your workflow: ASK, PLAN, EDIT, and AGENT. For your first edit, switch the dropdown to EDIT mode. This ensures that the AI only proposes targeted diffs rather than performing unconstrained autonomous operations.'
+          heading: '2. Asking for help or a code proposal',
+          body: 'Use the chat composer to ask a question about your workspace or describe a code change. Review any proposed changes before applying them.'
         },
         {
           heading: '3. Prompting the AI Assistant',
@@ -83,7 +83,7 @@ export function GuidesPage() {
       sections: [
         {
           heading: 'Why Diff Review Matters',
-          body: 'Autonomous code generation without human verification introduces bugs and regressions. FLOAT enforces explicit diff review: code is never silently overwritten behind your back.',
+          body: 'Reviewing proposed code changes helps catch bugs and regressions. FLOAT presents a proposal for inspection before applying it.',
           points: [
             'Unified and split diff inspection in Monaco.',
             'Explicit Accept and Reject actions for every proposal.',
@@ -99,18 +99,18 @@ export function GuidesPage() {
     {
       id: 'codebase-exploration-ask',
       category: 'Codebase Exploration',
-      title: 'Exploring Large Codebases with ASK Mode',
-      description: 'How to use read-only AI queries to understand complex dependency graphs, routing architectures, and data flows safely.',
+      title: 'Exploring a Codebase with AI Chat',
+      description: 'Use selected project files as context to understand dependencies, routing, and data flows.',
       readTime: '7 min read',
       isPublished: true,
       sections: [
         {
-          heading: 'Read-Only Exploration with ASK Mode',
-          body: 'When onboarding to a new repository or troubleshooting unfamiliar logic, switch to ASK mode. In ASK mode, FLOAT is strictly restricted from editing files. It reads repository context and provides deep architectural explanations.',
+          heading: 'Ask questions with selected context',
+          body: 'When onboarding to a repository or troubleshooting unfamiliar logic, attach the relevant project files to a chat message and ask a focused question.',
           points: [
             'Ask: "Where is authentication enforced in our Express routes?"',
             'Ask: "Explain how Zustand stores manage IDE state in src/store/"',
-            'No risk of accidental file edits or dirty git working trees.'
+            'For code changes, inspect the proposal and explicitly apply or reject it.'
           ]
         }
       ]
@@ -128,27 +128,11 @@ export function GuidesPage() {
           body: 'Large multi-turn conversations can consume tokens and dilute prompt relevance. Use the "New Chat" button when switching to an unrelated task to refresh the context window and ensure high-precision responses.',
           points: [
             'Track your token consumption in real time at /models/usage.',
-            'OpenAI GPT-4o provides rapid inference with large token context limits.'
+            'Choose GPT-6 Astra or GPT-6.1 Sol from the model picker; actual access depends on server configuration and provider account access.'
           ]
         }
       ]
     },
-    {
-      id: 'agentic-debugging-loop',
-      category: 'Debugging',
-      title: 'Automated Diagnostic Loops with Debugger Agent',
-      description: 'Let the Debugger Agent analyze stack traces, reproduce test failures, and propose surgical bug fixes.',
-      readTime: 'Coming soon',
-      isPublished: false
-    },
-    {
-      id: 'cloud-agent-pipelines',
-      category: 'Workflows',
-      title: 'Setting up Cloud Agent CI/CD Pipelines',
-      description: 'Automate PR reviews and background refactoring tasks with remote agent runners.',
-      readTime: 'Coming soon',
-      isPublished: false
-    }
   ];
 
   const categories = ['All', 'Getting Started', 'AI Coding', 'Codebase Exploration', 'Debugging', 'Workflows'];

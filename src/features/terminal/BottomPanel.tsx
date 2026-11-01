@@ -5,7 +5,6 @@ import { X, Trash2, Play, Terminal as TerminalIcon, AlertCircle, FileText, Loade
 import { cn, flattenFileTree } from '../../lib/utils';
 import { executeProjectCommand } from '../../services/projectExecution';
 import { ValidationPanel } from '../../components/panels/ValidationPanel';
-import { useCloudSession, AVAILABLE_PROFILES } from '../float/cloudSessionStore';
 import { isShellCommand, runShell } from '../float/sandbox';
 import { sandboxFs } from '../float/workspaceFs';
 import { auth } from '../../lib/firebase';
@@ -94,7 +93,7 @@ export function BottomPanel() {
       return;
     }
 
-    if (useCloudSession.getState().active && isShellCommand(trimmed)) {
+    if (isShellCommand(trimmed)) {
         setIsExecutingInput(true);
         try {
           const { output, code } = await runShell(trimmed, sandboxFs());
@@ -107,58 +106,6 @@ export function BottomPanel() {
         return;
     }
 
-    if (trimmed === 'session' || trimmed.startsWith('session ')) {
-      const parts = trimmed.split(/\s+/);
-      const sub = parts[1]?.toLowerCase();
-      const cs = useCloudSession.getState();
-
-      if (sub === 'stop' || sub === 'disconnect') {
-        cs.stop();
-        addTerminalEntry({
-          type: 'output',
-          content: 'Session disconnected. Type "session connect" or "session sol" to reconnect.'
-        });
-        return;
-      }
-
-      if (sub === 'sol') {
-        const solProfile = AVAILABLE_PROFILES.find(p => p.id === 'sol') || AVAILABLE_PROFILES[0];
-        cs.start('cloud-agent', 'sol-ccarenv', solProfile.sessionId, solProfile.environmentId, solProfile.model);
-      } else if (sub === 'astra' || sub === 'new') {
-        const astraProfile = AVAILABLE_PROFILES.find(p => p.id === 'astra') || AVAILABLE_PROFILES[1];
-        cs.start('cloud-agent', 'astra-ccarenv', astraProfile.sessionId, astraProfile.environmentId, astraProfile.model);
-      } else if (sub === 'connect') {
-        const customSession = parts[2];
-        const customEnv = parts[3];
-        if (customSession && customEnv) {
-          cs.start('cloud-agent', 'custom-ccarenv', customSession, customEnv, 'Custom Agent');
-        } else {
-          cs.connect();
-        }
-      }
-
-      const now = useCloudSession.getState();
-      if (now.active) {
-        addTerminalEntry({
-          type: 'output',
-          content: `Cloud execution session connected & active:
-  Agent Target:  ${now.modelAttached || 'GPT-6.1 Sol (Preview)'}
-  Session ID:    ${now.sessionId || 'sess_087a4d42ca75939b006ace64b295ac8193b83bd1fbfd9a4015'}
-  Environment:   ${now.environmentId || 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ'}
-  Remote URL:    https://api.openai.com/v1/agents/api/connect/rt_7k2m
-  Exec Server:   codex exec-server --remote 'https://api.openai.com/v1/agents/api/connect/rt_7k2m' --environment-id '${now.environmentId || 'ccarenv_b64_Y2NhcmVudl82YWNjNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ'}'
-  Upstream:      Connected (Automatic upstream fallback to GPT-4o if unreachable)
-  Commands:      session sol | session astra | session connect <sessId> <envId> | session stop`
-        });
-      } else {
-        addTerminalEntry({
-          type: 'output',
-          content: 'Session is currently disconnected. Type: session connect, session sol, or session astra to re-attach.'
-        });
-      }
-      return;
-    }
-
     if (trimmed === 'help') {
       addTerminalEntry({
         type: 'output',
@@ -169,8 +116,7 @@ export function BottomPanel() {
   clear               Clear the terminal screen
   help                Display this assistance message
 
-Browser worker (type: session start):
-  This is a separate, limited in-browser interpreter and is not a server shell.`
+  Browser worker commands use the local limited sandbox, not a server shell.`
       });
       return;
     }
@@ -181,7 +127,8 @@ Browser worker (type: session start):
     let stdout = '';
     let stderr = '';
     try {
-      await useIDEStore.getState().saveProject();
+      const saveResult = await useIDEStore.getState().saveProject();
+      if (saveResult.status !== 'synced') throw new Error(saveResult.message);
       const state = useIDEStore.getState();
       if (!state.projectId) throw new Error('Save this workspace before running a server command.');
       const virtualFiles = flattenFileTree(state.files).filter(file => file.type === 'file').map(file => ({ path: file.path, content: file.content }));
@@ -198,7 +145,8 @@ Browser worker (type: session start):
       });
       if (result.changedFiles?.length || result.deletedFiles?.length) {
         useIDEStore.getState().applyExecutionChanges(result.changedFiles || [], result.deletedFiles || []);
-        await useIDEStore.getState().saveProject();
+        const saveResult = await useIDEStore.getState().saveProject();
+        if (saveResult.status !== 'synced') throw new Error(saveResult.message);
       }
       const output = stdout + stderr;
       const failure = result.status === 'succeeded' ? null : `${result.status === 'timed_out' ? 'Process timed out' : result.status === 'cancelled' ? 'Process cancelled' : 'Process exited with code ' + result.exitCode}${stderr ? `\n${stderr}` : ''}`;

@@ -30,16 +30,12 @@ export interface CodeProposal {
   ownerId: string;
   projectId: string;
   conversationId?: string;
-  agentId?: string;
-  agentTaskId?: string;
-  agentBranch?: string;
-  agentBaseCommit?: string;
-  agentDiff?: string;
   description: string;
   status: ProposalStatus;
   affectedFiles: string[];
   changes: ProposalChange[];
   appliedFiles?: string[];
+  appliedFileGeneration?: string;
   failedFiles?: { path: string; error: string }[];
   conflictDetails?: { path: string; message: string }[];
   createdAt: number;

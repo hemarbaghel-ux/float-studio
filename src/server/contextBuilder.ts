@@ -33,7 +33,6 @@ export interface ConversationTurnSummary {
   content: string;
 }
 
-import { FloatAgentWorkflowMode, getWorkflowModeInstructions } from './agent/agentModes';
 import { RulesService } from './rules/rulesService';
 import { SkillsService } from './skills/skillsService';
 import { MemoryService } from './memory/memoryService';
@@ -54,7 +53,6 @@ export interface ContextBuilderOptions {
   gitDiffPaths?: string[];// backwards compatibility
   activeFilePath?: string;// backwards compatibility
   conversationHistory?: ConversationTurnSummary[];
-  workflowMode?: FloatAgentWorkflowMode;
   rules?: string[];
   skills?: string[];
   memories?: string[];
@@ -455,7 +453,6 @@ export class ContextBuilder {
     const gitInfo = gitRepoName ? ` (Linked: ${gitRepoName}${gitBranchName ? `@${gitBranchName}` : ''})` : '';
     const intentTag = ` [Intent: ${intent.toUpperCase()}]`;
 
-    const modeSection = options.workflowMode ? `${getWorkflowModeInstructions(options.workflowMode)}\n\n` : '';
     const rulesSection = options.rules && options.rules.length > 0 ? `[Workspace & Coding Rules]\n${options.rules.join('\n')}\n\n` : '';
     const skillsSection = options.skills && options.skills.length > 0 ? `[Active Domain Skills]\n${options.skills.join('\n')}\n\n` : '';
     const memorySection = options.memories && options.memories.length > 0 ? `[Project Architectural Memory]\n${options.memories.join('\n')}\n\n` : '';
@@ -464,7 +461,7 @@ export class ContextBuilder {
     const contextBody = `[Codebase & Attached Context]\n${includedBlocks.join('\n\n')}\n\n`;
     const userPromptSection = `[User Request]\n${userMessage}`;
 
-    const formattedPrompt = `${modeSection}${warningSection}${rulesSection}${skillsSection}${memorySection}${diagSection}${projectHeader}${contextBody}${userPromptSection}`;
+    const formattedPrompt = `${warningSection}${rulesSection}${skillsSection}${memorySection}${diagSection}${projectHeader}${contextBody}${userPromptSection}`;
 
     return {
       formattedPrompt,

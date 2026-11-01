@@ -13,7 +13,7 @@ export interface TestimonialItem {
   role: string;
   company: string;
   avatar: string;
-  category: 'engineering' | 'ai-agents' | 'productivity' | 'oss';
+  category: 'engineering' | 'productivity' | 'oss';
   content: string;
   highlight: string;
   metrics?: string;
@@ -39,22 +39,6 @@ const TESTIMONIALS: TestimonialItem[] = [
     verified: true,
     date: '2 days ago',
     tags: ['Diff Review', 'TypeScript', 'Refactoring']
-  },
-  {
-    id: 't-2',
-    name: 'Marcus Vance',
-    handle: '@marcusv_code',
-    role: 'Staff Infrastructure Lead',
-    company: 'VectorFlow AI',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80',
-    category: 'ai-agents',
-    content: "The multi-file agent execution in FLOAT is the closest thing to an autonomous senior engineer. It reads our project structure, parses AST diagnostics, writes unit tests, and validates before handing off.",
-    highlight: 'Multi-file agent execution parses AST diagnostics and writes unit tests.',
-    metrics: '100% test coverage preserved',
-    source: 'GitHub',
-    verified: true,
-    date: '1 week ago',
-    tags: ['Autonomous Agents', 'Test Runners', 'AST']
   },
   {
     id: 't-3',
@@ -136,22 +120,6 @@ const TESTIMONIALS: TestimonialItem[] = [
     date: 'Oct 4',
     tags: ['Diff Review', 'Monaco', 'UI/UX']
   },
-  {
-    id: 't-8',
-    name: 'Priya Narayanan',
-    handle: '@priya_n',
-    role: 'DevOps & Tooling Lead',
-    company: 'CloudMatrix',
-    avatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=120&auto=format&fit=crop&q=80',
-    category: 'ai-agents',
-    content: "FLOAT CLI & validation tooling caught 3 broken import cycles that had slipped through CI. The deterministic orchestrator and checkpoint rollbacks make experimenting with complex refactors risk-free.",
-    highlight: 'Deterministic orchestrator and rollback snapshots make refactoring risk-free.',
-    metrics: 'Zero regressions',
-    source: 'Discord',
-    verified: true,
-    date: 'Oct 2',
-    tags: ['CLI Validation', 'Checkpoints', 'Git']
-  }
 ];
 
 export function TestimonialsSection() {
@@ -162,7 +130,6 @@ export function TestimonialsSection() {
   const categories = [
     { id: 'all', label: 'All Reviews' },
     { id: 'engineering', label: 'Engineering' },
-    { id: 'ai-agents', label: 'Autonomous Agents' },
     { id: 'productivity', label: 'Speed & Workflow' },
     { id: 'oss', label: 'Open Source' }
   ];
@@ -191,7 +158,7 @@ export function TestimonialsSection() {
             Loved by engineers who ship every day
           </h2>
           <p className="mt-3 text-base text-slate-600 dark:text-[#A1A1AA] max-w-2xl">
-            See how developers, architects, and founders use FLOAT's agentic workflows, tab autocomplete, and safe staged diff reviews to build faster.
+            See how developers use FLOAT's code editor, workspace context, and reviewable proposals.
           </p>
         </div>
 

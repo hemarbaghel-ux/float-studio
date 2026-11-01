@@ -14,7 +14,7 @@ import {
 } from '../types/evals';
 import { ChangeSet, Change } from '../types';
 import { ScoringEngine } from './scoringEngine';
-import { sanitizeProposalPath } from './agent/proposalService';
+import { sanitizeProposalPath } from './proposals/proposalService';
 import { ModelRouter } from './providers/router';
 import { INITIAL_MODELS } from '../features/ai/registry';
 import { ServerPrivacyGuard } from './privacyGuard';
@@ -38,7 +38,7 @@ import {
 } from './evalPersistence';
 
 // Globally supported models for evaluations in FLOAT AI
-export const SUPPORTED_EVAL_MODELS = new Set<string>(['gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1', 'o1-mini', 'gpt-4.5-preview', 'gpt-4-turbo', 'chatgpt-4o-latest', 'auto', 'float-basic', 'gpt-6-astra', 'gpt-6.1-sol']);
+export const SUPPORTED_EVAL_MODELS = new Set<string>(['gpt-6-astra', 'gpt-6.1-sol']);
 
 // Built-in standard evaluation tasks for coding, debugging, refactoring, and agentic workflows
 const INITIAL_TASKS: EvalTask[] = [

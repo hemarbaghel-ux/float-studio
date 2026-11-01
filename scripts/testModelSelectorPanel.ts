@@ -29,18 +29,18 @@ assert(DASHBOARD_MODELS.length === 2, `DASHBOARD_MODELS contains exactly 2 model
 
 const astra = DASHBOARD_MODELS.find(m => m.id === 'gpt-6-astra')!;
 assert(Boolean(astra), 'GPT-6 Astra is present in DASHBOARD_MODELS');
-assert(astra?.displayName.includes('GPT-6 Astra'), 'Model 1 is "GPT-6 Astra Flagship Coding"');
+assert(astra?.displayName === 'GPT-6 Astra', 'Model 1 uses the requested GPT-6 Astra display name');
 assert(astra?.id === 'gpt-6-astra', 'Model 1 id is gpt-6-astra');
-assert(astra?.reasoningLevel === 'Balanced', 'GPT-6 Astra reasoningLevel is "Balanced"');
-assert(astra?.version === 'preview-rt_7k2m', 'GPT-6 Astra version is preview-rt_7k2m');
+assert(astra?.reasoningLevel === undefined, 'GPT-6 Astra does not display an unverified speed or effort rating');
+assert(astra?.version === 'gpt-6-astra', 'GPT-6 Astra version label uses the verified API model ID');
 assert(formatContextWindow(astra?.contextWindow) === '1M context window', `GPT-6 Astra context window formatted as 1M context window (got: ${formatContextWindow(astra?.contextWindow)})`);
 assert(astra?.provider === 'OpenAI', 'GPT-6 Astra provider is OpenAI');
 
 const sol = DASHBOARD_MODELS.find(m => m.id === 'gpt-6.1-sol')!;
 assert(Boolean(sol), 'GPT-6.1 Sol is present in DASHBOARD_MODELS');
-assert(sol?.isNew === true, 'GPT-6.1 Sol has isNew: true');
-assert(sol?.reasoningLevel === 'High', 'GPT-6.1 Sol reasoningLevel is "High"');
-assert(sol?.version === 'preview-sol-2025', 'GPT-6.1 Sol version is preview-sol-2025');
+assert(sol?.isNew !== true, 'GPT-6.1 Sol does not invent an unverified release badge');
+assert(sol?.reasoningLevel === undefined, 'GPT-6.1 Sol does not display an unverified speed or effort rating');
+assert(sol?.version === 'gpt-6.1-sol', 'GPT-6.1 Sol version label uses the verified API model ID');
 assert(formatContextWindow(sol?.contextWindow) === '1M context window', `GPT-6.1 Sol context window formatted as 1M context window (got: ${formatContextWindow(sol?.contextWindow)})`);
 assert(sol?.provider === 'OpenAI', 'GPT-6.1 Sol provider is OpenAI');
 
@@ -62,7 +62,7 @@ assert(formatContextWindow(1048576) === '1M context window', 'formatContextWindo
 assert(formatContextWindow(undefined) === 'Information unavailable', 'formatContextWindow returns Information unavailable for undefined');
 
 // 6. Test getVersionOrEffort helper
-assert(getVersionOrEffort(astra) === 'Version: preview-rt_7k2m', 'getVersionOrEffort extracts version');
+assert(getVersionOrEffort(astra) === 'Version: gpt-6-astra', 'getVersionOrEffort displays the verified model ID when no effort level is selected');
 assert(getVersionOrEffort({} as any) === 'Information unavailable', 'getVersionOrEffort returns Information unavailable for empty model');
 
 // 7. Test getModelCapabilitiesList helper
@@ -74,8 +74,8 @@ assert(astraCaps.includes('Vision'), 'GPT-6 Astra capabilities includes Vision')
 
 // 8. Test getAvailabilityDisplay helper
 const astraAvail = getAvailabilityDisplay(astra);
-assert(astraAvail.label === 'Available', 'GPT-6 Astra availability label is Available');
-assert(astraAvail.color === 'green', 'GPT-6 Astra availability color is green');
+assert(astraAvail.label === 'Access unverified', 'GPT-6 Astra does not claim account access without a provider check');
+assert(astraAvail.color === 'slate', 'Unverified model access is not shown as successful');
 
 // 9. Test clean model name helper
 assert(getCleanModelName('Auto Dynamic Balanced', 'Auto') === 'Auto', 'getCleanModelName strips Router suffix');

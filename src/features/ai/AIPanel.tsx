@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
+import { messagesForConversation } from './conversationMessageScope';
+import { ownsActiveRequest } from './requestLifecycle';
 import { auth } from '../../lib/firebase';
 import {
   Send, Plus, Code, Paperclip, Square, Loader2, X,
@@ -11,23 +13,21 @@ import {
 } from 'lucide-react';
 import { cn, flattenFileTree } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
-import { AgentMode, ChangeSet, AIMessage, AIContextItem, Plan } from '../../types';
-import { DiffReviewModal } from '../agent/DiffReviewModal';
-import { PlanCard } from './PlanCard';
+import { ChangeSet, AIMessage, AIContextItem } from '../../types';
+import { DiffReviewModal } from '../proposals/DiffReviewModal';
 import { ModelSelector } from './ModelSelector';
-import { AgentSelector } from './AgentSelector';
-import { AgentManagerModal } from './AgentManagerModal';
 import { ProjectFilePickerModal } from './ProjectFilePickerModal';
 import { CodebaseSearchModal } from './CodebaseSearchModal';
 import { SearchMatch } from '../../services/codebaseSearch';
-import { INITIAL_MODELS, INITIAL_AGENTS } from './registry';
+import { INITIAL_MODELS } from './registry';
 import { ConsentService } from '../../services/consentService';
 import { TelemetryService } from '../../services/telemetryService';
 import { useUsageStore } from '../../store/usageStore';
 import { ConversationService, ConversationMeta } from '../../services/conversationService';
 import { ContextPicker } from './ContextPicker';
 import { ChatFeedbackButtons } from '../float/ChatFeedbackButtons';
-import { CloudSessionBanner } from '../float/CloudSession';
+import { CODING_ASSISTANT_SYSTEM_PROMPT } from '../float/chatParsing';
+import { createAssistantProposal, prepareAssistantProposal } from '../proposals/proposalWorkflow';
 import { v4 as uuidv4 } from 'uuid';
 
 function CodeBlock({ node, inline, className, children, ...props }: any) {
@@ -115,106 +115,6 @@ function MarkdownTable({ children, ...props }: any) {
   );
 }
 
-function AgentEventsTimeline({ events, isLoading }: { events: any[]; isLoading: boolean }) {
-  const [isExpanded, setIsExpanded] = useState(true);
-  if (!events || events.length === 0) return null;
-
-  const latestEvent = events[events.length - 1];
-
-  return (
-    <div className="mb-2 w-full max-w-[92%]">
-      <div className="bg-slate-100/90 dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-xl overflow-hidden shadow-2xs">
-        <button
-          type="button"
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="w-full px-3 py-2 flex items-center justify-between text-xs text-slate-700 dark:text-[#C9D1D9] hover:bg-slate-200/50 dark:hover:bg-white/[0.03] transition-colors cursor-pointer"
-        >
-          <div className="flex items-center gap-2">
-            {isLoading ? (
-              <Loader2 size={13} className="animate-spin text-purple-600 dark:text-purple-400 shrink-0" />
-            ) : (
-              <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-            )}
-            <span className="font-semibold text-[11px] text-slate-900 dark:text-white">
-              Agent Execution
-            </span>
-            <span className="text-[10px] text-slate-400 dark:text-[#7D8590]">
-              ({events.length} step{events.length > 1 ? 's' : ''})
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-[#7D8590]">
-            {latestEvent?.action && (
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-purple-500/15 text-purple-700 dark:text-purple-300">
-                {latestEvent.action}
-              </span>
-            )}
-            <span className="truncate max-w-[140px] text-right">{latestEvent?.message}</span>
-            <ChevronDown size={12} className={cn("transition-transform duration-150", isExpanded ? "rotate-180" : "")} />
-          </div>
-        </button>
-
-        {isExpanded && (
-          <div className="px-3 pb-2.5 pt-1 border-t border-slate-200/60 dark:border-white/5 flex flex-col gap-2 text-xs text-slate-600 dark:text-[#8B949E]">
-            {events.map((ev, i) => {
-              const isCurrent = i === events.length - 1 && isLoading;
-              const isFailed = ev.type === 'tool_failed' || ev.type === 'failed';
-              const isDone = ev.type === 'tool_completed' || ev.type === 'completed';
-
-              return (
-                <div key={i} className="flex items-start gap-2 py-0.5">
-                  <div className="mt-0.5 shrink-0">
-                    {isCurrent ? (
-                      <Loader2 size={12} className="animate-spin text-purple-600 dark:text-purple-400" />
-                    ) : isFailed ? (
-                      <AlertCircle size={12} className="text-red-500" />
-                    ) : isDone ? (
-                      <Check size={12} className="text-emerald-500" />
-                    ) : (
-                      <div className="w-1.5 h-1.5 rounded-full bg-slate-400 mt-1" />
-                    )}
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {ev.action && (
-                        <span className={cn(
-                          "px-1.5 py-0.2 rounded text-[9px] font-semibold tracking-wide uppercase",
-                          ev.action === 'Searching' ? "bg-blue-500/15 text-blue-600 dark:text-blue-400" :
-                          ev.action === 'Reading' ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" :
-                          ev.action === 'Generating proposal' ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" :
-                          ev.action === 'Exploring' ? "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400" :
-                          ev.action === 'Inspecting' ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400" :
-                          ev.action === 'Synthesizing' ? "bg-purple-500/15 text-purple-600 dark:text-purple-400" :
-                          "bg-slate-500/15 text-slate-600 dark:text-slate-400"
-                        )}>
-                          {ev.action}
-                        </span>
-                      )}
-                      <span className={cn(
-                        "text-[11px] leading-snug",
-                        isFailed ? "text-red-600 dark:text-red-400" :
-                        isCurrent ? "text-purple-600 dark:text-purple-300 font-medium" :
-                        "text-slate-700 dark:text-[#C9D1D9]"
-                      )}>
-                        {ev.message}
-                      </span>
-                    </div>
-                    {ev.args && Object.keys(ev.args).length > 0 && (
-                      <span className="text-[10px] text-slate-400 dark:text-[#6E7681] font-mono truncate mt-0.5">
-                        {JSON.stringify(ev.args)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function AIPanel() {
   const {
     projectId,
@@ -229,14 +129,12 @@ export function AIPanel() {
 
   const {
     selectedModel, setSelectedModel,
-    selectedAgent, setSelectedAgent,
-    models, setModels, agents, setAgents
+    models, setModels
   } = useAIStore();
 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [reviewingChangeSet, setReviewingChangeSet] = useState<ChangeSet | null>(null);
-  const [isAgentManagerOpen, setIsAgentManagerOpen] = useState(false);
   const [conversationList, setConversationList] = useState<ConversationMeta[]>([]);
   const [isConvDropdownOpen, setIsConvDropdownOpen] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
@@ -244,7 +142,7 @@ export function AIPanel() {
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const [editingTitleConvId, setEditingTitleConvId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
-  const [activeWorkflowMode, setActiveWorkflowMode] = useState<'chat' | 'ask' | 'plan' | 'agent' | 'debug'>('chat');
+  const [activeWorkflowMode, setActiveWorkflowMode] = useState<'chat' | 'ask' | 'debug'>('chat');
 
   // Phase 3 Context Modals & Menu State
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
@@ -256,14 +154,12 @@ export function AIPanel() {
   const [isSearchingChat, setIsSearchingChat] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [activeSearchMatchIdx, setActiveSearchMatchIdx] = useState(0);
-  const [minimizedPlanIds, setMinimizedPlanIds] = useState<Set<string>>(new Set());
-  const [removedPlanIds, setRemovedPlanIds] = useState<Set<string>>(new Set());
   const [navigatedMsgId, setNavigatedMsgId] = useState<string | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<{
     id: string;
     text: string;
     context: AIContextItem[];
-    mode: 'chat' | 'ask' | 'plan' | 'agent' | 'debug';
+    mode: 'chat' | 'ask' | 'debug';
     projectId: string;
     timestamp: number;
   }[]>([]);
@@ -311,11 +207,7 @@ export function AIPanel() {
 
   useEffect(() => {
     if (models.length === 0) setModels(INITIAL_MODELS);
-    if (agents.length === 0) setAgents(INITIAL_AGENTS);
-  }, [models, agents, setModels, setAgents]);
-
-  const activeAgent = agents.find(a => a.id === selectedAgent) || agents[0];
-  const mode = activeAgent?.mode || 'ask';
+  }, [models, setModels]);
 
   const refreshConversations = async () => {
     const list = await ConversationService.fetchCloudList(currentProjectId);
@@ -368,21 +260,7 @@ export function AIPanel() {
     }
   }, [initialPrompt]);
 
-  // Composer mode activation (Cmd+I / Ctrl+I)
-  useEffect(() => {
-    const handleSwitchMode = (e: any) => {
-      if (e.detail?.mode) {
-        setActiveWorkflowMode(e.detail.mode);
-        setTimeout(() => {
-          textareaRef.current?.focus();
-        }, 60);
-      }
-    };
-    window.addEventListener('switch-ai-mode', handleSwitchMode);
-    return () => window.removeEventListener('switch-ai-mode', handleSwitchMode);
-  }, []);
-
-  // Phase 25: Process queued developer message when agent reaches completion
+  // Process the next queued chat message after the current response finishes.
   useEffect(() => {
     if (!isLoading && !isSubmittingRef.current && queuedMessages.length > 0) {
       const nextItem = queuedMessages[0];
@@ -661,7 +539,6 @@ export function AIPanel() {
         status: 'error',
         error: authError?.message || 'Failed to obtain authentication token',
         modelId: selectedModel,
-        agentId: selectedAgent,
         conversationId: targetConvId
       });
       setIsLoading(false);
@@ -680,22 +557,9 @@ export function AIPanel() {
         status: 'error',
         error: 'Missing authentication token',
         modelId: selectedModel,
-        agentId: selectedAgent,
         conversationId: targetConvId
       });
       setIsLoading(false);
-      isSubmittingRef.current = false;
-      return;
-    }
-
-    if (activeWorkflowMode === 'plan') {
-      await handlePlanSubmit(draftText, token, targetConvId, currentContext);
-      isSubmittingRef.current = false;
-      return;
-    }
-
-    if (activeWorkflowMode === 'agent' || mode === 'agent') {
-      await handleAgentSubmit(draftText, token, targetConvId, currentContext);
       isSubmittingRef.current = false;
       return;
     }
@@ -708,11 +572,11 @@ export function AIPanel() {
       content: '',
       status: 'streaming',
       modelId: selectedModel,
-      agentId: selectedAgent,
       conversationId: targetConvId
     });
 
-    abortControllerRef.current = new AbortController();
+    const requestController = new AbortController();
+    abortControllerRef.current = requestController;
     const startTime = Date.now();
     let accumulatedText = '';
 
@@ -759,7 +623,7 @@ export function AIPanel() {
         }
       }
 
-      let effectiveSystemInstruction = activeAgent?.systemInstructions || "You are an AI coding assistant. Answer questions concisely.";
+      let effectiveSystemInstruction = `${CODING_ASSISTANT_SYSTEM_PROMPT}\nYou are FLOAT AI. Answer clearly and concisely. Do not claim to execute actions that were not performed. When a user asks for code changes, produce complete path-tagged files so FLOAT can create a review proposal.`;
       if (activeWorkflowMode === 'ask') {
         effectiveSystemInstruction = "You are operating in strictly READ-ONLY Ask mode.\n- Explain code, examine architecture, find symbols, and answer questions.\n- You must NOT propose file edits or write tool calls that modify files or commit changes.\n- Provide clear, direct answers with file references and code snippets for the user to review.";
       } else if (activeWorkflowMode === 'debug') {
@@ -773,18 +637,16 @@ export function AIPanel() {
           'Authorization': `Bearer ${token}`,
           'X-Float-Data-Sharing': ConsentService.isSharingAllowed() ? 'true' : 'false'
         },
-        signal: abortControllerRef.current.signal,
+        signal: requestController.signal,
         body: JSON.stringify({
           messages: requestMessages,
           model: selectedModel,
           reasoningEffort: useAIStore.getState().selectedEffort,
-          agentId: selectedAgent,
           systemInstruction: effectiveSystemInstruction,
           contextItems: finalContext,
           activeEditor: activeEd,
           projectName: projectName || 'Project Workspace',
           projectId: currentProjectId,
-          workflowMode: activeWorkflowMode,
           stream: true
         })
       });
@@ -898,6 +760,32 @@ export function AIPanel() {
         });
       }
 
+      if (!streamCancelled && activeWorkflowMode !== 'ask' && activeConvIdRef.current === targetConvId) {
+        try {
+          const proposalDraft = prepareAssistantProposal(accumulatedText, draftText, files);
+          if (proposalDraft) {
+            const saveResult = await useIDEStore.getState().saveProject();
+            if (saveResult.status !== 'synced') throw new Error(saveResult.message);
+            const workspace = useIDEStore.getState();
+            if (!workspace.projectId) throw new Error('Save this workspace before creating a code proposal.');
+            const changeSet = await createAssistantProposal({
+              responseText: accumulatedText,
+              prompt: draftText,
+              projectId: workspace.projectId,
+              conversationId: targetConvId,
+              files: workspace.files,
+              token
+            });
+            if (changeSet) updateAiMessage(modelMsgId, { changeSet });
+          }
+        } catch (proposalError: any) {
+          updateAiMessage(modelMsgId, {
+            status: 'error',
+            error: `The response was generated, but its code proposal could not be saved: ${proposalError?.message || 'Unknown proposal error.'}`
+          });
+        }
+      }
+
       // Record token analytics only when genuine usage is returned by upstream API
       if (finalUsage && typeof finalUsage.inputTokens === 'number' && typeof finalUsage.outputTokens === 'number') {
         try {
@@ -911,7 +799,6 @@ export function AIPanel() {
             userId: auth.currentUser?.uid || 'user',
             provider: activeModelObj?.providerId || 'openai',
             modelId: selectedModel,
-            agentId: selectedAgent,
             inputTokens: inToks,
             outputTokens: outToks,
             cachedTokens: 0,
@@ -926,7 +813,7 @@ export function AIPanel() {
       }
 
       // Persist conversation state
-      const latestMessages = useIDEStore.getState().aiMessages;
+      const latestMessages = messagesForConversation(useIDEStore.getState().aiMessages, targetConvId);
       const title = latestMessages.find(m => m.role === 'user')?.content?.slice(0, 36) || 'New Conversation';
       await ConversationService.syncToCloud({
         id: targetConvId,
@@ -966,387 +853,11 @@ export function AIPanel() {
         });
       }
     } finally {
-      setIsLoading(false);
-      isSubmittingRef.current = false;
-      abortControllerRef.current = null;
-    }
-  };
-
-  // Plan Mode submit handler
-  const handlePlanSubmit = async (
-    userMessage: string,
-    token: string,
-    targetConvId: string,
-    contextItems: AIContextItem[] = []
-  ) => {
-    const { files } = useIDEStore.getState();
-    const virtualFiles = flattenFileTree(files);
-
-    const planMsgId = uuidv4();
-    addAiMessage({
-      id: planMsgId,
-      role: 'model',
-      content: 'Analyzing request and project structure to synthesize an implementation plan...',
-      status: 'streaming',
-      modelId: selectedModel,
-      agentId: selectedAgent,
-      conversationId: targetConvId
-    });
-
-    try {
-      const response = await fetch('/api/ai/plan', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          prompt: userMessage,
-          virtualFiles: virtualFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
-          conversationId: targetConvId,
-          projectId: currentProjectId,
-          model: selectedModel || 'gpt-6.1-sol'
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: Failed to generate plan.`);
+      if (ownsActiveRequest(abortControllerRef.current, requestController)) {
+        setIsLoading(false);
+        isSubmittingRef.current = false;
+        abortControllerRef.current = null;
       }
-
-      const data = await response.json();
-      const plan: Plan = data.plan;
-
-      updateAiMessage(planMsgId, {
-        content: `### Implementation Plan: ${plan.title}\n\n${plan.summary}\n\nReview the proposed steps below. Click **Approve & Execute** when ready to proceed with controlled agent execution.`,
-        plan,
-        status: 'completed'
-      });
-
-      // Sync conversation to cloud with plan included
-      const latestMessages = useIDEStore.getState().aiMessages;
-      await ConversationService.syncToCloud({
-        id: targetConvId,
-        projectId: currentProjectId,
-        title: plan.title.slice(0, 36) || 'Plan Task',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        messages: latestMessages
-      });
-      refreshConversations();
-    } catch (error: any) {
-      updateAiMessage(planMsgId, {
-        content: `**Planning Failed**: ${error.message || 'Could not generate plan.'}`,
-        status: 'error',
-        error: error.message
-      });
-    } finally {
-      setIsLoading(false);
-      isSubmittingRef.current = false;
-    }
-  };
-
-  // Plan approval handler - Starts controlled multi-step execution
-  const handleApprovePlan = async (planId: string, messageId: string) => {
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) return;
-
-    setIsLoading(true);
-    try {
-      // 1. Mark plan approved on server
-      const approveRes = await fetch(`/api/agents/plans/${planId}/approve`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!approveRes.ok) {
-        const err = await approveRes.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to approve plan on server.');
-      }
-
-      const approveData = await approveRes.json();
-      const approvedPlan: Plan = approveData.plan;
-
-      // Update local message with approved plan state
-      updateAiMessage(messageId, {
-        plan: approvedPlan
-      });
-
-      // 2. Sequential Step-by-Step Controlled Agent Execution
-      for (let i = 0; i < approvedPlan.steps.length; i++) {
-        const step = approvedPlan.steps[i];
-
-        // Update step status to executing
-        const executingPlan: Plan = {
-          ...approvedPlan,
-          status: 'executing',
-          currentStepIndex: i,
-          steps: approvedPlan.steps.map((s, idx) => idx === i ? { ...s, status: 'executing' } : s)
-        };
-        updateAiMessage(messageId, { plan: executingPlan });
-
-        // Execute step through agent runner
-        const stepPrompt = `[Executing Approved Plan Step ${step.order} of ${approvedPlan.steps.length}]\nObjective: ${step.objective}\nTarget files: ${step.files.join(', ') || 'All appropriate project files'}\nExpected Validation: ${step.validation}`;
-
-        await handleAgentSubmit(stepPrompt, token, activeConversationId || 'default-conv', []);
-
-        // Mark step completed
-        const completedPlan: Plan = {
-          ...executingPlan,
-          steps: executingPlan.steps.map((s, idx) => idx === i ? { ...s, status: 'completed', result: 'Step completed.' } : s)
-        };
-        updateAiMessage(messageId, { plan: completedPlan });
-      }
-
-      // Final plan marked completed
-      const finalCompletedPlan: Plan = {
-        ...approvedPlan,
-        status: 'completed',
-        completedAt: Date.now()
-      };
-      updateAiMessage(messageId, { plan: finalCompletedPlan });
-
-      const latestMessages = useIDEStore.getState().aiMessages;
-      await ConversationService.syncToCloud({
-        id: activeConversationId || 'default-conv',
-        projectId: currentProjectId,
-        title: finalCompletedPlan.title.slice(0, 36),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        messages: latestMessages
-      });
-    } catch (err: any) {
-      console.error('Plan execution error:', err);
-      const targetMsg = useIDEStore.getState().aiMessages.find(m => m.id === messageId);
-      if (targetMsg?.plan) {
-        updateAiMessage(messageId, {
-          plan: { ...targetMsg.plan, status: 'failed', error: err.message }
-        });
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Plan cancellation handler
-  const handleCancelPlan = async (planId: string, messageId: string) => {
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) return;
-
-    try {
-      await fetch(`/api/agents/plans/${planId}/cancel`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      const targetMsg = useIDEStore.getState().aiMessages.find(m => m.id === messageId);
-      if (targetMsg?.plan) {
-        updateAiMessage(messageId, {
-          plan: {
-            ...targetMsg.plan,
-            status: 'cancelled',
-            steps: targetMsg.plan.steps.map(s => s.status === 'executing' ? { ...s, status: 'cancelled' } : s)
-          }
-        });
-      }
-    } catch (e) {
-      console.warn('Could not cancel plan:', e);
-    }
-  };
-
-  // Plan update / edit handler
-  const handleUpdatePlan = async (planId: string, messageId: string, updates: Partial<Plan>) => {
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) return;
-
-    try {
-      const response = await fetch(`/api/agents/plans/${planId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(updates)
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        updateAiMessage(messageId, { plan: data.plan });
-      }
-    } catch (e) {
-      console.warn('Could not update plan:', e);
-    }
-  };
-
-  // Plan regenerate handler
-  const handleRegeneratePlan = async (plan: Plan) => {
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) return;
-    await handlePlanSubmit(plan.summary || plan.title, token, activeConversationId || 'default-conv', []);
-  };
-
-  // Agent submit handler
-  const handleAgentSubmit = async (
-    userMessage: string,
-    token: string,
-    targetConvId: string,
-    contextItems: AIContextItem[] = []
-  ) => {
-    const { files, openTabs, activeFileId, terminalEntries } = useIDEStore.getState();
-    const virtualFiles = flattenFileTree(files);
-
-    const activeFile = virtualFiles.find(f => f.id === activeFileId)?.path;
-    const openFilePaths = openTabs.map(t => virtualFiles.find(f => f.id === t.fileId)?.path).filter(Boolean);
-    const recentErrors = terminalEntries.filter(t => t.type === 'error').slice(-3).map(t => t.content);
-
-    let contextHeader = `
-[Context]
-Active File: ${activeFile || 'None'}
-Open Tabs: ${openFilePaths.join(', ') || 'None'}
-Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
-`;
-    if (contextItems.length > 0) {
-      contextHeader += `\n[Attached Files & Code Excerpts]\n` + contextItems.map(c => `--- ${c.name} ---\n${c.content}`).join('\n\n');
-    }
-
-    const fullPrompt = `${contextHeader}\n\n[User Request]\n${userMessage}`;
-
-    const tempId = uuidv4();
-    addAiMessage({
-      id: tempId,
-      role: 'model',
-      content: '',
-      status: 'streaming',
-      events: [],
-      conversationId: targetConvId
-    });
-
-    abortControllerRef.current = new AbortController();
-    let finalContent = '';
-
-    try {
-      const response = await fetch('/api/ai/agent', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'X-Float-Data-Sharing': ConsentService.isSharingAllowed() ? 'true' : 'false'
-        },
-        signal: abortControllerRef.current.signal,
-        body: JSON.stringify({
-          prompt: fullPrompt,
-          virtualFiles,
-          model: selectedModel,
-          agentId: selectedAgent,
-          projectName: projectName || 'Workspace',
-          projectId: currentProjectId
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: Agent service error`);
-      }
-
-      if (!response.body) throw new Error('No response body received from agent stream');
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      let events: any[] = [];
-      finalContent = '';
-      let finalChangeSet = undefined;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              if (data.type === 'event') {
-                events = [...events, data.data];
-                updateAiMessage(tempId, { events });
-                if (data.data?.type === 'failed') {
-                  const errorMsg = data.data.message || 'Agent task failed.';
-                  finalContent = finalContent
-                    ? `${finalContent}\n\n**Agent Execution Failed**: ${errorMsg}`
-                    : `**Agent Execution Failed**\n\n${errorMsg}`;
-                  updateAiMessage(tempId, {
-                    content: finalContent,
-                    status: 'error',
-                    error: errorMsg
-                  });
-                }
-              } else if (data.type === 'delta') {
-                const deltaText = data.data?.text || data.text || '';
-                finalContent += deltaText;
-                updateAiMessage(tempId, { content: finalContent, status: 'streaming' });
-              } else if (data.type === 'result') {
-                finalContent = data.data.text || finalContent || 'Task completed.';
-                finalChangeSet = data.data.changeSet;
-                updateAiMessage(tempId, {
-                  content: finalContent,
-                  changeSet: finalChangeSet,
-                  status: 'completed'
-                });
-              }
-            } catch (e) {
-              // Ignore boundary parse
-            }
-          }
-        }
-      }
-
-      const latestMessages = useIDEStore.getState().aiMessages;
-      const title = latestMessages.find(m => m.role === 'user')?.content?.slice(0, 36) || 'Agent Task';
-      await ConversationService.syncToCloud({
-        id: targetConvId,
-        projectId: currentProjectId,
-        title,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        messages: latestMessages
-      });
-      refreshConversations();
-
-    } catch (error: any) {
-      const isCancellation =
-        error?.name === 'AbortError' ||
-        error?.type === 'cancelation' ||
-        error?.type === 'cancelled' ||
-        /cancel/i.test(error?.message || error?.msg || '');
-
-      if (isCancellation) {
-        updateAiMessage(tempId, {
-          status: 'cancelled',
-          content: finalContent ? `${finalContent} *(cancelled)*` : '*(Agent task stopped)*'
-        });
-      } else {
-        let errMsg = error.message || 'Agent task failed.';
-        if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
-          errMsg = "Provider quota or rate limit exceeded. Please wait a moment before trying again, or select another available model in the model selector.";
-        }
-        updateAiMessage(tempId, {
-          status: 'error',
-          error: errMsg,
-          content: `**Rate Limit / Provider Error**\n\n${errMsg}`
-        });
-      }
-    } finally {
-      setIsLoading(false);
-      abortControllerRef.current = null;
     }
   };
 
@@ -1646,7 +1157,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </div>
         </div>
 
-        {/* Workflow Mode Switcher: Chat / Ask / Plan / Agent / Debug */}
+        {/* Workflow Mode Switcher: Chat / Ask / Debug */}
         <div className="flex items-center bg-slate-100 dark:bg-[#141414] p-0.5 rounded-lg border border-slate-200/80 dark:border-[#222]">
           <button
             type="button"
@@ -1675,31 +1186,6 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </button>
           <button
             type="button"
-            onClick={() => setActiveWorkflowMode('plan')}
-            className={cn(
-              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer flex items-center justify-center gap-0.5",
-              activeWorkflowMode === 'plan'
-                ? "bg-white dark:bg-[#202020] text-purple-600 dark:text-purple-400 font-semibold shadow-xs"
-                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-            )}
-          >
-            <Sparkles size={10} />
-            <span>Plan</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveWorkflowMode('agent')}
-            className={cn(
-              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
-              activeWorkflowMode === 'agent'
-                ? "bg-white dark:bg-[#202020] text-blue-600 dark:text-blue-400 font-semibold shadow-xs"
-                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-            )}
-          >
-            Agent
-          </button>
-          <button
-            type="button"
             onClick={() => setActiveWorkflowMode('debug')}
             className={cn(
               "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
@@ -1713,29 +1199,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
           </button>
         </div>
 
-        {/* Agent & Model Selectors */}
-        <div className="flex gap-2">
-          <div className="flex-1">
-             <AgentSelector
-                activeAgentId={selectedAgent}
-                onAgentChange={(agentId) => {
-                  setSelectedAgent(agentId);
-                  const agent = agents.find(a => a.id === agentId);
-                  if (agent && agent.defaultModel) {
-                    setSelectedModel(agent.defaultModel);
-                  }
-                }}
-                onAgentManagerOpen={() => document.dispatchEvent(new Event('open-agent-manager'))}
-             />
-          </div>
-          <div className="flex-1">
-             <ModelSelector
-                activeModelId={selectedModel}
-                onModelChange={setSelectedModel}
-                agentId={selectedAgent}
-             />
-          </div>
-        </div>
+        <ModelSelector activeModelId={selectedModel} onModelChange={setSelectedModel} />
       </div>
 
       {/* Cmd+F In-Transcript Search Bar */}
@@ -1876,7 +1340,6 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
         ) : (
           aiMessages.map((msg, idx) => {
             const msgModel = models.find(m => m.id === msg.modelId);
-            const msgAgent = agents.find(a => a.id === msg.agentId);
             const isUser = msg.role === 'user';
             const isStreaming = msg.status === 'streaming';
             const isError = msg.status === 'error' || (msg.content && msg.content.startsWith('**Error**:'));
@@ -1889,10 +1352,8 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                 data-role={msg.role}
                 className={cn("text-sm flex flex-col group", isUser ? "items-end" : "items-start")}
               >
-                {!isUser && (msgModel || msgAgent || msg.latency) && (
+                {!isUser && (msgModel || msg.latency) && (
                   <div className="flex items-center gap-2 mb-1 px-1 text-[11px] text-slate-400 dark:text-[#7D8590]">
-                    {msgAgent && <span className="font-medium text-slate-600 dark:text-[#C9D1D9]">{msgAgent.name}</span>}
-                    {msgAgent && msgModel && <span>·</span>}
                     {msgModel && <span>{msgModel.displayName}</span>}
                     {msg.latency && (
                       <>
@@ -1913,11 +1374,6 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                       </span>
                     )}
                   </div>
-                )}
-
-                {/* Event logs for autonomous agents */}
-                {msg.events && msg.events.length > 0 && (
-                  <AgentEventsTimeline events={msg.events} isLoading={isLoading && msg.id === aiMessages[aiMessages.length - 1]?.id} />
                 )}
 
                 {/* Message Bubble */}
@@ -2101,62 +1557,6 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
                   </div>
                 )}
 
-                {/* Structured Plan Card (Milestone 4 Plan Mode) */}
-                {msg.plan && !removedPlanIds.has(msg.plan.id) && (
-                  <div className="mt-2 w-full max-w-[95%]">
-                    {minimizedPlanIds.has(msg.plan.id) ? (
-                      <div className="flex items-center justify-between px-3 py-1.5 rounded-lg border border-purple-200 dark:border-purple-500/20 bg-purple-50/70 dark:bg-purple-950/20 text-xs shadow-2xs">
-                        <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300 font-medium truncate">
-                          <span className="text-sm">📋</span>
-                          <span className="truncate">Plan: {msg.plan.title || 'Implementation Plan'}</span>
-                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 dark:bg-purple-500/30 font-normal">
-                            {msg.plan.steps?.length || 0} steps
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0 ml-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const next = new Set(minimizedPlanIds);
-                              next.delete(msg.plan.id);
-                              setMinimizedPlanIds(next);
-                            }}
-                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-white/10 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-purple-700 dark:text-purple-300 transition-colors cursor-pointer border border-purple-200 dark:border-purple-500/30"
-                          >
-                            Expand
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const next = new Set(removedPlanIds);
-                              next.add(msg.plan.id);
-                              setRemovedPlanIds(next);
-                            }}
-                            className="p-1 hover:text-red-500 rounded text-slate-400 dark:text-slate-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
-                            title="Dismiss plan"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <PlanCard
-                        plan={msg.plan}
-                        onApprove={(planId) => handleApprovePlan(planId, msg.id)}
-                        onCancel={(planId) => handleCancelPlan(planId, msg.id)}
-                        onRegenerate={(plan) => handleRegeneratePlan(plan)}
-                        onUpdatePlan={(planId, updates) => handleUpdatePlan(planId, msg.id, updates)}
-                        onMinimize={() => {
-                          const next = new Set(minimizedPlanIds);
-                          next.add(msg.plan.id);
-                          setMinimizedPlanIds(next);
-                        }}
-                        isExecuting={isLoading}
-                      />
-                    )}
-                  </div>
-                )}
-
                 {!isUser && !isStreaming && !isError && (
                   <div className="flex items-center justify-between w-full mt-1.5 px-1 pt-1 border-t border-slate-100 dark:border-white/5">
                     <ChatFeedbackButtons
@@ -2220,7 +1620,6 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
 
           {/* Active Cloud Execution Session Banner */}
           <div className="mx-3 mt-2">
-            <CloudSessionBanner />
           </div>
 
           {/* Attached Context Badge Chips */}
@@ -2353,18 +1752,12 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               <div className="flex items-center gap-1.5 font-medium">
                 <span className={cn(
                   "w-1.5 h-1.5 rounded-full shrink-0",
-                  activeWorkflowMode === 'ask' ? "bg-emerald-500" :
-                  activeWorkflowMode === 'plan' ? "bg-purple-500" :
-                  activeWorkflowMode === 'agent' ? "bg-blue-500" : "bg-amber-500"
+                  activeWorkflowMode === 'ask' ? "bg-emerald-500" : "bg-amber-500"
                 )} />
                 <span className={cn(
-                  activeWorkflowMode === 'ask' ? "text-emerald-600 dark:text-emerald-400" :
-                  activeWorkflowMode === 'plan' ? "text-purple-600 dark:text-purple-400" :
-                  activeWorkflowMode === 'agent' ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400"
+                  activeWorkflowMode === 'ask' ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
                 )}>
                   {activeWorkflowMode === 'ask' && 'ASK MODE (Read-only • No file modifications)'}
-                  {activeWorkflowMode === 'plan' && 'PLAN MODE (Generates structured implementation plan)'}
-                  {activeWorkflowMode === 'agent' && 'AGENT MODE (Autonomous multi-step coding agent)'}
                   {activeWorkflowMode === 'debug' && 'DEBUG MODE (Root-cause diagnostics & verified fixes)'}
                 </span>
               </div>
@@ -2410,11 +1803,7 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               }
             }}
             placeholder={
-              activeWorkflowMode === 'plan'
-                ? "Describe what you want to build or refactor to generate a structured implementation plan (Enter to plan)..."
-                : activeWorkflowMode === 'agent' || mode === 'agent'
-                ? "Describe changes for the autonomous coding agent..."
-                : activeWorkflowMode === 'debug'
+              activeWorkflowMode === 'debug'
                 ? "Describe the bug, error, or symptom to diagnose (Enter to debug)..."
                 : activeWorkflowMode === 'ask'
                 ? "Ask a question about the project or architecture (read-only)..."
@@ -2558,7 +1947,6 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
               <ModelSelector
                 activeModelId={selectedModel}
                 onModelChange={setSelectedModel}
-                agentId={selectedAgent}
                 placement="top"
                 variant="composer"
               />
@@ -2599,10 +1987,6 @@ Recent Terminal Errors: ${recentErrors.join(' | ') || 'None'}
         />
       )}
 
-      {/* Agent Manager Modal */}
-      {isAgentManagerOpen && (
-        <AgentManagerModal onClose={() => setIsAgentManagerOpen(false)} />
-      )}
 
       {/* Project File Picker Modal */}
       <ProjectFilePickerModal

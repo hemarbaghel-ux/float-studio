@@ -35,7 +35,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
               v1.2.0-beta • Build 2026.09
             </span>
             <p className="text-slate-500 dark:text-[#8B949E] text-xs max-w-xs mt-1">
-              AI-native developer workspace combining Monaco Editor, Pyodide Python 3.12 runtime, and multi-model agent routing.
+              AI developer workspace combining a Monaco editor, project files, and server-routed chat for the selected model.
             </p>
           </div>
 

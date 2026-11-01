@@ -23,20 +23,28 @@ service cloud.firestore {
     }
     
     function isValidProject(data) {
-      return data.keys().hasAll(['ownerId', 'name', 'files', 'createdAt', 'updatedAt']) &&
-             data.keys().size() == 5 &&
-             data.ownerId == request.auth.uid &&
+      return data.ownerId == request.auth.uid &&
              data.name is string && data.name.size() <= 100 &&
-             data.files is string && data.files.size() <= 1000000;
+             data.createdAt is timestamp && data.updatedAt is timestamp &&
+             ((data.keys().hasAll(['ownerId', 'name', 'files', 'createdAt', 'updatedAt']) &&
+               data.keys().size() == 5 && data.files is string && data.files.size() <= 1000000) ||
+              (data.keys().hasAll(['ownerId', 'name', 'fileStorageVersion', 'fileGeneration', 'fileChunkCount', 'fileBytes', 'fileSnapshotComplete', 'createdAt', 'updatedAt']) &&
+               data.keys().hasOnly(['ownerId', 'name', 'fileStorageVersion', 'fileGeneration', 'fileChunkCount', 'fileBytes', 'fileSnapshotComplete', 'createdAt', 'updatedAt']) &&
+               data.fileStorageVersion == 2 && data.fileGeneration is string && data.fileGeneration.size() == 36 &&
+               data.fileChunkCount is number && data.fileChunkCount >= 1 && data.fileChunkCount <= 1000000 &&
+               data.fileBytes is number && data.fileBytes >= 2 && data.fileBytes <= 1000000000 &&
+               data.fileSnapshotComplete is bool));
     }
 
     function isValidConversation(data) {
       return data.keys().hasAll(['ownerId', 'projectId', 'title', 'messages', 'createdAt', 'updatedAt']) &&
-             data.keys().size() == 6 &&
+             data.keys().hasOnly(['ownerId', 'projectId', 'title', 'messages', 'messageCount', 'createdAt', 'updatedAt']) &&
              data.ownerId == request.auth.uid &&
              data.projectId is string && data.projectId.size() <= 128 &&
              data.title is string && data.title.size() <= 200 &&
-             data.messages is string && data.messages.size() <= 2000000;
+             data.messages is string && data.messages.size() <= 850000 &&
+             (!data.keys().hasAny(['messageCount']) ||
+              (data.messageCount is number && data.messageCount >= 0 && data.messageCount <= 1000000));
     }
 
     function isValidEvalTask(data) {
@@ -139,7 +147,27 @@ service cloud.firestore {
                     incoming().ownerId == existing().ownerId &&
                     incoming().createdAt == existing().createdAt &&
                     incoming().updatedAt == request.time &&
-                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'files', 'updatedAt']);
+                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'files', 'updatedAt', 'fileStorageVersion', 'fileGeneration', 'fileChunkCount', 'fileBytes', 'fileSnapshotComplete']);
+
+      match /projectContent/{contentId} {
+        function ownsParentProject() {
+          return isSignedIn() &&
+                 exists(/databases/$(database)/documents/projects/$(projectId)) &&
+                 get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+        }
+
+        allow read: if ownsParentProject() && resource.data.ownerId == request.auth.uid;
+
+        allow create, update: if ownsParentProject() &&
+          contentId.matches('^[a-f0-9-]{36}_[0-9]{8}$') &&
+          incoming().keys().hasOnly(['ownerId', 'generation', 'index', 'content']) &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().generation is string && incoming().generation.size() == 36 &&
+          incoming().index is number && incoming().index >= 0 && incoming().index <= 1000000 &&
+          incoming().content is string && incoming().content.size() <= 614400;
+
+        allow delete: if ownsParentProject() && resource.data.ownerId == request.auth.uid;
+      }
     }
 
     match /conversations/{conversationId} {
@@ -160,7 +188,35 @@ service cloud.firestore {
                     incoming().ownerId == existing().ownerId &&
                     incoming().createdAt == existing().createdAt &&
                     incoming().updatedAt == request.time &&
-                    incoming().diff(existing()).affectedKeys().hasOnly(['title', 'messages', 'updatedAt']);
+                    incoming().diff(existing()).affectedKeys().hasOnly(['title', 'messages', 'messageCount', 'updatedAt']);
+
+      match /messages/{messageId} {
+        function ownsParentConversation() {
+          return isSignedIn() &&
+                 get(/databases/$(database)/documents/conversations/$(conversationId)).data.ownerId == request.auth.uid;
+        }
+
+        allow read: if ownsParentConversation();
+
+        allow create, update: if ownsParentConversation() &&
+          incoming().ownerId == request.auth.uid &&
+          ((messageId == '__manifest__' &&
+            incoming().keys().hasOnly(['ownerId', 'generation', 'previousGeneration', 'count', 'complete']) &&
+            incoming().generation is string && incoming().generation.size() == 36 &&
+            (!incoming().keys().hasAny(['previousGeneration']) ||
+             (incoming().previousGeneration is string && incoming().previousGeneration.size() == 36)) &&
+            incoming().count is number && incoming().count >= 0 &&
+            incoming().count <= 1000000 && incoming().complete is bool) ||
+           (messageId.matches('^[a-f0-9-]{36}_[0-9]{8}$') &&
+            incoming().keys().hasOnly(['ownerId', 'generation', 'index', 'message']) &&
+            incoming().generation is string && incoming().generation.size() == 36 &&
+            incoming().index is number && incoming().index >= 0 &&
+            incoming().index <= 1000000 && incoming().message is string &&
+            incoming().message.size() <= 850000));
+
+        allow delete: if ownsParentConversation() &&
+          (messageId == '__manifest__' || messageId.matches('^[a-f0-9-]{36}_[0-9]{8}$'));
+      }
     }
 
     match /evalTasks/{taskId} {

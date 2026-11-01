@@ -26,10 +26,7 @@ export interface AIMessage {
   content: string;
   timestamp: number;
   changeSet?: ChangeSet;
-  plan?: import('./plan').Plan;
-  events?: AgentEvent[];
   modelId?: string;
-  agentId?: string;
   latency?: number;
   status?: 'sending' | 'streaming' | 'completed' | 'error' | 'cancelled';
   error?: string;
@@ -37,7 +34,6 @@ export interface AIMessage {
   conversationId?: string;
   checkpoint?: FileNode[];
   changes?: Record<string, { status: 'pending' | 'accepted' | 'rejected'; before?: string | null }>;
-  agentEvents?: Array<{ type?: string; action?: string; message?: string; tool?: string }>;
   cancelled?: boolean;
   contextExplanation?: {
     intent?: string;
@@ -85,8 +81,6 @@ export interface TerminalEntry {
   timestamp: number;
 }
 
-export type AgentMode = 'ask' | 'edit' | 'agent' | 'plan';
-
 export interface ChangeSet {
   id: string;
   description: string;
@@ -95,9 +89,6 @@ export interface ChangeSet {
   proposalId?: string;
   ownerId?: string;
   projectId?: string;
-  agentBranch?: string;
-  agentBaseCommit?: string;
-  agentDiff?: string;
 }
 
 export interface Change {
@@ -111,12 +102,7 @@ export interface Change {
   status: 'pending' | 'approved' | 'rejected' | 'applied' | 'failed';
 }
 
-export interface AgentEvent {
-  type: 'task_started' | 'planning' | 'searching' | 'reading_file' | 'generating' | 'review_ready' | 'applying' | 'validation_started' | 'validation_completed' | 'completed' | 'failed';
-  message?: string;
-}
 export * from './ai';
 export * from './evals';
-export * from './plan';
 export * from './proposal';
 export * from './validation';

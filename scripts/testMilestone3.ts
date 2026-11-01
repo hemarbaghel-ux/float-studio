@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { ProposalService } from '../src/server/agent/proposalService';
+import { ProposalService } from '../src/server/proposals/proposalService';
 
 async function runMilestone3Tests() {
   console.log('--- Running Milestone 3 Tests: Monaco Inline Assistant & Autocomplete ---');

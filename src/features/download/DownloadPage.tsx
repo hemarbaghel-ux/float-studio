@@ -75,7 +75,7 @@ export function DownloadPage() {
             Download FLOAT AI
           </h1>
           <p className="mt-4 text-base sm:text-lg text-slate-600 dark:text-[#8B949E] leading-relaxed">
-            The complete AI coding environment for macOS, Windows, and Linux. Built with local symbol indexing, subagent parallelism, and full Monaco integration.
+            FLOAT is currently available as a browser-based coding workspace with a Monaco editor, project files, and AI chat.
           </p>
 
           <div className="mt-8 flex flex-wrap justify-center gap-4">

@@ -141,7 +141,6 @@ export function ModelsFilteredPage({ providerId, title, description }: ModelsFil
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
             <a href="/models" className="text-slate-900 dark:text-white">Hub</a>
             <a href="/models/usage" className="text-slate-500 hover:text-slate-900 dark:text-[#A1A1AA] dark:hover:text-white transition-colors">Usage</a>
-            <a href="/models/evals" className="text-slate-500 hover:text-slate-900 dark:text-[#A1A1AA] dark:hover:text-white transition-colors">Evals</a>
           </nav>
           <div className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600 dark:text-[#A1A1AA]">
             <ModelsDropdown currentPath={window.location.pathname} />

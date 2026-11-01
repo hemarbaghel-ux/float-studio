@@ -1,60 +1,49 @@
 import { AIModel } from '../../types/ai';
-import { GPT6_ASTRA_CLOUD_CONFIG } from '../../server/providers/cloudAgentConfig';
+import { VERIFIED_MODELS } from '../../data/verifiedModels';
 
-/**
- * Verified OpenAI & FLOAT Basic models in the FLOAT AI workspace selector.
- */
-export const DASHBOARD_MODELS: AIModel[] = [
-  {
-    id: 'gpt-6-astra',
-    displayName: 'GPT-6 Astra Flagship Coding',
-    shortName: 'GPT-6 Astra',
+/** UI model cards are derived from the same catalog used by the server router. */
+export const DASHBOARD_MODELS: AIModel[] = VERIFIED_MODELS
+  .filter((model) => model.id === 'gpt-6-astra' || model.id === 'gpt-6.1-sol')
+  .map((model) => ({
+    id: model.id,
+    exactModelId: model.exactModelId,
+    apiModelId: model.upstreamModelId || model.exactModelId,
+    providerId: model.providerId,
     provider: 'OpenAI',
-    providerId: 'openai',
-    family: 'codex',
-    tier: 'Preview',
-    description: 'Next-generation flagship coding agent powered by OpenAI Codex execution server with cloud remote connection and deep developer assistance.',
-    contextWindow: 1000000,
-    version: 'preview-rt_7k2m',
-    reasoningLevel: 'Balanced',
-    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
-    capabilitiesList: ['Coding', 'Reasoning', 'Tool use', 'Vision'],
-    status: 'AVAILABLE',
-    speed: 'fast',
-    apiModelId: 'gpt-6-astra',
-    fallbackModel: 'gpt-6.1-sol',
-    cloudAgentConfig: GPT6_ASTRA_CLOUD_CONFIG as any,
-    supportsStreaming: true,
-    supportsTools: true,
-    supportsVision: true,
-    supportsReasoning: true,
-    availability: 'Available',
-    pricing: { inputCost: 3.00, outputCost: 12.00, currency: 'USD', effectiveDate: '2025-03-01' }
-  },
-  {
-    id: 'gpt-6.1-sol',
-    displayName: 'GPT-6.1 Sol Deep Reasoning',
-    shortName: 'GPT-6.1 Sol',
-    provider: 'OpenAI',
-    providerId: 'openai',
-    family: 'codex',
-    isNew: true,
-    description: 'Frontier deep-reasoning model tuned for complex architecture design, algorithm synthesis, multi-step refactoring, and root-cause debugging.',
-    contextWindow: 1000000,
-    version: 'preview-sol-2025',
-    reasoningLevel: 'High',
-    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
-    capabilitiesList: ['Coding', 'Reasoning', 'Tool use', 'Vision'],
-    status: 'AVAILABLE',
-    speed: 'fast',
-    apiModelId: 'gpt-6.1-sol',
-    fallbackModel: 'gpt-6-astra',
-    cloudAgentConfig: GPT6_ASTRA_CLOUD_CONFIG as any,
-    supportsStreaming: true,
-    supportsTools: true,
-    supportsVision: true,
-    supportsReasoning: true,
-    availability: 'Available',
-    pricing: { inputCost: 3.50, outputCost: 14.00, currency: 'USD', effectiveDate: '2025-04-01' }
-  }
-];
+    displayName: model.displayName,
+    shortName: model.displayName.replace(' Flagship Coding', '').replace(' Deep Reasoning', ''),
+    family: model.family,
+    tier: model.deprecationStatus === 'preview' ? 'Preview' : undefined,
+    description: model.description,
+    capabilities: { ...model.capabilities },
+    capabilitiesList: [
+      ...(model.capabilities.coding ? ['Coding'] : []),
+      ...(model.capabilities.reasoning ? ['Reasoning'] : []),
+      ...(model.capabilities.tools ? ['Tool use'] : []),
+      ...(model.capabilities.vision ? ['Vision'] : [])
+    ],
+    contextWindow: model.contextWindow,
+    status: model.availabilityStatus,
+    speed: model.speed,
+    version: model.snapshotVersion,
+    availability: 'Access unverified',
+    pricing: {
+      inputCost: model.pricing.inputCostPer1M,
+      outputCost: model.pricing.outputCostPer1M,
+      currency: model.pricing.currency,
+      effectiveDate: model.pricing.effectiveDate
+    },
+    limits: { maxOutputTokens: model.maxOutputTokens },
+    releaseDate: model.releaseDate,
+    modalities: model.modalities,
+    docUrl: model.docUrl,
+    pricingUrl: model.pricing.sourceUrl,
+    snapshotVersion: model.snapshotVersion,
+    limitations: model.limitations,
+    intendedUseCases: model.intendedUseCases,
+    availabilityDetails: model.availabilityDetails,
+    supportsStreaming: model.capabilities.streaming,
+    supportsTools: model.capabilities.tools,
+    supportsVision: model.capabilities.vision,
+    supportsReasoning: model.capabilities.reasoning
+  }));

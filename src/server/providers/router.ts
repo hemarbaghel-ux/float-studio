@@ -7,13 +7,15 @@ import {
 } from './base';
 import { OpenAIAdapter } from './openai';
 import { ServerPrivacyGuard } from '../privacyGuard';
+import { getModelDescriptor, getPublicModelCatalog, MODEL_ROUTES } from './modelRegistry';
 
 export interface ModelRouteDefinition {
   provider: 'openai';
   apiModelId: string;
+  protocol?: 'responses' | 'chat_completions';
   /** True when the route ID is a FLOAT-defined internal alias rather than a literal upstream OpenAI model ID. */
   isInternalAlias?: boolean;
-  /** The verified upstream OpenAI model ID executed by the adapter (or fallback target for preview cloud agents). */
+  /** The exact upstream model ID executed by the selected provider adapter. */
   upstreamModelId?: string;
 }
 
@@ -21,28 +23,7 @@ export class ModelRouter {
   private adapters: Map<string, AIProviderAdapter> = new Map();
 
   // Explicit provider/model allowlist. GPT-6 Astra & Sol are the flagship primary models.
-  private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Flagship Primary Models (Exclusive Focus)
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: false, upstreamModelId: 'gpt-6-astra' },
-    'gpt-6.1-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: false, upstreamModelId: 'gpt-6.1-sol' },
-
-    // Dynamic router aliases mapped to Astra & Sol
-    'auto': { provider: 'openai', apiModelId: 'gpt-6-astra', isInternalAlias: true, upstreamModelId: 'gpt-6-astra' },
-    'gpt-6.1': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-6.1-sol' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6.1-sol', isInternalAlias: true, upstreamModelId: 'gpt-6.1-sol' },
-
-    // Legacy / Fallback Backend Routes
-    'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o', isInternalAlias: false, upstreamModelId: 'gpt-4o' },
-    'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: false, upstreamModelId: 'gpt-4o-mini' },
-    'o1': { provider: 'openai', apiModelId: 'o1', isInternalAlias: false, upstreamModelId: 'o1' },
-    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini', isInternalAlias: false, upstreamModelId: 'o1-mini' },
-    'o3-mini': { provider: 'openai', apiModelId: 'o3-mini', isInternalAlias: false, upstreamModelId: 'o3-mini' },
-    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview', isInternalAlias: false, upstreamModelId: 'gpt-4.5-preview' },
-    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo', isInternalAlias: false, upstreamModelId: 'gpt-4-turbo' },
-    'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest', isInternalAlias: false, upstreamModelId: 'chatgpt-4o-latest' },
-    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo', isInternalAlias: false, upstreamModelId: 'gpt-3.5-turbo' },
-    'float-basic': { provider: 'openai', apiModelId: 'gpt-4o-mini', isInternalAlias: true, upstreamModelId: 'gpt-4o-mini' }
-  };
+  private modelRoutes: Record<string, ModelRouteDefinition> = { ...MODEL_ROUTES };
 
   constructor() {
     this.registerAdapter(new OpenAIAdapter());
@@ -65,6 +46,28 @@ export class ModelRouter {
       };
     }
     return status;
+  }
+
+  getModelCatalog() {
+    const openAIConfigured = this.adapters.get('openai')?.isConfigured() ?? false;
+    return getPublicModelCatalog(openAIConfigured);
+  }
+
+  private assertModelCapability(
+    modelId: string,
+    capability: 'streaming' | 'tools',
+    operation: string
+  ): void {
+    const descriptor = getModelDescriptor(modelId);
+    const supported = descriptor?.capabilities[capability];
+    if (descriptor && !supported) {
+      throw new AIProviderError(
+        `Selected model "${descriptor.displayName}" does not support ${operation}. Choose a model that supports ${operation}.`,
+        'INVALID_REQUEST',
+        descriptor.providerId,
+        400
+      );
+    }
   }
 
   async checkAllProvidersHealth(): Promise<Record<string, ProviderHealthCheckResult>> {
@@ -160,6 +163,7 @@ export class ModelRouter {
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
+    if (request.tools?.length) this.assertModelCapability(route.apiModelId, 'tools', 'tool calling');
 
     const dataSharingAllowed = request.dataSharingAllowed !== undefined
       ? request.dataSharingAllowed === true
@@ -187,6 +191,8 @@ export class ModelRouter {
       ...request,
       model: request.model,
       apiModelId: route.apiModelId,
+      apiProtocol: route.protocol,
+      maxOutputTokens: getModelDescriptor(route.apiModelId)?.maxOutputTokens,
       dataSharingConsent: dataSharingAllowed,
       dataSharingAllowed
     });
@@ -212,6 +218,7 @@ export class ModelRouter {
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
+    this.assertModelCapability(route.apiModelId, 'streaming', 'streaming');
 
     const dataSharingAllowed = request.dataSharingAllowed !== undefined
       ? request.dataSharingAllowed === true
@@ -239,6 +246,8 @@ export class ModelRouter {
         ...request,
         model: request.model,
         apiModelId: route.apiModelId,
+        apiProtocol: route.protocol,
+        maxOutputTokens: getModelDescriptor(route.apiModelId)?.maxOutputTokens,
         dataSharingConsent: dataSharingAllowed,
         dataSharingAllowed
       }, onChunk, signal);
@@ -248,6 +257,8 @@ export class ModelRouter {
       ...request,
       model: request.model,
       apiModelId: route.apiModelId,
+      apiProtocol: route.protocol,
+      maxOutputTokens: getModelDescriptor(route.apiModelId)?.maxOutputTokens,
       dataSharingConsent: dataSharingAllowed,
       dataSharingAllowed
     });
@@ -257,49 +268,4 @@ export class ModelRouter {
     return result;
   }
 
-  async runAgentLoop(req: any, res: any, model: string, prompt: string, virtualFiles: any[]): Promise<void> {
-    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-      throw new AIProviderError(
-        'A non-empty prompt is required to run the agent loop.',
-        'INVALID_REQUEST',
-        'FLOAT',
-        400
-      );
-    }
-
-    const { route, adapter } = this.resolveRoute(model);
-    const dataSharingAllowed = ServerPrivacyGuard.evaluateConsent(req);
-
-    ServerPrivacyGuard.logAudit('ModelRouter', `runAgentLoop(${model} -> ${route.provider}:${route.apiModelId})`, dataSharingAllowed, {
-      requestedModel: model,
-      routedProvider: route.provider,
-      apiModelId: route.apiModelId,
-      fileCount: virtualFiles?.length || 0,
-      dataSharingAllowed
-    });
-
-    if (!adapter.isConfigured()) {
-      throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To run agents with "${model}", configure the server-side API key.`,
-        'AUTH_ERROR',
-        adapter.name,
-        401
-      );
-    }
-
-    if (!adapter.runAgentLoop) {
-      throw new AIProviderError(
-        `Autonomous agent loop is not supported for provider ${adapter.name}.`,
-        'INVALID_REQUEST',
-        adapter.name,
-        400
-      );
-    }
-
-    if (!dataSharingAllowed) {
-      ServerPrivacyGuard.dispatchExternalTelemetry('agent_loop_telemetry', false, null);
-    }
-
-    return adapter.runAgentLoop(req, res, route.apiModelId, prompt, virtualFiles);
-  }
 }

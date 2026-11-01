@@ -117,7 +117,7 @@ Typecheck: 0 errors. All imports resolved.`,
       availabilityStatus: 'Available',
       authRequired: true,
       providerKeyRequired: false,
-      environmentNotes: 'FLOAT provides managed provider access; custom API keys can also be configured in settings.',
+      environmentNotes: 'Provider access is configured on the server. Credentials are not entered or stored in the browser.',
       knownLimitations: [
         'Concurrent subagent execution is subject to provider rate limits (TPM/RPM).',
         'Models that do not support structured tool calling cannot be assigned to autonomous tool-execution subtasks.'
@@ -125,8 +125,8 @@ Typecheck: 0 errors. All imports resolved.`,
     },
     faq: [
       {
-        question: 'Can I bring my own API keys (BYOK)?',
-        answer: 'Yes! FLOAT supports direct API keys for OpenAI, Anthropic, Google Gemini, and xAI with zero markup.'
+        question: 'Where are provider credentials configured?',
+        answer: 'Provider credentials are configured on the server and are not entered or stored in the browser.'
       },
       {
         question: 'How does FLOAT prevent subagents from creating conflicting edits?',

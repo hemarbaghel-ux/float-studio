@@ -1,5 +1,4 @@
-import { ProviderId, CloudAgentConfig } from '../types/ai';
-import { GPT6_ASTRA_CLOUD_CONFIG } from '../server/providers/cloudAgentConfig';
+import { ProviderId } from '../types/ai';
 
 export type AvailabilityStatus =
   | 'AVAILABLE'
@@ -39,7 +38,7 @@ export interface VerifiedModel {
   family: string;
   category?: ModelCategory;
   snapshotVersion: string;
-  releaseDate: string;
+  releaseDate?: string;
   docUrl: string;
   description: string;
   contextWindow: number;
@@ -51,17 +50,20 @@ export interface VerifiedModel {
   intendedUseCases: string[];
   speed: 'fast' | 'balanced' | 'slow';
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'hybrid';
-  supportedEfforts?: ('low' | 'medium' | 'high')[];
+  supportedEfforts?: ('low' | 'medium' | 'high' | 'xhigh' | 'max')[];
   availabilityStatus: AvailabilityStatus;
   availabilityDetails: string;
   configRequirement?: string;
   deprecationStatus?: 'active' | 'preview' | 'deprecated' | 'retired';
-  cloudAgentConfig?: CloudAgentConfig;
   fallbackModel?: string;
   /** True when this entry is an internal FLOAT alias rather than a literal upstream OpenAI model ID. */
   isInternalAlias?: boolean;
   /** Explicit upstream OpenAI model ID that executes requests for this entry. */
   upstreamModelId?: string;
+  /** Provider protocol used by the backend runtime for requests to this exact API model. */
+  apiProtocol?: 'responses' | 'chat_completions';
+  /** Primary server-side environment variable. This does not imply account access. */
+  requiredEnvironmentVariable?: string;
 }
 
 /**
@@ -74,118 +76,67 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     exactModelId: 'gpt-6-astra',
     isInternalAlias: false,
     upstreamModelId: 'gpt-6-astra',
-    displayName: 'GPT-6 Astra Flagship Coding',
+    displayName: 'GPT-6 Astra',
     providerId: 'openai',
+    apiProtocol: 'responses',
+    requiredEnvironmentVariable: 'OPENAI_API_KEY',
     family: 'codex',
     category: 'flagship_coding',
-    snapshotVersion: 'preview-rt_7k2m',
-    releaseDate: '2025-03-01',
-    docUrl: 'https://platform.openai.com/docs/models/agents',
-    description: 'Next-generation flagship coding agent powered by OpenAI Codex execution server with cloud remote connection and deep developer assistance.',
-    contextWindow: 1000000,
-    maxOutputTokens: 32768,
+    snapshotVersion: 'gpt-6-astra',
+    docUrl: 'https://developers.openai.com/api/docs/models/gpt-6-astra',
+    description: 'OpenAI flagship model for complex reasoning and coding, called through the Responses API.',
+    contextWindow: 1050000,
+    maxOutputTokens: 128000,
     modalities: ['text', 'code', 'vision'],
     capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
-    pricing: { inputCostPer1M: 3.00, outputCostPer1M: 12.00, cachedInputCostPer1M: 1.50, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2025-03-01', sourceUrl: 'https://openai.com/api/pricing/' },
+    supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    pricing: { inputCostPer1M: 10.00, outputCostPer1M: 50.00, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2026-10-31', sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-6-astra' },
     limitations: [
-      'Internal FLOAT alias routed upstream to OpenAI gpt-4o (or Codex preview agent server when configured).',
-      'Native upstream OpenAI model context window is 128k tokens; extended context is indexed by FLOAT workspace engine.',
-      'Requires server-side OPENAI_API_KEY for live execution.'
+      'A configured credential does not prove that the account can access this model.',
+      'Model access is reported as unverified until a real provider check succeeds.',
+      'Agent workflows are not available in the current product.'
     ],
     intendedUseCases: [
-      'Autonomous developer workflows with OpenAI Codex execution server',
-      'Multi-file architectural changes and cloud agent tasks',
-      'Complex full-stack feature implementation and debugging'
+      'Complex coding and reasoning requests',
+      'Chat-based coding and reasoning assistance'
     ],
     speed: 'fast',
-    availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Flagship Coding Agent with real model responses.',
-    deprecationStatus: 'preview',
-    fallbackModel: 'gpt-4o',
-    cloudAgentConfig: {
-      remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
-      environmentId: GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-      sessionId: GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      sessionStatus: 'connected',
-      fallbackStrategy: 'upstream_fallback_if_unreachable',
-      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand,
-      fallbackModel: 'gpt-4o',
-      mode: 'preview'
-    }
+    availabilityStatus: 'UNKNOWN',
+    availabilityDetails: 'Model-level access is unverified until a provider request succeeds.',
+    deprecationStatus: 'active'
   },
   {
     id: 'gpt-6.1-sol',
     exactModelId: 'gpt-6.1-sol',
     isInternalAlias: false,
     upstreamModelId: 'gpt-6.1-sol',
-    displayName: 'GPT-6.1 Sol Deep Reasoning',
+    displayName: 'GPT-6.1 Sol',
     providerId: 'openai',
+    apiProtocol: 'responses',
+    requiredEnvironmentVariable: 'OPENAI_API_KEY',
     family: 'codex',
     category: 'advanced_reasoning',
-    snapshotVersion: 'preview-sol-2025',
-    releaseDate: '2025-04-01',
-    docUrl: 'https://platform.openai.com/docs/models/agents',
-    description: 'Frontier deep-reasoning model tuned for complex architecture design, algorithm synthesis, multi-step refactoring, and root-cause debugging.',
-    contextWindow: 1000000,
-    maxOutputTokens: 65536,
+    snapshotVersion: 'gpt-6.1-sol',
+    docUrl: 'https://developers.openai.com/api/docs/models/gpt-6.1-sol',
+    description: 'OpenAI model for complex reasoning and coding, called through the Responses API.',
+    contextWindow: 1050000,
+    maxOutputTokens: 128000,
     modalities: ['text', 'code', 'vision'],
     capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
-    pricing: { inputCostPer1M: 3.50, outputCostPer1M: 14.00, cachedInputCostPer1M: 1.75, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2025-04-01', sourceUrl: 'https://openai.com/api/pricing/' },
+    pricing: { inputCostPer1M: 2.00, outputCostPer1M: 10.00, cachedInputCostPer1M: 0.10, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2026-10-31', sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-6.1-sol' },
     limitations: [
-      'Internal FLOAT alias routed upstream to OpenAI (gpt-4o / o1 reasoning targets).',
-      'Extended workspace context handled via FLOAT repository indexing; direct upstream window is 128k/200k tokens.',
-      'Requires server-side OPENAI_API_KEY for live execution.'
+      'A configured credential does not prove that the account can access this model.',
+      'Model access is reported as unverified until a real provider check succeeds.',
+      'Agent workflows are not available in the current product.'
     ],
     intendedUseCases: [
-      'Frontier code synthesis and system architecture planning',
-      'Deep multi-step algorithmic reasoning and refactoring',
-      'Concurrency, security audits, and type-system invariants'
+      'Complex reasoning and coding requests',
+      'Chat-based coding and reasoning assistance'
     ],
     speed: 'fast',
-    reasoningEffort: 'high',
-    supportedEfforts: ['low', 'medium', 'high'],
-    availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Frontier Deep Reasoning model with real model responses.',
-    deprecationStatus: 'active',
-    fallbackModel: 'gpt-6-astra',
-    cloudAgentConfig: {
-      remoteUrl: GPT6_ASTRA_CLOUD_CONFIG.remoteUrl,
-      environmentId: 'ccarenv_b64_Y2NhcmVudl82YWNlNjRiMjljOTg4MTkxYjVhM2E4NmY4MmNiZTVkOQ',
-      sessionId: 'sess_087a4d42ca75939b006ace64b295ac8193b83bd1fbfd9a4015',
-      sessionStatus: 'connected',
-      fallbackStrategy: 'upstream_fallback_if_unreachable',
-      execServerCommand: GPT6_ASTRA_CLOUD_CONFIG.execServerCommand,
-      fallbackModel: 'gpt-4o',
-      mode: 'preview'
-    }
-  },
-  {
-    id: 'float-basic',
-    exactModelId: 'gpt-4o-mini',
-    isInternalAlias: true,
-    upstreamModelId: 'gpt-4o-mini',
-    displayName: 'FLOAT Basic',
-    providerId: 'openai',
-    family: 'gpt-4o',
-    category: 'efficient',
-    snapshotVersion: '2024-07-18',
-    releaseDate: '2024-07-18',
-    docUrl: 'https://platform.openai.com/docs/models/gpt-4o-mini',
-    description: 'Free tier efficient model for lightweight code editing and exploration.',
-    contextWindow: 128000,
-    maxOutputTokens: 16384,
-    modalities: ['text', 'code'],
-    capabilities: { coding: true, reasoning: false, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: true },
-    pricing: { inputCostPer1M: 0, outputCostPer1M: 0, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2024-07-18', sourceUrl: 'https://openai.com/api/pricing/' },
-    limitations: [
-      'not optimized for large-scale architectural redesign',
-      'Mandatory proposal review before applying code changes.',
-      'Rate-limited on free tier accounts.'
-    ],
-    intendedUseCases: ['Quick edits', 'Code reviews', 'Basic exploration'],
-    speed: 'fast',
-    availabilityStatus: 'AVAILABLE',
-    availabilityDetails: 'Free tier model.',
+    supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    availabilityStatus: 'UNKNOWN',
+    availabilityDetails: 'Model-level access is unverified until a provider request succeeds.',
     deprecationStatus: 'active'
   }
 ];

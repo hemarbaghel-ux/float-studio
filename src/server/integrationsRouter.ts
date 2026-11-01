@@ -5,6 +5,8 @@ import JSZip from 'jszip';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './adminFirebase';
 import { requireAuth } from './authMiddleware';
+import { serializeProjectFileTree } from '../services/projectCloudFiles';
+import { deleteProjectContentAdmin, writeProjectFileTreeAdmin } from './projectContent';
 import {
   consumeOAuthState,
   deleteIntegrationConnection,
@@ -774,30 +776,43 @@ integrationsRouter.post('/github/import', requireAuth, async (req: any, res: Res
     const newProjectId = uuidv4();
     const projectName = customProjectName || repo;
     const now = Date.now();
+    const serializedFiles = serializeProjectFileTree(rootNodes);
+    if (serializedFiles.ok === false) throw new Error('Imported project files could not be serialized safely.');
+    const generation = uuidv4();
 
-    // Persist project & Git baseline in Firestore transaction
+    // Write immutable file chunks first, then publish the complete project manifest and Git link atomically.
     const projectRef = adminDb.collection('projects').doc(newProjectId);
     const linkRef = adminDb.collection('projectGitLinks').doc(newProjectId);
 
-    await adminDb.runTransaction(async (transaction) => {
-      transaction.set(projectRef, {
-        ownerId: req.user.uid,
-        name: projectName,
-        files: JSON.stringify(rootNodes),
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp()
+    try {
+      await writeProjectFileTreeAdmin(newProjectId, req.user.uid, generation, serializedFiles.chunks);
+      await adminDb.runTransaction(async (transaction) => {
+        transaction.set(projectRef, {
+          ownerId: req.user.uid,
+          name: projectName,
+          fileStorageVersion: 2,
+          fileGeneration: generation,
+          fileChunkCount: serializedFiles.chunks.length,
+          fileBytes: serializedFiles.byteLength,
+          fileSnapshotComplete: true,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp()
+        });
+        transaction.set(linkRef, {
+          ownerId: req.user.uid,
+          repositoryOwner: owner,
+          repositoryName: repo,
+          defaultBranch: repoData.default_branch || 'main',
+          branch,
+          baseSha,
+          baseFiles: baseFilesMap,
+          updatedAt: now
+        });
       });
-      transaction.set(linkRef, {
-        ownerId: req.user.uid,
-        repositoryOwner: owner,
-        repositoryName: repo,
-        defaultBranch: repoData.default_branch || 'main',
-        branch,
-        baseSha,
-        baseFiles: baseFilesMap,
-        updatedAt: now
-      });
-    });
+    } catch (error) {
+      await deleteProjectContentAdmin(newProjectId).catch(() => {});
+      throw error;
+    }
 
     connection.lastVerifiedAt = now;
     await saveIntegrationConnection(connection);

@@ -1,5 +1,7 @@
 import assert from 'assert';
 import { ModelRouter } from '../src/server/providers/router';
+import { messagesForConversation } from '../src/features/ai/conversationMessageScope';
+import { ownsActiveRequest } from '../src/features/ai/requestLifecycle';
 
 async function runStageBTests() {
   console.log('=== FLOAT AI Stage B: Reliable Basic Chat Verification ===\n');
@@ -35,8 +37,8 @@ async function runStageBTests() {
     assert.strictEqual(router.resolveModelId('auto'), 'gpt-6-astra');
   });
 
-  test('Resolves exact gpt-4o model', () => {
-    assert.strictEqual(router.resolveModelId('gpt-4o'), 'gpt-4o');
+  test('Preserves the exact selected GPT-6 model ID', () => {
+    assert.strictEqual(router.resolveModelId('gpt-6.1-sol'), 'gpt-6.1-sol');
   });
 
   // Test 2: Rejection of Non-OpenAI Models
@@ -48,9 +50,14 @@ async function runStageBTests() {
   });
 
   // Test 3: Provider Mapping Integrity (No silent fallback)
-  test('Maps gpt-4o strictly to openai provider', () => {
-    const adapter = router.getAdapterForModel('gpt-4o');
+  test('Maps GPT-6 Astra strictly to the OpenAI provider', () => {
+    const adapter = router.getAdapterForModel('gpt-6-astra');
     assert.strictEqual(adapter.id, 'openai');
+  });
+
+  test('Rejects non-selectable OpenAI models through the execution router', () => {
+    assert.throws(() => router.resolveRoute('gpt-4o'), (error: any) => error.code === 'MODEL_NOT_FOUND');
+    assert.throws(() => router.resolveRoute('float-basic'), (error: any) => error.code === 'MODEL_NOT_FOUND');
   });
 
   test('Rejects claude as unsupported provider', () => {
@@ -229,6 +236,23 @@ async function runStageBTests() {
     assert.strictEqual(patchedContent, 'Hello from chat alpha', 'Late chunk must not apply after navigation');
   });
 
+  test('Conversation persistence filters messages to the target conversation', () => {
+    const messages = [
+      { id: 'a1', conversationId: 'chat-alpha', role: 'user', content: 'alpha' },
+      { id: 'b1', conversationId: 'chat-beta', role: 'user', content: 'beta' },
+      { id: 'a2', conversationId: 'chat-alpha', role: 'model', content: 'answer' }
+    ] as any;
+    const persisted = messagesForConversation(messages, 'chat-alpha');
+    assert.deepStrictEqual(persisted.map((message) => message.id), ['a1', 'a2'], 'Persisting alpha cannot include beta messages');
+  });
+
+  test('A stale request cannot clear the newer request controller or loading state', () => {
+    const older = new AbortController();
+    const newer = new AbortController();
+    assert.strictEqual(ownsActiveRequest(newer, older), false, 'older finally block does not own active request slot');
+    assert.strictEqual(ownsActiveRequest(newer, newer), true, 'current finally block can release its own slot');
+  });
+
   // Test 11: Phase 2A Empty Response Rejection
   test('Empty response or malformed stream is rejected as error rather than empty success', () => {
     const fullText = '';
@@ -247,14 +271,12 @@ async function runStageBTests() {
   });
 
   // Test 12: Phase 2A OpenAI-Only Active Model Routing
-  test('All active dashboard models map strictly to OpenAI API models or truthfully disclosed free tier', () => {
-    const activeOpenAIModels = [
-      'gpt-4o', 'o3-mini', 'gpt-4o-mini', 'o1', 'o1-mini',
-      'gpt-4.5-preview', 'gpt-4-turbo', 'chatgpt-4o-latest'
-    ];
+  test('All active dashboard models map strictly to their exact OpenAI API IDs', () => {
+    const activeOpenAIModels = ['gpt-6-astra', 'gpt-6.1-sol'];
     for (const mId of activeOpenAIModels) {
-      const adapter = router.getAdapterForModel(mId);
+      const { route, adapter } = router.resolveRoute(mId);
       assert.strictEqual(adapter.id, 'openai', `Model ${mId} routes to openai adapter`);
+      assert.strictEqual(route.apiModelId, mId, `Model ${mId} reaches its exact upstream ID`);
     }
   });
 

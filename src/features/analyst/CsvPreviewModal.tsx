@@ -212,7 +212,7 @@ export function CsvPreviewModal({
         {/* Footer */}
         <div className="px-5 py-3 border-t border-slate-200 dark:border-[#30363D] bg-slate-50 dark:bg-[#0D1117] flex items-center justify-between shrink-0">
           <span className="text-[11px] text-slate-500 dark:text-[#8B949E]">
-            Ready for Python sandbox analysis and executive chart synthesis.
+            Ready for CSV statistics and model-assisted chart analysis.
           </span>
           <button
             type="button"

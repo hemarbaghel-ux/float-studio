@@ -88,21 +88,21 @@ export function LearnHub() {
         <div className="inline-flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-4 tracking-wide uppercase">
           <span>FLOAT Learning Center</span>
           <span aria-hidden="true">·</span>
-          <span>Agentic Development</span>
+          <span>AI-assisted development</span>
         </div>
 
         <h1 className="text-4xl md:text-6xl font-medium tracking-tight mb-6 text-slate-900 dark:text-white leading-[1.15]">
-          Learn to build with AI agents.
+          Learn to build with FLOAT.
         </h1>
 
         <p className="text-lg md:text-xl text-slate-600 dark:text-[#A1A1AA] max-w-2xl mx-auto mb-10 leading-relaxed">
-          Understand agentic development, explore practical workflows, and learn how to build, test, and ship software with FLOAT.
+          Explore the workspace, AI chat, code context, and reviewable proposals.
         </p>
 
         {/* Primary & Secondary Buttons */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-14">
           <button
-            onClick={() => handleNav('/learn/agentic-development')}
+            onClick={() => handleNav('/learn/getting-started')}
             className="w-full sm:w-auto px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-black rounded-full font-medium text-sm hover:opacity-90 transition-opacity flex items-center justify-center gap-2 cursor-pointer shadow-sm"
           >
             <span>Start learning</span>
@@ -153,7 +153,7 @@ export function LearnHub() {
 
             {searchResults.articles.length === 0 && searchResults.glossary.length === 0 ? (
               <div className="text-center py-12 bg-white dark:bg-[#121210] rounded-xl border border-slate-200 dark:border-white/5 p-8">
-                <p className="text-slate-500 dark:text-slate-400 text-sm">No topics matched your search query. Try terms like &ldquo;agent&rdquo;, &ldquo;diff&rdquo;, &ldquo;context&rdquo;, or &ldquo;prompts&rdquo;.</p>
+                <p className="text-slate-500 dark:text-slate-400 text-sm">No topics matched your search query. Try terms like &ldquo;diff&rdquo;, &ldquo;context&rdquo;, or &ldquo;models&rdquo;.</p>
               </div>
             ) : (
               <div className="grid md:grid-cols-2 gap-4">
@@ -222,7 +222,7 @@ export function LearnHub() {
                   Start Here
                 </h2>
                 <p className="text-sm text-slate-500 dark:text-[#A1A1AA]">
-                  Essential introductory guides to build a strong foundation in agentic development with FLOAT.
+                  Essential introductions to the FLOAT workspace, chat, and project context.
                 </p>
               </div>
 
@@ -266,7 +266,7 @@ export function LearnHub() {
                     Curriculum & Guides
                   </h2>
                   <p className="text-sm text-slate-500 dark:text-[#A1A1AA]">
-                    Systematic technical deep dives covering every layer of the agentic lifecycle.
+                    Technical guides to models, project context, and software development workflows.
                   </p>
                 </div>
 
@@ -381,7 +381,7 @@ export function LearnHub() {
                     Developer Glossary
                   </h2>
                   <p className="text-sm text-slate-500 dark:text-[#A1A1AA]">
-                    Authoritative definitions of core concepts in agentic AI, ReAct, RAG, and codebase indexing.
+                    Definitions of development, model, and codebase concepts.
                   </p>
                 </div>
                 <button
@@ -419,10 +419,10 @@ export function LearnHub() {
             <section className="py-12 px-8 bg-slate-900 text-white dark:bg-white dark:text-black rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-lg">
               <div>
                 <h3 className="text-2xl font-semibold tracking-tight mb-2">
-                  Ready to apply agentic development?
+                  Ready to work with FLOAT?
                 </h3>
                 <p className="text-sm text-slate-300 dark:text-slate-700 max-w-xl">
-                  Launch the FLOAT workspace to experience multi-step autonomous planning, safe Monaco diff reviews, and multi-model routing on your own codebase.
+                  Open the FLOAT workspace to chat about your project and review proposed code changes.
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">

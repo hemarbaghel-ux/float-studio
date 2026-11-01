@@ -9,7 +9,7 @@ import {
   ErrorExplanationRequest,
   ErrorExplanationResponse
 } from '../../types/validation';
-import { ProposalService } from '../agent/proposalService';
+import { ProposalService } from '../proposals/proposalService';
 import { ModelRouter } from '../providers/router';
 import { projectProcessManager } from '../execution/processManager';
 

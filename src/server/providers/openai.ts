@@ -6,8 +6,7 @@ import {
   AIProviderError,
   ProviderHealthCheckResult
 } from './base';
-import { PortableAgentRunner } from '../agent/portableAgentRunner';
-import { GPT6_ASTRA_CLOUD_CONFIG } from './cloudAgentConfig';
+import { getModelProtocol, MODEL_REGISTRY } from './modelRegistry';
 
 function sanitizeOpenAIErrorMessage(msg: string): string {
   return msg.replace(/sk-[a-zA-Z0-9_\-]{8,}/g, 'sk-[REDACTED]');
@@ -108,30 +107,9 @@ export class OpenAIAdapter implements AIProviderAdapter {
    * Authoritative, documented credential resolver for OpenAI.
    * Primary documented credential source for OpenAI API requests is OPENAI_API_KEY.
    */
-  public resolveApiKey(forModel?: string): string | undefined {
-    const isCloudPreview = forModel === 'gpt-6-astra' || forModel === 'gpt-6.1-sol' || forModel === 'gpt-6-sol' || forModel === 'gpt-6.1';
-
-    // 1. For cloud preview agents, check session credentials if available
-    if (isCloudPreview) {
-      const cloudKey = (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)?.trim();
-      if (cloudKey && cloudKey.length > 0 && !cloudKey.includes('replace_with')) {
-        return cloudKey;
-      }
-    }
-
-    // 2. Primary documented credential source for OpenAI API requests
-    const primaryKey = process.env.OPENAI_API_KEY?.trim();
-    if (primaryKey && primaryKey.length > 0 && !primaryKey.includes('replace_with')) {
-      return primaryKey;
-    }
-
-    // 3. Fallback to legacy environment variables with documented migration notice
-    const legacyKey = (process.env.CODEX_API_KEY || process.env.OPENAI_ENVIRONMENT_KEY)?.trim();
-    if (legacyKey && legacyKey.length > 0 && !legacyKey.includes('replace_with')) {
-      return legacyKey;
-    }
-
-    return undefined;
+  public resolveApiKey(_forModel?: string): string | undefined {
+    const key = process.env.OPENAI_API_KEY?.trim();
+    return key && key.length > 0 && !key.includes('replace_with') ? key : undefined;
   }
 
   isConfigured(): boolean {
@@ -148,43 +126,55 @@ export class OpenAIAdapter implements AIProviderAdapter {
         401
       );
     }
-    const isCloudAgent = forModel === 'gpt-6-astra' || forModel === 'gpt-6.1-sol' || forModel === 'gpt-6-sol' || forModel === 'gpt-6.1';
-
-    const defaultHeaders = isCloudAgent ? {
-      'X-Session-Id': GPT6_ASTRA_CLOUD_CONFIG.sessionId,
-      'X-Environment-Id': GPT6_ASTRA_CLOUD_CONFIG.environmentId,
-    } : undefined;
-
-    return new OpenAI({
-      apiKey: key,
-      ...(defaultHeaders ? { defaultHeaders } : {})
-    });
+    return new OpenAI({ apiKey: key });
   }
 
   async checkHealth(): Promise<ProviderHealthCheckResult> {
+    const selectedModels = MODEL_REGISTRY.filter((model) => model.selectable);
+    const defaultModel = selectedModels.find((model) => model.id === 'gpt-6-astra')?.apiModelId;
+    const configurationRequired = Object.fromEntries(selectedModels.map((model) => [model.id, {
+      upstreamModelId: model.apiModelId,
+      status: 'configuration_required' as const,
+      detail: 'OPENAI_API_KEY is not configured on this server.'
+    }]));
+
     if (!this.isConfigured()) {
       return {
         provider: 'OpenAI',
         configured: false,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-4o'
+        defaultModel,
+        accessibleModelIds: [],
+        modelAccess: configurationRequired
       };
     }
 
     try {
-      const client = this.getClient('gpt-4o');
-      // Lightweight verification using models.list
+      const client = this.getClient(defaultModel);
       const models = await client.models.list();
-      const accessibleModelIds = models.data.map(m => m.id);
-      const hasOperationalModel = accessibleModelIds.some(m => m.includes('gpt-4') || m.includes('o1') || m.includes('o3'));
+      const listedModelIds = new Set(models.data.map((model) => model.id));
+      const accessibleModelIds = selectedModels
+        .filter((model) => listedModelIds.has(model.apiModelId))
+        .map((model) => model.apiModelId);
+      const modelAccess = Object.fromEntries(selectedModels.map((model) => {
+        const listed = listedModelIds.has(model.apiModelId);
+        return [model.id, {
+          upstreamModelId: model.apiModelId,
+          status: listed ? 'listed' as const : 'not_listed' as const,
+          detail: listed
+            ? 'The configured credential lists this model ID. Generation access has not been verified.'
+            : 'The configured credential did not list this model ID. Generation access remains unverified.'
+        }];
+      }));
       return {
         provider: 'OpenAI',
         configured: true,
         authenticated: true,
-        modelAvailable: hasOperationalModel || models.data.length > 0,
-        defaultModel: 'gpt-4o',
-        accessibleModelIds
+        modelAvailable: false,
+        defaultModel,
+        accessibleModelIds,
+        modelAccess
       };
     } catch (err: any) {
       const normalized = normalizeOpenAIError(err);
@@ -193,7 +183,13 @@ export class OpenAIAdapter implements AIProviderAdapter {
         configured: true,
         authenticated: false,
         modelAvailable: false,
-        defaultModel: 'gpt-4o',
+        defaultModel,
+        accessibleModelIds: [],
+        modelAccess: Object.fromEntries(selectedModels.map((model) => [model.id, {
+          upstreamModelId: model.apiModelId,
+          status: 'unverified' as const,
+          detail: 'OpenAI credential verification failed; model access could not be checked.'
+        }])),
         error: normalized.message
       };
     }
@@ -201,10 +197,70 @@ export class OpenAIAdapter implements AIProviderAdapter {
 
   private resolveApiModel(model: string): string {
     const mapping: Record<string, string> = {
-      auto: 'gpt-6-astra',
-      'float-basic': 'gpt-4o-mini'
+      auto: 'gpt-6-astra'
     };
-    return mapping[model] || model || 'gpt-4o';
+    if (!model) throw new Error('Selected model is unavailable.');
+    return mapping[model] || model;
+  }
+
+  private usesResponsesApi(model: string): boolean {
+    return getModelProtocol(model) === 'responses';
+  }
+
+  private formatResponsesInput(request: AIProviderRequest): Array<{ role: string; content: string }> {
+    const messages: Array<{ role: string; content: string }> = [];
+    if (Array.isArray(request.messages)) {
+      for (const msg of request.messages) {
+        if (typeof msg === 'string') {
+          messages.push({ role: 'user', content: msg });
+        } else if (msg && typeof msg === 'object') {
+          const role = msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user';
+          const content = typeof msg.content === 'string'
+            ? msg.content
+            : Array.isArray(msg.parts)
+              ? msg.parts.map((part: any) => part.text || '').join('')
+              : typeof msg.text === 'string' ? msg.text : '';
+          messages.push({ role, content });
+        }
+      }
+    }
+    if (messages.length === 0) messages.push({ role: 'user', content: 'Hello' });
+    return messages;
+  }
+
+  private formatResponsesTools(tools?: AIProviderRequest['tools']): Array<Record<string, unknown>> | undefined {
+    if (!tools?.length) return undefined;
+    return tools.map((tool) => ({
+      type: 'function',
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters
+    }));
+  }
+
+  private parseResponsesOutput(response: any): Pick<AIProviderResponse, 'text' | 'toolCalls' | 'usage'> {
+    const output = Array.isArray(response?.output) ? response.output : [];
+    const text = typeof response?.output_text === 'string'
+      ? response.output_text
+      : output.flatMap((item: any) => item?.type === 'message' && Array.isArray(item.content)
+        ? item.content.flatMap((part: any) => part?.type === 'output_text'
+          ? [part.text || '']
+          : part?.type === 'refusal' && typeof part.refusal === 'string' ? [part.refusal] : [])
+        : []).join('');
+    const toolCalls = output.filter((item: any) => item?.type === 'function_call').map((item: any) => {
+      let args: Record<string, any> = {};
+      try {
+        args = JSON.parse(item.arguments || '{}');
+      } catch {
+        throw new AIProviderError('OpenAI returned invalid function arguments.', 'PROVIDER_ERROR', 'OpenAI', 502);
+      }
+      return { id: String(item.call_id || item.id || ''), name: String(item.name || ''), arguments: args };
+    });
+    const usage = response?.usage ? {
+      inputTokens: Number(response.usage.input_tokens || 0),
+      outputTokens: Number(response.usage.output_tokens || 0)
+    } : undefined;
+    return { text, toolCalls, usage };
   }
 
   private formatMessages(request: AIProviderRequest, isReasoningModel: boolean): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
@@ -555,6 +611,21 @@ Let me know what specific module, file, or integration you would like to impleme
     }
 
     const client = this.getClient(requestedModel);
+    if (this.usesResponsesApi(effectiveModel)) {
+      try {
+        const response = await client.responses.create({
+          model: effectiveModel,
+          ...(request.systemInstruction ? { instructions: request.systemInstruction } : {}),
+          input: this.formatResponsesInput(request),
+          ...(this.formatResponsesTools(request.tools) ? { tools: this.formatResponsesTools(request.tools) } : {}),
+          ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
+          ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {})
+        } as any);
+        return this.parseResponsesOutput(response) as AIProviderResponse;
+      } catch (err: any) {
+        throw normalizeOpenAIError(err);
+      }
+    }
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -564,6 +635,7 @@ Let me know what specific module, file, or integration you would like to impleme
       const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
         model: effectiveModel,
         messages,
+        ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
         ...(tools ? { tools } : {})
       };
 
@@ -636,6 +708,42 @@ Let me know what specific module, file, or integration you would like to impleme
     }
 
     const client = this.getClient(requestedModel);
+    if (this.usesResponsesApi(effectiveModel)) {
+      try {
+        const stream = await client.responses.create({
+          model: effectiveModel,
+          ...(request.systemInstruction ? { instructions: request.systemInstruction } : {}),
+          input: this.formatResponsesInput(request),
+          ...(this.formatResponsesTools(request.tools) ? { tools: this.formatResponsesTools(request.tools) } : {}),
+          ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
+          ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {}),
+          stream: true
+        } as any, { signal } as any) as any;
+        let fullText = '';
+        let completedResponse: any;
+        for await (const event of stream) {
+          if (signal?.aborted) break;
+          if ((event?.type === 'response.output_text.delta' || event?.type === 'response.refusal.delta') && typeof event.delta === 'string') {
+            fullText += event.delta;
+            onChunk(event.delta);
+          } else if (event?.type === 'response.completed') {
+            completedResponse = event.response;
+          } else if (event?.type === 'response.failed' || event?.type === 'error') {
+            throw event.error || new Error(event.response?.error?.message || 'OpenAI response stream failed.');
+          }
+        }
+        if (signal?.aborted) {
+          const cancelled = new Error('Operation was cancelled.');
+          cancelled.name = 'AbortError';
+          throw cancelled;
+        }
+        if (!completedResponse) throw new Error('OpenAI response stream ended before completion.');
+        const parsed = this.parseResponsesOutput(completedResponse);
+        return { ...parsed, text: fullText || parsed.text } as AIProviderResponse;
+      } catch (err: any) {
+        throw normalizeOpenAIError(err);
+      }
+    }
     const isReasoning = effectiveModel.startsWith('o1') || effectiveModel.startsWith('o3');
 
     try {
@@ -645,6 +753,7 @@ Let me know what specific module, file, or integration you would like to impleme
       const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
         model: effectiveModel,
         messages,
+        ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
         stream: true,
         stream_options: { include_usage: true },
         ...(tools ? { tools } : {})
@@ -686,22 +795,4 @@ Let me know what specific module, file, or integration you would like to impleme
     }
   }
 
-  async runAgentLoop(
-    req: any,
-    res: any,
-    model: string,
-    prompt: string,
-    virtualFiles: any[]
-  ): Promise<void> {
-    const apiKey = this.resolveApiKey(model);
-    if (!apiKey) {
-      throw new AIProviderError(
-        `OpenAI is not configured on the FLOAT server. To run agents with "${model}", configure OPENAI_API_KEY.`,
-        'AUTH_ERROR',
-        'OpenAI',
-        401
-      );
-    }
-    return PortableAgentRunner.run('openai', req, res, model, prompt, virtualFiles, apiKey);
-  }
 }

@@ -41,7 +41,6 @@ export function ProductsDropdown({ currentPath }: ProductsDropdownProps) {
       icon: <Terminal size={16} />,
       items: [
         { name: 'Model catalog', desc: 'Browse models supported by configured providers.', status: 'AVAILABLE', href: '/models' },
-        { name: 'Evaluations', desc: 'Create and run model evaluation tasks.', status: 'AVAILABLE', href: '/evals' },
         { name: 'Usage', desc: 'Review usage data recorded by the workspace.', status: 'AVAILABLE', href: '/models/usage' },
       ]
     },
@@ -51,7 +50,6 @@ export function ProductsDropdown({ currentPath }: ProductsDropdownProps) {
       items: [
         { name: 'GitHub', desc: 'Connect GitHub when OAuth is configured for this deployment.', status: 'AVAILABLE', href: '/integrations' },
         { name: 'GitLab', desc: 'GitLab OAuth is available when configured for this deployment.', status: 'AVAILABLE', href: '/integrations' },
-        { name: 'Automations', desc: 'Manage browser-local scheduled workflows.', status: 'AVAILABLE', href: '/automations' },
       ]
     }
   ];

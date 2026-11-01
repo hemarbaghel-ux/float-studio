@@ -87,7 +87,7 @@ if (!formatted.includes('Cursor Rules') || !formatted.includes('strict TypeScrip
   console.error('[FAIL] Formatted prompt does not contain .cursorrules instructions');
   process.exit(1);
 }
-console.log('[PASS] Formatted prompt injects .cursorrules into agent and chat system prompts');
+console.log('[PASS] Formatted project rules are available to supported chat prompts');
 
 console.log('\n==================================================');
 console.log('Cursor Parity & Website Integration: All 4 suites passed!');

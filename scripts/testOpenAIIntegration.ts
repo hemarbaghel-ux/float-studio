@@ -2,8 +2,7 @@ import { ModelRouter } from '../src/server/providers/router';
 import { OpenAIAdapter, normalizeOpenAIError } from '../src/server/providers/openai';
 import { AIProviderError } from '../src/server/providers/base';
 import OpenAI from 'openai';
-import { GPT6_ASTRA_CLOUD_CONFIG } from '../src/server/providers/cloudAgentConfig';
-import { INITIAL_MODELS, INITIAL_AGENTS } from '../src/features/ai/registry';
+import { INITIAL_MODELS } from '../src/features/ai/registry';
 import { VERIFIED_MODELS } from '../src/data/verifiedModels';
 import { DASHBOARD_MODELS } from '../src/features/dashboard/dashboardModels';
 
@@ -30,17 +29,9 @@ async function runOpenAIIntegrationTests() {
   // Test Suite 1: Verified Model Routing
   console.log('--- Test Suite 1: Verified Model Routing ---');
   const verifiedModelsToTest = [
-    { input: 'gpt-4o', expectedApiId: 'gpt-4o' },
-    { input: 'gpt-4o-mini', expectedApiId: 'gpt-4o-mini' },
-    { input: 'o1', expectedApiId: 'o1' },
-    { input: 'o1-mini', expectedApiId: 'o1-mini' },
-    { input: 'o3-mini', expectedApiId: 'o3-mini' },
-    { input: 'gpt-4.5-preview', expectedApiId: 'gpt-4.5-preview' },
-    { input: 'gpt-4-turbo', expectedApiId: 'gpt-4-turbo' },
-    { input: 'gpt-3.5-turbo', expectedApiId: 'gpt-3.5-turbo' },
-    { input: 'auto', expectedApiId: 'gpt-4o' },
-    { input: 'float-basic', expectedApiId: 'gpt-4o-mini' },
-    { input: 'gpt-6-astra', expectedApiId: 'gpt-6-astra' }
+    { input: 'gpt-6-astra', expectedApiId: 'gpt-6-astra' },
+    { input: 'gpt-6.1-sol', expectedApiId: 'gpt-6.1-sol' },
+    { input: 'auto', expectedApiId: 'gpt-6-astra' }
   ];
 
   for (const { input, expectedApiId } of verifiedModelsToTest) {
@@ -146,7 +137,14 @@ async function runOpenAIIntegrationTests() {
       },
       models: {
         list: async () => ({
-          data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }, { id: 'o1' }, { id: 'o3-mini' }]
+          data: [
+            { id: 'gpt-4o' },
+            { id: 'gpt-4o-mini' },
+            { id: 'o1' },
+            { id: 'o3-mini' },
+            { id: 'gpt-6-astra' },
+            { id: 'gpt-6.1-sol' }
+          ]
         })
       }
     };
@@ -188,8 +186,10 @@ async function runOpenAIIntegrationTests() {
   // Test health check returns accessible models
   const healthRes = await mockAdapter.checkHealth();
   assert(healthRes.authenticated === true, 'Health check authenticates successfully with client');
-  assert(healthRes.modelAvailable === true, 'Health check detects operational models');
-  assert(Array.isArray((healthRes as any).accessibleModelIds), 'Health check returns accessibleModelIds array');
+  assert(healthRes.modelAvailable === false, 'Model listing does not claim successful generation');
+  assert(JSON.stringify(healthRes.accessibleModelIds) === JSON.stringify(['gpt-6-astra', 'gpt-6.1-sol']), 'Health check lists only exact selectable upstream model IDs');
+  assert(healthRes.modelAccess?.['gpt-6-astra']?.status === 'listed', 'Health check reports Astra as listed by credentials');
+  assert(healthRes.modelAccess?.['gpt-6.1-sol']?.status === 'listed', 'Health check reports Sol as listed by credentials');
 
   // Restore env key
   if (originalKey !== undefined) {
@@ -238,36 +238,22 @@ async function runOpenAIIntegrationTests() {
     console.log('  [NOTICE] No live OPENAI_API_KEY configured in environment. Skipping live network call.');
   }
 
-  // Test Suite 8: GPT-6 Astra Preview / Cloud Agent Verification
-  console.log('\n--- Test Suite 8: GPT-6 Astra Preview / Cloud Agent Verification ---');
-  assert(GPT6_ASTRA_CLOUD_CONFIG.modelId === 'gpt-6-astra', 'GPT-6 Astra config has modelId');
-  assert(GPT6_ASTRA_CLOUD_CONFIG.fallbackModel === 'gpt-4o', 'GPT-6 Astra specifies upstream fallback to gpt-4o');
-  assert(GPT6_ASTRA_CLOUD_CONFIG.remoteUrl.includes('agents/api/connect'), 'GPT-6 Astra has remote connect URL');
-  assert(GPT6_ASTRA_CLOUD_CONFIG.environmentId.startsWith('ccarenv_b64_'), 'GPT-6 Astra has environment ID');
-  assert(GPT6_ASTRA_CLOUD_CONFIG.execServerCommand.includes('codex exec-server'), 'GPT-6 Astra has codex exec-server command');
-
+  // Test Suite 8: Selectable GPT-6 model catalog verification
+  console.log('\n--- Test Suite 8: Selectable GPT-6 Model Catalog Verification ---');
   const routerAstra = router.resolveRoute('gpt-6-astra');
   assert(routerAstra.route.provider === 'openai', 'Router routes gpt-6-astra to OpenAI adapter');
   assert(routerAstra.route.apiModelId === 'gpt-6-astra', 'Router resolves gpt-6-astra to apiModelId gpt-6-astra');
 
-  const inInitial = INITIAL_MODELS.find(m => m.id === 'gpt-6-astra' || m.id === 'gpt-4.5-preview');
-  assert(Boolean(inInitial), 'Preview model is present in INITIAL_MODELS catalog');
-  assert(inInitial?.tier === 'Preview' || inInitial?.availability?.includes('Preview'), 'Preview model tier is Preview');
-  assert((inInitial?.contextWindow || 0) >= 128000, 'Preview model context window verified');
-  assert(Boolean(inInitial?.cloudAgentConfig || inInitial?.fallbackModel), 'Preview model contains cloudAgentConfig metadata');
+  assert(INITIAL_MODELS.length === 2, 'Client registry exposes only two selectable models');
+  assert(INITIAL_MODELS.some((model) => model.id === 'gpt-6-astra'), 'GPT-6 Astra is in the client registry');
+  assert(INITIAL_MODELS.some((model) => model.id === 'gpt-6.1-sol'), 'GPT-6.1 Sol is in the client registry');
 
-  const inVerified = VERIFIED_MODELS.find(m => m.id === 'gpt-6-astra' || m.id === 'gpt-4.5-preview');
-  assert(Boolean(inVerified), 'Preview model is registered in VERIFIED_MODELS');
-  assert(inVerified?.category === 'flagship_coding' || Boolean(inVerified?.capabilities?.coding), 'Preview model is categorized for coding');
-  assert(inVerified?.fallbackModel === 'gpt-4o' || inVerified?.exactModelId.includes('gpt-4'), 'Preview model defines verified fallback');
+  const inVerified = VERIFIED_MODELS.filter((model) => model.id === 'gpt-6-astra' || model.id === 'gpt-6.1-sol');
+  assert(inVerified.length === 2, 'Both selectable models have verified source metadata');
+  assert(inVerified.every((model) => model.apiProtocol === 'responses'), 'Both selectable models are registered for the Responses API');
+  assert(inVerified.every((model) => model.availabilityStatus === 'UNKNOWN'), 'Model metadata does not claim account access without a provider check');
 
-  const inDashboard = DASHBOARD_MODELS.find(m => m.id === 'gpt-6-astra' || m.id === 'gpt-4.5-preview');
-  assert(Boolean(inDashboard), 'Preview model is featured in DASHBOARD_MODELS');
-
-  const astraAgent = INITIAL_AGENTS.find(a => a.id === 'astra-agent');
-  assert(Boolean(astraAgent), 'Astra Cloud Agent is registered in INITIAL_AGENTS');
-  assert(Boolean(astraAgent?.defaultModel), 'Astra Cloud Agent has default model configured');
-  assert(Boolean(astraAgent?.fallbackModel), 'Astra Cloud Agent has fallbackModel configured');
+  assert(DASHBOARD_MODELS.length === 2, 'Dashboard selector exposes only the two selected models');
 
   console.log(`\n======================================================`);
   console.log(`TEST RESULTS: ${passed} passed, ${failed} failed`);

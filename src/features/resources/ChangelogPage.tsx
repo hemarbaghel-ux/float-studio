@@ -13,7 +13,7 @@ export interface ChangelogItem {
   version: string;
   date: string;
   title: string;
-  category: 'AI & Models' | 'Editor & UX' | 'Agent Platform' | 'Git & Source Control' | 'Security & Governance';
+  category: 'AI & Models' | 'Editor & UX' | 'Git & Source Control' | 'Security & Governance';
   summary: string;
   highlights: string[];
   technicalDetails?: string[];
@@ -31,35 +31,8 @@ export const CHANGELOG_ENTRIES: ChangelogItem[] = [
     highlights: [
       'In-transcript find bar with Cmd+F / Ctrl+F, yellow match highlights, and match index counter',
       'Keyboard message navigation: Cmd/Ctrl+Up/Down jump across user prompts; Cmd/Ctrl+Shift+Up/Down jump across assistant turns',
-      'Minimized Plan pills above the composer with expand and dismiss controls',
       'One-click "Copy Table as Markdown" on all rendered tables in chat',
-      'Windows extensionless script resolution (.ps1, .bat, .cmd, .exe) in lifecycle hooks',
       'File-pattern scoped rule matching preventing irrelevant token consumption'
-    ],
-    technicalDetails: [
-      'Implemented checkToolLoop in AgentRunner to detect identical repeated calls and inject recovery nudges',
-      'Added parent-child hierarchy tracking and recursive cascading cancellation in MultiAgentCoordinator',
-      'Human-readable execution policy reasons for outside-workspace and protected-file modifications'
-    ]
-  },
-  {
-    id: 'milestone-9',
-    milestone: 'Milestone 9',
-    version: 'v1.3.0',
-    date: 'October 2026',
-    title: 'Cursor-Class Parity, Rules Engine & Multi-Agent Architecture',
-    category: 'Agent Platform',
-    summary: 'Comprehensive parity program introducing .cursorrules discovery, Model Context Protocol (MCP), lifecycle hooks, and parallel subagents.',
-    highlights: [
-      'Automatic discovery of .cursorrules alongside .float/rules/ with file-pattern precedence',
-      'Model Context Protocol (MCP) tool integration and schema validation',
-      'Lifecycle hooks supporting pre-edit and post-apply shell scripts',
-      'Parallel subagent coordinator with isolated worktrees and progress streaming',
-      'Authoritative execution policies with safe, review, allowlist, and sandboxed modes'
-    ],
-    technicalDetails: [
-      'Staged proposal review immutability guarantees: zero file writes without explicit human approval',
-      'Consolidated OpenAI provider architecture featuring GPT-4o, o3-mini, and o1'
     ]
   },
   {
@@ -78,7 +51,7 @@ export const CHANGELOG_ENTRIES: ChangelogItem[] = [
     ],
     technicalDetails: [
       'AST-based import extraction and BFS dependency weighting algorithm',
-      'Sliding window rate limiters and multi-provider fallback resilience'
+      'Provider errors are returned explicitly without switching providers'
     ]
   },
   {
@@ -90,29 +63,13 @@ export const CHANGELOG_ENTRIES: ChangelogItem[] = [
     category: 'Git & Source Control',
     summary: 'Production Git integration enabling clean-room worktrees, branch switching, commit staging, and GitHub PR creation.',
     highlights: [
-      'Isolated Git worktrees allowing background agents to work in separate checkouts without disrupting the user',
       'Staged proposal review modal with side-by-side Monaco diff viewer and live conflict detection',
       'GitHub OAuth linking, branch management, and remote repository sync',
       'Security audit: strict path boundary guards preventing ../ traversal escapes'
     ],
     technicalDetails: [
       'SHA-256 pre/post content hashing to prevent applying proposals on top of conflicting file changes',
-      'Unified 45-suite verification framework validating security and agent loops'
-    ]
-  },
-  {
-    id: 'milestone-6',
-    milestone: 'Milestone 6',
-    version: 'v1.0.0',
-    date: 'September 2026',
-    title: 'Persistent Background Agents & Task Recovery',
-    category: 'Agent Platform',
-    summary: 'Enterprise agent reliability: tasks survive browser reloads, network disconnects, and server restarts.',
-    highlights: [
-      'Firestore-backed task queues and distributed lease heartbeats',
-      'Automatic resume and reattachment when user reconnects to active agent session',
-      'Graceful cancellation propagation across background tasks',
-      'Agent events timeline in chat transcript showing real-time thought progress'
+      'Security checks for workspace path boundaries and proposal application'
     ]
   },
   {
@@ -127,20 +84,6 @@ export const CHANGELOG_ENTRIES: ChangelogItem[] = [
       'Trigram fuzzy codebase indexing for instantaneous file and symbol lookups',
       'Extraction of TypeScript/Python functions, classes, and type definitions',
       'Fuzzy symbol scoring with path distance weighting'
-    ]
-  },
-  {
-    id: 'milestone-4',
-    milestone: 'Milestone 4',
-    version: 'v0.8.0',
-    date: 'August 2026',
-    title: 'Structured Plan Mode with Human Approval Gates',
-    category: 'AI & Models',
-    summary: 'Dedicated Plan workflow: generate multi-step DAG implementation plans before executing code changes.',
-    highlights: [
-      'Interactive PlanCard with editable title, step descriptions, and execution badges',
-      'Approval gates requiring user confirmation before agent begins mutating files',
-      'Granular step status tracking (pending, executing, completed, failed, cancelled)'
     ]
   },
   {
@@ -181,7 +124,7 @@ export function ChangelogPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  const categories = ['All', 'AI & Models', 'Editor & UX', 'Agent Platform', 'Git & Source Control', 'Security & Governance'];
+  const categories = ['All', 'AI & Models', 'Editor & UX', 'Git & Source Control', 'Security & Governance'];
 
   const filteredEntries = useMemo(() => {
     return CHANGELOG_ENTRIES.filter(entry => {
@@ -211,7 +154,7 @@ export function ChangelogPage() {
             Release Notes
           </h1>
           <p className="text-base text-slate-600 dark:text-[#A1A1AA] leading-relaxed">
-            Verified milestones and feature additions shipped to the FLOAT AI developer workspace. Track our architecture advancements across AI intelligence, agent reliability, source control, and editor experience.
+            Verified milestones and feature additions in the FLOAT developer workspace, including model routing, source control, and editor improvements.
           </p>
         </div>
 

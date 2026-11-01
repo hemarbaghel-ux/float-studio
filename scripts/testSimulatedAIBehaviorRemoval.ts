@@ -1,5 +1,6 @@
 import { OpenAIAdapter } from '../src/server/providers/openai';
 import { AIProviderError } from '../src/server/providers/base';
+import { streamGeminiContent } from '../src/services/gemini';
 
 let passed = 0;
 let failed = 0;
@@ -70,13 +71,11 @@ async function runTests() {
   process.env.OPENAI_API_KEY = 'sk-invalid-key-for-test-mock';
   const mock401Adapter = new OpenAIAdapter();
   (mock401Adapter as any).getClient = () => ({
-    chat: {
-      completions: {
-        create: async () => {
-          const err: any = new Error('Incorrect API key provided: sk-invalid-key-for-test-mock');
-          err.status = 401;
-          throw err;
-        }
+    responses: {
+      create: async () => {
+        const err: any = new Error('Incorrect API key provided: sk-invalid-key-for-test-mock');
+        err.status = 401;
+        throw err;
       }
     }
   });
@@ -116,13 +115,11 @@ async function runTests() {
   console.log('\n--- Test Suite 3: Upstream Quota/Rate Limit (429) Must Throw ---');
   const mock429Adapter = new OpenAIAdapter();
   (mock429Adapter as any).getClient = () => ({
-    chat: {
-      completions: {
-        create: async () => {
-          const err: any = new Error('You exceeded your current quota, please check your plan and billing details.');
-          err.status = 429;
-          throw err;
-        }
+    responses: {
+      create: async () => {
+        const err: any = new Error('You exceeded your current quota, please check your plan and billing details.');
+        err.status = 429;
+        throw err;
       }
     }
   });
@@ -171,6 +168,22 @@ async function runTests() {
   assert(demoStreamRes.usage === undefined, 'Streaming demo does NOT fabricate token usage');
   assert(demoStreamChunks.length > 0, 'Demo chunks were delivered progressively');
   assert(demoStreamChunks.join('').includes('[SIMULATED DEMO RESPONSE]'), 'Accumulated stream contains disclosure banner');
+
+  // Legacy Gemini-only client compatibility path must fail explicitly; it cannot
+  // synthesize a response or return text when the provider is not in the router.
+  let retiredGeminiError: any = null;
+  const retiredGeminiChunks: string[] = [];
+  try {
+    await streamGeminiContent({
+      prompt: 'Build a calculator',
+      model: 'gemini-3.8-flash',
+      onChunk: (chunk) => { retiredGeminiChunks.push(chunk); }
+    });
+  } catch (err: any) {
+    retiredGeminiError = err;
+  }
+  assert(retiredGeminiError?.code === 'UNSUPPORTED_PROVIDER', 'Unregistered Gemini model returns explicit unsupported-provider error');
+  assert(retiredGeminiChunks.length === 0, 'Retired Gemini client never fabricates a completed assistant response');
 
   // Restore original environment
   if (originalKey !== undefined) process.env.OPENAI_API_KEY = originalKey;

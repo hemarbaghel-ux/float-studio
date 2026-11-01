@@ -6,8 +6,6 @@ import {
   AIProviderError,
   ProviderHealthCheckResult
 } from './base';
-import { AgentRunner } from '../agent/agentRunner';
-import { PortableAgentRunner } from '../agent/portableAgentRunner';
 
 export function normalizeAnthropicError(error: any): AIProviderError {
   const msg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
@@ -308,18 +306,4 @@ export class AnthropicAdapter implements AIProviderAdapter {
     }
   }
 
-  async runAgentLoop(
-    req: any,
-    res: any,
-    model: string,
-    prompt: string,
-    virtualFiles: any[]
-  ): Promise<void> {
-    throw new AIProviderError(
-      'Autonomous agent loop is only supported for OpenAI models in FLOAT AI.',
-      'INVALID_REQUEST',
-      'Anthropic',
-      400
-    );
-  }
 }

@@ -7,20 +7,15 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 import { ModelRouter } from '../src/server/providers/router';
 import { OpenAIAdapter } from '../src/server/providers/openai';
-import { GPT6_ASTRA_CLOUD_CONFIG } from '../src/server/providers/cloudAgentConfig';
 
 console.log('=== FLOAT AI — GPT-6 Astra Environment Key Verification ===\n');
 
 async function testAstraConnection() {
-  const envKey = process.env.OPENAI_ENVIRONMENT_KEY;
-  const codexKey = process.env.CODEX_API_KEY;
+  const envKey = process.env.OPENAI_API_KEY;
 
   console.log('1. Checking environment key availability:');
-  assert.ok(envKey, 'OPENAI_ENVIRONMENT_KEY is present in environment');
-  assert.ok(envKey.startsWith('sk-proj-'), 'OPENAI_ENVIRONMENT_KEY has valid sk-proj- prefix');
-  assert.ok(codexKey, 'CODEX_API_KEY is present in environment');
-  assert.strictEqual(envKey, codexKey, 'OPENAI_ENVIRONMENT_KEY matches CODEX_API_KEY');
-  console.log('  ✓ OPENAI_ENVIRONMENT_KEY & CODEX_API_KEY are configured.');
+  assert.ok(envKey, 'OPENAI_API_KEY is present in the server environment');
+  console.log('  ✓ OPENAI_API_KEY is configured.');
 
   console.log('\n2. Verifying OpenAIAdapter key selection:');
   const adapter = new OpenAIAdapter();
@@ -30,24 +25,19 @@ async function testAstraConnection() {
   assert.strictEqual(astraClient.apiKey, envKey, 'Client for gpt-6-astra uses OPENAI_ENVIRONMENT_KEY');
 
   const standardClient = (adapter as any).getClient('gpt-4o');
-  assert.strictEqual(standardClient.apiKey, process.env.OPENAI_API_KEY, 'Client for gpt-4o uses primary OPENAI_API_KEY');
-  console.log('  ✓ Model-specific client key resolution verified.');
+  assert.strictEqual(standardClient.apiKey, envKey, 'Client for gpt-4o uses OPENAI_API_KEY');
+  assert.strictEqual(astraClient.defaultHeaders, undefined, 'GPT-6 uses the documented OpenAI API without hard-coded session headers');
+  console.log('  ✓ All OpenAI models use the documented server credential and standard API headers.');
 
   console.log('\n3. Verifying ModelRouter route resolution:');
   const router = new ModelRouter();
   const route = router.resolveRoute('gpt-6-astra');
   assert.strictEqual(route.route.provider, 'openai');
   assert.strictEqual(route.route.apiModelId, 'gpt-6-astra');
-  console.log('  ✓ gpt-6-astra routes to OpenAI adapter.');
+  assert.strictEqual(route.route.protocol, 'responses');
+  console.log('  ✓ gpt-6-astra routes to OpenAI Responses API.');
 
-  console.log('\n4. Verifying Cloud Agent Configuration:');
-  assert.strictEqual(GPT6_ASTRA_CLOUD_CONFIG.modelId, 'gpt-6-astra');
-  assert.strictEqual(GPT6_ASTRA_CLOUD_CONFIG.fallbackModel, 'gpt-4o');
-  assert.ok(GPT6_ASTRA_CLOUD_CONFIG.remoteUrl.includes('rt_9v4n'));
-  assert.ok(GPT6_ASTRA_CLOUD_CONFIG.environmentId.includes('ccarenv_b64'));
-  console.log('  ✓ GPT6_ASTRA_CLOUD_CONFIG verified.');
-
-  console.log('\n5. Verifying live generation with upstream fallback:');
+  console.log('\n4. Verifying live generation:');
   try {
     const result = await router.generateContent({
       model: 'gpt-6-astra',
@@ -65,7 +55,7 @@ async function testAstraConnection() {
     }
   }
 
-  console.log('\n6. Verifying streaming generation with upstream fallback:');
+  console.log('\n5. Verifying live Responses API streaming:');
   try {
     let streamedDelta = '';
     const streamResult = await router.generateContentStream(

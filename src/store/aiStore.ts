@@ -1,32 +1,26 @@
 import { create } from 'zustand';
-import { AIModel, Agent, ModelPreference, ProviderStatus } from '../types/ai';
-import { INITIAL_MODELS, INITIAL_AGENTS } from '../features/ai/registry';
+import { AIModel, ModelPreference, ProviderStatus } from '../types/ai';
+import { INITIAL_MODELS } from '../features/ai/registry';
 
 export type ReasoningEffortLevel = 'low' | 'medium' | 'high';
 
 interface AIStore {
   models: AIModel[];
-  agents: Agent[];
   selectedModel: string;
   selectedEffort: ReasoningEffortLevel;
-  selectedAgent: string;
   favoriteModels: string[];
   recentModels: string[];
   providers: Record<string, ProviderStatus>;
   preferences: ModelPreference;
   setModels: (models: AIModel[]) => void;
-  setAgents: (agents: Agent[]) => void;
   setSelectedModel: (modelId: string) => void;
   setSelectedEffort: (effort: ReasoningEffortLevel) => void;
   toggleFavoriteModel: (modelId: string) => void;
   recordRecentModel: (modelId: string) => void;
-  setSelectedAgent: (agentId: string) => void;
   updateProviderStatus: (providerId: string, status: Partial<ProviderStatus>) => void;
   updatePreferences: (prefs: Partial<ModelPreference>) => void;
   syncProviderStatus: () => Promise<void>;
 }
-
-export const defaultAgents: Agent[] = INITIAL_AGENTS;
 
 export const VALID_FLOAT_MODELS = Array.from(
   new Set([
@@ -95,10 +89,8 @@ const getInitialRecents = (): string[] => {
 
 export const useAIStore = create<AIStore>((set) => ({
   models: INITIAL_MODELS,
-  agents: INITIAL_AGENTS,
   selectedModel: getInitialSelectedModel(),
   selectedEffort: getInitialEffort(),
-  selectedAgent: 'main-agent',
   favoriteModels: getInitialFavorites(),
   recentModels: getInitialRecents(),
   providers: {
@@ -120,7 +112,6 @@ export const useAIStore = create<AIStore>((set) => ({
     });
     set({ models: deduplicated });
   },
-  setAgents: (agents) => set({ agents }),
   setSelectedModel: (selectedModel) => {
     const validModel = VALID_FLOAT_MODELS.includes(selectedModel) ? selectedModel : 'gpt-6-astra';
     if (typeof window !== 'undefined') {
@@ -171,7 +162,6 @@ export const useAIStore = create<AIStore>((set) => ({
       return { recentModels: updatedRecents };
     });
   },
-  setSelectedAgent: (selectedAgent) => set({ selectedAgent }),
   updateProviderStatus: (providerId, status) => set((state) => ({
     providers: { ...state.providers, [providerId]: { ...state.providers[providerId], ...status } }
   })),
@@ -215,13 +205,53 @@ export const useAIStore = create<AIStore>((set) => ({
                 : (updatedProviders[pId]?.configured ?? false);
               return {
                 ...m,
-                status: isConfigured ? ('AVAILABLE' as const) : ('CONFIG_REQUIRED' as const),
-                availability: isConfigured ? 'Available' : 'Configuration required'
+                status: isConfigured ? ('UNKNOWN' as const) : ('CONFIG_REQUIRED' as const),
+                availability: isConfigured
+                  ? 'Server credential is configured; model access has not been verified.'
+                  : 'Server credential is not configured.'
               };
             });
 
             return { providers: updatedProviders, models: updatedModels };
           });
+        }
+      }
+
+      const catalogRes = await fetch('/api/ai/models', { headers: { Accept: 'application/json' } });
+      if (catalogRes.ok && (catalogRes.headers.get('content-type') || '').includes('application/json')) {
+        const catalog = await catalogRes.json();
+        if (Array.isArray(catalog?.models)) {
+          const serverModels: AIModel[] = catalog.models.map((model: any) => ({
+            id: model.id,
+            exactModelId: model.apiModelId,
+            apiModelId: model.apiModelId,
+            providerId: model.providerId,
+            provider: model.providerId === 'openai' ? 'OpenAI' : model.providerId,
+            displayName: model.displayName,
+            shortName: model.displayName,
+            family: model.providerId,
+            description: model.description,
+            capabilities: model.capabilities,
+            capabilitiesList: Object.entries(model.capabilities || {}).filter(([, enabled]) => enabled).map(([name]) => name),
+            contextWindow: model.contextWindow || 0,
+            status: model.status,
+            speed: 'balanced',
+            availability: model.availabilityDetails,
+            availabilityDetails: model.availabilityDetails,
+            limits: model.maxOutputTokens ? { maxOutputTokens: model.maxOutputTokens } : undefined,
+            pricing: model.pricing ? {
+              inputCost: model.pricing.inputCostPer1M,
+              outputCost: model.pricing.outputCostPer1M,
+              currency: model.pricing.currency,
+              effectiveDate: model.pricing.effectiveDate
+            } : undefined,
+            pricingUrl: model.pricing?.sourceUrl,
+            supportsStreaming: model.capabilities?.streaming === true,
+            supportsTools: model.capabilities?.tools === true,
+            supportsVision: model.capabilities?.vision === true,
+            supportsReasoning: model.capabilities?.reasoning === true
+          }));
+          if (serverModels.length > 0) set({ models: serverModels });
         }
       }
     } catch (err) {

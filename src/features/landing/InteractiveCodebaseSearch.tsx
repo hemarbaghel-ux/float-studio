@@ -48,7 +48,7 @@ const CONTEXT_TAGS: ContextTag[] = [
     id: 'terminal',
     label: '@Terminal',
     icon: Terminal,
-    description: 'Feed current terminal console logs and compiler stderr directly to agent',
+    description: 'Attach terminal output and compiler errors to an AI chat message',
     sampleMatch: 'stderr: TypeScript TS2322 in PageHeader.tsx:18',
     snippet: 'Type "string | undefined" is not assignable to type "string"'
   }

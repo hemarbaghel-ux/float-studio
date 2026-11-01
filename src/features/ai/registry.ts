@@ -1,4 +1,4 @@
-import { AIModel, Agent } from '../../types/ai';
+import { AIModel } from '../../types/ai';
 import { VERIFIED_MODELS } from '../../data/verifiedModels';
 import { DASHBOARD_MODELS } from '../dashboard/dashboardModels';
 
@@ -37,9 +37,10 @@ const rawInitialModels: AIModel[] = [
     contextWindow: vm.contextWindow,
     status: vm.availabilityStatus as any,
     speed: vm.speed,
-    reasoningLevel: vm.speed === 'fast' ? 'Fast' : vm.speed === 'slow' ? 'High' : 'Medium',
     version: vm.snapshotVersion || vm.id,
-    availability: vm.availabilityStatus === 'AVAILABLE' ? 'Available' : 'Configuration required',
+    availability: vm.availabilityStatus === 'AVAILABLE'
+      ? 'Available'
+      : vm.availabilityStatus === 'CONFIG_REQUIRED' ? 'Configuration required' : 'Access unverified',
     pricing: {
       inputCost: vm.pricing.inputCostPer1M,
       outputCost: vm.pricing.outputCostPer1M,
@@ -58,7 +59,6 @@ const rawInitialModels: AIModel[] = [
     intendedUseCases: vm.intendedUseCases,
     availabilityDetails: vm.availabilityDetails,
     fallbackModel: vm.fallbackModel,
-    cloudAgentConfig: vm.cloudAgentConfig,
     supportsStreaming: vm.capabilities.streaming,
     supportsTools: vm.capabilities.tools,
     supportsVision: vm.capabilities.vision,
@@ -66,173 +66,11 @@ const rawInitialModels: AIModel[] = [
   }))
 ];
 
-export const FLOAT_BASIC_MODEL: AIModel = {
-  id: 'float-basic',
-  exactModelId: 'gpt-4o-mini',
-  apiModelId: 'gpt-4o-mini',
-  providerId: 'openai',
-  provider: 'FLOAT AI',
-  displayName: 'FLOAT Basic',
-  shortName: 'FLOAT Basic',
-  family: 'gpt-4o',
-  tier: 'Free',
-  description: 'Free tier efficient model for lightweight code editing and exploration.',
-  capabilities: {
-    coding: true,
-    reasoning: false,
-    vision: false,
-    tools: true,
-    structuredOutput: true,
-    streaming: true,
-    longContext: true
-  },
-  capabilitiesList: ['Coding', 'Reviewing', 'Planning', 'Debugging', 'Exploring', 'UI assistance'],
-  contextWindow: 128000,
-  status: 'AVAILABLE',
-  speed: 'fast',
-  reasoningLevel: 'Fast',
-  version: '2024-07-18',
-  availability: 'Available',
-  pricing: {
-    inputCost: 0,
-    outputCost: 0,
-    currency: 'USD',
-    effectiveDate: '2024-07-18'
-  },
-  limits: {
-    maxOutputTokens: 16384
-  },
-  releaseDate: '2024-07-18',
-  modalities: ['text', 'code'],
-  docUrl: 'https://platform.openai.com/docs/models/gpt-4o-mini',
-  pricingUrl: 'https://openai.com/api/pricing/',
-  snapshotVersion: '2024-07-18',
-  limitations: [
-    'not optimized for large-scale architectural redesign',
-    'proposal review required before applying changes',
-    'Free tier usage boundaries apply'
-  ],
-  intendedUseCases: ['Quick edits', 'Reviewing code', 'Basic debugging'],
-  availabilityDetails: 'Free tier model.',
-  supportsStreaming: true,
-  supportsTools: true,
-  supportsVision: false,
-  supportsReasoning: false
-};
-
 const seenInitialModelIds = new Set<string>();
 export const INITIAL_MODELS: AIModel[] = [
-  ...rawInitialModels.filter(m => m.id === 'gpt-6-astra' || m.id === 'gpt-6.1-sol'),
-  FLOAT_BASIC_MODEL
+  ...rawInitialModels.filter(m => m.id === 'gpt-6-astra' || m.id === 'gpt-6.1-sol')
 ].filter(m => {
   if (seenInitialModelIds.has(m.id)) return false;
   seenInitialModelIds.add(m.id);
   return true;
 });
-
-export const INITIAL_AGENTS: Agent[] = [
-  {
-    id: 'main-agent',
-    name: 'Main Agent',
-    description: 'General purpose AI assistant powered by GPT-6 Astra & FLOAT AI',
-    icon: 'Bot',
-    systemInstructions: 'You are the main FLOAT assistant.',
-    defaultModel: 'gpt-6-astra',
-    fallbackModel: 'gpt-6.1-sol',
-    allowedModels: ['*'],
-    tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file', 'rename_file', 'delete_file'],
-    permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: true, deleteFiles: true, terminal: false, webResearch: false },
-    mode: 'agent'
-  },
-  {
-    id: 'coder-agent',
-    name: 'Coder',
-    description: 'Writes and modifies code with proposal review',
-    icon: 'Code',
-    systemInstructions: 'You are an expert software engineer.',
-    defaultModel: 'gpt-6-astra',
-    fallbackModel: 'gpt-6.1-sol',
-    allowedModels: ['*'],
-    tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file', 'rename_file', 'delete_file'],
-    permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: true, deleteFiles: true, terminal: false, webResearch: false },
-    mode: 'edit'
-  },
-  {
-    id: 'reviewer-agent',
-    name: 'Reviewer',
-    description: 'Reviews code for bugs and security issues',
-    icon: 'Eye',
-    systemInstructions: 'You are a code reviewer.',
-    defaultModel: 'gpt-6.1-sol',
-    fallbackModel: 'gpt-6-astra',
-    allowedModels: ['*'],
-    tools: ['search_codebase', 'read_file', 'list_files'],
-    permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
-    mode: 'ask'
-  },
-  {
-    id: 'planner-agent',
-    name: 'Planner',
-    description: 'Plans complex architectural changes',
-    icon: 'Map',
-    systemInstructions: 'You are a software architect.',
-    defaultModel: 'gpt-6.1-sol',
-    fallbackModel: 'gpt-6-astra',
-    allowedModels: ['*'],
-    tools: ['search_codebase', 'read_file', 'list_files'],
-    permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
-    mode: 'ask'
-  },
-  {
-    id: 'explorer-agent',
-    name: 'Explorer',
-    description: 'Navigates and explains large codebases',
-    icon: 'Compass',
-    systemInstructions: 'You are a codebase explorer.',
-    defaultModel: 'gpt-6-astra',
-    fallbackModel: 'gpt-6.1-sol',
-    allowedModels: ['*'],
-    tools: ['search_codebase', 'read_file', 'list_files'],
-    permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: false, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
-    mode: 'ask'
-  },
-  {
-    id: 'debugger-agent',
-    name: 'Debugger',
-    description: 'Finds and fixes bugs with deep reasoning',
-    icon: 'Bug',
-    systemInstructions: 'You are a debugging expert.',
-    defaultModel: 'gpt-6.1-sol',
-    fallbackModel: 'gpt-6-astra',
-    allowedModels: ['*'],
-    tools: ['search_codebase', 'read_file', 'list_files', 'modify_file'],
-    permissions: { readFiles: true, searchCode: true, createFiles: false, modifyFiles: true, renameFiles: false, deleteFiles: false, terminal: true, webResearch: false },
-    mode: 'edit'
-  },
-  {
-    id: 'ui-agent',
-    name: 'UI Agent',
-    description: 'Builds polished user interfaces',
-    icon: 'Layout',
-    systemInstructions: 'You are an expert UI/UX developer.',
-    defaultModel: 'gpt-6-astra',
-    fallbackModel: 'gpt-6.1-sol',
-    allowedModels: ['*'],
-    tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file'],
-    permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: false, deleteFiles: false, terminal: false, webResearch: false },
-    mode: 'edit'
-  },
-  {
-    id: 'astra-agent',
-    name: 'Astra Cloud Agent',
-    description: 'Autonomous cloud execution agent powered by GPT-6 Astra',
-    icon: 'Sparkles',
-    systemInstructions: 'You are Astra, FLOAT AI\'s next-generation autonomous cloud execution agent powered by GPT-6 Astra.',
-    defaultModel: 'gpt-6-astra',
-    fallbackModel: 'gpt-6.1-sol',
-    allowedModels: ['*'],
-    tools: ['search_codebase', 'read_file', 'list_files', 'create_file', 'modify_file', 'rename_file', 'delete_file'],
-    permissions: { readFiles: true, searchCode: true, createFiles: true, modifyFiles: true, renameFiles: true, deleteFiles: true, terminal: true, webResearch: true },
-    mode: 'agent'
-  }
-];

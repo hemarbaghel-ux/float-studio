@@ -39,7 +39,7 @@ export function ResourcesPage() {
   const categories = [
     {
       title: 'Documentation',
-      desc: 'Comprehensive guides, workspace concepts, AI modes, and provider configurations.',
+      desc: 'Guides to the workspace, AI chat, selected model, and provider configuration.',
       href: '/resources/docs',
       icon: <BookOpen size={20} className="text-purple-600 dark:text-purple-400" />,
       tag: 'Core Docs'
@@ -87,7 +87,7 @@ export function ResourcesPage() {
       title: 'Introduction to FLOAT',
       category: 'Documentation',
       href: '/resources/docs',
-      snippet: 'Learn how FLOAT transforms coding with Ask, Plan, Edit, and Agent modes in an integrated Monaco editor.'
+      snippet: 'Learn how FLOAT combines AI chat, workspace context, and a Monaco editor.'
     },
     {
       title: 'Accessing & Installing FLOAT',
@@ -108,10 +108,10 @@ export function ResourcesPage() {
       snippet: 'Navigate the 4-panel developer environment: Activity Bar, File Explorer, Editor, and AI Panel.'
     },
     {
-      title: 'Using Ask, Plan, Edit, and Agent Modes',
+      title: 'Using AI Chat and Code Proposals',
       category: 'Documentation',
       href: '/resources/docs',
-      snippet: 'Choose the optimal level of AI autonomy from read-only architectural analysis to targeted code diffs.'
+      snippet: 'Ask questions about selected workspace context and review proposed code changes.'
     },
     {
       title: 'Monaco Editor & Diff Review Engine',
@@ -132,10 +132,10 @@ export function ResourcesPage() {
       snippet: 'Master FLOAT’s human-in-the-loop diff review engine to inspect and verify code changes.'
     },
     {
-      title: 'Exploring Large Codebases with ASK Mode',
+      title: 'Exploring a Codebase with AI Chat',
       category: 'Guides',
       href: '/resources/guides',
-      snippet: 'How to use read-only AI queries to understand complex dependency graphs and architectures.'
+      snippet: 'Use selected project files as context to understand dependencies and architecture.'
     },
     {
       title: 'v0.9.4: Navigation Refinement & Resources Hub',
@@ -340,8 +340,8 @@ export function ResourcesPage() {
                   },
                   {
                     step: '02',
-                    title: 'Select AI Mode',
-                    desc: 'Choose ASK for read-only exploration, PLAN for roadmaps, or EDIT for targeted code diffs.'
+                    title: 'Start an AI chat',
+                    desc: 'Ask a question or describe a code change, then review any proposed edits.'
                   },
                   {
                     step: '03',

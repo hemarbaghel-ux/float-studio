@@ -29,7 +29,7 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
     currency: 'USD',
     description: 'Essential developer tools for building and exploring code.',
     features: [
-      'FLOAT Basic AI model with standard context',
+      'GPT-6 Astra and GPT-6.1 Sol model selection (server access required)',
       'Browser coding workspace & Monaco editor',
       'Basic codebase search and file tools',
       'Single-file review and proposals',
@@ -42,11 +42,11 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
     badge: 'Most Popular',
     monthlyPrice: 20,
     currency: 'USD',
-    description: 'For individual developers building seriously with AI agents.',
+    description: 'For individual developers building with AI chat and reviewable code proposals.',
     features: [
       '500 Fast Frontier Model queries per month',
-      'Unlimited everyday FLOAT Basic model assistance',
-      'All 6 specialized developer agents (Coder, Reviewer, Planner, Debugger, Explorer, UI)',
+      'GPT-6 Astra and GPT-6.1 Sol model selection (server access required)',
+      'AI chat with selected workspace context',
       'Multi-file ChangeSet generation and visual diff review',
       'Advanced semantic repository context & search',
       'Priority server processing queue'
@@ -74,13 +74,13 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
     badge: 'Maximum Power',
     monthlyPrice: 100,
     currency: 'USD',
-    description: 'For power users and teams running heavy agentic workflows.',
+    description: 'For power users and teams with higher AI usage needs.',
     features: [
       'Everything in Business included',
       '3,500 Fast Frontier Model queries per user/month',
       'Dedicated high-throughput inference lane',
       'Custom model routing and temperature defaults',
-      'Early access to experimental autonomous agents',
+      'GPT-6 Astra and GPT-6.1 Sol model selection (server access required)',
       '24/7 dedicated engineering support'
     ]
   }

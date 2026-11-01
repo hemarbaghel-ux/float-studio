@@ -1,10 +1,20 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { FileNode, OpenTab, AIMessage, EditorSettings, AIContextItem, TerminalEntry, ChangeSet, EditorSelection } from '../types';
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { deleteField, doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { OperationType, handleFirestoreError } from '../lib/firestoreErrors';
 import { executeProjectCommand } from '../services/projectExecution';
+import {
+  projectCloudSaveErrorMessage,
+  projectCloudSaveFailureReason,
+  serializeProjectFileTree,
+  type ProjectCloudSaveResult
+} from '../services/projectCloudFiles';
+import {
+  deleteProjectContentGeneration,
+  runSerialProjectCloudWrite,
+  writeProjectContentGeneration
+} from '../services/projectCloudRepository';
 import { flattenFileTree } from '../lib/utils';
 import { projectStorageKey } from './projectStorage';
 import { workspaceIndexManager } from '../services/indexing/workspaceIndexManager';
@@ -95,10 +105,13 @@ interface IDEState {
   projectId: string | null;
   projectName: string | null;
   files: FileNode[];
-  setProject: (name: string, files: FileNode[], projectId?: string) => void;
+  projectLoadedFromCloud: boolean;
+  setProject: (name: string, files: FileNode[], projectId?: string, source?: 'cloud' | 'local') => void;
   switchAccount: (ownerId: string | null) => void;
   clearProject: () => void;
-  saveProject: () => Promise<void>;
+  saveProject: () => Promise<ProjectCloudSaveResult>;
+  projectCloudSaveStatus: 'idle' | 'saving' | 'synced' | 'local-only' | 'error';
+  projectCloudSaveMessage: string | null;
   updateFileContent: (id: string, content: string) => void;
   addFile: (parentId: string | null, file: FileNode) => void;
   renameFile: (id: string, newName: string) => void;
@@ -123,8 +136,8 @@ interface IDEState {
   
   // Layout
   leftSidebarOpen: boolean;
-  activeWorkspace: "code" | "evals" | "agents";
-  setActiveWorkspace: (workspace: "code" | "evals" | "agents") => void;
+  activeWorkspace: "code";
+  setActiveWorkspace: (workspace: "code") => void;
   activeSidebarView: 'explorer' | 'search' | 'source-control';
   rightSidebarOpen: boolean;
   bottomPanelOpen: boolean;
@@ -253,6 +266,7 @@ const findFile = (nodes: FileNode[], id: string): FileNode | null => {
 };
 
 const initialProject = loadStoredProject(auth.currentUser?.uid ?? null);
+let projectSaveSequence = 0;
 
 export const useIDEStore = create<IDEState>((set, get) => ({
   hasStarted: true,
@@ -260,10 +274,13 @@ export const useIDEStore = create<IDEState>((set, get) => ({
   projectId: initialProject.projectId,
   projectName: initialProject.projectName,
   files: initialProject.files,
+  projectLoadedFromCloud: false,
+  projectCloudSaveStatus: 'idle',
+  projectCloudSaveMessage: null,
   openTabs: initialProject.openTabs,
   activeFileId: initialProject.activeFileId,
 
-  setProject: (name, files, projectId) => {
+  setProject: (name, files, projectId, source = 'local') => {
     const id = projectId || uuidv4();
     try {
       workspaceIndexManager.syncProject(id, flattenFileTree(files).map(f => ({
@@ -287,6 +304,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       openTabs: initialTabs, 
       activeFileId: activeId, 
       projectId: id,
+      projectLoadedFromCloud: source === 'cloud',
+      projectCloudSaveStatus: 'idle',
+      projectCloudSaveMessage: null,
       hasStarted: true
     });
 
@@ -307,6 +327,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     const project = loadStoredProject(ownerId);
     set({
       ...project,
+      projectLoadedFromCloud: false,
       aiMessages: [],
       aiContext: [],
       initialPrompt: null,
@@ -317,6 +338,8 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       executionOutput: '',
       executionError: null,
       lastExecutionTimeMs: null,
+      projectCloudSaveStatus: 'idle',
+      projectCloudSaveMessage: null,
     });
   },
   
@@ -331,16 +354,20 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     };
     set({
       ...def,
+      projectLoadedFromCloud: false,
       aiMessages: [],
       aiContext: [],
       initialPrompt: null,
-      terminalEntries: []
+      terminalEntries: [],
+      projectCloudSaveStatus: 'idle',
+      projectCloudSaveMessage: null
     });
     saveStoredProject(def);
   },
 
   saveProject: async () => {
     const state = get();
+    const requestSequence = ++projectSaveSequence;
     const ownerId = auth.currentUser?.uid ?? null;
     let currentProjectId = state.projectId;
 
@@ -360,21 +387,61 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       }, ownerId);
     }
 
-    if (!state.projectName || !auth.currentUser) return;
+    if (!state.projectName) {
+      return { status: 'local-only', reason: 'no-project', message: 'No named workspace is available to sync.' };
+    }
+    if (!auth.currentUser) {
+      const message = 'Sign in to sync this workspace. A local copy is saved on this device.';
+      if (get().projectId === currentProjectId && requestSequence === projectSaveSequence) {
+        set({
+          projectCloudSaveStatus: 'local-only',
+          projectCloudSaveMessage: message
+        });
+      }
+      return { status: 'local-only', reason: 'not-authenticated', message };
+    }
 
     const user = auth.currentUser;
-    let projectRef = doc(db, 'projects', currentProjectId);
-
-    try {
+    const serializedFiles = serializeProjectFileTree(state.files);
+    if (serializedFiles.ok === false) {
+      const message = 'This workspace could not be serialized for cloud storage. Its local copy is preserved.';
+      if (get().projectId === currentProjectId && requestSequence === projectSaveSequence) {
+        set({ projectCloudSaveStatus: 'local-only', projectCloudSaveMessage: message });
+      }
+      return { status: 'local-only', reason: 'unserializable', message };
+    }
+    const generation = uuidv4();
+    const manifest = {
+      fileStorageVersion: 2,
+      fileGeneration: generation,
+      fileChunkCount: serializedFiles.chunks.length,
+      fileBytes: serializedFiles.byteLength
+    } as const;
+    if (get().projectId === currentProjectId && requestSequence === projectSaveSequence) {
+      set({ projectCloudSaveStatus: 'saving', projectCloudSaveMessage: 'Saving workspace to cloud…' });
+    }
+    return runSerialProjectCloudWrite(`${user.uid}:${currentProjectId}`, async () => {
+      let projectRef = doc(db, 'projects', currentProjectId);
+      let generationMayExist = false;
+      let generationPublished = false;
+      try {
       let docExists = false;
       let isOwner = false;
       let ownershipCouldNotBeVerified = false;
+      let previousGeneration: string | undefined;
+      let expectedLegacyFileValue: string | undefined;
 
       try {
         const snap = await getDoc(projectRef);
         if (snap.exists()) {
+          const existingData = snap.data();
           docExists = true;
-          isOwner = snap.data().ownerId === user.uid;
+          isOwner = existingData.ownerId === user.uid;
+          if (isOwner && existingData.fileStorageVersion === 2 && typeof existingData.fileGeneration === 'string') {
+            previousGeneration = existingData.fileGeneration;
+          } else if (isOwner) {
+            expectedLegacyFileValue = JSON.stringify(existingData.files);
+          }
         }
       } catch (readErr: any) {
         // A permission or network error does not prove that the ID is unused.
@@ -383,17 +450,39 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       }
 
       if (docExists && isOwner) {
-        // Use updateDoc to send ONLY modified fields; preserves immutable ownerId and createdAt
-        await updateDoc(projectRef, {
-          name: state.projectName,
-          files: JSON.stringify(state.files),
-          updatedAt: serverTimestamp()
+        // Publish a new immutable content generation only after all its chunks were written.
+        generationMayExist = true;
+        await writeProjectContentGeneration(db, currentProjectId, user.uid, generation, serializedFiles.chunks);
+        await runTransaction(db, async (transaction) => {
+          const latest = await transaction.get(projectRef);
+          if (!latest.exists() || latest.data().ownerId !== user.uid) {
+            const error = new Error('Workspace ownership changed during save.') as Error & { code: string };
+            error.code = 'aborted';
+            throw error;
+          }
+          const latestData = latest.data();
+          const unchanged = previousGeneration
+            ? latestData.fileStorageVersion === 2 && latestData.fileGeneration === previousGeneration
+            : latestData.fileStorageVersion !== 2 && JSON.stringify(latestData.files) === expectedLegacyFileValue;
+          if (!unchanged) {
+            const error = new Error('Workspace changed in another window during save.') as Error & { code: string };
+            error.code = 'aborted';
+            throw error;
+          }
+          transaction.update(projectRef, {
+            name: state.projectName,
+            ...manifest,
+            fileSnapshotComplete: true,
+            files: deleteField(),
+            updatedAt: serverTimestamp()
+          });
         });
+        generationPublished = true;
       } else {
         // If document exists but is not owned by current user, allocate a fresh ID
         if ((docExists && !isOwner) || ownershipCouldNotBeVerified) {
           currentProjectId = uuidv4();
-          set({ projectId: currentProjectId });
+          if (get().projectId === state.projectId) set({ projectId: currentProjectId });
           projectRef = doc(db, 'projects', currentProjectId);
           saveStoredProject({
             projectId: currentProjectId,
@@ -404,18 +493,56 @@ export const useIDEStore = create<IDEState>((set, get) => ({
           }, ownerId);
         }
 
-        await setDoc(projectRef, {
-          ownerId: user.uid,
-          name: state.projectName,
-          files: JSON.stringify(state.files),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
+        await runTransaction(db, async (transaction) => {
+          const existing = await transaction.get(projectRef);
+          if (existing.exists()) {
+            const error = new Error('Workspace ID was claimed while saving.') as Error & { code: string };
+            error.code = 'aborted';
+            throw error;
+          }
+          transaction.set(projectRef, {
+            ownerId: user.uid,
+            name: state.projectName,
+            ...manifest,
+            fileSnapshotComplete: false,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        });
+        generationMayExist = true;
+        await writeProjectContentGeneration(db, currentProjectId, user.uid, generation, serializedFiles.chunks);
+        await runTransaction(db, async (transaction) => {
+          const latest = await transaction.get(projectRef);
+          if (!latest.exists() || latest.data().ownerId !== user.uid || latest.data().fileGeneration !== generation) {
+            const error = new Error('Workspace changed in another window during save.') as Error & { code: string };
+            error.code = 'aborted';
+            throw error;
+          }
+          transaction.update(projectRef, { fileSnapshotComplete: true, updatedAt: serverTimestamp() });
+        });
+        generationPublished = true;
+      }
+      if (previousGeneration && previousGeneration !== generation) {
+        await deleteProjectContentGeneration(db, currentProjectId, previousGeneration).catch((cleanupError) => {
+          console.warn('A previous project content generation could not be cleaned up:', cleanupError);
         });
       }
-    } catch (err: any) {
-      console.error("Failed to save project to cloud", err);
-      handleFirestoreError(err, OperationType.WRITE, `projects/${currentProjectId}`);
-    }
+      if (get().projectId === currentProjectId && auth.currentUser?.uid === user.uid && requestSequence === projectSaveSequence) {
+        set({ projectCloudSaveStatus: 'synced', projectCloudSaveMessage: 'Workspace saved to cloud.', projectLoadedFromCloud: true });
+      }
+        return { status: 'synced' };
+      } catch (err: any) {
+        if (generationMayExist && !generationPublished) {
+          await deleteProjectContentGeneration(db, currentProjectId, generation).catch(() => {});
+        }
+        console.error('Failed to save project to cloud:', err?.code || 'unknown-error');
+        const message = projectCloudSaveErrorMessage(err);
+        if (get().projectId === currentProjectId && auth.currentUser?.uid === user.uid && requestSequence === projectSaveSequence) {
+          set({ projectCloudSaveStatus: 'error', projectCloudSaveMessage: message });
+        }
+        return { status: 'error', reason: projectCloudSaveFailureReason(err), message };
+      }
+    });
   },
   
   updateFileContent: (id, content) => set((state) => {
@@ -754,7 +881,8 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     }));
 
     try {
-      await state.saveProject();
+      const saveResult = await state.saveProject();
+      if (saveResult.status !== 'synced') throw new Error(saveResult.message);
       const projectId = get().projectId;
       if (!projectId) throw new Error('Save this workspace before running a server command.');
       const result = await executeProjectCommand({
@@ -765,7 +893,8 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       });
       if (result.changedFiles?.length || result.deletedFiles?.length) {
         get().applyExecutionChanges(result.changedFiles || [], result.deletedFiles || []);
-        await get().saveProject();
+        const saveResult = await get().saveProject();
+        if (saveResult.status !== 'synced') throw new Error(saveResult.message);
       }
       const failure = result.status === 'succeeded' ? null : `Process ${result.status} (exit code ${result.exitCode ?? 'unknown'}).`;
       state.addTerminalEntry({ type: failure ? 'error' : 'output', content: `[${result.status}; exit code ${result.exitCode ?? 'unknown'}; ${result.durationMs}ms]` });

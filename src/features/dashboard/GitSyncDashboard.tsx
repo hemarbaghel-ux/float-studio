@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   GitBranch, GitCommit, GitPullRequest, RefreshCw, Link2, ExternalLink,
   CheckCircle2, AlertCircle, ArrowRight, Code2, FolderGit2, Search,
@@ -18,7 +18,7 @@ import {
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { apiFetch } from '../../services/api';
-import { mapToTree } from '../float/projectIO';
+import { loadProjectFileTree } from '../../services/projectCloudRepository';
 
 interface ProjectOption {
   id: string;
@@ -93,6 +93,7 @@ export function GitSyncDashboard() {
   const [selectedDiffFileIndex, setSelectedDiffFileIndex] = useState(0);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [isSideBySide, setIsSideBySide] = useState(true);
+  const projectLoadSequenceRef = useRef(0);
 
   // Load user projects
   useEffect(() => {
@@ -317,20 +318,23 @@ export function GitSyncDashboard() {
   };
 
   // Open in FLOAT IDE action
-  const handleOpenInIDE = () => {
+  const handleOpenInIDE = async () => {
     const proj = projects.find(p => p.id === selectedProjectId);
     if (!proj) return;
-    let parsedFiles = [];
+    const requestSequence = ++projectLoadSequenceRef.current;
     try {
-      parsedFiles = proj.files ? JSON.parse(proj.files) : [];
-    } catch {
-      parsedFiles = [];
+      const parsedFiles = await loadProjectFileTree(db, proj.id, proj as unknown as Record<string, unknown>);
+      if (requestSequence !== projectLoadSequenceRef.current) return;
+      setProject(proj.name || 'Project Workspace', parsedFiles, proj.id, 'cloud');
+      useIDEStore.getState().setActiveSidebarView('source-control');
+      useIDEStore.getState().setActiveWorkspace('code');
+      window.history.pushState({}, '', '/ide');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    } catch (error: any) {
+      if (requestSequence === projectLoadSequenceRef.current) {
+        setLinkError(error.message || 'Could not load this workspace from cloud storage.');
+      }
     }
-    setProject(proj.name || 'Project Workspace', parsedFiles, proj.id);
-    useIDEStore.getState().setActiveSidebarView('source-control');
-    useIDEStore.getState().setActiveWorkspace('code');
-    window.history.pushState({}, '', '/ide');
-    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   // Filter repos by search

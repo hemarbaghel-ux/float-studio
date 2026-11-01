@@ -4,6 +4,11 @@ import App from './App.tsx';
 import { LanguageProvider } from './components/LanguageProvider';
 import './index.css';
 
+// Remove credentials left behind by the retired browser-local BYOK settings.
+if (typeof window !== 'undefined') {
+  try { localStorage.removeItem('float_user_api_keys_v1'); } catch { /* storage may be unavailable */ }
+}
+
 
 const LegacyCacheRecovery = lazy(() => import('./components/LegacyCacheRecovery').then((module) => ({ default: module.LegacyCacheRecovery })));
 

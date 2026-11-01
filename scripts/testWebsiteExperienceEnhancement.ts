@@ -15,6 +15,8 @@
 
 import { MATRIX_CATEGORIES } from '../src/features/pricing/PricingComparisonMatrix';
 import { CHANGELOG_ENTRIES } from '../src/features/resources/ChangelogPage';
+import { GLOSSARY_TERMS, LEARN_ARTICLES, START_HERE_ARTICLES } from '../src/features/learn/learnData';
+import { INITIAL_MODELS } from '../src/features/ai/registry';
 
 console.log('=== FLOAT AI Website Experience Enhancement Verification ===\n');
 
@@ -148,15 +150,33 @@ for (const ctrl of requiredControls) {
 }
 console.log('[PASS] Terminal demo provides play/pause, restart, skip, and command copying controls');
 
-// --- 4. Pricing Comparison Matrix Completeness & Accuracy ---
-console.log('\n--- Test 4: Pricing Comparison Matrix Categories ---');
+// Verify retired surfaces are not publicly linked or rendered by the landing page.
+const landingSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/features/landing/LandingPage.tsx'), 'utf8');
+const resourceFooterSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/features/resources/ResourcesFooter.tsx'), 'utf8');
+const appSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+const retiredEvaluationPageSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/features/resources/RetiredEvaluationPage.tsx'), 'utf8');
+if (/href=["']\/(?:models\/)?evals/.test(landingSrc) || /href=["']\/(?:models\/)?evals/.test(resourceFooterSrc)) {
+  console.error('[FAIL] Public navigation still links to retired evaluations');
+  process.exit(1);
+}
+if (!appSrc.includes("currentPath === '/evals' || currentPath === '/models/evals'") ||
+    !retiredEvaluationPageSrc.includes('Evaluations are unavailable')) {
+  console.error('[FAIL] Retired evaluation URLs do not resolve to a clear unavailable page');
+  process.exit(1);
+}
+if (landingSrc.includes('InteractiveCodeHeroDemo') || landingSrc.includes('InteractiveTerminalShowcase')) {
+  console.error('[FAIL] Public landing still renders simulated code-edit or terminal-agent showcases');
+  process.exit(1);
+}
+console.log('[PASS] Retired evaluation links are removed, direct URLs explain unavailability, and simulated landing demos are not rendered');
+
+// --- 4. Pricing Comparison Matrix & Retired Agent Feature Verification ---
+console.log('\n--- Test 4: Pricing Matrix and Retired Agent Features ---');
 const expectedCategoryIds = [
   'workspace',
   'ai_modes',
   'context',
-  'agent_platform',
   'git_github',
-  'automation_cloud',
   'collaboration'
 ];
 
@@ -167,11 +187,26 @@ for (const catId of expectedCategoryIds) {
     process.exit(1);
   }
 }
-console.log(`[PASS] All ${expectedCategoryIds.length} required pricing categories populated with detailed features`);
+console.log(`[PASS] All ${expectedCategoryIds.length} current pricing categories populated with features`);
 
 // Test capability status honesty
 console.log('\n--- Test 5: Capability Status Honesty ---');
 const allFeatures = MATRIX_CATEGORIES.flatMap(c => c.features);
+if (allFeatures.some((feature) => /agent|subagent|autonomous/i.test(`${feature.name} ${feature.description}`))) {
+  console.error('[FAIL] Pricing matrix still exposes an agent feature');
+  process.exit(1);
+}
+if (LEARN_ARTICLES['agents'] || LEARN_ARTICLES['agentic-development'] || LEARN_ARTICLES['agent-workflows'] ||
+    START_HERE_ARTICLES.some((article) => /agent/i.test(`${article.title} ${article.description}`)) ||
+    GLOSSARY_TERMS.some((term) => /agent/i.test(`${term.term} ${term.definition}`))) {
+  console.error('[FAIL] Learning center still exposes retired agent content');
+  process.exit(1);
+}
+if (JSON.stringify(INITIAL_MODELS.map((model) => model.id).sort()) !== JSON.stringify(['gpt-6-astra', 'gpt-6.1-sol'])) {
+  console.error('[FAIL] Client model selector does not expose only GPT-6 Astra and GPT-6.1 Sol');
+  process.exit(1);
+}
+console.log('[PASS] Agent-only pricing and learning entries are retired; the selector contains only the two chosen models');
 const validStatuses = new Set(['included', 'limited', 'config_required', 'infra_required', 'coming_soon', 'not_included']);
 
 for (const f of allFeatures) {
@@ -181,24 +216,17 @@ for (const f of allFeatures) {
   }
 }
 
-// Ensure high-infrastructure features are honestly marked as infra_required or config_required
-const cloudWorkerFeature = allFeatures.find(f => f.name.includes('Cloud Worker'));
-if (!cloudWorkerFeature || cloudWorkerFeature.pro !== 'infra_required') {
-  console.error('[FAIL] Cloud Worker feature is not honestly marked as infra_required');
-  process.exit(1);
-}
-
 const githubOAuthFeature = allFeatures.find(f => f.name.includes('GitHub OAuth'));
 if (!githubOAuthFeature || githubOAuthFeature.hobby !== 'config_required') {
   console.error('[FAIL] GitHub OAuth feature is not honestly marked as config_required');
   process.exit(1);
 }
-console.log('[PASS] Product honesty verified: Cloud Worker and OAuth features declare realistic capability requirements');
+console.log('[PASS] Product honesty verified: GitHub OAuth declares its configuration requirement');
 
 // --- 6. Changelog / Release Notes Verification ---
 console.log('\n--- Test 6: Changelog Data Integrity ---');
-if (CHANGELOG_ENTRIES.length < 9) {
-  console.error(`[FAIL] Expected at least 9 milestones in changelog, found ${CHANGELOG_ENTRIES.length}`);
+if (CHANGELOG_ENTRIES.length < 6) {
+  console.error(`[FAIL] Expected at least 6 supported milestones in changelog, found ${CHANGELOG_ENTRIES.length}`);
   process.exit(1);
 }
 
@@ -208,12 +236,13 @@ if (!m10 || !m10.highlights.some(h => h.includes('Cmd+F')) || !m10.highlights.so
   process.exit(1);
 }
 
-const m9 = CHANGELOG_ENTRIES.find(c => c.id === 'milestone-9');
-if (!m9 || !m9.highlights.some(h => h.includes('.cursorrules'))) {
-  console.error('[FAIL] Milestone 9 missing .cursorrules parity entry');
+if (CHANGELOG_ENTRIES.some((entry) => /agent|subagent|autonomous/i.test(
+  [entry.title, entry.summary, ...entry.highlights, ...(entry.technicalDetails || [])].join(' '),
+))) {
+  console.error('[FAIL] Changelog still advertises retired agent capabilities');
   process.exit(1);
 }
-console.log(`[PASS] Changelog verified: ${CHANGELOG_ENTRIES.length} milestones with dates, summaries, and verifiable features`);
+console.log(`[PASS] Changelog contains ${CHANGELOG_ENTRIES.length} supported milestones and no retired agent claims`);
 
 // --- 7. Accessibility & Semantic Labels Verification ---
 console.log('\n--- Test 7: Accessibility & Keyboard Semantics ---');

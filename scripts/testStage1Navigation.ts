@@ -1,4 +1,5 @@
 import assert from 'assert';
+import { readFileSync } from 'node:fs';
 
 function runStage1NavigationTests() {
   console.log('=== FLOAT AI Stage 1: Main Page & Navigation Verification ===\n');
@@ -196,6 +197,18 @@ function runStage1NavigationTests() {
     const empty = submit('    ');
     assert.strictEqual(empty, false);
     assert.strictEqual(callCount, 1);
+  });
+
+  test('IDE composer shortcuts open chat without activating retired agent mode', () => {
+    const workspace = readFileSync(new URL('../src/features/shell/IDEWorkspace.tsx', import.meta.url), 'utf8');
+    const editor = readFileSync(new URL('../src/features/editor/CodeEditor.tsx', import.meta.url), 'utf8');
+    const aiPanel = readFileSync(new URL('../src/features/ai/AIPanel.tsx', import.meta.url), 'utf8');
+
+    assert.doesNotMatch(workspace, /switch-ai-mode|mode:\s*['"]agent['"]/);
+    assert.doesNotMatch(editor, /switch-ai-mode|mode:\s*['"]agent['"]/);
+    assert.doesNotMatch(aiPanel, /switch-ai-mode/);
+    assert.match(workspace, /textarea\[placeholder\*="Ask"\]/);
+    assert.match(editor, /textarea\[placeholder\*="Ask"\]/);
   });
 
   console.log(`\n======================================================`);

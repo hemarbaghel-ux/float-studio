@@ -27,18 +27,23 @@ import { MCPService } from './mcp/mcpService';
 import { TerminalService } from './terminal/terminalService';
 import { MemoryService } from './memory/memoryService';
 import { CodeReviewService } from './review/codeReviewService';
-import { AutomationService } from './automations/automationService';
 import { DiagnosticsService } from './diagnostics/diagnosticsService';
 import { ExecutionPolicyManager, ExecutionPolicyMode } from './policy/executionPolicy';
-import { BrowserAgentService } from './browser/browserAgent';
 import { MultiRepoService } from './workspace/multiRepoService';
-import { MultiAgentCoordinator } from './agent/subagents';
 import { ConversationSearchService } from './conversation/conversationSearch';
 
 export const milestone9Router = Router();
 
 // Enforce authentication and server-side project ownership on all /projects/:projectId/* routes
 milestone9Router.use('/projects/:projectId', requireAuth, asyncRoute(requireProjectOwnership()));
+
+const agentsUnavailable = (_req: any, res: any) => res.status(410).json({
+  error: 'Agent features are unavailable.',
+  code: 'AGENTS_UNAVAILABLE'
+});
+
+// Retire the former autonomous automation API without deleting stored user data.
+milestone9Router.use('/projects/:projectId/automations', requireAuth, agentsUnavailable);
 
 // ==========================================
 // 1. RULES API
@@ -379,68 +384,6 @@ milestone9Router.post('/projects/:projectId/review/:reportId/dismiss/:findingId'
 });
 
 // ==========================================
-// 7. AUTOMATIONS API
-// ==========================================
-milestone9Router.get('/projects/:projectId/automations', requireAuth, (req: any, res) => {
-  res.json({ automations: AutomationService.listAutomations(req.params.projectId, req.user.uid) });
-});
-
-milestone9Router.post('/projects/:projectId/automations', requireAuth, (req: any, res) => {
-  const { name, trigger, action, permissions, enabled, description } = req.body || {};
-  if (!name || !trigger?.type || !action?.type) {
-    return res.status(400).json({ error: 'Automation name, trigger, and action are required.' });
-  }
-  const automation = AutomationService.createAutomation({
-    projectId: req.params.projectId,
-    userId: req.user.uid,
-    name,
-    description,
-    trigger,
-    action,
-    permissions: Array.isArray(permissions) ? permissions : ['read'],
-    enabled: enabled !== false
-  });
-  res.json({ automation });
-});
-
-milestone9Router.delete('/projects/:projectId/automations/:automationId', requireAuth, (req: any, res) => {
-  const deleted = AutomationService.deleteAutomation(
-    req.params.automationId,
-    req.user.uid,
-    req.params.projectId
-  );
-  if (!deleted) return res.status(404).json({ error: 'Automation not found.' });
-  res.json({ success: deleted });
-});
-
-milestone9Router.post('/projects/:projectId/automations/:automationId/trigger', requireAuth, asyncRoute(async (req: any, res) => {
-  const auto = AutomationService.getAutomation(req.params.automationId, req.user.uid, req.params.projectId);
-  if (!auto) {
-    return res.status(404).json({ error: 'Automation not found or access denied.' });
-  }
-  try {
-    const result = await AutomationService.trigger(req.params.automationId, {
-      triggerType: req.body?.triggerType || 'manual',
-      payload: req.body?.payload,
-      userId: req.user.uid,
-      projectId: req.params.projectId
-    });
-    res.json(result);
-  } catch (err: any) {
-    const status = /forbidden/i.test(err.message || '') ? 403 : 400;
-    res.status(status).json({ error: err.message || 'Automation trigger failed.' });
-  }
-}));
-
-milestone9Router.get('/projects/:projectId/automations/:automationId/logs', requireAuth, (req: any, res) => {
-  const auto = AutomationService.getAutomation(req.params.automationId, req.user.uid, req.params.projectId);
-  if (!auto) {
-    return res.status(404).json({ error: 'Automation not found or access denied.' });
-  }
-  res.json({ logs: AutomationService.getRunLogs(req.params.automationId, req.user.uid, req.params.projectId) });
-});
-
-// ==========================================
 // 8. DIAGNOSTICS API
 // ==========================================
 milestone9Router.get('/projects/:projectId/diagnostics', requireAuth, (req: any, res) => {
@@ -500,18 +443,10 @@ milestone9Router.post('/policy', requireAuth, (req: any, res) => {
 });
 
 // ==========================================
-// 10. BROWSER AGENT STATUS & ACTION API
+// 10. RETIRED BROWSER AGENT API
 // ==========================================
-milestone9Router.get('/browser/status', requireAuth, (_req, res) => {
-  res.json({ status: BrowserAgentService.detectEnvironment() });
-});
-
-milestone9Router.post('/browser/action', requireAuth, asyncRoute(async (req: any, res) => {
-  const action = req.body;
-  if (!action?.type) return res.status(400).json({ error: 'Browser action type is required.' });
-  const result = await BrowserAgentService.executeAction(action);
-  res.json(result);
-}));
+milestone9Router.get('/browser/status', requireAuth, agentsUnavailable);
+milestone9Router.post('/browser/action', requireAuth, agentsUnavailable);
 
 // ==========================================
 // 11. MULTI-REPO WORKSPACES API
@@ -547,18 +482,9 @@ milestone9Router.post('/projects/:projectId/workspace/repositories', requireAuth
 });
 
 // ==========================================
-// 12. MULTI-AGENT COORDINATOR API
+// 12. RETIRED MULTI-AGENT COORDINATOR API
 // ==========================================
-milestone9Router.post('/projects/:projectId/coordinate', requireAuth, asyncRoute(async (req: any, res) => {
-  const { goal, tasks } = req.body || {};
-  if (!goal) return res.status(400).json({ error: 'Goal is required.' });
-  const result = await MultiAgentCoordinator.coordinate(
-    goal,
-    Array.isArray(tasks) ? tasks : [],
-    { userId: req.user.uid, projectId: req.params.projectId }
-  );
-  res.json(result);
-}));
+milestone9Router.post('/projects/:projectId/coordinate', requireAuth, agentsUnavailable);
 
 // ==========================================
 // 13. CONVERSATION SEARCH API

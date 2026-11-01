@@ -6,7 +6,6 @@ import {
   AIProviderError,
   ProviderHealthCheckResult
 } from './base';
-import { AgentRunner } from '../agent/agentRunner';
 
 export function normalizeGeminiError(error: any): AIProviderError {
   let rawObj = error;
@@ -292,93 +291,4 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     return messages;
   }
 
-  async runAgentLoop(
-    req: any,
-    res: any,
-    model: string,
-    prompt: string,
-    virtualFiles: any[]
-  ): Promise<void> {
-    if (!this.isConfigured()) {
-      throw new AIProviderError(
-        'GEMINI_API_KEY is not configured on the FLOAT server.',
-        'AUTH_ERROR',
-        'Google Gemini',
-        401
-      );
-    }
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-
-    const abortController = new AbortController();
-    // The request body is fully read before this handler starts. IncomingMessage's
-    // `close` can therefore fire before the model work finishes; watch the response
-    // instead so only a disconnected client cancels generation.
-    res.on('close', () => {
-      if (!res.writableEnded) abortController.abort();
-    });
-
-    const sendEvent = (type: string, data: any) => {
-      if (abortController.signal.aborted || res.destroyed || res.writableEnded) return;
-      res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
-    };
-
-    try {
-      const apiModel = this.resolveApiModel(model);
-      const result = await AgentRunner.run({
-        model: apiModel,
-        prompt,
-        virtualFiles,
-        projectName: req.body?.projectName || 'Workspace',
-        projectId: req.body?.projectId || 'default-project',
-        userId: req.user?.uid || 'user',
-        systemInstruction: req.body.systemInstruction,
-        onEvent: (event) => {
-          sendEvent('event', event);
-        },
-        onDelta: (delta) => {
-          sendEvent('delta', { text: delta });
-        },
-        signal: abortController.signal
-      });
-
-      sendEvent('result', {
-        text: result.text,
-        changeSet: result.changeSet
-      });
-    } catch (error: any) {
-      if (!abortController.signal.aborted) {
-        const normalized = normalizeGeminiError(error);
-        const isCancelled = normalized.name === 'AbortError' || (normalized as any).type === 'cancelation';
-        if (isCancelled) {
-          sendEvent('event', {
-            type: 'cancelled',
-            message: 'Agent execution was stopped by user.'
-          });
-          sendEvent('result', {
-            text: '*(Agent task stopped)*',
-            changeSet: null
-          });
-        } else {
-          console.error('Agent Loop Error:', normalized.message);
-          sendEvent('event', {
-            type: 'failed',
-            message: normalized.message
-          });
-          sendEvent('delta', { text: `\n\n**Agent Execution Stopped**: ${normalized.message}` });
-          sendEvent('result', {
-            text: `**Agent Execution Stopped**: ${normalized.message}`,
-            changeSet: null
-          });
-        }
-      }
-    } finally {
-      res.end();
-    }
-  }
 }

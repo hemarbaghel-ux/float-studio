@@ -13,13 +13,9 @@ import { ModelRouter } from '../src/server/providers/router';
 import { OpenAIAdapter } from '../src/server/providers/openai';
 import { VERIFIED_MODELS } from '../src/data/verifiedModels';
 import { DASHBOARD_MODELS } from '../src/features/dashboard/dashboardModels';
-import { INITIAL_MODELS, FLOAT_BASIC_MODEL } from '../src/features/ai/registry';
+import { INITIAL_MODELS } from '../src/features/ai/registry';
 import { useAIStore, VALID_FLOAT_MODELS } from '../src/store/aiStore';
 import { useIDEStore } from '../src/store/index';
-import { ToolRegistry } from '../src/server/agent/toolRegistry';
-import { ProposalService } from '../src/server/agent/proposalService';
-import { EvalEngine } from '../src/server/evalEngine';
-import { MultiAgentCoordinator } from '../src/server/agent/subagents';
 import {
   getUserSubscription,
   updateUserSubscription,
@@ -82,28 +78,29 @@ async function runMasterAuditRegressionTests() {
   console.log('\n--- 2. Model Catalog, Alias Reconciliation & AI Store Integrity ---');
   const router = new ModelRouter();
   check(DASHBOARD_MODELS.length === 2, 'DASHBOARD_MODELS has consolidated dashboard selector models (GPT-6 Astra & GPT-6.1 Sol)');
-  check(VERIFIED_MODELS.length === 3, 'VERIFIED_MODELS has consolidated catalog entries (GPT-6 Astra, GPT-6.1 Sol & float-basic)');
-  check(INITIAL_MODELS.length === 3 && VALID_FLOAT_MODELS.length === 3, 'INITIAL_MODELS and VALID_FLOAT_MODELS agree on consolidated catalog entries');
-  check(Boolean(FLOAT_BASIC_MODEL && FLOAT_BASIC_MODEL.id === 'float-basic'), 'FLOAT_BASIC_MODEL is exported and defined');
+  check(VERIFIED_MODELS.length === 2, 'VERIFIED_MODELS contains only GPT-6 Astra and GPT-6.1 Sol');
+  check(INITIAL_MODELS.length === 2 && VALID_FLOAT_MODELS.length === 2 && INITIAL_MODELS.every((model) => ['gpt-6-astra', 'gpt-6.1-sol'].includes(model.id)), 'Client selection exposes only GPT-6 Astra and GPT-6.1 Sol');
 
-  const internalAliases: Array<{ id: string; expectedUpstream: string }> = [
-    { id: 'float-basic', expectedUpstream: 'gpt-4o-mini' },
+  const selectedModels: Array<{ id: string; expectedUpstream: string }> = [
     { id: 'gpt-6-astra', expectedUpstream: 'gpt-6-astra' },
     { id: 'gpt-6.1-sol', expectedUpstream: 'gpt-6.1-sol' }
   ];
-  for (const { id, expectedUpstream } of internalAliases) {
+  for (const { id, expectedUpstream } of selectedModels) {
     useAIStore.getState().setSelectedModel(id);
-    check(useAIStore.getState().selectedModel === id, `useAIStore preserves internal alias "${id}"`);
-    const resolved = router.resolveRoute(id);
+    check(useAIStore.getState().selectedModel === id, `useAIStore preserves selected model "${id}"`);
     const vmEntry = VERIFIED_MODELS.find(m => m.id === id);
+    const resolved = router.resolveRoute(id);
     check(
-      resolved.route.isInternalAlias === (id === 'float-basic') &&
+      !resolved.route.isInternalAlias &&
       resolved.route.upstreamModelId === expectedUpstream &&
-      vmEntry?.isInternalAlias === (id === 'float-basic') &&
+      vmEntry?.isInternalAlias === false &&
       vmEntry?.upstreamModelId === expectedUpstream,
-      `Model "${id}" has truthful alias metadata and upstreamModelId="${expectedUpstream}" in Router and VERIFIED_MODELS`
+      `Model "${id}" preserves its exact selectable upstreamModelId="${expectedUpstream}"`
     );
   }
+  let removedModelError: any;
+  try { router.resolveRoute('float-basic'); } catch (error) { removedModelError = error; }
+  check(removedModelError?.code === 'MODEL_NOT_FOUND', 'Removed FLOAT Basic model is explicitly unavailable');
 
   // 3. OpenAIAdapter Exact Model Preservation & Explicit Alias Mapping
   console.log('\n--- 3. OpenAIAdapter Upstream Model ID Preservation ---');
@@ -111,7 +108,7 @@ async function runMasterAuditRegressionTests() {
   check((adapter as any).resolveApiModel('o1') === 'o1', 'OpenAIAdapter preserves o1 model ID');
   check((adapter as any).resolveApiModel('o3-mini') === 'o3-mini', 'OpenAIAdapter preserves o3-mini model ID');
   check((adapter as any).resolveApiModel('gpt-4o-mini') === 'gpt-4o-mini', 'OpenAIAdapter preserves gpt-4o-mini model ID');
-  check((adapter as any).resolveApiModel('float-basic') === 'gpt-4o-mini', 'OpenAIAdapter maps float-basic alias to gpt-4o-mini');
+  check((adapter as any).resolveApiModel('float-basic') === 'float-basic', 'OpenAIAdapter does not silently rewrite a removed model ID');
   check((adapter as any).resolveApiModel('gpt-6-astra') === 'gpt-6-astra', 'OpenAIAdapter preserves gpt-6-astra model ID');
   check((adapter as any).resolveApiModel('gpt-6.1-sol') === 'gpt-6.1-sol', 'OpenAIAdapter preserves gpt-6.1-sol model ID');
 
@@ -165,210 +162,8 @@ async function runMasterAuditRegressionTests() {
   const resetSub = await getUserSubscription('user-sub-test');
   check(resetSub.planId === 'free', 'resetSubscriptionMemoryState clears memorySubscriptions map properly');
 
-  // 6. Genuine Git Diffs (Unchanged, Modified, Newly Created, Deleted & Sensitive File Exclusion)
-  console.log('\n--- 6. Genuine Git Diffs & Multi-Edit Baseline Hash Integrity ---');
-  const vFiles = new Map<string, { path: string; name?: string; content?: string; type: string }>();
-  vFiles.set('src/index.ts', { path: 'src/index.ts', name: 'index.ts', content: 'export const v = 1;\nconst deadCode = true;\n', type: 'file' });
-  vFiles.set('src/helper.ts', { path: 'src/helper.ts', name: 'helper.ts', content: 'export const h = "old";\n', type: 'file' });
-  vFiles.set('src/obsolete.ts', { path: 'src/obsolete.ts', name: 'obsolete.ts', content: 'export const legacy = true;\n', type: 'file' });
-  vFiles.set('.env', { path: '.env', name: '.env', content: 'OPENAI_API_KEY=secret', type: 'file' });
-
-  const ctx: any = { userId: 'user-sec', projectId: 'proj-sec', projectName: 'SecTest', virtualFiles: vFiles };
-  const secretRead = await ToolRegistry.execute('read_file', { path: '.env' }, ctx);
-  check(!secretRead.success, 'ToolRegistry blocks reading .env file');
-
-  const secretDiff = await ToolRegistry.execute('get_git_diff', { path: '.env' }, ctx);
-  check(!secretDiff.success, 'get_git_diff blocks inspecting sensitive .env path');
-
-  const traversalDiff = await ToolRegistry.execute('get_git_diff', { path: '../../etc/passwd' }, ctx);
-  check(!traversalDiff.success, 'get_git_diff blocks path traversal');
-
-  // Clean git diff before edits (also automatically captures untouched baselineFiles)
-  const cleanDiff = await ToolRegistry.execute('get_git_diff', {}, ctx);
-  check(
-    cleanDiff.success &&
-    cleanDiff.output.hasChanges === false &&
-    cleanDiff.output.totalModified === 0 &&
-    cleanDiff.output.filesChecked === 3,
-    'get_git_diff reports 0 changes across 3 non-sensitive files on untouched workspace'
-  );
-
-  // First edit_file: delete deadCode using empty string new_str: ""
-  const edit1 = await ToolRegistry.execute('edit_file', {
-    path: 'src/index.ts',
-    old_str: 'const deadCode = true;\n',
-    new_str: ''
-  }, ctx);
-  check(edit1.success, 'edit_file supports empty string new_str="" to delete lines of code');
-
-  // Second edit_file on a second file in the same session
-  const edit2 = await ToolRegistry.execute('edit_file', {
-    path: 'src/helper.ts',
-    old_str: 'export const h = "old";',
-    new_str: 'export const h = "new";'
-  }, ctx);
-  check(edit2.success, 'Second edit_file succeeds in same agent session');
-  check(edit2.output.proposal.changes.length === 2, 'Consolidated proposal preserves both edited files across sequential edit_file calls');
-
-  // Add a newly created file and delete src/obsolete.ts in working tree
-  vFiles.set('src/newFeature.ts', { path: 'src/newFeature.ts', name: 'newFeature.ts', content: 'export const feature = "v2";\n', type: 'file' });
-  vFiles.delete('src/obsolete.ts');
-
-  const fullDiff = await ToolRegistry.execute('get_git_diff', {}, ctx);
-  check(
-    fullDiff.success &&
-    fullDiff.output.totalModified === 4 &&
-    fullDiff.output.addedCount === 1 &&
-    fullDiff.output.modifiedCount === 2 &&
-    fullDiff.output.deletedCount === 1,
-    'get_git_diff accurately reports 1 added, 2 modified, and 1 deleted file against untouched baseline'
-  );
-
-  const singleFileDiff = await ToolRegistry.execute('get_git_diff', { path: 'src/newFeature.ts' }, ctx);
-  check(
-    singleFileDiff.success &&
-    singleFileDiff.output.diffs.length === 1 &&
-    singleFileDiff.output.diffs[0].status === 'added',
-    'get_git_diff path filter returns exact added diff for src/newFeature.ts'
-  );
-
-  // Verify baseline hashes in consolidated proposal match untouched baseline files
-  const baselineCheckMap = new Map<string, string>([
-    ['src/index.ts', 'export const v = 1;\nconst deadCode = true;\n'],
-    ['src/helper.ts', 'export const h = "old";\n'],
-    ['src/obsolete.ts', 'export const legacy = true;\n']
-  ]);
-  const validation = ProposalService.checkConflicts(edit2.output.proposal, baselineCheckMap);
-  check(validation.isStale === false && validation.conflicts.length === 0, 'Consolidated multi-edit proposal validates cleanly against untouched baseline hashes');
-
-  // 7. Real Command Execution (All 5 Distinct Outcomes)
-  console.log('\n--- 7. Real Command Execution (5 Distinct Outcomes) ---');
-  // Outcome 4: Command unavailable when sandbox is disabled/unconfigured
-  for (const cmd of ['npm run lint', 'tsc --noEmit', 'npm test', 'npm run build']) {
-    const res = await ToolRegistry.execute('run_command', { command: cmd }, ctx);
-    check(
-      res.success === false &&
-      res.output?.outcome === 'command_unavailable' &&
-      res.output?.status === 'command_unavailable' &&
-      res.output?.executed === false &&
-      res.output?.exitCode === null,
-      `run_command("${cmd}") never masquerades syntax validation as command execution when sandbox is unavailable`
-    );
-  }
-
-  // Outcome 3: Lightweight syntax validation only
-  const syntaxRes = await ToolRegistry.execute('run_command', { command: 'syntax-check' }, ctx);
-  check(
-    syntaxRes.success === true &&
-    syntaxRes.output?.outcome === 'syntax_validation_only' &&
-    syntaxRes.output?.status === 'syntax_validation_only' &&
-    syntaxRes.output?.executed === false &&
-    syntaxRes.output?.syntaxValidationOnly === true &&
-    syntaxRes.output?.exitCode === null,
-    'run_command("syntax-check") reports outcome=syntax_validation_only with executed=false and exitCode=null'
-  );
-
-  // Outcome 5: Command requires approval
-  const approvalPolicyRes = await ToolRegistry.execute('run_command', { command: 'npm test' }, {
-    ...ctx,
-    executionPolicy: 'ask'
-  });
-  check(
-    approvalPolicyRes.success === false &&
-    approvalPolicyRes.output?.outcome === 'requires_approval' &&
-    approvalPolicyRes.output?.status === 'requires_approval' &&
-    approvalPolicyRes.output?.executed === false &&
-    approvalPolicyRes.output?.exitCode === null,
-    'run_command under "ask" policy returns outcome=requires_approval'
-  );
-
-  const unallowlistedRes = await ToolRegistry.execute('run_command', { command: 'node scripts/custom.js' }, ctx);
-  check(
-    unallowlistedRes.success === false &&
-    unallowlistedRes.output?.outcome === 'requires_approval',
-    'Non-allowlisted command returns outcome=requires_approval'
-  );
-
-  // Outcome 1: Actual command executed in isolated sandbox and passed
-  const sandboxPassRes = await ToolRegistry.execute('run_command', { command: 'npm test' }, {
-    ...ctx,
-    enableSandboxExecution: true,
-    sandboxExecutor: async (req) => ({
-      status: 'succeeded',
-      exitCode: 0,
-      durationMs: 85,
-      stdout: `Executed ${req.command} across ${req.files.length} sandboxed files: PASS`,
-      stderr: ''
-    })
-  });
-  check(
-    sandboxPassRes.success === true &&
-    sandboxPassRes.output?.outcome === 'sandbox_passed' &&
-    sandboxPassRes.output?.status === 'succeeded' &&
-    sandboxPassRes.output?.executed === true &&
-    sandboxPassRes.output?.sandboxExecuted === true &&
-    sandboxPassRes.output?.exitCode === 0,
-    'run_command in isolated sandbox reports outcome=sandbox_passed and exitCode=0 on pass'
-  );
-
-  // Outcome 2: Actual command executed in isolated sandbox and failed
-  const sandboxFailRes = await ToolRegistry.execute('run_command', { command: 'npm run build' }, {
-    ...ctx,
-    enableSandboxExecution: true,
-    sandboxExecutor: async () => ({
-      status: 'failed',
-      exitCode: 2,
-      durationMs: 110,
-      stdout: '',
-      stderr: 'error TS2322: Type string is not assignable to number'
-    })
-  });
-  check(
-    sandboxFailRes.success === false &&
-    sandboxFailRes.output?.outcome === 'sandbox_failed' &&
-    sandboxFailRes.output?.status === 'failed' &&
-    sandboxFailRes.output?.executed === true &&
-    sandboxFailRes.output?.sandboxExecuted === true &&
-    sandboxFailRes.output?.exitCode === 2,
-    'run_command in isolated sandbox reports outcome=sandbox_failed and exact non-zero exitCode on failure'
-  );
-
-  // 8. Subagent Real Workspace Inspection & EvalEngine Scoring
-  console.log('\n--- 8. Subagent Workspace Analysis & Honest EvalEngine Scoring ---');
-  const coordPlan = await MultiAgentCoordinator.coordinate(
-    'Review and verify src/index.ts',
-    [
-      { role: 'explorer', instructions: 'Map workspace symbols', contextFiles: ['src/index.ts'] },
-      { role: 'reviewer', instructions: 'Audit code quality', contextFiles: ['src/index.ts'] },
-      { role: 'tester', instructions: 'Verify diagnostics', contextFiles: ['src/index.ts'] }
-    ],
-    { userId: 'user-sec', projectId: 'proj-sec' }
-  );
-  check(coordPlan.results.length === 3 && coordPlan.results.every(r => r.success), 'MultiAgentCoordinator completes all 3 subagent roles with real workspace analysis');
-  check(coordPlan.summary.includes('EXPLORER') && coordPlan.summary.includes('REVIEWER'), 'Subagent synthesis includes structured role findings');
-
-  const evalEngine = new EvalEngine();
-  (evalEngine as any).modelRouter = {
-    getAdapterForModel: () => ({
-      name: 'openai',
-      isConfigured: () => true,
-      generateContent: async () => ({
-        text: '```ts\n// src/index.ts\nexport function sum(a: number, b: number): number { return a + b; }\n```',
-        usage: { promptTokens: 25, completionTokens: 20, totalTokens: 45 }
-      })
-    })
-  };
-  const tasks = evalEngine.getTasks();
-  if (tasks.length > 0) {
-    const run = await evalEngine.runEval(tasks[0].id, 'gpt-4o', 'openai', 'agent-1');
-    await new Promise(r => setTimeout(r, 150));
-    check(typeof run.finalScore === 'number' && run.finalScore >= 0, 'EvalEngine computes numeric finalScore via ScoringEngine');
-    check(Boolean(run.scoreBreakdown), 'EvalEngine attaches structured scoreBreakdown');
-    check(run.typecheckPassed === undefined && run.lintPassed === undefined && run.buildPassed === undefined, 'EvalEngine leaves buildPassed/typecheckPassed/lintPassed undefined when sandboxed checks did not execute');
-  }
-
-  // 9. Runtime HTTP Smoke Test (Authenticated Chat, SSE, Project Ownership, Validation & Clear Error Reporting)
-  console.log('\n--- 9. Runtime HTTP Smoke Test (Express Server + Real Fetch) ---');
+  // 6. Runtime HTTP Smoke Test (Authenticated Chat, SSE, Project Ownership, Validation & Clear Error Reporting)
+  console.log('\n--- 6. Runtime HTTP Smoke Test (Express Server + Real Fetch) ---');
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048,
     publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -411,18 +206,18 @@ async function runMasterAuditRegressionTests() {
     checkAllProvidersHealth: async () => ({
       openai: { provider: 'OpenAI', configured: true, authenticated: true, modelAvailable: true }
     }),
-    resolveModelId: (m: string) => (m === 'auto' ? 'gpt-4o' : m),
+    resolveModelId: (m: string) => (m === 'auto' ? 'gpt-6-astra' : m),
     validateModelAvailability: () => {},
     resolveRoute: (m: string) => ({
       adapter: {} as any,
-      route: { provider: 'openai', apiModelId: m === 'float-basic' ? 'gpt-4o-mini' : 'gpt-4o' }
+      route: { provider: 'openai', apiModelId: m === 'float-basic' ? 'gpt-4o-mini' : m }
     }),
     getAdapterForModel: () => ({
       id: 'openai',
       name: 'OpenAI',
       isConfigured: () => true,
       generateContent: async () => ({
-        text: 'Smoke response from gpt-4o',
+        text: 'Smoke response from gpt-6-astra',
         usage: { inputTokens: 12, outputTokens: 8 }
       }),
       generateContentStream: async (_req: any, onChunk: (d: string) => void) => {
@@ -432,7 +227,7 @@ async function runMasterAuditRegressionTests() {
       }
     }),
     generateContent: async () => ({
-      text: 'Smoke response from gpt-4o',
+      text: 'Smoke response from gpt-6-astra',
       usage: { inputTokens: 12, outputTokens: 8 }
     }),
     generateContentStream: async (_req: any, onChunk: (d: string) => void) => {
@@ -459,7 +254,7 @@ async function runMasterAuditRegressionTests() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aliceToken}` },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        model: 'gpt-6-astra',
         projectId: 'proj-smoke-1',
         messages: [{ role: 'user', content: 'Verify smoke test' }],
         stream: false
@@ -467,7 +262,7 @@ async function runMasterAuditRegressionTests() {
     });
     const chatJson: any = await chatRes.json();
     check(
-      chatRes.status === 200 && chatJson.text === 'Smoke response from gpt-4o' && chatJson.usage?.inputTokens === 12,
+      chatRes.status === 200 && chatJson.text === 'Smoke response from gpt-6-astra' && chatJson.usage?.inputTokens === 12,
       'Runtime smoke: POST /api/ai/chat returns authenticated provider response and usage'
     );
 
@@ -476,7 +271,7 @@ async function runMasterAuditRegressionTests() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aliceToken}` },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        model: 'gpt-6.1-sol',
         projectId: 'proj-smoke-1',
         messages: [{ role: 'user', content: 'Stream smoke test' }],
         stream: true
@@ -494,6 +289,7 @@ async function runMasterAuditRegressionTests() {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aliceToken}` },
       body: JSON.stringify({
         description: 'Smoke multi-file update',
+        conversationId: 'conversation-smoke-1',
         changes: [
           { path: 'src/app.ts', operation: 'modify', proposedContent: 'export const ready = true;\nexport const v = 2;\n' },
           { path: 'src/util.ts', operation: 'create', proposedContent: 'export const util = 1;\n' }
@@ -503,7 +299,7 @@ async function runMasterAuditRegressionTests() {
     });
     const propHttpJson: any = await propHttpRes.json();
     check(
-      propHttpRes.status === 201 && propHttpJson.proposal?.changes?.length === 2,
+      propHttpRes.status === 201 && propHttpJson.proposal?.changes?.length === 2 && propHttpJson.proposal?.conversationId === 'conversation-smoke-1',
       'Runtime smoke: POST /api/projects/:projectId/proposals creates multi-file proposal'
     );
 

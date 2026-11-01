@@ -162,7 +162,8 @@ export function GitPanel() {
           .map(([path, content]) => ({ path, content }));
         const deletedFiles = [...current.keys()].filter(path => !incoming.has(path));
         applyExecutionChanges(changedFiles, deletedFiles);
-        await saveProject();
+        const saveResult = await saveProject();
+        if (saveResult.status !== 'synced') throw new Error(saveResult.message);
       }
       await refresh();
     } catch (err: any) {

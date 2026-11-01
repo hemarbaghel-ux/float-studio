@@ -1,9 +1,9 @@
 import express from 'express';
-import { GoogleGenAI } from '@google/genai';
+import { AIProviderError } from './providers/base';
+import { ModelRouter } from './providers/router';
 import { DatasetProfile, DatasetColumn, ExecutiveReport, AgentProgressStep } from '../features/analyst/types';
 import { requireAuth } from './authMiddleware';
-
-export const analystRouter = express.Router();
+import { ServerPrivacyGuard } from './privacyGuard';
 
 // Per-user sliding window rate limiter for Data Analyst endpoints
 const analystRateLimits = new Map<string, number[]>();
@@ -30,8 +30,11 @@ export function resetAnalystRateLimitsForTests(): void {
   analystRateLimits.clear();
 }
 
+export function createAnalystRouter(modelRouter = new ModelRouter()) {
+const router = express.Router();
+
 // Enforce verified authentication on all Data Analyst routes
-analystRouter.use(requireAuth);
+router.use(requireAuth);
 
 /**
  * Robust CSV parser supporting quotes, commas, and linebreaks.
@@ -141,17 +144,7 @@ function profileDataset(name: string, csvText: string): DatasetProfile {
   };
 }
 
-/**
- * Safe simulated Python Sandbox Runner for data aggregations and statistical calculations.
- */
-function runSandboxPython(_code: string, rows: Record<string, any>[]): { stdout: string; summaryStats: Record<string, any> } {
-  const stdoutLines: string[] = [
-    `[OpenAI Sandbox Python 3.11 Environment]`,
-    `>>> import pandas as pd`,
-    `>>> import numpy as np`,
-    `>>> df = pd.read_csv('dataset.csv')  # Ingested ${rows.length} records`,
-  ];
-
+function computeDatasetStats(rows: Record<string, any>[]): Record<string, any> {
   const summaryStats: Record<string, any> = {
     rowCount: rows.length,
   };
@@ -159,12 +152,15 @@ function runSandboxPython(_code: string, rows: Record<string, any>[]): { stdout:
   if (rows.length > 0) {
     const keys = Object.keys(rows[0]);
     keys.forEach((key) => {
-      const nums = rows.map((r) => r[key]).filter((v) => typeof v === 'number') as number[];
+      const nums = rows.map((r) => r[key]).filter((v) => typeof v === 'number' && Number.isFinite(v)) as number[];
       if (nums.length > rows.length * 0.5) {
         const sum = nums.reduce((a, b) => a + b, 0);
         const mean = sum / nums.length;
         const sorted = [...nums].sort((a, b) => a - b);
-        const median = sorted[Math.floor(sorted.length / 2)];
+        const middle = Math.floor(sorted.length / 2);
+        const median = sorted.length % 2 === 0
+          ? (sorted[middle - 1] + sorted[middle]) / 2
+          : sorted[middle];
         summaryStats[key] = {
           sum: Number(sum.toFixed(2)),
           mean: Number(mean.toFixed(2)),
@@ -172,20 +168,35 @@ function runSandboxPython(_code: string, rows: Record<string, any>[]): { stdout:
           min: sorted[0],
           max: sorted[sorted.length - 1],
         };
-        stdoutLines.push(`>>> df['${key}'].describe() -> mean: ${mean.toFixed(2)}, median: ${median}, max: ${sorted[sorted.length - 1]}`);
       }
     });
   }
 
-  stdoutLines.push(`>>> Analysis execution verified successfully. 0 errors.`);
+  return summaryStats;
+}
+
+function parseAnalystNarrative(text: string): { summary: string; recommendations: string[]; caveats: string[] } {
+  const normalized = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  let parsed: any;
+  try {
+    parsed = JSON.parse(normalized);
+  } catch {
+    throw new AIProviderError('The selected model returned an invalid analyst report. Please retry.', 'PROVIDER_ERROR', 'FLOAT', 502);
+  }
+  if (!parsed || typeof parsed.summary !== 'string' || !parsed.summary.trim() ||
+      !Array.isArray(parsed.recommendations) || !parsed.recommendations.every((item: unknown) => typeof item === 'string') ||
+      !Array.isArray(parsed.caveats) || !parsed.caveats.every((item: unknown) => typeof item === 'string')) {
+    throw new AIProviderError('The selected model returned an incomplete analyst report. Please retry.', 'PROVIDER_ERROR', 'FLOAT', 502);
+  }
   return {
-    stdout: stdoutLines.join('\n'),
-    summaryStats,
+    summary: parsed.summary.trim(),
+    recommendations: parsed.recommendations.map((item: string) => item.trim()).filter(Boolean).slice(0, 12),
+    caveats: parsed.caveats.map((item: string) => item.trim()).filter(Boolean).slice(0, 12),
   };
 }
 
 // 1. Ingest & Profile CSV
-analystRouter.post('/profile', requireAuth, express.json({ limit: '15mb' }), (req: any, res) => {
+router.post('/profile', express.json({ limit: '15mb' }), (req: any, res) => {
   if (!checkAnalystRateLimit(req.user?.uid, 30, 60_000)) {
     return res.status(429).json({ error: 'Rate limit exceeded for dataset profiling. Please wait a moment.' });
   }
@@ -202,8 +213,8 @@ analystRouter.post('/profile', requireAuth, express.json({ limit: '15mb' }), (re
   }
 });
 
-// 2. Query Agent & Execute Sandbox
-analystRouter.post('/query', requireAuth, express.json({ limit: '15mb' }), async (req: any, res) => {
+// 2. Query the selected model using computed server-side CSV statistics.
+router.post('/query', express.json({ limit: '15mb' }), async (req: any, res) => {
   if (!checkAnalystRateLimit(req.user?.uid, 20, 60_000)) {
     return res.status(429).json({ error: 'Rate limit exceeded for analyst queries. Please wait a moment.' });
   }
@@ -212,74 +223,57 @@ analystRouter.post('/query', requireAuth, express.json({ limit: '15mb' }), async
     query,
     datasetName = 'dataset.csv',
     model = 'gpt-6-astra',
+    conversationHistory = [],
   } = req.body || {};
 
-  if (!csvData || !query) {
-    return res.status(400).json({ error: 'csvData and query are required' });
+  if (typeof csvData !== 'string' || !csvData.trim() || typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({ error: 'csvData and query are required', code: 'INVALID_REQUEST' });
+  }
+  if (typeof model !== 'string' || !model.trim()) {
+    return res.status(400).json({ error: 'A selected model ID is required.', code: 'INVALID_REQUEST' });
   }
 
   const { rows, headers } = parseCsv(csvData);
-  const modelName = model === 'gpt-6.1-sol' ? 'GPT-6.1 Sol' : 'GPT-6 Astra';
+  if (!headers.length || !rows.length) {
+    return res.status(400).json({ error: 'The CSV must contain a header row and at least one data row.', code: 'INVALID_REQUEST' });
+  }
+
+  let providerId = 'unknown';
 
   const steps: AgentProgressStep[] = [
     {
       id: 'step-1',
-      title: 'Inspect & Profile Dataset',
-      description: `Ingested ${rows.length} rows across ${headers.length} columns (${headers.slice(0, 5).join(', ')}...)`,
-      status: 'completed',
-      durationMs: 140,
+      title: 'Parse dataset',
+      description: `Parsed ${rows.length} rows across ${headers.length} columns.`,
+      status: 'pending',
     },
     {
       id: 'step-2',
-      title: 'Formulate Statistical Hypothesis',
-      description: `Mapped query intent: "${String(query).slice(0, 60)}..."`,
-      status: 'completed',
-      durationMs: 280,
+      title: 'Compute dataset statistics',
+      description: `Computed descriptive statistics from ${rows.length} parsed rows.`,
+      status: 'pending',
     },
     {
       id: 'step-3',
-      title: 'Execute in OpenAI Python Sandbox',
-      description: 'Running pandas aggregation, correlation matrix, and anomaly detection in sandbox',
-      status: 'completed',
-      durationMs: 420,
+      title: 'Build charts from dataset',
+      description: 'Aggregated parsed rows for the report charts.',
+      status: 'pending',
     },
     {
       id: 'step-4',
-      title: 'Synthesize Interactive Visualizations',
-      description: 'Formatting multi-series chart payloads with tooltips and responsive axes',
-      status: 'completed',
-      durationMs: 210,
+      title: 'Generate model-assisted findings',
+      description: `Requested a report using the selected model ${model}.`,
+      status: 'pending',
     },
     {
       id: 'step-5',
-      title: 'Compile Executive Findings & Caveats',
-      description: 'Assembling strategic takeaways, recommendations, and sample bias warnings',
-      status: 'completed',
-      durationMs: 190,
+      title: 'Assemble report',
+      description: 'Combined provider findings with computed dataset metrics.',
+      status: 'pending',
     },
   ];
 
-  const generatedPythonCode =
-`import pandas as pd
-import numpy as np
-
-# Load dataset and inspect data types
-df = pd.read_csv('${datasetName}')
-print(f"Shape: {df.shape}")
-
-# Statistical aggregations for query: ${String(query).replace(/'/g, "\\'")}
-summary = df.describe(include='all')
-print(summary)
-
-# Correlation and group aggregations
-numeric_cols = df.select_dtypes(include=[np.number]).columns
-if len(numeric_cols) >= 2:
-    corr = df[numeric_cols].corr()
-    print("Correlation matrix:")
-    print(corr)
-`;
-
-  const sandboxRes = runSandboxPython(generatedPythonCode, rows);
+  const summaryStats = computeDatasetStats(rows);
 
   const charts: any[] = [];
   const numericKeys = headers.filter((h) => {
@@ -288,8 +282,8 @@ if len(numeric_cols) >= 2:
   });
 
   const categoryKeys = headers.filter((h) => !numericKeys.includes(h));
-  const primaryCategory = categoryKeys[0] || headers[0];
-  const primaryNumeric = numericKeys[0] || headers[1];
+  const primaryCategory = categoryKeys[0];
+  const primaryNumeric = numericKeys[0];
   const secondaryNumeric = numericKeys[1];
 
   if (primaryCategory && primaryNumeric) {
@@ -344,112 +338,92 @@ if len(numeric_cols) >= 2:
     });
   }
 
-  let aiSummary = '';
-  let aiCaveats: string[] = [
-    `Sample size of ${rows.length} records provides directional statistical guidance; broader cohorts recommended for formal confidence intervals.`,
-    `Outliers in upper percentiles may skew arithmetic means; evaluate medians alongside standard deviations.`,
-    `Historical data patterns reflect specific operational conditions; seasonal or macro anomalies should be controlled for.`,
-  ];
-  let aiRecommendations: string[] = [
-    `Focus operational interventions on categories exhibiting negative variance or elevated error rates.`,
-    `Implement continuous monitoring on key performance indicators to detect drift before quarterly reviews.`,
-    `Segment future data collection by geography and cohort tenure for granular retention targeting.`,
-  ];
-
+  const history = Array.isArray(conversationHistory)
+    ? conversationHistory.slice(-10).filter((message: any) =>
+      message && ['user', 'assistant', 'model'].includes(message.role) &&
+      typeof message.content === 'string' && message.content.trim()
+    ).map((message: any) => ({
+      role: message.role === 'user' ? 'user' : 'assistant',
+      content: message.content.slice(0, 12_000),
+    }))
+    : [];
+  const narrativePrompt = [
+    `Analyze the dataset statistics for the user's request. The CSV was parsed server-side; no Python sandbox was used.`,
+    `Dataset: ${String(datasetName).slice(0, 200)}`,
+    `Rows analyzed: ${rows.length}`,
+    `Columns: ${headers.join(', ')}`,
+    `User request: ${query}`,
+    `Computed descriptive statistics (JSON): ${JSON.stringify(summaryStats)}`,
+    'Use only supplied statistics and column metadata. Do not claim statistical significance, confidence, causation, tests, or calculations that are not represented in the supplied values.',
+    'Return only JSON with this schema: {"summary":"...","recommendations":["..."],"caveats":["..."]}.',
+  ].join('\n\n');
+  let narrative: { summary: string; recommendations: string[]; caveats: string[] };
   try {
-    const aiKey = process.env.GEMINI_API_KEY;
-    if (aiKey) {
-      const ai = new GoogleGenAI({ apiKey: aiKey });
-      const prompt =
-        `You are the FLOAT Senior Data Analyst Agent (${modelName}). ` +
-        `Analyze the following dataset metadata and user query.\n\n` +
-        `DATASET: ${datasetName} (${rows.length} rows, columns: ${headers.join(', ')})\n` +
-        `USER QUERY: "${query}"\n` +
-        `COMPUTED STATISTICS: ${JSON.stringify(sandboxRes.summaryStats)}\n\n` +
-        `Respond in JSON format with exactly this structure:\n` +
-        `{\n` +
-        `  "title": "Concise Descriptive Report Title",\n` +
-        `  "summary": "3-4 paragraphs of executive findings with exact figures, data insights, and clear conclusions.",\n` +
-        `  "recommendations": ["Recommendation 1", "Recommendation 2", "Recommendation 3"],\n` +
-        `  "caveats": ["Caveat 1 on data limitations", "Caveat 2 on potential confounders", "Caveat 3"]\n` +
-        `}\n` +
-        `Do not wrap in markdown quotes. Just return the JSON object.`;
-
-      const response = await ai.models.generateContent({
-        model: model === 'gpt-6.1-sol' ? 'gemini-3.1-pro-preview' : 'gemini-3.8-flash',
-        contents: prompt,
-      });
-
-      const responseText = response.text || '';
-      const cleanJson = responseText.replace(/^```json|```$/g, '').trim();
-      const parsed = JSON.parse(cleanJson);
-      if (parsed.summary) aiSummary = parsed.summary;
-      if (Array.isArray(parsed.caveats)) aiCaveats = parsed.caveats;
-      if (Array.isArray(parsed.recommendations)) aiRecommendations = parsed.recommendations;
-    }
-  } catch (aiErr) {
-    console.warn('[AnalystRouter] AI generation fallback:', aiErr);
-  }
-
-  if (!aiSummary) {
-    aiSummary =
-      `Based on the quantitative analysis of **${datasetName}** (${rows.length} records across ${headers.length} attributes), ` +
-      `the data reveals clear structural relationships for your query: "${query}".\n\n` +
-      `Primary observations indicate distinct variance between categorical groupings, with key metrics ` +
-      `demonstrating statistically significant concentration in upper performance tiers. Review the interactive visualizations and Python sandbox outputs below for detailed distributions.`;
+    const resolvedRoute = modelRouter.resolveRoute(model);
+    providerId = resolvedRoute.route.provider;
+    const response = await modelRouter.generateContent({
+      model,
+      messages: [...history, { role: 'user', content: narrativePrompt }],
+      systemInstruction: 'You are FLOAT Data Analyst. Report only evidence supported by the supplied dataset statistics. Never invent metrics, execution, provider behavior, confidence scores, or causal claims.',
+      dataSharingAllowed: ServerPrivacyGuard.evaluateConsent(req),
+    });
+    narrative = parseAnalystNarrative(response.text);
+  } catch (error: any) {
+    const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
+    const code = typeof error?.code === 'string' ? error.code : 'PROVIDER_ERROR';
+    return res.status(statusCode).json({
+      error: error?.message || 'The selected model could not generate the analyst report.',
+      code,
+      provider: error?.provider || providerId,
+    });
   }
 
   const keyMetrics = [
     {
-      label: 'Sample Rows',
+      label: 'Rows analyzed',
       value: rows.length.toLocaleString(),
-      change: '+100%',
-      trend: 'up' as const,
-      description: 'Clean parsed records',
+      description: 'Parsed from the uploaded CSV',
     },
-    ...(primaryNumeric && sandboxRes.summaryStats[primaryNumeric]
+    ...(primaryNumeric && summaryStats[primaryNumeric]
       ? [
           {
-            label: `Avg ${primaryNumeric.replace(/_/g, ' ')}`,
-            value: sandboxRes.summaryStats[primaryNumeric].mean.toLocaleString(),
-            change: 'Mean value',
-            trend: 'neutral' as const,
-            description: `Median: ${sandboxRes.summaryStats[primaryNumeric].median}`,
+            label: `Average ${primaryNumeric.replace(/_/g, ' ')}`,
+            value: summaryStats[primaryNumeric].mean.toLocaleString(),
+            description: `Median: ${summaryStats[primaryNumeric].median}`,
           },
           {
-            label: `Max ${primaryNumeric.replace(/_/g, ' ')}`,
-            value: sandboxRes.summaryStats[primaryNumeric].max.toLocaleString(),
-            change: 'Peak metric',
-            trend: 'up' as const,
-            description: `Min: ${sandboxRes.summaryStats[primaryNumeric].min}`,
+            label: `Maximum ${primaryNumeric.replace(/_/g, ' ')}`,
+            value: summaryStats[primaryNumeric].max.toLocaleString(),
+            description: `Minimum: ${summaryStats[primaryNumeric].min}`,
           },
         ]
       : []),
-    {
-      label: 'Confidence Score',
-      value: '98.4%',
-      change: 'High reliability',
-      trend: 'up' as const,
-      description: 'Zero null variance',
-    },
   ];
 
   const report: ExecutiveReport = {
     id: `rep_${Date.now()}`,
     title: `Analytical Report: ${String(query).slice(0, 45)}`,
-    summary: aiSummary,
+    summary: narrative.summary,
     keyMetrics,
     charts,
-    pythonCode: generatedPythonCode,
-    pythonOutput: sandboxRes.stdout,
-    caveats: aiCaveats,
-    recommendations: aiRecommendations,
+    caveats: narrative.caveats,
+    recommendations: narrative.recommendations,
     generatedAt: Date.now(),
-    modelUsed: modelName,
+    modelUsed: model,
+    providerUsed: providerId,
+    rowsAnalyzed: rows.length,
+    computationMethod: 'server-side CSV parsing and TypeScript descriptive statistics',
   };
 
+  const completedSteps = steps.map((step) => ({ ...step, status: 'completed' as const }));
+
   res.json({
-    steps,
+    steps: completedSteps,
     report,
   });
 });
+
+return router;
+}
+
+export const analystRouter = createAnalystRouter();

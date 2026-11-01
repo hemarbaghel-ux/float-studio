@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { loadProjectFileTree } from '../../services/projectCloudRepository';
 import { useIDEStore, applyThemeToDocument } from '../../store';
 import { ActivityBar } from './ActivityBar';
 import { Header } from './Header';
@@ -12,12 +13,7 @@ import { SearchPanel } from '../search/SearchPanel';
 import { GitPanel } from '../git/GitPanel';
 import { CommandPalette } from '../command-palette/CommandPalette';
 import { SettingsModal } from '../settings/SettingsModal';
-import { ApiConfigModal } from '../settings/ApiConfigModal';
 
-import { AgentManagerModal } from '../ai/AgentManagerModal';
-import { EvalsWorkspace } from '../evals/EvalsWorkspace';
-import { AgentsWorkspace } from '../agents/AgentsWorkspace';
-import { CloudSessionModal } from '../float/CloudSession';
 
 export function AppShell() {
   const { saveProject, files,
@@ -30,33 +26,25 @@ export function AppShell() {
   } = useIDEStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [agentManagerOpen, setAgentManagerOpen] = useState(false);
-  const [apiConfigOpen, setApiConfigOpen] = useState(false);
   const { setProject } = useIDEStore();
 
-  useEffect(() => {
-    const handleOpen = () => setApiConfigOpen(true);
-    document.addEventListener('open-api-config-modal', handleOpen);
-    return () => document.removeEventListener('open-api-config-modal', handleOpen);
-  }, []);
 
   useEffect(() => {
+    let loadSequence = 0;
     const handleLocationOrLoad = () => {
+      const requestSequence = ++loadSequence;
       const path = window.location.pathname;
       if (path.startsWith('/chat/')) {
         const id = path.replace('/chat/', '').trim();
-        if (id && useIDEStore.getState().projectId !== id) {
+        const workspaceState = useIDEStore.getState();
+        if (id && !(workspaceState.projectId === id && workspaceState.projectLoadedFromCloud)) {
           getDoc(doc(db, 'projects', id))
-            .then(snap => {
+            .then(async snap => {
+              if (requestSequence !== loadSequence) return;
               if (snap.exists()) {
                 const data = snap.data();
-                let parsedFiles = [];
-                try {
-                  parsedFiles = typeof data.files === 'string' ? JSON.parse(data.files) : (data.files || []);
-                } catch {
-                  parsedFiles = [];
-                }
-                setProject(data.name || 'Untitled Project', parsedFiles, id);
+                const parsedFiles = await loadProjectFileTree(db, id, data);
+                if (requestSequence === loadSequence) setProject(data.name || 'Untitled Project', parsedFiles, id, 'cloud');
               }
             })
             .catch(err => {
@@ -68,7 +56,10 @@ export function AppShell() {
 
     handleLocationOrLoad();
     window.addEventListener('popstate', handleLocationOrLoad);
-    return () => window.removeEventListener('popstate', handleLocationOrLoad);
+    return () => {
+      loadSequence += 1;
+      window.removeEventListener('popstate', handleLocationOrLoad);
+    };
   }, [setProject]);
 
   useEffect(() => {
@@ -78,9 +69,7 @@ export function AppShell() {
   // Expose function to open settings globally for now
   useEffect(() => {
     const handleOpenSettings = () => setSettingsOpen(true);
-    const handleOpenAgentManager = () => setAgentManagerOpen(true);
     document.addEventListener('open-settings', handleOpenSettings);
-    document.addEventListener('open-agent-manager', handleOpenAgentManager);
 
     // Auto save logic
     const saveTimeout = setTimeout(() => {
@@ -89,7 +78,6 @@ export function AppShell() {
 
     return () => {
       document.removeEventListener('open-settings', handleOpenSettings);
-      document.removeEventListener('open-agent-manager', handleOpenAgentManager);
       clearTimeout(saveTimeout);
     };
   }, [files]); // Re-run effect when files change to debounce save
@@ -112,8 +100,6 @@ export function AppShell() {
         <div className="flex-1 flex flex-col min-w-0 h-full min-h-0 overflow-hidden relative">
           <div className="flex-1 min-h-0 relative h-full w-full overflow-hidden">
             {activeWorkspace === 'code' && <EditorArea />}
-            {activeWorkspace === 'evals' && <EvalsWorkspace />}
-            {activeWorkspace === 'agents' && <AgentsWorkspace />}
           </div>
 
           {bottomPanelOpen && (
@@ -134,9 +120,6 @@ export function AppShell() {
 
       <CommandPalette />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
-      {agentManagerOpen && <AgentManagerModal onClose={() => setAgentManagerOpen(false)} />}
-      <CloudSessionModal />
-      <ApiConfigModal isOpen={apiConfigOpen} onClose={() => setApiConfigOpen(false)} />
     </div>
   );
 }

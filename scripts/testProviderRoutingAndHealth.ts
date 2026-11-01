@@ -6,6 +6,8 @@ import { GoogleGeminiAdapter, normalizeGeminiError } from '../src/server/provide
 import { AIProviderError } from '../src/server/providers/base';
 import { DASHBOARD_MODELS } from '../src/features/dashboard/dashboardModels';
 import { VERIFIED_MODELS } from '../src/data/verifiedModels';
+import { MODEL_REGISTRY, MODEL_ROUTES } from '../src/server/providers/modelRegistry';
+import { useModelIntelligenceStore } from '../src/store/modelIntelligenceStore';
 
 let passed = 0;
 let failed = 0;
@@ -54,21 +56,82 @@ async function runTests() {
 
   // Test 3: ModelRouter Strict Routing (Provider + apiModelId)
   console.log('\n--- Test Suite 3: ModelRouter Provider & Model Resolution ---');
-  const gptRoute = router.resolveRoute('gpt-4o');
-  assert(gptRoute.route.provider === 'openai', 'gpt-4o routes to OpenAI provider');
-  assert(gptRoute.route.apiModelId === 'gpt-4o', 'gpt-4o resolves to gpt-4o API ID');
+  const astraRoute = router.resolveRoute('gpt-6-astra');
+  assert(astraRoute.route.provider === 'openai', 'GPT-6 Astra routes to OpenAI');
+  assert(astraRoute.route.apiModelId === 'gpt-6-astra', 'GPT-6 Astra preserves the exact upstream model ID');
+  assert(astraRoute.route.protocol === 'responses', 'GPT-6 Astra routes through the Responses API protocol');
+  const solRoute = router.resolveRoute('gpt-6.1-sol');
+  assert(solRoute.route.apiModelId === 'gpt-6.1-sol', 'GPT-6.1 Sol preserves the exact upstream model ID');
+  assert(solRoute.route.protocol === 'responses', 'GPT-6.1 Sol routes through the Responses API protocol');
+  assert(
+    JSON.stringify(Object.keys(MODEL_ROUTES).sort()) ===
+      JSON.stringify(['auto', 'gpt-6-astra', 'gpt-6.1-sol'].sort()),
+    'Runtime route authority exposes only the two selected model IDs and the explicit Auto alias'
+  );
+  assert(
+    !('runAgentLoop' in router.getAdapterForModel('gpt-6-astra')),
+    'OpenAI adapter exposes no autonomous agent execution entry point'
+  );
 
-  const miniRoute = router.resolveRoute('gpt-4o-mini');
-  assert(miniRoute.route.provider === 'openai', 'gpt-4o-mini routes to OpenAI provider');
-  assert(miniRoute.route.apiModelId === 'gpt-4o-mini', 'gpt-4o-mini resolves to gpt-4o-mini API ID');
+  for (const retiredModelId of ['gpt-4o', 'gpt-4o-mini', 'o1', 'float-basic', 'gpt-6-sol']) {
+    let retiredModelError: any;
+    try { router.resolveRoute(retiredModelId); } catch (error) { retiredModelError = error; }
+    assert(
+      retiredModelError?.code === 'MODEL_NOT_FOUND' && retiredModelError?.statusCode === 404,
+      `Non-selectable model ${retiredModelId} is unavailable through the runtime router`
+    );
+  }
 
-  const o1Route = router.resolveRoute('o1');
-  assert(o1Route.route.provider === 'openai', 'o1 routes to OpenAI provider');
-  assert(o1Route.route.apiModelId === 'o1', 'o1 resolves to o1 API ID');
+  const modelCatalog = router.getModelCatalog();
+  assert(modelCatalog.length === 2 && modelCatalog.some((model) => model.id === 'gpt-6-astra') && modelCatalog.some((model) => model.id === 'gpt-6.1-sol'), 'Server model catalog exposes only GPT-6 Astra and GPT-6.1 Sol');
+  assert(modelCatalog.every((model) => model.modelAvailability === 'unverified'), 'Credential configuration is not reported as model access verification');
+  assert(modelCatalog.every((model) => model.status === 'UNKNOWN' || model.status === 'CONFIG_REQUIRED'), 'Unverified models are not marked available');
+  assert(modelCatalog.find((model) => model.id === 'gpt-6-astra')?.maxOutputTokens === 128000, 'GPT-6 Astra catalog exposes the verified output ceiling');
 
-  const basicRoute = router.resolveRoute('float-basic');
-  assert(basicRoute.route.provider === 'openai', 'float-basic routes to OpenAI provider');
-  assert(basicRoute.route.apiModelId === 'gpt-4o-mini', 'float-basic resolves to gpt-4o-mini API ID');
+  // Provider credential presence is not proof that every selectable model is accessible.
+  const originalFetch = globalThis.fetch;
+  const originalModels = useModelIntelligenceStore.getState().models;
+  try {
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      providers: { openai: {
+        name: 'OpenAI',
+        configured: true,
+        modelAccess: {
+          'gpt-6-astra': { upstreamModelId: 'gpt-6-astra', status: 'listed', detail: 'The credential lists this model ID; generation is unverified.' },
+          'gpt-6.1-sol': { upstreamModelId: 'gpt-6.1-sol', status: 'not_listed', detail: 'The credential did not list this model ID; generation is unverified.' }
+        }
+      } }
+    }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    await useModelIntelligenceStore.getState().fetchProviderStatus();
+    const configuredModelStatuses = useModelIntelligenceStore.getState().models;
+    assert(
+      configuredModelStatuses.every((model) => model.availabilityStatus !== 'AVAILABLE'),
+      'Configured provider credentials do not mark unverified models as available'
+    );
+    assert(
+      configuredModelStatuses.find((model) => model.id === 'gpt-6-astra')?.availabilityStatus === 'UNKNOWN' &&
+        /credential lists this model ID/i.test(configuredModelStatuses.find((model) => model.id === 'gpt-6-astra')?.availabilityDetails || ''),
+      'Listed model ID remains generation-unverified in client state'
+    );
+    assert(
+      configuredModelStatuses.find((model) => model.id === 'gpt-6.1-sol')?.availabilityStatus === 'UNKNOWN' &&
+        /did not list this model ID/i.test(configuredModelStatuses.find((model) => model.id === 'gpt-6.1-sol')?.availabilityDetails || ''),
+      'Model omitted by the provider listing remains explicitly unverified in client state'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    useModelIntelligenceStore.setState({ models: originalModels, isLoadingStatus: false });
+  }
+
+  const astraDescriptor = MODEL_REGISTRY.find((model) => model.id === 'gpt-6-astra')! as any;
+  const savedStreaming = astraDescriptor.capabilities.streaming;
+  astraDescriptor.capabilities.streaming = false;
+  try {
+    let capabilityError: any;
+    try { await router.generateContentStream({ model: 'gpt-6-astra', messages: [{ role: 'user', content: 'test' }] }, () => {}); }
+    catch (error) { capabilityError = error; }
+    assert(capabilityError?.code === 'INVALID_REQUEST' && /does not support streaming/.test(capabilityError.message), 'Model capability registry rejects unsupported streaming before provider execution');
+  } finally { astraDescriptor.capabilities.streaming = savedStreaming; }
 
   // Test 4: NO Silent Fallback to Gemini when Model Fails or is Unknown
   console.log('\n--- Test Suite 4: Prohibition of Silent Fallbacks & DeepSeek Removal ---');
@@ -81,6 +144,8 @@ async function runTests() {
   assert(unknownModelError instanceof AIProviderError, 'Unknown model throws AIProviderError');
   assert(unknownModelError?.code === 'MODEL_NOT_FOUND', 'Unknown model error code is MODEL_NOT_FOUND');
   assert(unknownModelError?.statusCode === 404, 'Unknown model status is 404');
+
+  assert(typeof (router as any).runAgentLoop === 'undefined', 'ModelRouter no longer exposes agent execution');
 
   // Verify DeepSeek models are completely removed from catalog and routing
   const deepseekInVerified = VERIFIED_MODELS.some(m => m.id.includes('deepseek') || m.providerId === ('deepseek' as any));
@@ -123,7 +188,7 @@ async function runTests() {
 
   let openAIMissingKeyError: any = null;
   try {
-    await freshRouter.generateContent({ model: 'gpt-4o', messages: [{ role: 'user', content: 'test' }] });
+    await freshRouter.generateContent({ model: 'gpt-6-astra', messages: [{ role: 'user', content: 'test' }] });
   } catch (err) {
     openAIMissingKeyError = err;
   }
@@ -194,7 +259,7 @@ async function runTests() {
     try {
       streamResult = await liveRouter.generateContentStream(
         {
-          model: 'gpt-4o-mini',
+          model: 'gpt-6-astra',
           messages: [{ role: 'user', content: 'Return the exact word: FLOAT_VERIFIED' }]
         },
         (delta) => {
@@ -220,7 +285,7 @@ async function runTests() {
   try {
     await liveRouter.generateContentStream(
       {
-        model: 'gpt-4o-mini',
+        model: 'gpt-6.1-sol',
         messages: [{ role: 'user', content: 'Write a long essay on programming' }]
       },
       (delta) => {

@@ -62,8 +62,11 @@ export interface ExecutiveReport {
   summary: string;
   keyMetrics: ReportMetric[];
   charts: ChartData[];
-  pythonCode: string;
-  pythonOutput: string;
+  providerUsed?: string;
+  rowsAnalyzed?: number;
+  computationMethod?: string;
+  pythonCode?: string;
+  pythonOutput?: string;
   caveats: string[];
   recommendations: string[];
   generatedAt: number;

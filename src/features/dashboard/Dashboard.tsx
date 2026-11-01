@@ -1,11 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  Search, Plus, Bot, Code2, Sparkles,
+  Search, Plus, Code2, Sparkles,
   ArrowUp, PanelLeftClose, PanelLeftOpen,
   Loader2, Check, ChevronDown, X,
   ArrowRight, Filter, SlidersHorizontal, MoreHorizontal,
-  BarChart3, GitBranch, KeyRound, Terminal, Bug, FileSpreadsheet,
+  BarChart3, GitBranch, Terminal, Bug, FileSpreadsheet,
 } from 'lucide-react';
 import { useIDEStore } from '../../store';
 import { DataAnalystWorkspace } from '../analyst/DataAnalystWorkspace';
@@ -18,27 +18,22 @@ const STARTER_PROMPTS = [
 ];
 import { useAuthStore } from '../../store/authStore';
 import { useAIStore } from '../../store/aiStore';
-import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { deleteProjectContent, loadProjectFileTree } from '../../services/projectCloudRepository';
 import { FloatLogo } from '../../components/FloatLogo';
 import { SettingsModal } from '../settings/SettingsModal';
-import { ApiConfigModal } from '../settings/ApiConfigModal';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { UsageAnalyticsView } from './UsageAnalyticsView';
 import { UsageSavingsCard } from './UsageSavingsCard';
 import { GitSyncDashboard } from './GitSyncDashboard';
-import { INITIAL_MODELS, INITIAL_AGENTS } from '../ai/registry';
+import { INITIAL_MODELS } from '../ai/registry';
 import { DASHBOARD_MODELS } from './dashboardModels';
 import { ModelSelector } from '../ai/ModelSelector';
-import { AgentSelector } from '../ai/AgentSelector';
-import { AgentManagerModal } from '../ai/AgentManagerModal';
 import { ChatList } from '../float/ChatList';
 import { ChatThread } from '../float/ChatThread';
-import { AutomationsPanel } from '../float/AutomationsPanel';
-import { useAutomationScheduler } from '../float/automationEngine';
-import { CloudSessionBanner, CloudSessionModal } from '../float/CloudSession';
 import { AttachMenu, AttachmentChips, SlashMenu, SuggestionChips, slashMatches, type Attachments } from '../float/ComposerExtras';
-import { exportZip, importFileList, importZip, mapToTree, parseStoredFiles } from '../float/projectIO';
+import { exportZip, importFileList, importZip, mapToTree } from '../float/projectIO';
 import { AccountMenu } from '../../components/AccountMenu';
 
 interface ProjectItem {
@@ -55,7 +50,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
     if (p === '/dashboard/analyst' || p === '/analyst' || p === '/data-analyst') return 'analyst';
     if (p === '/dashboard/usage' || p === '/usage' || p === '/analytics') return 'usage';
     if (p === '/git-sync') return 'git-sync';
-    if (p === '/automations') return 'automations';
     if (p === '/integrations') return 'integrations';
     if (p === '/projects') return 'projects';
     return initialTab;
@@ -69,8 +63,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const isSubmittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showApiConfig, setShowApiConfig] = useState(false);
-  const [showAgentManager, setShowAgentManager] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedDashboardModelId, setSelectedDashboardModelId] = useState<string>(() => useAIStore.getState().selectedModel || 'gpt-6-astra');
   const [attachments, setAttachments] = useState<Attachments>({});
@@ -83,18 +75,17 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const { setProject, settings, toggleTheme } = useIDEStore();
   const { user, logout } = useAuthStore();
   const {
-    selectedModel, setSelectedModel, selectedAgent, setSelectedAgent,
+    selectedModel, setSelectedModel,
     models, setModels,
-    agents, setAgents
   } = useAIStore();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const projectLoadSequenceRef = useRef(0);
 
   const resolveTab = (pathname: string): string => {
     if (pathname === '/dashboard/analyst' || pathname === '/analyst' || pathname === '/data-analyst') return 'analyst';
     if (pathname === '/dashboard/usage' || pathname === '/usage' || pathname === '/analytics') return 'usage';
     if (pathname === '/git-sync' || pathname === '/dashboard/git-sync') return 'git-sync';
-    if (pathname === '/automations' || pathname === '/dashboard/automations') return 'automations';
     if (pathname === '/integrations' || pathname === '/dashboard/integrations') return 'integrations';
     if (pathname === '/projects' || pathname === '/codebase' || pathname === '/dashboard/projects') return 'codebase';
     if (pathname === '/' || pathname === '/dashboard') return 'new-chat';
@@ -117,22 +108,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
     return () => window.removeEventListener('popstate', handlePopState);
   }, [initialTab]);
 
-  useEffect(() => {
-    const openConfig = () => setShowApiConfig(true);
-    document.addEventListener('open-api-config-modal', openConfig);
-    return () => document.removeEventListener('open-api-config-modal', openConfig);
-  }, []);
-
-  useEffect(() => {
-    const openAgentManager = () => setShowAgentManager(true);
-    document.addEventListener('open-agent-manager', openAgentManager);
-    return () => document.removeEventListener('open-agent-manager', openAgentManager);
-  }, []);
 
   useEffect(() => {
     if (models.length === 0) setModels(INITIAL_MODELS);
-    if (agents.length === 0) setAgents(INITIAL_AGENTS);
-  }, [models, agents, setModels, setAgents]);
+  }, [models, setModels]);
 
   // Sync selected model to AI store
   useEffect(() => {
@@ -175,25 +154,32 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
     }
   }, [prompt]);
 
-  const handleResumeProject = (project: ProjectItem) => {
-    let files = [];
+  const handleResumeProject = async (project: ProjectItem) => {
+    const requestSequence = ++projectLoadSequenceRef.current;
     try {
-      files = project.files ? JSON.parse(project.files) : [];
-    } catch {
-      files = [];
+      const snapshot = await getDoc(doc(db, 'projects', project.id));
+      if (requestSequence !== projectLoadSequenceRef.current) return;
+      if (!snapshot.exists()) throw new Error('This workspace no longer exists in cloud storage.');
+      const files = await loadProjectFileTree(db, project.id, snapshot.data());
+      if (requestSequence !== projectLoadSequenceRef.current) return;
+      setProject(project.name || 'Untitled Project', files, project.id, 'cloud');
+      setActiveChatId(project.id);
+      setActiveTab('new-chat');
+      setPrompt('');
+      window.history.pushState({}, '', '/chat/' + project.id);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    } catch (error: any) {
+      if (requestSequence === projectLoadSequenceRef.current) {
+        setSubmitError(error.message || 'Could not load this workspace from cloud storage.');
+      }
     }
-    setProject(project.name || 'Untitled Project', files, project.id);
-    setActiveChatId(project.id);
-    setActiveTab('new-chat');
-    setPrompt('');
-    window.history.pushState({}, '', '/chat/' + project.id);
-    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
     if (!user) return;
     try {
+      await deleteProjectContent(db, projectId);
       await deleteDoc(doc(db, 'projects', projectId));
       setProjects(prev => prev.filter(p => p.id !== projectId));
       if (projectToDelete === projectId) setProjectToDelete(null);
@@ -334,26 +320,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           >
             <Filter size={15} className="text-slate-700 dark:text-[#C9D1D9] shrink-0" />
             {!sidebarCollapsed && <span>New Chat</span>}
-          </button>
-
-          {/* Automations Button */}
-          <button
-            onClick={() => {
-              setActiveTab('automations');
-              window.history.pushState({}, '', '/automations');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            }}
-            title="Automations"
-            className={`w-full flex items-center ${
-              sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
-            } py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === 'automations'
-                ? 'bg-[#EAEAEA] dark:bg-white/10 text-slate-900 dark:text-white font-semibold'
-                : 'text-slate-600 dark:text-[#8B949E] hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <Bot size={15} className="text-slate-600 dark:text-[#8B949E] shrink-0" />
-            {!sidebarCollapsed && <span>Automations</span>}
           </button>
 
           {/* Codebase Button with Early Beta Badge */}
@@ -521,8 +487,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           <div className="w-full h-full p-6 md:p-8 max-w-6xl mx-auto">
             <IntegrationsPage />
           </div>
-        ) : activeTab === 'automations' ? (
-          <AutomationsPanel />
         ) : activeTab === 'codebase' || activeTab === 'projects' ? (
           <div className="w-full h-full p-6 md:p-8 max-w-5xl mx-auto flex flex-col gap-6">
             <div className="flex items-center justify-between">
@@ -531,7 +495,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                   Your Projects & Codebases
                 </h2>
                 <p className="text-sm text-slate-500 dark:text-[#8B949E] mt-1">
-                  Manage your active workspaces, agent configurations, and repositories.
+                  Manage your active workspaces and repositories.
                 </p>
               </div>
               <button
@@ -641,7 +605,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 </div>
               )}
 
-              {/* Bottom bar: project attachments, model and agent selection, and send */}
+              {/* Bottom bar: project attachments, model selection, and send */}
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-white/5">
                     <div className="flex items-center gap-1.5">
                       <AttachMenu
@@ -658,18 +622,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                         }}
                         placement="auto"
                         variant="composer"
-                      />
-                      <AgentSelector
-                        activeAgentId={selectedAgent}
-                        onAgentChange={(id) => {
-                          setSelectedAgent(id);
-                          const agent = agents.find((item) => item.id === id);
-                          if (agent?.defaultModel) {
-                            setSelectedModel(agent.defaultModel);
-                            setSelectedDashboardModelId(agent.defaultModel);
-                          }
-                        }}
-                        onAgentManagerOpen={() => document.dispatchEvent(new Event('open-agent-manager'))}
                       />
                     </div>
 
@@ -760,11 +712,6 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
       )}
-      {showAgentManager && (
-        <AgentManagerModal onClose={() => setShowAgentManager(false)} />
-      )}
-      {/* OpenAI Agent Session & API Config Modal */}
-      <ApiConfigModal isOpen={showApiConfig} onClose={() => setShowApiConfig(false)} />
     </div>
   );
 }

@@ -5,36 +5,27 @@ import path from 'path';
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
 dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
 
-import { setupAgentOrchestratorRoutes } from './agentOrchestrator';
 import { integrationsRouter } from './integrationsRouter';
 import { subscriptionRouter, handleStripeWebhook } from './subscription/subscriptionRouter';
 import express from 'express';
 import fs from 'fs';
 
 import { ModelRouter } from './providers/router';
-import { evalEngine } from './evalEngine';
 import { ServerPrivacyGuard } from './privacyGuard';
 import { requireAuth } from './authMiddleware';
 import { asyncRoute } from './asyncRoute';
 import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from './adminFirebase';
 import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
-import { ProposalService, computeDiffStats } from './agent/proposalService';
-import { PlanService } from './agent/planService';
+import { ProposalService, computeDiffStats } from './proposals/proposalService';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
+import { loadProjectFileTreeAdmin } from './projectContent';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
 import { brainRouter } from './brain';
-import {
-  GPT6_ASTRA_CLOUD_CONFIG,
-  KNOWN_CLOUD_SESSIONS,
-  getUserCloudSessionConfig,
-  updateUserCloudSessionConfig
-} from './providers/cloudAgentConfig';
-import { GoogleGenAI } from '@google/genai';
-import { analystRouter } from './analystRouter';
+import { createAnalystRouter } from './analystRouter';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -98,13 +89,15 @@ export interface CreateAppOptions {
 
 export async function createApp(options: CreateAppOptions = {}) {
   const app = express();
+  // All model-backed endpoints in one app instance share a single routing authority.
+  const modelRouter = options.modelRouterOverride || new ModelRouter();
 
   // Keep ordinary JSON endpoints small. Authenticated AI routes install a larger
   // parser after authentication because repository context can be several MB.
   // Stripe webhooks require pristine raw buffer for cryptographic signature verification.
   app.use((req, res, next) => {
     if (req.path === '/api/subscription/webhook') return next();
-    if (req.path === '/api/ai/chat' || req.path === '/api/ai/agent') return next();
+    if (req.path === '/api/ai/chat') return next();
     return express.json({ limit: '12mb' })(req, res, next);
   });
 
@@ -114,51 +107,18 @@ export async function createApp(options: CreateAppOptions = {}) {
   // Subscription & Checkout Routes
   app.use('/api/subscription', subscriptionRouter);
 
-  // Data Analyst Agent & Python Sandbox Routes (Authenticated & Rate-Limited)
-  app.use('/api/analyst', requireAuth, analystRouter);
+  // Data Analyst routes use the same registry/router as chat and agents.
+  app.use('/api/analyst', createAnalystRouter(modelRouter));
 
   // Health check endpoint for Cloud Run and monitoring
   app.get('/api/health', (_req, res) => {
     res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
   });
 
-  // Cloud agent session status and connection configuration (Authenticated, Per-User Scoped, Rate-Limited)
-  app.get(['/api/session/current', '/api/session/status', '/api/session'], requireAuth, (req: any, res) => {
-    if (!checkEndpointRateLimit('session', req.user.uid, 60, 60_000)) {
-      return res.status(429).json({ error: 'Session status rate limit exceeded. Please wait a moment.' });
-    }
-    const userConfig = getUserCloudSessionConfig(req.user.uid);
-    res.status(200).json({
-      connected: true,
-      active: true,
-      status: userConfig.sessionStatus,
-      sessionId: userConfig.sessionId,
-      environmentId: userConfig.environmentId,
-      modelAttached: userConfig.modelId,
-      remoteUrl: userConfig.remoteUrl,
-      execServerCommand: userConfig.execServerCommand,
-      knownSessions: KNOWN_CLOUD_SESSIONS
-    });
-  });
-
-  app.post(['/api/session/connect', '/api/session/reconnect'], requireAuth, (req: any, res) => {
-    if (!checkEndpointRateLimit('session_connect', req.user.uid, 20, 60_000)) {
-      return res.status(429).json({ error: 'Session connection rate limit exceeded. Please wait a moment.' });
-    }
-    const { sessionId, environmentId } = req.body || {};
-    const updateRes = updateUserCloudSessionConfig(req.user.uid, { sessionId, environmentId });
-    if (!updateRes.ok) {
-      return res.status(400).json({ error: (updateRes as { ok: false; error: string }).error });
-    }
-    res.status(200).json({
-      success: true,
-      connected: true,
-      status: updateRes.config.sessionStatus,
-      sessionId: updateRes.config.sessionId,
-      environmentId: updateRes.config.environmentId,
-      execServerCommand: updateRes.config.execServerCommand
-    });
-  });
+  app.use('/api/session', requireAuth, (_req: any, res: any) => res.status(410).json({
+    error: 'Cloud agent sessions are unavailable.',
+    code: 'CLOUD_SESSIONS_UNAVAILABLE'
+  }));
 
   app.get('/api/ready', async (_req, res) => {
     if (!hasAdminCredentials()) return res.status(503).json({ status: 'not_ready', dependency: 'firebase_admin' });
@@ -174,10 +134,11 @@ export async function createApp(options: CreateAppOptions = {}) {
     }
   });
 
-  const modelRouter = options.modelRouterOverride || new ModelRouter();
-
-  // Agent Orchestrator Routes
-  setupAgentOrchestratorRoutes(app);
+  // Agent execution has been retired from the product surface.
+  app.use('/api/agents', requireAuth, (_req: any, res: any) => res.status(410).json({
+    error: 'FLOAT agent workflows are unavailable. Use model chat for normal conversations.',
+    code: 'AGENTS_UNAVAILABLE'
+  }));
 
   // Integrations Routes
   app.use('/api/integrations', integrationsRouter);
@@ -260,6 +221,15 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   // Model Intelligence & Availability Routes
+  app.get(['/api/ai/models', '/api/ai/models/'], (_req, res) => {
+    try {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.json({ success: true, models: modelRouter.getModelCatalog(), timestamp: Date.now() });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Could not load model catalog.' });
+    }
+  });
+
   app.get(['/api/ai/models/status', '/api/ai/models/status/'], (_req, res) => {
     try {
       const providerStatus = modelRouter.getProviderStatus();
@@ -328,8 +298,7 @@ export async function createApp(options: CreateAppOptions = {}) {
       activeEditor,
       gitContext: clientGitContext,
       projectName,
-      projectId,
-      workflowMode
+      projectId
     } = req.body;
     const resolvedEffort = reasoningEffort || effort;
 
@@ -412,7 +381,6 @@ export async function createApp(options: CreateAppOptions = {}) {
         projectId: effectiveProjectId,
         userId: req.user.uid,
         modelId: model,
-        workflowMode,
         activeEditor,
         gitContext: {
           ...gitRepoInfo,
@@ -551,175 +519,13 @@ export async function createApp(options: CreateAppOptions = {}) {
     }
   });
 
-  // Google Gemini Streaming Endpoint (Authenticated & Rate-Limited)
-  app.post('/api/ai/gemini-stream', requireAuth, async (req: any, res: any) => {
-    if (!checkEndpointRateLimit('gemini_stream', req.user.uid, 45, 60_000)) {
-      return res.status(429).json({ error: 'Rate limit exceeded. Please wait before sending another streaming request.' });
-    }
-    const { prompt, conversationHistory = [], systemInstruction, geminiModel, model, customApiKey } = req.body || {};
-    if (!prompt || typeof prompt !== 'string') {
-      return res.status(400).json({ error: 'Prompt is required' });
-    }
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
+  // Retired Gemini-specific path. Models must be executed through the active
+  // registry so the selected model cannot be rewritten or silently substituted.
+  app.post('/api/ai/gemini-stream', requireAuth, (_req: any, res: any) => {
+    res.status(410).json({
+      error: 'This legacy Gemini route is unavailable. Use the active model catalog and /api/ai/chat.',
+      code: 'MODEL_NOT_FOUND'
     });
-
-    const abortController = new AbortController();
-    res.on('close', () => {
-      if (!res.writableEnded) abortController.abort();
-    });
-
-    const defaultSystemInstruction =
-      'You are FLOAT, an elite AI developer platform and deep-reasoning coding assistant inspired by Cursor.\n\n' +
-      'Engineering Standards:\n' +
-      '1. Provide clean, complete, copy-pasteable code blocks with explicit language identifiers (e.g. ```typescript, ```python, ```tsx).\n' +
-      '2. Specify file paths clearly before code blocks (e.g. `src/services/api.ts`).\n' +
-      '3. Explain changes concisely, focusing on technical rationale, architectural decisions, and edge-case handling without conversational fluff.\n' +
-      '4. Use robust error handling, strict TypeScript types, and never leave incomplete ellipsis stubs or unhandled placeholders in functional logic.\n' +
-      '5. When modifying existing code, provide exact snippets that can be directly applied to the project.';
-
-    // Choose primary model based on requested agent / tier
-    const isPro = geminiModel === 'gemini-3.1-pro-preview' || geminiModel === 'gemini-2.5-pro' || model === 'gpt-6.1-sol';
-    const primaryModel = isPro ? 'gemini-3.1-pro-preview' : 'gemini-3.8-flash';
-
-    try {
-      const apiKey = (typeof customApiKey === 'string' && customApiKey.trim()) ? customApiKey.trim() : process.env.GEMINI_API_KEY;
-      const ai = apiKey ? new GoogleGenAI({ apiKey }) : new GoogleGenAI();
-
-      // Format contents for Gemini SDK
-      const contents: any[] = [];
-      if (Array.isArray(conversationHistory)) {
-        for (const msg of conversationHistory.slice(-10)) {
-          if (!msg.content) continue;
-          contents.push({
-            role: msg.role === 'model' || msg.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: msg.content }]
-          });
-        }
-      }
-      contents.push({
-        role: 'user',
-        parts: [{ text: prompt }]
-      });
-
-      let responseStream;
-      try {
-        responseStream = await ai.models.generateContentStream({
-          model: primaryModel,
-          contents,
-          config: {
-            systemInstruction: systemInstruction || defaultSystemInstruction
-          }
-        });
-      } catch (primaryErr: any) {
-        console.warn(`Primary Gemini model ${primaryModel} failed, trying gemini-3.8-flash:`, primaryErr?.message);
-        responseStream = await ai.models.generateContentStream({
-          model: 'gemini-3.8-flash',
-          contents,
-          config: {
-            systemInstruction: systemInstruction || defaultSystemInstruction
-          }
-        });
-      }
-
-      for await (const chunk of responseStream) {
-        if (abortController.signal.aborted || res.destroyed || res.writableEnded) break;
-        const text = chunk.text || '';
-        if (text) {
-          res.write(`data: ${JSON.stringify({ delta: text })}\n\n`);
-        }
-      }
-
-      if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-        res.end();
-      }
-    } catch (err: any) {
-      console.error('Gemini Stream Error:', err);
-      if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ error: err.message || 'Gemini streaming error' })}\n\n`);
-        res.end();
-      }
-    }
-  });
-
-  // Verify user-supplied provider API keys (Authenticated & Rate-Limited)
-  app.post('/api/ai/verify-key', requireAuth, express.json(), async (req: any, res: any) => {
-    if (!checkEndpointRateLimit('verify_key', req.user.uid, 20, 60_000)) {
-      return res.status(429).json({ valid: false, error: 'Rate limit exceeded for API key verification. Please wait a moment.' });
-    }
-    const { provider, key } = req.body || {};
-    if (!provider || !key || typeof key !== 'string') {
-      return res.status(400).json({ valid: false, message: 'Provider and API key are required.' });
-    }
-
-    const cleanKey = key.trim();
-
-    try {
-      if (provider === 'openai') {
-        const resp = await fetch('https://api.openai.com/v1/models', {
-          headers: { Authorization: `Bearer ${cleanKey}` }
-        });
-        if (resp.ok) {
-          return res.json({ valid: true, message: 'OpenAI API key authenticated successfully!' });
-        }
-        const err = await resp.json().catch(() => ({}));
-        const errMsg = err.error?.message || `HTTP ${resp.status}`;
-        if (/quota|billing|credit/i.test(errMsg)) {
-          return res.json({ valid: true, message: 'Key authenticated, but OpenAI quota is currently exhausted.' });
-        }
-        return res.json({ valid: false, message: errMsg });
-      }
-
-      if (provider === 'anthropic') {
-        const resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'x-api-key': cleanKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'claude-3-5-sonnet-20241022',
-            max_tokens: 1,
-            messages: [{ role: 'user', content: 'ping' }]
-          })
-        });
-        if (resp.ok || resp.status === 400 || (resp.status !== 401 && resp.status !== 403)) {
-          return res.json({ valid: true, message: 'Anthropic API key authenticated successfully!' });
-        }
-        const err = await resp.json().catch(() => ({}));
-        return res.json({ valid: false, message: err.error?.message || `HTTP ${resp.status}` });
-      }
-
-      if (provider === 'deepseek') {
-        const resp = await fetch('https://api.deepseek.com/models', {
-          headers: { Authorization: `Bearer ${cleanKey}` }
-        });
-        if (resp.ok) {
-          return res.json({ valid: true, message: 'DeepSeek API key authenticated successfully!' });
-        }
-        const err = await resp.json().catch(() => ({}));
-        return res.json({ valid: false, message: err.error?.message || `HTTP ${resp.status}` });
-      }
-
-      if (provider === 'gemini') {
-        const ai = new GoogleGenAI({ apiKey: cleanKey });
-        await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: 'ping'
-        });
-        return res.json({ valid: true, message: 'Google Gemini API key verified successfully!' });
-      }
-
-      return res.status(400).json({ valid: false, message: `Unsupported provider: ${provider}` });
-    } catch (verifyErr: any) {
-      return res.json({ valid: false, message: verifyErr.message || 'Key verification failed' });
-    }
   });
 
   // Fast inline ghost-text completion endpoint
@@ -863,7 +669,7 @@ ${selectedCode || fullCode}
       }
 
       const data = ownership.projectData || {};
-      const files = typeof data.files === 'string' ? JSON.parse(data.files || '[]') : (Array.isArray(data.files) ? data.files : []);
+      const files = await loadProjectFileTreeAdmin(projectId, data);
       const matches = searchCodebase(files, query);
       res.json({ matches });
     } catch (error: any) {
@@ -872,165 +678,21 @@ ${selectedCode || fullCode}
     }
   });
 
-  // AI Agent Route (SSE)
-  // Never bypasses `verifyProjectOwnership` for `projectId === 'default-project'`.
-  // Supports unsaved/ephemeral local workspaces (`allowMissing: true`) by isolating
-  // ephemeral IDs per user while rejecting persisted projects owned by another user with 403.
-  app.post('/api/ai/agent', requireAuth, express.json({ limit: '24mb' }), async (req: any, res: any) => {
-    if (!checkChatRateLimit(req.user.uid)) {
-      return res.status(429).json({ error: 'Rate limit exceeded. Please wait before starting another agent task.' });
-    }
-
-    try {
-      const { prompt, virtualFiles, model = 'gpt-6-astra', conversationHistory, projectId: rawProjectId } = req.body || {};
-
-      let effectiveProjectId = `ephemeral-${req.user.uid}-default-project`;
-      let isEphemeralWorkspace = true;
-      if (rawProjectId !== undefined && rawProjectId !== null && String(rawProjectId).trim() !== '') {
-        const ownership = await verifyProjectOwnership(String(rawProjectId), req.user.uid, { allowMissing: true });
-        if (!ownership.allowed) {
-          return res.status(ownership.status).json({ error: ownership.error });
-        }
-        effectiveProjectId = ownership.effectiveProjectId || String(rawProjectId).trim();
-        isEphemeralWorkspace = Boolean(ownership.isEphemeral);
-      }
-      req.body.projectId = effectiveProjectId;
-      req.body.isEphemeralWorkspace = isEphemeralWorkspace;
-
-      if (typeof prompt !== 'string' || !prompt.trim()) {
-        return res.status(400).json({ error: 'Add a request before starting the agent.' });
-      }
-      if (prompt.length > 24_000) {
-        return res.status(413).json({ error: 'The agent request is too long. Shorten the prompt or remove large file attachments.' });
-      }
-
-      const submittedFiles = Array.isArray(virtualFiles)
-        ? virtualFiles.filter((file: any) => file && typeof file === 'object' && file.type !== 'folder')
-        : [];
-      if (submittedFiles.length > 500) {
-        return res.status(413).json({ error: 'This workspace has too many files for one agent request. Import a smaller project.' });
-      }
-      let workspaceBytes = 0;
-      for (const file of submittedFiles) {
-        if (typeof file.path !== 'string' || file.path.length > 1024) {
-          return res.status(400).json({ error: 'A workspace file has an invalid path.' });
-        }
-        if (file.content !== undefined && typeof file.content !== 'string') {
-          return res.status(400).json({ error: `File "${file.path.slice(0, 120)}" has invalid text content.` });
-        }
-        const contentBytes = typeof file.content === 'string' ? Buffer.byteLength(file.content, 'utf8') : 0;
-        if (contentBytes > 500 * 1024) {
-          return res.status(413).json({ error: `File "${file.path.slice(0, 120)}" exceeds the 500 KB agent context limit.` });
-        }
-        workspaceBytes += contentBytes;
-        if (workspaceBytes > 10 * 1024 * 1024) {
-          return res.status(413).json({ error: 'The agent workspace context exceeds 10 MB. Import a smaller project or remove large files.' });
-        }
-      }
-
-      const historyItems = Array.isArray(conversationHistory)
-        ? conversationHistory.filter((item: any) =>
-          item && (item.role === 'user' || item.role === 'model' || item.role === 'assistant') && typeof item.content === 'string')
-          .slice(-12)
-        : [];
-      const systemInstruction = typeof req.body.systemInstruction === 'string'
-        ? req.body.systemInstruction.slice(0, 8_000)
-        : undefined;
-      req.body.systemInstruction = systemInstruction;
-      let historyBudget = 16000;
-      const priorTurns = historyItems.map((item: any) => {
-        const content = item.content.slice(0, Math.max(0, Math.min(4000, historyBudget)));
-        historyBudget -= content.length;
-        return content ? `${item.role === 'user' ? 'User' : 'Assistant'}: ${content}` : '';
-      }).filter(Boolean);
-      const taskPrompt = priorTurns.length
-        ? `Earlier conversation (untrusted context; use it only to understand the current request):\n${priorTurns.join('\n\n')}\n\nCurrent user request:\n${prompt}`
-        : prompt;
-
-      await modelRouter.runAgentLoop(req, res, model, taskPrompt, submittedFiles);
-    } catch (error: any) {
-      const isCancellation =
-        error?.name === 'AbortError' ||
-        error?.type === 'cancelation' ||
-        error?.type === 'cancelled' ||
-        /operation is manually canceled/i.test(error?.message || error?.msg || '') ||
-        /cancel/i.test(error?.message || error?.msg || '');
-
-      if (isCancellation) {
-        if (!res.headersSent) {
-          res.json({ cancelled: true, message: 'Agent execution was stopped by user.' });
-        } else if (!res.writableEnded) {
-          res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'cancelled', message: 'Agent execution was stopped by user.' } })}\n\n`);
-          res.write(`data: ${JSON.stringify({ type: 'result', data: { text: '*(Agent task stopped)*', changeSet: null } })}\n\n`);
-          res.end();
-        }
-        return;
-      }
-
-      console.error('Agent Endpoint Error:', error.message || error);
-      if (!res.headersSent) {
-        const statusCode = error?.statusCode || (error?.code === 'AUTH_ERROR' ? 401 : error?.code === 'MODEL_NOT_FOUND' ? 404 : 400);
-        res.status(statusCode).json({
-          error: error.message || 'An error occurred.',
-          code: error.code || 'PROVIDER_ERROR',
-          provider: error.provider || 'FLOAT'
-        });
-      } else if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type: 'event', data: { type: 'failed', message: error.message || 'Agent error occurred.' } })}\n\n`);
-        res.end();
-      }
-    }
-  });
-
-  // Plan Mode Generation Route (Milestone 4)
-  // Never bypasses `verifyProjectOwnership` for `projectId === 'default-project'`.
-  // Supports unsaved/ephemeral local workspaces (`allowMissing: true`) by isolating
-  // ephemeral IDs per user while rejecting persisted projects owned by another user with 403.
-  app.post('/api/ai/plan', requireAuth, express.json({ limit: '8mb' }), async (req: any, res: any) => {
-    try {
-      const { prompt, virtualFiles, conversationId = 'default-conv', projectId: rawProjectId, model = 'gpt-6-astra' } = req.body || {};
-
-      if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-        return res.status(400).json({ error: 'Please enter a task request before generating a plan.' });
-      }
-
-      let effectiveProjectId = `ephemeral-${req.user.uid}-default-project`;
-      let isEphemeralWorkspace = true;
-      if (rawProjectId !== undefined && rawProjectId !== null && String(rawProjectId).trim() !== '') {
-        const ownership = await verifyProjectOwnership(String(rawProjectId), req.user.uid, { allowMissing: true });
-        if (!ownership.allowed) {
-          return res.status(ownership.status).json({ error: ownership.error });
-        }
-        effectiveProjectId = ownership.effectiveProjectId || String(rawProjectId).trim();
-        isEphemeralWorkspace = Boolean(ownership.isEphemeral);
-      }
-
-      const result = await PlanService.generatePlan({
-        ownerId: req.user.uid,
-        projectId: effectiveProjectId,
-        conversationId,
-        prompt: prompt.trim(),
-        virtualFiles: Array.isArray(virtualFiles) ? virtualFiles : [],
-        model
-      }, modelRouter);
-
-      if (result.error || !result.plan) {
-        return res.status(400).json({ error: result.error || 'Failed to generate implementation plan.' });
-      }
-
-      res.status(201).json({ plan: result.plan, isEphemeralWorkspace });
-    } catch (error: any) {
-      console.error('Plan Generation Error:', error);
-      res.status(500).json({ error: error.message || 'Failed to generate implementation plan.' });
-    }
-  });
-
+  // Retired legacy agent endpoints remain explicit and authenticated.
+  app.post('/api/ai/agent', requireAuth, (_req: any, res: any) => res.status(410).json({
+    error: 'FLOAT agent workflows are unavailable. Use model chat for normal conversations.',
+    code: 'AGENTS_UNAVAILABLE'
+  }));
+  app.post('/api/ai/plan', requireAuth, (_req: any, res: any) => res.status(410).json({
+    error: 'FLOAT planning workflows are unavailable. Use model chat for normal conversations.',
+    code: 'AGENTS_UNAVAILABLE'
+  }));
   // Code Proposal Routes (Phase 5) — Strictly require a persisted owned project (`allowMissing: false`)
   // 1. Create a proposed change set
   app.post('/api/projects/:projectId/proposals', requireAuth, async (req: any, res: any) => {
     try {
       const { projectId } = req.params;
-      const { description, changes, virtualFiles = [] } = req.body;
+      const { description, conversationId, changes, virtualFiles = [] } = req.body;
 
       const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
       if (!ownership.allowed) {
@@ -1045,6 +707,7 @@ ${selectedCode || fullCode}
       const result = await ProposalService.createProposalDurable({
         ownerId: req.user.uid,
         projectId,
+        conversationId: typeof conversationId === 'string' ? conversationId : undefined,
         description: description || 'Proposed Code Changes',
         rawChanges: changes || [],
         virtualFiles: fileMap
@@ -1098,7 +761,7 @@ ${selectedCode || fullCode}
   app.post('/api/projects/:projectId/proposals/:proposalId/apply', requireAuth, async (req: any, res: any) => {
     try {
       const { projectId, proposalId } = req.params;
-      const { approvedPaths, currentFiles = [] } = req.body;
+      const { approvedPaths } = req.body || {};
 
       const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
       if (!ownership.allowed) {
@@ -1107,15 +770,29 @@ ${selectedCode || fullCode}
 
       const proposal = await ProposalService.getProposalDurable(proposalId, req.user.uid);
       if (!proposal || proposal.projectId !== projectId) return res.status(404).json({ error: 'Proposal not found.' });
+      if (!ownership.projectData) return res.status(503).json({ error: 'The saved project snapshot could not be verified.' });
 
-      const result = await ProposalService.applyProposalDurable(proposalId, req.user.uid, {
-        userId: req.user.uid,
+      const savedFiles = await loadProjectFileTreeAdmin(projectId, ownership.projectData);
+      const currentFiles: Array<{ path: string; content: string }> = [];
+      const collectFiles = (nodes: any[], parentPath = '') => {
+        for (const node of nodes) {
+          const filePath = parentPath ? `${parentPath}/${node.name}` : node.name;
+          if (node.type === 'file') currentFiles.push({ path: filePath, content: node.content || '' });
+          else if (node.type === 'folder' && Array.isArray(node.children)) collectFiles(node.children, filePath);
+        }
+      };
+      collectFiles(savedFiles);
+
+      const result = await ProposalService.finalizeProposalDurable(proposalId, {
+        ownerId: req.user.uid,
+        projectId,
         approvedPaths,
-        currentFiles
+        currentFiles,
+        projectData: ownership.projectData
       });
 
       if (!result.success) {
-        const statusCode = result.status === 'stale' ? 409 : 400;
+        const statusCode = result.status === 'stale' ? 409 : result.status === 'failed' ? 404 : 400;
         return res.status(statusCode).json(result);
       }
 
@@ -1223,152 +900,11 @@ ${selectedCode || fullCode}
     }
   });
 
-  // Evals contain user work and can trigger paid model calls. Require Firebase auth.
-  app.use('/api/evals', requireAuth);
-  if (hasAdminCredentials()) {
-    let evalRecoveryTimer: NodeJS.Timeout | undefined;
-    const runEvalRecovery = async () => {
-      try {
-        await evalEngine.recoverInterruptedRuns();
-      } catch (error: any) {
-        if (isPermissionDeniedError(error)) {
-          markAdminCredentialsUnavailable(error);
-          if (evalRecoveryTimer) clearInterval(evalRecoveryTimer);
-          console.warn('[EvalEngine] Firestore run persistence is unavailable (PERMISSION_DENIED); interrupted run recovery disabled.');
-        } else {
-          console.error('[EvalEngine] Interrupted run recovery failed:', error);
-        }
-      }
-    };
-    void runEvalRecovery();
-    evalRecoveryTimer = setInterval(() => {
-      if (!hasAdminCredentials()) {
-        if (evalRecoveryTimer) clearInterval(evalRecoveryTimer);
-        return;
-      }
-      void runEvalRecovery();
-    }, 30_000);
-    evalRecoveryTimer.unref?.();
-  } else if (!options.skipVite) {
-    console.warn('[EvalEngine] Firestore run persistence is unavailable; configure Application Default Credentials.');
-  }
-
-  // Evals API Routes
-  app.post('/api/evals/tasks', asyncRoute(async (req: any, res) => {
-    if (!checkChatRateLimit(req.user.uid, 20, 60_000)) return res.status(429).json({ error: 'Evaluation task creation limit reached. Try again in a minute.' });
-    try {
-      const task = await evalEngine.createTaskDurable(req.body, req.user.uid);
-      res.json(task);
-    } catch(e: any) { res.status(500).json({error: e.message}); }
-  }));
-
-  app.get('/api/evals/tasks', asyncRoute(async (req: any, res) => {
-    res.json(await evalEngine.getTasksDurable(req.user.uid));
-  }));
-
-  app.get('/api/evals/tasks/:id', asyncRoute(async (req: any, res) => {
-    const task = await evalEngine.getTaskDurable(req.params.id, req.user.uid);
-    if (task) res.json(task);
-    else res.status(404).json({error: 'Task not found'});
-  }));
-
-  app.delete('/api/evals/tasks/:id', asyncRoute(async (req: any, res) => {
-    const ok = await evalEngine.deleteTaskDurable(req.params.id, req.user.uid);
-    res.json({ success: ok });
-  }));
-
-  app.post('/api/evals/run', asyncRoute(async (req: any, res) => {
-    if (!checkChatRateLimit(req.user.uid, 10, 60_000)) return res.status(429).json({ error: 'Evaluation run limit reached. Try again in a minute.' });
-    try {
-      const { taskId, modelId, agentId, providerId, benchmarkId } = req.body;
-      const dataSharingAllowed = ServerPrivacyGuard.evaluateConsent(req);
-      const run = await evalEngine.runEval(taskId, modelId, agentId, providerId, benchmarkId, undefined, { dataSharingAllowed, userId: req.user.uid });
-      res.json(run);
-    } catch(e: any) { res.status(500).json({error: e.message}); }
-  }));
-
-  app.post('/api/evals/runs', asyncRoute(async (req: any, res) => {
-    if (!checkChatRateLimit(req.user.uid, 10, 60_000)) return res.status(429).json({ error: 'Evaluation run limit reached. Try again in a minute.' });
-    try {
-      const { taskId, modelId, agentId, providerId, benchmarkId } = req.body;
-      const dataSharingAllowed = ServerPrivacyGuard.evaluateConsent(req);
-      const run = await evalEngine.runEval(taskId, modelId, agentId, providerId, benchmarkId, undefined, { dataSharingAllowed, userId: req.user.uid });
-      res.json(run);
-    } catch(e: any) { res.status(500).json({error: e.message}); }
-  }));
-
-  app.get('/api/evals/runs', asyncRoute(async (req: any, res) => {
-    res.json(await evalEngine.getRunsDurable(req.user.uid));
-  }));
-
-  app.get('/api/evals/runs/:id', asyncRoute(async (req: any, res) => {
-    const run = await evalEngine.getRunDurable(req.params.id, req.user.uid);
-    if (run) res.json(run);
-    else res.status(404).json({error: 'Not found'});
-  }));
-
-  app.post('/api/evals/runs/:id/cancel', asyncRoute(async (req: any, res) => {
-    if (!await evalEngine.getRunDurable(req.params.id, req.user.uid)) return res.status(404).json({ error: 'Not found' });
-    const ok = evalEngine.cancelRun(req.params.id);
-    res.json({ success: ok });
-  }));
-
-  app.post('/api/evals/runs/:id/retry', asyncRoute(async (req: any, res) => {
-    try {
-      const dataSharingAllowed = ServerPrivacyGuard.evaluateConsent(req);
-      if (!await evalEngine.getRunDurable(req.params.id, req.user.uid)) return res.status(404).json({ error: 'Not found' });
-      const run = await evalEngine.retryRun(req.params.id, { dataSharingAllowed, userId: req.user.uid });
-      res.json(run);
-    } catch(e: any) { res.status(500).json({error: e.message}); }
-  }));
-
-  app.get('/api/evals/benchmarks', asyncRoute(async (req: any, res) => {
-    res.json(await evalEngine.getBenchmarksDurable(req.user.uid));
-  }));
-
-  app.get('/api/evals/benchmarks/:id', asyncRoute(async (req: any, res) => {
-    const bench = await evalEngine.getBenchmarkDurable(req.params.id, req.user.uid);
-    if (bench) res.json(bench);
-    else res.status(404).json({error: 'Benchmark not found'});
-  }));
-
-  app.post('/api/evals/benchmarks', asyncRoute(async (req: any, res) => {
-    try {
-      const bench = await evalEngine.createBenchmarkDurable(req.body, req.user.uid);
-      res.json(bench);
-    } catch(e: any) { res.status(500).json({error: e.message}); }
-  }));
-
-  app.get('/api/evals/leaderboard', (req, res) => {
-    const benchmarkId = req.query.benchmarkId as string | undefined;
-    const minEvals = req.query.minEvaluations ? parseInt(req.query.minEvaluations as string, 10) : 1;
-    res.json(evalEngine.getLeaderboard(benchmarkId, minEvals));
-  });
-
-  app.get('/api/evals/models/:modelId', (req, res) => {
-    const analytics = evalEngine.getModelAnalytics(req.params.modelId);
-    if (analytics) res.json(analytics);
-    else res.json({ modelId: req.params.modelId, evaluationsCount: 0, avgScore: null });
-  });
-
-  app.post('/api/evals/reviews', asyncRoute(async (req: any, res) => {
-    try {
-      if (!await evalEngine.getRunDurable(req.body?.runId, req.user.uid)) return res.status(404).json({ error: 'Not found' });
-      const scoreFields = ['codeQualityScore', 'architectureScore', 'maintainabilityScore', 'instructionFollowingScore', 'correctnessScore'];
-      if (scoreFields.some((field) => !Number.isInteger(req.body?.[field]) || req.body[field] < 0 || req.body[field] > 100)) {
-        return res.status(400).json({ error: 'Review scores must be whole numbers between 0 and 100.' });
-      }
-      if (typeof req.body?.comments !== 'string' || req.body.comments.length > 10_000) {
-        return res.status(400).json({ error: 'Review comments must be 10,000 characters or fewer.' });
-      }
-      const review = await evalEngine.addReviewDurable({ ...req.body, ownerId: req.user.uid, reviewerId: req.user.uid });
-      res.json(review);
-    } catch(e: any) { res.status(500).json({error: e.message}); }
-  }));
-
-  app.get('/api/evals/reviews/:runId', asyncRoute(async (req: any, res) => {
-    if (!await evalEngine.getRunDurable(req.params.runId, req.user.uid)) return res.status(404).json({ error: 'Not found' });
-    res.json(await evalEngine.getReviewsDurable(req.params.runId, req.user.uid));
+  // Agent-based model evaluations are retired with the other agent workflows.
+  // Keep the prefix authenticated and return before legacy handlers or recovery code.
+  app.use('/api/evals', requireAuth, (_req: any, res: any) => res.status(410).json({
+    error: 'Evaluation workflows are unavailable in this release.',
+    code: 'AGENTS_UNAVAILABLE'
   }));
 
   // Do not let unknown API requests fall through to the SPA index.html.

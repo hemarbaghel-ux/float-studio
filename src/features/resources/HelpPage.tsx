@@ -40,7 +40,7 @@ export function HelpPage() {
       id: 'faq-1',
       category: 'General',
       question: 'What is FLOAT and how is it different from a basic chat interface?',
-      answer: 'FLOAT is an integrated developer workspace combining an AI assistant with a full Monaco code editor, file tree explorer, diff review engine, and multi-model router. Unlike disconnected chatbot windows, FLOAT has direct context on your files, enables safe line-by-line diff approvals, and supports specialized Ask, Plan, Edit, and Agent workflows.'
+      answer: 'FLOAT is a browser-based developer workspace with AI chat, a code editor, project files, and reviewable code proposals. You can ask questions about selected workspace context and decide whether to apply proposed code changes.'
     },
     {
       id: 'faq-2',
@@ -62,13 +62,13 @@ export function HelpPage() {
       id: 'faq-4',
       category: 'Editor & Diffs',
       question: 'Will the AI overwrite my code without my permission?',
-      answer: 'No. FLOAT strictly enforces human-in-the-loop diff reviews. Whenever code changes are generated in EDIT or AGENT mode, a diff review interface displays proposed additions and deletions side-by-side. You must explicitly click "Accept Change" to apply modifications to your buffer.'
+      answer: 'Code proposals are shown for review before they are applied. Review the proposed changes and choose Apply or Reject.'
     },
     {
       id: 'faq-5',
       category: 'AI & Models',
       question: 'Which AI models are supported and how are requests routed?',
-      answer: 'FLOAT features a centralized provider router. The active primary model is OpenAI GPT-4o, which provides fast inference and generous context windows. You can benchmark models, review evaluation tasks, and track token usage at /models and /models/usage.',
+      answer: 'The model selector lists GPT-6 Astra and GPT-6.1 Sol. Requests use the selected model through server-side provider configuration. Access depends on the server credential and provider account; an unavailable model or missing configuration should return an error rather than switch providers.',
       tips: [
         'FLOAT does not perform silent fallbacks: if an API error occurs, an explicit actionable message is displayed.'
       ]
@@ -78,12 +78,6 @@ export function HelpPage() {
       category: 'AI & Models',
       question: 'What should I do if I encounter a quota or rate limit error?',
       answer: 'If your request exceeds the provider’s quota limit, wait approximately 30 to 60 seconds before retrying. Starting a fresh conversation via the "New Chat" button also clears accumulated turn history and reduces token payload.'
-    },
-    {
-      id: 'faq-7',
-      category: 'Workspace',
-      question: 'What do the Ask, Plan, Edit, and Agent modes mean?',
-      answer: 'ASK mode is read-only for codebase questions. PLAN mode breaks complex architectures into verifiable roadmaps. EDIT mode proposes targeted code changes with diffs. AGENT mode executes multi-step coding workflows.'
     },
     {
       id: 'faq-8',

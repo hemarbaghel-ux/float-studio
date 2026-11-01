@@ -28,7 +28,7 @@ export function ResourcesDropdown({ currentPath }: ResourcesDropdownProps) {
   const resources = [
     {
       name: 'Learning Center',
-      desc: 'Master agentic development, multi-step workflows, and prompts.',
+      desc: 'Learn how to use FLOAT chat, project files, and code review.',
       href: '/learn',
       icon: <GraduationCap size={16} className="text-[#FF5F56]" />
     },

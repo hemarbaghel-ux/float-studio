@@ -53,7 +53,7 @@ export function DocsPage() {
       content: {
         summary: 'FLOAT is an AI-powered development environment designed to help developers create, explore, edit, and review software with high-precision AI assistance.',
         details: [
-          'FLOAT combines an intelligent chat workflow, specialized AI modes (Ask, Plan, Edit, and Agent), and a Monaco-powered code editor with rigorous diff reviews.',
+          'FLOAT combines AI chat, workspace context, a Monaco-powered code editor, and reviewable code proposals.',
           'Built on clean web technologies (React 19, TypeScript, Tailwind CSS) and secured with Firebase, FLOAT provides both cloud convenience and responsive desktop-grade performance.'
         ],
         tips: [
@@ -112,7 +112,7 @@ export function DocsPage() {
           'Activity Bar: Leftmost rail for switching between File Explorer, Search, Git, Extensions, and Settings.',
           'File Explorer: Interactive tree view supporting file opening, folder expansion, and contextual operations.',
           'Editor Area: Monaco Editor with tab management, syntax highlighting, line numbers, and inline diff viewing.',
-          'AI Panel: Right-hand chat and agent interface for conversational questions, planning, and code changes.'
+          'AI Panel: Right-hand chat interface for questions, workspace context, and code proposals.'
         ],
         tips: [
           'Collapse the AI panel or file explorer to maximize editor screen estate when focused on deep coding.',
@@ -137,26 +137,6 @@ export function DocsPage() {
       }
     },
     {
-      id: 'ai-modes',
-      category: 'AI Assistance',
-      title: 'Ask, Plan, Edit & Agent Modes',
-      desc: 'Choose the exact level of autonomy and intervention appropriate for your task.',
-      status: 'AVAILABLE',
-      content: {
-        summary: 'FLOAT categorizes AI interaction into 4 distinct modes tailored to specific development phases.',
-        details: [
-          'ASK mode: Read-only exploration. Answers questions and explains architectures without modifying files.',
-          'PLAN mode: Architectural roadmapping. Breaks down complex features into structured, verifiable implementation steps.',
-          'EDIT mode: Targeted code modifications. Proposes precise diffs with side-by-side review before applying.',
-          'AGENT mode: Autonomous task execution. Coordinates multi-step file reads, edits, and diagnostics.'
-        ],
-        tips: [
-          'Always use PLAN mode before launching large multi-file refactors.',
-          'Use ASK mode when performing security audits or onboarding to unfamiliar files.'
-        ]
-      }
-    },
-    {
       id: 'code-editor-diffs',
       category: 'Editor & Files',
       title: 'Monaco Editor & Diff Review',
@@ -165,7 +145,7 @@ export function DocsPage() {
       content: {
         summary: 'Human-in-the-loop review is a core FLOAT principle: code is never silently overwritten.',
         steps: [
-          'When the AI generates or edits code in EDIT or AGENT mode, a Diff Review card is displayed.',
+          'When chat returns a code proposal, review the proposed changes before applying them.',
           'Inspect the red (removals) and green (additions) line-by-line diffs.',
           'Click "Accept Change" to apply the diff to your file or "Reject" to discard the proposal.'
         ],
@@ -184,9 +164,9 @@ export function DocsPage() {
       content: {
         summary: 'FLOAT uses a centralized provider router to handle model dispatching and telemetry.',
         details: [
-          'Active Primary: OpenAI (GPT-4o) configured for fast inference and large context windows.',
-          'Evaluations & Benchmarks: Compare performance, latency, and cost in the Models Hub (/models).',
-          'Token Tracking: Real-time token consumption analytics available at /models/usage.'
+          'The model selector offers GPT-6 Astra and GPT-6.1 Sol.',
+          'Requests require server-side provider configuration and model access.',
+          'A listed model does not prove provider access; provider errors are shown to the user.'
         ],
         tips: [
           'FLOAT strictly forbids silent fallback: if a model is unavailable, an honest actionable error is returned.'
@@ -205,20 +185,6 @@ export function DocsPage() {
           'Theme System: Toggle between sleek developer dark mode and crisp high-contrast light mode.',
           'Localization: Built-in support for 10 languages (English, Spanish, Chinese, Japanese, French, etc.).',
           'Persistence: Preferences are automatically stored in local storage and synced to user settings.'
-        ]
-      }
-    },
-    {
-      id: 'cloud-agents',
-      category: 'AI Assistance',
-      title: 'Cloud Agents & Background Tasks',
-      desc: 'Delegate long-running builds, test suites, and refactorings to background cloud agents.',
-      status: 'COMING SOON',
-      content: {
-        summary: 'Cloud Agents will enable asynchronous task execution on remote runners without keeping the browser open.',
-        details: [
-          'Currently in active development: multi-agent task graph orchestration and isolated execution sandboxes.',
-          'Will support automated branch creation, pull request generation, and test execution.'
         ]
       }
     },
@@ -286,7 +252,7 @@ export function DocsPage() {
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Search documentation (e.g. Monaco diffs, Ask mode, GPT-4o)..."
+              placeholder="Search documentation (e.g. Monaco diffs, AI chat, GPT-6 Astra)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-[#161616] border border-slate-200 dark:border-white/10 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 shadow-xs"
