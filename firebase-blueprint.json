@@ -472,6 +472,47 @@
         }
       },
       "required": ["ownerId", "chatId", "messageId", "rating", "createdAt", "updatedAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "A user's AI chat conversation thread associated with a project",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns this conversation",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "projectId": {
+          "type": "string",
+          "description": "The project ID associated with this conversation",
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "Conversation title",
+          "maxLength": 200
+        },
+        "messages": {
+          "type": "string",
+          "description": "JSON stringified recent conversation messages snapshot",
+          "maxLength": 850000
+        },
+        "messageCount": {
+          "type": "number",
+          "description": "Total number of messages in the conversation"
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp"
+        }
+      },
+      "required": ["ownerId", "projectId", "title", "messages", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -482,6 +523,10 @@
     "/projects/{projectId}": {
       "schema": { "$ref": "#/entities/Project" },
       "description": "Stores user projects"
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Stores user AI chat conversations"
     },
     "/userConsents/{userId}": {
       "schema": { "$ref": "#/entities/UserConsent" },

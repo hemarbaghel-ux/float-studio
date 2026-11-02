@@ -387,7 +387,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       }, ownerId);
     }
 
-    const projectName = state.projectName;
+    const projectName = state.projectName ? state.projectName.slice(0, 100) : null;
     if (!projectName) {
       return { status: 'local-only', reason: 'no-project', message: 'No named workspace is available to sync.' };
     }
@@ -503,7 +503,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
           }
           transaction.set(projectRef, {
             ownerId: user.uid,
-            name: state.projectName,
+            name: projectName,
             ...manifest,
             fileSnapshotComplete: false,
             createdAt: serverTimestamp(),

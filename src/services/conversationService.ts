@@ -132,9 +132,13 @@ export class ConversationService {
           docExists = true;
           isOwner = snap.data().ownerId === user.uid;
         }
-      } catch (readErr) {
-        docExists = false;
-        isOwner = false;
+      } catch (readErr: any) {
+        if (readErr?.code === 'permission-denied' || /permission/i.test(readErr?.message || '')) {
+          docExists = true;
+          isOwner = false;
+        } else {
+          throw readErr;
+        }
       }
 
       const serializedMessages = serializeConversationMessages(record.messages);
@@ -146,10 +150,11 @@ export class ConversationService {
       const generation = crypto.randomUUID();
       let previousGeneration: string | undefined;
 
+      const safeProjectId = (record.projectId || 'default-project').slice(0, 128);
       const parentData = {
         ownerId: user.uid,
-        projectId: record.projectId,
-        title: record.title.slice(0, 190),
+        projectId: safeProjectId,
+        title: (record.title || 'Untitled Chat').slice(0, 190),
         messages: legacySnapshot,
         messageCount: record.messages.length,
         createdAt: serverTimestamp(),
@@ -159,13 +164,13 @@ export class ConversationService {
       if (docExists && isOwner) {
         previousGeneration = await this.beginMessageSync(record.id, user.uid, generation, record.messages.length);
         await updateDoc(convRef, {
-          title: record.title.slice(0, 190),
+          title: (record.title || 'Untitled Chat').slice(0, 190),
           messages: legacySnapshot,
           messageCount: record.messages.length,
           updatedAt: serverTimestamp()
         });
       } else if (docExists) {
-        console.error(`Refusing to overwrite conversation ${record.id} owned by another account.`);
+        console.warn(`Skipping cloud sync for conversation ${record.id}: owned by another account.`);
         return { status: 'failed', reason: 'permission-denied' };
       } else {
         await setDoc(convRef, parentData);
