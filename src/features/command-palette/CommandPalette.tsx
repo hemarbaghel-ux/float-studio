@@ -126,6 +126,22 @@ export function CommandPalette() {
         action: () => toggleRightSidebar()
       },
       {
+        id: 'toggle-composer',
+        category: 'AI Assistant',
+        label: 'Open Composer (Multi-File Editing & Assistant)',
+        shortcut: 'Ctrl+I',
+        icon: <FloatLogo className="w-3.5 h-3.5" />,
+        action: () => {
+          if (!useIDEStore.getState().rightSidebarOpen) {
+            toggleRightSidebar();
+          }
+          setTimeout(() => {
+            const aiInput = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
+            aiInput?.focus();
+          }, 80);
+        }
+      },
+      {
         id: 'inline-edit',
         category: 'AI Assistant',
         label: 'Inline Edit Code with AI',

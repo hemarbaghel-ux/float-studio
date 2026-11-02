@@ -58,4 +58,12 @@ assert.ok(explicitlySelected.some((item) => item.type === 'attachment' && item.p
 assert.ok(explicitlySelected.some((item) => item.path === 'auth.ts'), 'relevant source is still retrieved alongside explicit selection');
 assert.ok(!explicitlySelected.some((item) => item.path === '.env.local'), 'a credential file cannot be explicitly selected for model context');
 
+const codebaseExplicit = buildChatContextItems(
+  'Refactor the system using @codebase context',
+  workspace,
+  'chat-context-codebase-regression'
+);
+assert.ok(codebaseExplicit.some((item) => item.path === 'auth.ts' || item.path === 'formatter.ts'), '@codebase triggers whole-codebase search across files');
+assert.ok(!codebaseExplicit.some((item) => item.path === '.env.local'), '@codebase never leaks sensitive credentials');
+
 console.log('Chat context selection: 9 assertions passed.');

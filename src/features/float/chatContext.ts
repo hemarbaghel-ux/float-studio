@@ -49,15 +49,35 @@ export function buildChatContextItems(
     includedPaths.add(safePath);
   }
 
-  const shouldRetrieve = CODE_INTENT.test(prompt) || /\b[A-Z][a-z0-9]+[A-Z][\w$]*\b/.test(prompt);
+  const isCodebaseMentioned = /@codebase\b/i.test(prompt);
+  const shouldRetrieve = isCodebaseMentioned || CODE_INTENT.test(prompt) || /\b[A-Z][a-z0-9]+[A-Z][\w$]*\b/.test(prompt);
   if (!shouldRetrieve || !files.length) return context;
 
-  const matches = searchCodebase(files, prompt, {
+  const cleanPrompt = prompt.replace(/@codebase\b/gi, '').trim() || prompt;
+  let matches = searchCodebase(files, cleanPrompt, {
     projectId,
     activeFilePath,
-    maxResults: MAX_AUTO_RESULTS,
+    maxResults: isCodebaseMentioned ? 12 : MAX_AUTO_RESULTS,
     contextLines: 3,
   });
+
+  if (isCodebaseMentioned && matches.length === 0) {
+    const candidateFiles = files.slice(0, 4);
+    for (const f of candidateFiles) {
+      const excerpt = (f.content || '').slice(0, 1000);
+      matches.push({
+        fileId: f.id,
+        filePath: f.path,
+        fileName: f.name,
+        matchType: 'content',
+        score: 1,
+        line: 1,
+        startLine: 1,
+        endLine: Math.min(20, (f.content || '').split('\n').length),
+        contentExcerpt: excerpt
+      });
+    }
+  }
   for (const match of matches) {
     const { safePath, error } = sanitizePath(match.filePath);
     if (error || !safePath || includedPaths.has(safePath) || !match.contentExcerpt) continue;

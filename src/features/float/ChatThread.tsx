@@ -19,6 +19,7 @@ import { flattenFileTree } from '../../lib/utils';
 import type { ChangeSet, FileNode } from '../../types';
 import { ModelSelector } from '../ai/ModelSelector';
 import { DiffReviewModal } from '../proposals/DiffReviewModal';
+import { MultiFileDiffCard } from '../composer/MultiFileDiffCard';
 import { createAssistantProposal } from '../proposals/proposalWorkflow';
 import { CODING_ASSISTANT_SYSTEM_PROMPT, diffRows, diffStats, parseSegments, type Segment } from './chatParsing';
 import { buildChatContextItems } from './chatContext';
@@ -833,10 +834,10 @@ function AssistantMessage({
         ),
       )}
       {msg.changeSet && !streaming && (
-        <div className="rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50/70 dark:bg-blue-950/20 px-3 py-2.5 flex items-center gap-3">
-          <span className="flex-1 text-xs text-slate-700 dark:text-[#C9D1D9]">{msg.changeSet.changes.length} file changes are saved as a review proposal. Workspace files are unchanged.</span>
-          <button onClick={onReviewProposal} className="px-2.5 py-1 rounded-md bg-slate-900 dark:bg-white text-white dark:text-black text-xs font-semibold cursor-pointer">Review diff</button>
-        </div>
+        <MultiFileDiffCard
+          changeSet={msg.changeSet}
+          onOpenFullReview={onReviewProposal}
+        />
       )}
       {!streaming && pending.length > 1 && (
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-white/10 px-3 py-2 text-xs">
@@ -894,6 +895,7 @@ function AssistantMessage({
 
 function CodeBlock({ children }: { children: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
+  const [running, setRunning] = useState(false);
   const text = extractText(children);
 
   // Extract language from props (e.g. className="language-typescript")
@@ -901,6 +903,23 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
   const className = (childElement?.props as any)?.className || '';
   const langMatch = /language-([a-zA-Z0-9_-]+)/.exec(className);
   const language = langMatch ? langMatch[1] : '';
+
+  const isTerminal = ['bash', 'sh', 'shell', 'zsh', 'terminal', 'cmd'].includes(language.toLowerCase());
+
+  const handleRun = async () => {
+    setRunning(true);
+    try {
+      const { output, code } = await runShell(text, sandboxFs());
+      const store = useIDEStore.getState();
+      store.addTerminalEntry({ type: 'command', content: text });
+      if (output) store.addTerminalEntry({ type: code === 0 ? 'output' : 'error', content: output });
+    } catch (err: any) {
+      const store = useIDEStore.getState();
+      store.addTerminalEntry({ type: 'error', content: `Error: ${err?.message || err}` });
+    } finally {
+      setRunning(false);
+    }
+  };
 
   const lines = text.split('\n');
   if (lines.length > 1 && lines[lines.length - 1] === '') {
@@ -922,27 +941,41 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
             ({lines.length} line{lines.length === 1 ? '' : 's'})
           </span>
         </div>
-        <button
-          onClick={() => {
-            void navigator.clipboard.writeText(text);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
-          }}
-          className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] text-[#C9D1D9] hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
-          aria-label="Copy code"
-        >
-          {copied ? (
-            <>
-              <Check size={12} className="text-emerald-400" />
-              <span className="text-emerald-400 font-medium">Copied!</span>
-            </>
-          ) : (
-            <>
-              <Copy size={12} />
-              <span>Copy</span>
-            </>
+        <div className="flex items-center gap-2">
+          {isTerminal && (
+            <button
+              onClick={handleRun}
+              disabled={running}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-emerald-400 hover:bg-white/10 hover:text-emerald-300 transition-colors cursor-pointer"
+              aria-label="Run command in terminal"
+              title="Run command in workspace sandbox"
+            >
+              {running ? <Loader2 size={11} className="animate-spin text-emerald-400" /> : <Play size={10} className="fill-emerald-400 text-emerald-400" />}
+              <span>{running ? 'Running…' : 'Run'}</span>
+            </button>
           )}
-        </button>
+          <button
+            onClick={() => {
+              void navigator.clipboard.writeText(text);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1200);
+            }}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] text-[#C9D1D9] hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+            aria-label="Copy code"
+          >
+            {copied ? (
+              <>
+                <Check size={12} className="text-emerald-400" />
+                <span className="text-emerald-400 font-medium">Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy size={12} />
+                <span>Copy</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Code body with line numbers and syntax highlighted tokens */}
