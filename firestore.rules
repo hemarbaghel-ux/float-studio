@@ -156,7 +156,7 @@ service cloud.firestore {
                  get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
         }
 
-        allow read: if ownsParentProject() && resource.data.ownerId == request.auth.uid;
+        allow read: if ownsParentProject() && (resource == null || resource.data.ownerId == request.auth.uid);
 
         allow create, update: if ownsParentProject() &&
           contentId.matches('^[a-f0-9-]{36}_[0-9]{8}$') &&
@@ -166,7 +166,7 @@ service cloud.firestore {
           incoming().index is number && incoming().index >= 0 && incoming().index <= 1000000 &&
           incoming().content is string && incoming().content.size() <= 614400;
 
-        allow delete: if ownsParentProject() && resource.data.ownerId == request.auth.uid;
+        allow delete: if ownsParentProject() && (resource == null || resource.data.ownerId == request.auth.uid);
       }
     }
 
@@ -193,6 +193,7 @@ service cloud.firestore {
       match /messages/{messageId} {
         function ownsParentConversation() {
           return isSignedIn() &&
+                 exists(/databases/$(database)/documents/conversations/$(conversationId)) &&
                  get(/databases/$(database)/documents/conversations/$(conversationId)).data.ownerId == request.auth.uid;
         }
 

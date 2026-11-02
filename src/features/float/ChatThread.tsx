@@ -154,13 +154,22 @@ export function ChatThread({ chatId }: { chatId: string }) {
       try {
         const snap = await getDoc(doc(db, 'projects', chatId));
         if (cancelled) return;
-        if (!snap.exists()) throw new Error('This chat was not found. It may have been deleted.');
+        if (!snap.exists()) {
+          const current = useIDEStore.getState();
+          if (current.projectId === chatId && current.files.length > 0) {
+            return;
+          }
+          throw new Error('This chat was not found. It may have been deleted.');
+        }
         const data = snap.data() as any;
         const projectFiles = await loadProjectFileTree(db, chatId, data);
         if (cancelled) return;
         useIDEStore.getState().setProject(data.name || 'Untitled Project', projectFiles, chatId, 'cloud');
       } catch (e: any) {
-        if (!cancelled) setLoadError(e?.message || 'Could not load this chat.');
+        const current = useIDEStore.getState();
+        if (!cancelled && !(current.projectId === chatId && current.files.length > 0)) {
+          setLoadError(e?.message || 'Could not load this chat.');
+        }
       } finally {
         if (!cancelled) setLoadingProject(false);
       }

@@ -3,54 +3,27 @@ import {
   AIProviderRequest,
   AIProviderResponse,
   AIProviderError,
-  ProviderHealthCheckResult,
-  CodeInterpreterResponseRequest,
-  CodeInterpreterResponseResult,
-  CodeInterpreterStreamEvent
+  ProviderHealthCheckResult
 } from './base';
 import { OpenAIAdapter } from './openai';
-import { GoogleGeminiAdapter } from './gemini';
-import { AnthropicAdapter } from './anthropic';
+import {
+  MODEL_ROUTES,
+  ModelProtocol,
+  getModelDescriptor,
+  getPublicModelCatalog
+} from './modelRegistry';
 import { ServerPrivacyGuard } from '../privacyGuard';
 
 export interface ModelRouteDefinition {
-  provider: 'openai' | 'google' | 'anthropic';
+  provider: 'openai';
   apiModelId: string;
+  protocol?: ModelProtocol;
+  isInternalAlias?: boolean;
+  upstreamModelId?: string;
 }
 
 export class ModelRouter {
   private adapters: Map<string, AIProviderAdapter> = new Map();
-
-  // Single source of truth for real upstream model IDs (zero fake aliases).
-  // gpt-6.1-sol is excluded unless /api/ai/health proves it works.
-  private modelRoutes: Record<string, ModelRouteDefinition> = {
-    // Google Gemini 4 Flagship Coding & Reasoning
-    'gemini-4-argon': { provider: 'google', apiModelId: 'gemini-4-argon' },
-
-    // Real OpenAI GPT-6 Models
-    'gpt-6-astra': { provider: 'openai', apiModelId: 'gpt-6-astra' },
-    'gpt-6-sol': { provider: 'openai', apiModelId: 'gpt-6-sol' },
-    'gpt-6-luna': { provider: 'openai', apiModelId: 'gpt-6-luna' },
-
-    // Standard OpenAI Models
-    'gpt-4o': { provider: 'openai', apiModelId: 'gpt-4o' },
-    'gpt-4o-mini': { provider: 'openai', apiModelId: 'gpt-4o-mini' },
-    'o1': { provider: 'openai', apiModelId: 'o1' },
-    'o1-mini': { provider: 'openai', apiModelId: 'o1-mini' },
-    'o3-mini': { provider: 'openai', apiModelId: 'o3-mini' },
-    'gpt-4.5-preview': { provider: 'openai', apiModelId: 'gpt-4.5-preview' },
-    'gpt-4-turbo': { provider: 'openai', apiModelId: 'gpt-4-turbo' },
-    'chatgpt-4o-latest': { provider: 'openai', apiModelId: 'chatgpt-4o-latest' },
-    'gpt-3.5-turbo': { provider: 'openai', apiModelId: 'gpt-3.5-turbo' },
-
-    // Real Anthropic Claude Models
-    'claude-sonnet-5-5': { provider: 'anthropic', apiModelId: 'claude-sonnet-5-5' },
-    'claude-opus-5-5': { provider: 'anthropic', apiModelId: 'claude-opus-5-5' },
-    'claude-haiku-5-5': { provider: 'anthropic', apiModelId: 'claude-haiku-5-5' },
-    'claude-sonnet-4-20250514': { provider: 'anthropic', apiModelId: 'claude-sonnet-4-20250514' },
-    'claude-3-7-sonnet-20250219': { provider: 'anthropic', apiModelId: 'claude-3-7-sonnet-20250219' },
-    'claude-3-5-sonnet-20241022': { provider: 'anthropic', apiModelId: 'claude-3-5-sonnet-20241022' }
-  };
 
   constructor() {
     this.ensureAdaptersRegistered();
@@ -60,16 +33,6 @@ export class ModelRouter {
     try {
       if (!this.adapters.has('openai') && typeof OpenAIAdapter === 'function') {
         this.registerAdapter(new OpenAIAdapter());
-      }
-    } catch {}
-    try {
-      if (!this.adapters.has('google') && typeof GoogleGeminiAdapter === 'function') {
-        this.registerAdapter(new GoogleGeminiAdapter());
-      }
-    } catch {}
-    try {
-      if (!this.adapters.has('anthropic') && typeof AnthropicAdapter === 'function') {
-        this.registerAdapter(new AnthropicAdapter());
       }
     } catch {}
   }
@@ -83,34 +46,27 @@ export class ModelRouter {
     return this.adapters.get(providerId);
   }
 
+  getModelCatalog() {
+    this.ensureAdaptersRegistered();
+    const openaiAdapter = this.adapters.get('openai');
+    return getPublicModelCatalog(Boolean(openaiAdapter?.isConfigured()));
+  }
+
   getConfiguredModelIds(): string[] {
     this.ensureAdaptersRegistered();
-    const ids: string[] = [];
-    const googleAdapter = this.adapters.get('google');
     const openaiAdapter = this.adapters.get('openai');
-    const anthropicAdapter = this.adapters.get('anthropic');
-
-    if (googleAdapter?.isConfigured()) {
-      ids.push('gemini-4-argon');
-    }
     if (openaiAdapter?.isConfigured()) {
-      ids.push('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna');
-      if (this.modelRoutes['gpt-6.1-sol']) {
-        ids.push('gpt-6.1-sol');
-      }
+      return ['gpt-6-astra', 'gpt-6.1-sol'];
     }
-    if (anthropicAdapter?.isConfigured()) {
-      ids.push('claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5');
-    }
-    return ids;
+    return [];
   }
 
   getProviderStatus(): Record<string, { name: string; configured: boolean; models?: string[] }> {
     this.ensureAdaptersRegistered();
     const status: Record<string, { name: string; configured: boolean; models?: string[] }> = {};
     for (const [id, adapter] of this.adapters.entries()) {
-      const modelsForProvider = Object.entries(this.modelRoutes)
-        .filter(([, route]) => route.provider === id)
+      const modelsForProvider = Object.entries(MODEL_ROUTES)
+        .filter(([modelId, route]) => route.provider === id && modelId !== 'auto')
         .map(([modelId]) => modelId);
       status[id] = {
         name: adapter.name,
@@ -121,28 +77,13 @@ export class ModelRouter {
     return status;
   }
 
-  async checkAllProvidersHealth(): Promise<
-    Record<
-      string,
-      ProviderHealthCheckResult & {
-        models?: Record<string, { status: 'ok' | 'error'; code?: string; statusCode?: number; message?: string }>;
-      }
-    >
-  > {
+  async checkAllProvidersHealth(): Promise<Record<string, ProviderHealthCheckResult>> {
     this.ensureAdaptersRegistered();
-    const results: Record<
-      string,
-      ProviderHealthCheckResult & {
-        models?: Record<string, { status: 'ok' | 'error'; code?: string; statusCode?: number; message?: string }>;
-      }
-    > = {};
+    const results: Record<string, ProviderHealthCheckResult> = {};
     for (const [id, adapter] of this.adapters.entries()) {
       if (adapter.checkHealth) {
         try {
           results[id] = await adapter.checkHealth();
-          if (id === 'openai' && results[id]?.models?.['gpt-6.1-sol']?.status === 'ok') {
-            this.modelRoutes['gpt-6.1-sol'] = { provider: 'openai', apiModelId: 'gpt-6.1-sol' };
-          }
         } catch (err: any) {
           results[id] = {
             provider: adapter.name,
@@ -157,7 +98,7 @@ export class ModelRouter {
           provider: adapter.name,
           configured: adapter.isConfigured(),
           authenticated: adapter.isConfigured(),
-          modelAvailable: adapter.isConfigured()
+          modelAvailable: false
         };
       }
     }
@@ -168,11 +109,6 @@ export class ModelRouter {
     this.ensureAdaptersRegistered();
     const trimmed = (modelId || '').trim();
     if (!trimmed || trimmed === 'auto') {
-      const openaiAdapter = this.adapters.get('openai');
-      const googleAdapter = this.adapters.get('google');
-      if (googleAdapter?.isConfigured() && !openaiAdapter?.isConfigured()) {
-        return 'gemini-4-argon';
-      }
       return 'gpt-6-astra';
     }
     return trimmed;
@@ -181,8 +117,8 @@ export class ModelRouter {
   validateModelAvailability(modelId: string): void {
     const lower = (modelId || '').toLowerCase();
     if (
-      lower === 'gemini-2.0-flash' ||
-      lower.startsWith('gemini-1.5') ||
+      lower.startsWith('gemini') ||
+      lower.startsWith('claude') ||
       lower.startsWith('grok') ||
       lower.startsWith('deepseek') ||
       lower.startsWith('composer') ||
@@ -212,12 +148,12 @@ export class ModelRouter {
     this.ensureAdaptersRegistered();
     const key = this.resolveModelId(modelId);
     this.validateModelAvailability(key);
-    const route = this.modelRoutes[key];
+    const route = MODEL_ROUTES[key];
 
     if (!route) {
       throw new AIProviderError(
-        `Model "${modelId}" is not recognized or supported by the FLOAT router. Configured route candidates include: ${Object.keys(this.modelRoutes).join(', ')}`,
-        'MODEL_NOT_AVAILABLE',
+        `Model "${modelId}" is not recognized or supported by the FLOAT router.`,
+        'MODEL_NOT_FOUND',
         'FLOAT',
         404
       );
@@ -234,12 +170,6 @@ export class ModelRouter {
     }
 
     return { route, adapter };
-  }
-
-  private getRequiredEnvKeyName(providerId: string): string {
-    if (providerId === 'google') return 'GEMINI_API_KEY';
-    if (providerId === 'anthropic') return 'ANTHROPIC_API_KEY';
-    return 'OPENAI_API_KEY';
   }
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
@@ -264,12 +194,11 @@ export class ModelRouter {
     );
 
     if (!adapter.isConfigured() && !request.demoMode) {
-      const envVar = this.getRequiredEnvKeyName(route.provider);
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${envVar} in the server environment.`,
-        'NOT_CONFIGURED',
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure OPENAI_API_KEY in the server environment.`,
+        'AUTH_ERROR',
         adapter.name,
-        503
+        401
       );
     }
 
@@ -303,6 +232,15 @@ export class ModelRouter {
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
     const { route, adapter } = this.resolveRoute(request.model);
+    const descriptor = getModelDescriptor(route.apiModelId);
+    if (descriptor && !descriptor.capabilities.streaming) {
+      throw new AIProviderError(
+        `Model "${request.model}" does not support streaming.`,
+        'INVALID_REQUEST',
+        'FLOAT',
+        400
+      );
+    }
 
     const dataSharingAllowed =
       request.dataSharingAllowed !== undefined
@@ -323,12 +261,11 @@ export class ModelRouter {
     );
 
     if (!adapter.isConfigured() && !request.demoMode) {
-      const envVar = this.getRequiredEnvKeyName(route.provider);
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${envVar} in the server environment.`,
-        'NOT_CONFIGURED',
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure OPENAI_API_KEY in the server environment.`,
+        'AUTH_ERROR',
         adapter.name,
-        503
+        401
       );
     }
 
@@ -357,112 +294,6 @@ export class ModelRouter {
       onChunk(result.text);
     }
     return result;
-  }
-
-  async runAgentLoop(req: any, res: any, model: string, prompt: string, virtualFiles: any[]): Promise<void> {
-    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-      throw new AIProviderError(
-        'A non-empty prompt is required to run the agent loop.',
-        'INVALID_REQUEST',
-        'FLOAT',
-        400
-      );
-    }
-
-    const { route, adapter } = this.resolveRoute(model);
-    const dataSharingAllowed = ServerPrivacyGuard.evaluateConsent(req);
-
-    ServerPrivacyGuard.logAudit(
-      'ModelRouter',
-      `runAgentLoop(${model} -> ${route.provider}:${route.apiModelId})`,
-      dataSharingAllowed,
-      {
-        requestedModel: model,
-        routedProvider: route.provider,
-        apiModelId: route.apiModelId,
-        fileCount: virtualFiles?.length || 0,
-        dataSharingAllowed
-      }
-    );
-
-    if (!adapter.isConfigured()) {
-      const envVar = this.getRequiredEnvKeyName(route.provider);
-      throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To run agents with "${model}", configure ${envVar} in the server environment.`,
-        'NOT_CONFIGURED',
-        adapter.name,
-        503
-      );
-    }
-
-    if (!adapter.runAgentLoop) {
-      throw new AIProviderError(
-        `Autonomous agent loop is not supported for provider ${adapter.name}.`,
-        'INVALID_REQUEST',
-        adapter.name,
-        400
-      );
-    }
-
-    if (!dataSharingAllowed) {
-      ServerPrivacyGuard.dispatchExternalTelemetry('agent_loop_telemetry', false, null);
-    }
-
-    return adapter.runAgentLoop(req, res, route.apiModelId, prompt, virtualFiles);
-  }
-
-  async runCodeInterpreterResponse(
-    request: CodeInterpreterResponseRequest,
-    onEvent?: (event: CodeInterpreterStreamEvent) => void,
-    signal?: AbortSignal
-  ): Promise<CodeInterpreterResponseResult> {
-    let route: ModelRouteDefinition;
-    let adapter: AIProviderAdapter;
-    try {
-      const resolved = this.resolveRoute(request.model);
-      route = resolved.route;
-      adapter = resolved.adapter;
-    } catch (err: any) {
-      const code = err instanceof AIProviderError ? err.code : 'CODE_INTERPRETER_NOT_SUPPORTED';
-      throw new AIProviderError(
-        err?.message || `Model "${request.model}" does not support hosted code_interpreter.`,
-        code,
-        'OpenAI',
-        503,
-        { status: 503, code, model: request.model }
-      );
-    }
-
-    if (!adapter.isConfigured()) {
-      const envVar = this.getRequiredEnvKeyName(route.provider);
-      throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${envVar} in the server environment.`,
-        'NOT_CONFIGURED',
-        adapter.name,
-        503,
-        { status: 503, code: 'not_configured', model: request.model }
-      );
-    }
-
-    if (typeof adapter.runCodeInterpreterResponse !== 'function') {
-      throw new AIProviderError(
-        `Provider "${adapter.name}" does not support hosted code_interpreter via the Responses API.`,
-        'CODE_INTERPRETER_NOT_SUPPORTED',
-        adapter.name,
-        503,
-        { status: 503, code: 'code_interpreter_not_supported', model: request.model }
-      );
-    }
-
-    return adapter.runCodeInterpreterResponse(
-      {
-        ...request,
-        model: request.model,
-        apiModelId: route.apiModelId
-      },
-      onEvent,
-      signal
-    );
   }
 }
 
