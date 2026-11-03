@@ -14,6 +14,21 @@ export interface IFloatStreamResultMetadata {
 	contextExplanation?: any;
 }
 
+export interface IFloatCompletionOptions {
+	prefix: string;
+	suffix: string;
+	language?: string;
+	fileName?: string;
+	model?: string;
+}
+
+export interface IFloatCompletionResult {
+	completion: string;
+	cached?: boolean;
+	durationMs?: number;
+	cancelled?: boolean;
+}
+
 export interface IFloatStreamCallbacks {
 	onChunk: (chunk: string) => void;
 	onError: (error: Error) => void;
@@ -267,6 +282,60 @@ export class FloatModelClient {
 			}
 		} finally {
 			this._activeAbortController = null;
+		}
+	}
+
+	/**
+	 * Fast inline code autocompletion endpoint (Cursor Tab style)
+	 */
+	public async completeCode(
+		options: IFloatCompletionOptions,
+		authToken?: string,
+		projectId: string = 'default-project',
+		signal?: AbortSignal
+	): Promise<IFloatCompletionResult> {
+		const startTime = Date.now();
+		const headers: Record<string, string> = {
+			'Content-Type': 'application/json',
+			'X-Float-Project-Id': projectId
+		};
+		if (authToken) {
+			headers['Authorization'] = `Bearer ${authToken}`;
+		}
+
+		const base = this._endpoint.replace(/\/api\/ai\/chat.*$/, '');
+		const completeUrl = `${base}/api/ai/complete`;
+
+		try {
+			const res = await fetch(completeUrl, {
+				method: 'POST',
+				headers,
+				body: JSON.stringify({
+					prefix: options.prefix,
+					suffix: options.suffix,
+					language: options.language || 'plaintext',
+					fileName: options.fileName || 'file',
+					model: options.model || getDefaultFloatModel().id
+				}),
+				signal
+			});
+
+			if (!res.ok) {
+				const errBody = await res.text().catch(() => '');
+				throw new Error(`Completion HTTP ${res.status}: ${errBody}`);
+			}
+
+			const data: any = await res.json();
+			return {
+				completion: data.completion || '',
+				cancelled: data.cancelled || false,
+				durationMs: Date.now() - startTime
+			};
+		} catch (err: any) {
+			if (signal?.aborted || err?.name === 'AbortError') {
+				return { completion: '', cancelled: true, durationMs: Date.now() - startTime };
+			}
+			throw err;
 		}
 	}
 }

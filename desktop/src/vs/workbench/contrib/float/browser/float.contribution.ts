@@ -15,6 +15,7 @@ import { OpenFloatComposerAction } from './composer/floatComposerActions.js';
 import { OpenFloatChatAction } from './chat/floatChatActions.js';
 import { FloatTerminalListener } from './terminal/floatTerminalListener.js';
 import { FixWithFloatTerminalAction } from './terminal/floatTerminalActions.js';
+import { ToggleFloatAutocompleteAction } from './autocomplete/floatAutocompleteActions.js';
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
 registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
@@ -27,10 +28,11 @@ registerEditorContribution(
 );
 
 // 3. Register Keybindings & Actions
-registerAction2(FloatInlineDiffAction);    // Ctrl+K
-registerAction2(OpenFloatComposerAction);  // Ctrl+I
-registerAction2(OpenFloatChatAction);      // Ctrl+L
-registerAction2(FixWithFloatTerminalAction);
+registerAction2(FloatInlineDiffAction);           // Ctrl+K
+registerAction2(OpenFloatComposerAction);         // Ctrl+I
+registerAction2(OpenFloatChatAction);             // Ctrl+L
+registerAction2(FixWithFloatTerminalAction);      // Terminal Fix
+registerAction2(ToggleFloatAutocompleteAction);   // Alt+Shift+A (Predictive Autocomplete)
 
 // 4. Register Workbench Terminal Exit-Code Listener
 registerWorkbenchContribution2(

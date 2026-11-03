@@ -9,7 +9,7 @@ import { FloatProposalSession } from './proposals/floatProposal.js';
 import { FloatCheckpointService } from './checkpoints/floatCheckpointService.js';
 import { FloatBrainService } from './brain/floatBrainService.js';
 import { FloatWorkspaceIndexer } from './workspace/floatWorkspaceIndexer.js';
-import { FloatModelClient, IFloatStreamCallbacks } from './model-runtime/floatModelClient.js';
+import { FloatModelClient, IFloatStreamCallbacks, IFloatCompletionOptions, IFloatCompletionResult } from './model-runtime/floatModelClient.js';
 import { FLOAT_MODELS, getDefaultFloatModel, getFloatModel } from './model-runtime/floatModelRegistry.js';
 import { FloatBoundedAgentLoop } from './agent-runtime/floatAgentLoop.js';
 import { FloatAuthService, IFloatAuthService } from './auth/floatAuthService.js';
@@ -44,6 +44,12 @@ export interface IFloatService {
 		contextItems?: Array<{ path: string; content: string }>,
 		conversationId?: string
 	): Promise<void>;
+	completeCode(
+		options: IFloatCompletionOptions,
+		authToken?: string,
+		projectId?: string,
+		signal?: AbortSignal
+	): Promise<IFloatCompletionResult>;
 	cancelActiveStream(): void;
 }
 
@@ -128,6 +134,25 @@ export class FloatService extends Disposable implements IFloatService {
 			projId,
 			contextItems,
 			conversationId
+		);
+	}
+
+	public async completeCode(
+		options: IFloatCompletionOptions,
+		authToken?: string,
+		projectId?: string,
+		signal?: AbortSignal
+	): Promise<IFloatCompletionResult> {
+		const token = authToken || this._authService.getAuthToken() || undefined;
+		const projId = projectId || this._authService.getActiveProjectId() || 'default-project';
+		return this._modelClient.completeCode(
+			{
+				...options,
+				model: options.model || this._activeModel.id
+			},
+			token,
+			projId,
+			signal
 		);
 	}
 
