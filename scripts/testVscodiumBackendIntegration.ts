@@ -318,6 +318,7 @@ async function runSuite() {
   } finally {
     setGooglePublicKeysForTests(null);
     setProjectLookupForTests(null);
+    if (typeof (server as any).closeAllConnections === 'function') (server as any).closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }
