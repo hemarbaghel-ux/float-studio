@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
+import { IShadowDiagnostic, IShadowValidationResult } from '../shadow/floatShadowTypes.js';
 
 export interface IDiffHunk {
 	index: number;
@@ -27,6 +28,8 @@ export interface IFloatOrchestratedFile {
 		additions: number;
 		deletions: number;
 	};
+	speculativeDiagnostics?: IShadowDiagnostic[];
+	validationStatus?: 'clean' | 'has_errors' | 'has_warnings';
 }
 
 export interface IFloatMultiFileProposal {
@@ -42,6 +45,8 @@ export interface IFloatMultiFileProposal {
 		totalAdditions: number;
 		totalDeletions: number;
 	};
+	speculativeDiagnostics?: IShadowDiagnostic[];
+	validationStatus?: 'clean' | 'has_errors' | 'has_warnings';
 }
 
 export function computeLineHunks(original: string, proposed: string): IDiffHunk[] {
@@ -162,6 +167,24 @@ export class FloatMultiFileDiffOrchestrator {
 
 		this._proposals.set(id, proposal);
 		return proposal;
+	}
+
+	public attachValidationResult(proposalId: string, result: IShadowValidationResult): void {
+		const prop = this._proposals.get(proposalId);
+		if (!prop) return;
+
+		prop.speculativeDiagnostics = result.diagnostics;
+		prop.validationStatus = result.status;
+
+		for (const file of prop.files) {
+			const fileDiags = result.diagnostics.filter(d => d.filePath === file.path);
+			file.speculativeDiagnostics = fileDiags;
+			file.validationStatus = fileDiags.some(d => d.severity === 'error')
+				? 'has_errors'
+				: fileDiags.some(d => d.severity === 'warning')
+					? 'has_warnings'
+					: 'clean';
+		}
 	}
 
 	public getProposal(id: string): IFloatMultiFileProposal | undefined {

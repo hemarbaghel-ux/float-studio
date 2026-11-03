@@ -7,6 +7,8 @@ import { IFloatService } from '../floatService.js';
 import { FloatComposerToolRegistry, IComposerToolCall, IComposerToolResult } from './floatComposerTools.js';
 import { FloatMultiFileDiffOrchestrator, IFloatMultiFileProposal } from './floatMultiFileDiffOrchestrator.js';
 import { parseModelProposals } from '../proposals/floatProposalValidator.js';
+import { FloatShadowWorkspaceService } from '../shadow/floatShadowWorkspaceService.js';
+import { IShadowValidationResult } from '../shadow/floatShadowTypes.js';
 
 export interface IComposerAgentStep {
 	stepIndex: number;
@@ -20,6 +22,8 @@ export interface IComposerAgentGoal {
 	prompt: string;
 	maxSteps?: number;
 	activeFilePath?: string;
+	enableShadowValidation?: boolean;
+	maxSpeculativeRepairs?: number;
 }
 
 export interface IComposerAgentExecution {
@@ -29,6 +33,7 @@ export interface IComposerAgentExecution {
 	status: 'running' | 'completed' | 'failed' | 'cancelled';
 	proposal?: IFloatMultiFileProposal;
 	checkpointId?: string;
+	validationResult?: IShadowValidationResult;
 	error?: string;
 }
 
@@ -36,7 +41,8 @@ export class FloatComposerAgent {
 	constructor(
 		private readonly _floatService: IFloatService,
 		private readonly _toolRegistry: FloatComposerToolRegistry,
-		private readonly _orchestrator: FloatMultiFileDiffOrchestrator
+		private readonly _orchestrator: FloatMultiFileDiffOrchestrator,
+		private readonly _shadowWorkspace: FloatShadowWorkspaceService = FloatShadowWorkspaceService.getInstance()
 	) {}
 
 	public async executeGoal(
@@ -46,6 +52,9 @@ export class FloatComposerAgent {
 	): Promise<IComposerAgentExecution> {
 		const id = `turn-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 		const maxSteps = goal.maxSteps ?? 10;
+		const enableShadowValidation = goal.enableShadowValidation ?? true;
+		const maxSpeculativeRepairs = goal.maxSpeculativeRepairs ?? 2;
+		let speculativeRepairCount = 0;
 		const steps: IComposerAgentStep[] = [];
 
 		// 1. Snapshot initial state via CheckpointService
@@ -78,7 +87,7 @@ export class FloatComposerAgent {
 			.join('\n');
 
 		const systemInstructions = [
-			'You are FLOAT Autonomous Composer Agent.',
+			'You are FLOAT Autonomous Composer Agent with Speculative Shadow Validation.',
 			'You have access to the following workspace tools:',
 			toolListStr,
 			'',
@@ -212,14 +221,6 @@ export class FloatComposerAgent {
 				});
 			} else {
 				// No more tool calls: Agent has reached conclusion
-				const finalStep: IComposerAgentStep = {
-					stepIndex: stepCount,
-					thought: assistantResponse.trim(),
-					timestamp: Date.now()
-				};
-				steps.push(finalStep);
-				onStep?.(finalStep);
-
 				// Parse any code blocks into multi-file proposal
 				const parsed = parseModelProposals(assistantResponse, goal.activeFilePath);
 				const proposalChanges: Array<{ path: string; originalContent: string; proposedContent: string }> = [];
@@ -246,6 +247,55 @@ export class FloatComposerAgent {
 					}
 				}
 
+				// 3. Shadow Workspace Speculative Validation Gate
+				if (enableShadowValidation && proposalChanges.length > 0) {
+					const shadowSession = this._shadowWorkspace.createSession({
+						sessionId: `shadow-gate-${id}-${stepCount}`,
+						baseFiles: Object.fromEntries(proposalChanges.map(c => [c.path, c.originalContent]))
+					});
+
+					for (const change of proposalChanges) {
+						this._shadowWorkspace.setFileOverlay(shadowSession.id, change.path, change.proposedContent);
+					}
+
+					const validationResult = await this._shadowWorkspace.validateSession(shadowSession.id, {
+						checkSyntax: true,
+						checkTypes: true
+					});
+
+					this._shadowWorkspace.disposeSession(shadowSession.id);
+
+					// If speculative validation failed with compiler errors and we still have repair attempts
+					if (validationResult.status === 'has_errors' && speculativeRepairCount < maxSpeculativeRepairs) {
+						speculativeRepairCount++;
+						const feedbackPrompt = this._shadowWorkspace.formatDiagnosticsForPrompt(validationResult.diagnostics);
+
+						const repairStep: IComposerAgentStep = {
+							stepIndex: stepCount,
+							thought: `[Shadow Workspace Gate] Speculative validation detected ${validationResult.errorCount} compiler error(s). Intercepting and prompting self-repair (attempt ${speculativeRepairCount}/${maxSpeculativeRepairs}).`,
+							timestamp: Date.now()
+						};
+						steps.push(repairStep);
+						onStep?.(repairStep);
+
+						conversationHistory.push({
+							role: 'user',
+							content: `${feedbackPrompt}\n\nPlease revise your proposed changes to fix these compiler errors.`
+						});
+						continue; // Resume loop for self-repair
+					}
+
+					execution.validationResult = validationResult;
+				}
+
+				const finalStep: IComposerAgentStep = {
+					stepIndex: stepCount,
+					thought: assistantResponse.trim(),
+					timestamp: Date.now()
+				};
+				steps.push(finalStep);
+				onStep?.(finalStep);
+
 				if (proposalChanges.length > 0) {
 					execution.proposal = this._orchestrator.createProposal(
 						`Composer: ${goal.prompt.slice(0, 50)}`,
@@ -253,6 +303,10 @@ export class FloatComposerAgent {
 						proposalChanges,
 						checkpoint.id
 					);
+
+					if (execution.validationResult) {
+						this._orchestrator.attachValidationResult(execution.proposal.id, execution.validationResult);
+					}
 				}
 
 				execution.status = 'completed';
