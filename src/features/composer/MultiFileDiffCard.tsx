@@ -202,8 +202,8 @@ export function MultiFileDiffCard({
 
     try {
       const saveResult = await applyLocally(targetPaths);
-      if (saveResult.status !== 'synced') {
-        throw new Error(`Cloud persistence failed, proposal remains pending: ${saveResult.message}`);
+      if (saveResult.status === 'error') {
+        throw new Error(`Persistence failed: ${saveResult.message}`);
       }
 
       const response = await apiFetch(
@@ -277,8 +277,8 @@ export function MultiFileDiffCard({
 
     try {
       const saveResult = await applyLocally(targetPaths);
-      if (saveResult.status !== 'synced') {
-        throw new Error(`Cloud persistence failed: ${saveResult.message}`);
+      if (saveResult.status === 'error') {
+        throw new Error(`Persistence failed: ${saveResult.message}`);
       }
 
       const response = await apiFetch(

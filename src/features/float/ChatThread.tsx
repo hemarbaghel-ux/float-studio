@@ -425,7 +425,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
         if (responseSegments.some((segment) => segment.kind !== 'text')) {
           const currentWorkspace = useIDEStore.getState();
           const saveResult = await currentWorkspace.saveProject();
-          if (saveResult.status !== 'synced') throw new Error(saveResult.message);
+          if (saveResult.status === 'error') throw new Error(saveResult.message);
           if (activeChatIdRef.current !== chatId) return;
           const savedWorkspace = useIDEStore.getState();
           if (!savedWorkspace.projectId) throw new Error('Save this workspace before creating a code proposal.');

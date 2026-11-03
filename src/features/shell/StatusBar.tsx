@@ -114,11 +114,24 @@ export function StatusBar() {
         {/* Git Branch / Source Control Trigger */}
         <button
           onClick={() => {
+            if (!leftSidebarOpen) toggleLeftSidebar();
+            setActiveSidebarView('source-control');
+          }}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-300/60 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
+          title={githubConn ? `Git: Connected (${gitBranch})` : 'Git: Local Workspace (Unlinked)'}
+        >
+          <GitBranch size={11} className={githubConn ? "text-blue-500" : "text-slate-400"} />
+          <span className="font-semibold">{githubConn ? gitBranch : 'local'}</span>
+        </button>
+
+        {/* Problems & Diagnostics Trigger */}
+        <button
+          onClick={() => {
             if (!bottomPanelOpen) toggleBottomPanel();
             setBottomPanelTab('problems');
           }}
           className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-300/60 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
-          title={`Problems: ${totalErrors} Errors, ${totalWarnings} Warnings`}
+          title={`Diagnostics: ${totalErrors} Errors, ${totalWarnings} Warnings`}
         >
           <div className="flex items-center gap-0.5">
             <AlertCircle size={11} className={totalErrors > 0 ? "text-rose-500" : "text-slate-400 dark:text-[#777]"} />

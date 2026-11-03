@@ -119,7 +119,7 @@ interface IDEState {
   saveProject: () => Promise<ProjectCloudSaveResult>;
   projectCloudSaveStatus: 'idle' | 'saving' | 'synced' | 'local-only' | 'error';
   projectCloudSaveMessage: string | null;
-  updateFileContent: (id: string, content: string) => void;
+  updateFileContent: (idOrPath: string, content: string) => void;
   addFile: (parentId: string | null, file: FileNode) => void;
   renameFile: (id: string, newName: string) => void;
   deleteFile: (id: string) => void;
@@ -602,19 +602,40 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     });
   },
   
-  updateFileContent: (id, content) => set((state) => {
+  updateFileContent: (idOrPath, content) => set((state) => {
     const newFiles = JSON.parse(JSON.stringify(state.files));
-    const file = findFile(newFiles, id);
-    if (file) {
-      file.content = content;
-      if (state.projectId) {
-        try {
-          const filePath = flattenFileTree(state.files).find(f => f.id === id)?.path || file.name;
-          workspaceIndexManager.getIndex(state.projectId).updateFile(filePath, content);
-        } catch {}
+    let file = findFile(newFiles, idOrPath);
+
+    // If not found by direct ID or path, but idOrPath is a valid relative path, insert into tree
+    if (!file && typeof idOrPath === 'string' && (idOrPath.includes('/') || idOrPath.includes('.'))) {
+      const normalizedPath = normalizeFilePath(idOrPath);
+      const segments = normalizedPath.split('/').filter(Boolean);
+      if (segments.length > 0) {
+        let level: FileNode[] = newFiles;
+        for (const segment of segments.slice(0, -1)) {
+          let folder = level.find((node: FileNode) => node.name === segment && node.type === 'folder');
+          if (!folder) {
+            folder = { id: uuidv4(), name: segment, type: 'folder', children: [] };
+            level.push(folder);
+          }
+          folder.children = folder.children || [];
+          level = folder.children;
+        }
+        const name = segments[segments.length - 1];
+        file = { id: uuidv4(), name, type: 'file', content: content ?? '' };
+        level.push(file);
       }
+    } else if (file) {
+      file.content = content;
     }
-    
+
+    if (file && state.projectId) {
+      try {
+        const filePath = flattenFileTree(newFiles).find(f => f.id === file!.id)?.path || normalizeFilePath(idOrPath) || file.name;
+        workspaceIndexManager.getIndex(state.projectId).updateFile(filePath, content);
+      } catch {}
+    }
+
     // Save locally
     if (state.projectId && state.projectName) {
       saveStoredProject({
@@ -766,18 +787,20 @@ export const useIDEStore = create<IDEState>((set, get) => ({
   applyExecutionChanges: (changedFiles, deletedFiles) => set((state) => {
     const nextFiles = JSON.parse(JSON.stringify(state.files)) as FileNode[];
     const findPath = (nodes: FileNode[], target: string, parentPath = ''): FileNode | null => {
+      const normTarget = normalizeFilePath(target);
       for (const node of nodes) {
         const currentPath = parentPath ? `${parentPath}/${node.name}` : node.name;
-        if (currentPath === target) return node;
+        if (currentPath === normTarget) return node;
         const nested = node.children && findPath(node.children, target, currentPath);
         if (nested) return nested;
       }
       return null;
     };
     const removePath = (nodes: FileNode[], target: string, parentPath = ''): boolean => {
+      const normTarget = normalizeFilePath(target);
       for (let index = 0; index < nodes.length; index += 1) {
         const currentPath = parentPath ? `${parentPath}/${nodes[index].name}` : nodes[index].name;
-        if (currentPath === target) { nodes.splice(index, 1); return true; }
+        if (currentPath === normTarget) { nodes.splice(index, 1); return true; }
         if (nodes[index].children && removePath(nodes[index].children!, target, currentPath)) return true;
       }
       return false;
@@ -794,7 +817,8 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       }
     }
     for (const changed of changedFiles) {
-      const segments = changed.path.split('/').filter(Boolean);
+      const normPath = normalizeFilePath(changed.path);
+      const segments = normPath.split('/').filter(Boolean);
       if (!segments.length) continue;
       let level = nextFiles;
       let parentPath = '';
@@ -807,16 +831,20 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       }
       const name = segments[segments.length - 1];
       const existing = level.find(node => node.name === name && node.type === 'file');
-      if (existing) existing.content = changed.content ?? '';
-      else level.push({ id: uuidv4(), name, type: 'file', content: changed.content ?? '' });
+      if (existing) {
+        existing.content = changed.content ?? '';
+      } else {
+        const newFile: FileNode = { id: uuidv4(), name, type: 'file', content: changed.content ?? '' };
+        level.push(newFile);
+      }
     }
     const sort = (nodes: FileNode[]) => { nodes.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1); nodes.forEach(node => node.children && sort(node.children)); };
     sort(nextFiles);
     if (state.projectId) {
       try {
         const idx = workspaceIndexManager.getIndex(state.projectId);
-        for (const d of deletedFiles) idx.removeFile(d);
-        for (const c of changedFiles) idx.updateFile(c.path, c.content || '');
+        for (const d of deletedFiles) idx.removeFile(normalizeFilePath(d));
+        for (const c of changedFiles) idx.updateFile(normalizeFilePath(c.path), c.content || '');
       } catch {}
     }
     if (state.projectId && state.projectName) saveStoredProject({ projectId: state.projectId, projectName: state.projectName, files: nextFiles, openTabs, activeFileId });
