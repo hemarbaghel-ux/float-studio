@@ -33,7 +33,7 @@ export interface IFloatService {
 	getWorkspaceIndexer(): FloatWorkspaceIndexer;
 	createAgentLoop(maxIterations?: number): FloatBoundedAgentLoop;
 
-	streamChat(messages: IFloatChatMessage[], callbacks: IFloatStreamCallbacks): Promise<void>;
+	streamChat(messages: IFloatChatMessage[], callbacks: IFloatStreamCallbacks, authToken?: string, projectId?: string): Promise<void>;
 	cancelActiveStream(): void;
 }
 
@@ -91,8 +91,13 @@ export class FloatService extends Disposable implements IFloatService {
 		return new FloatBoundedAgentLoop(maxIterations);
 	}
 
-	public async streamChat(messages: IFloatChatMessage[], callbacks: IFloatStreamCallbacks): Promise<void> {
-		return this._modelClient.streamChat(messages, this._activeModel.id, callbacks);
+	public async streamChat(
+		messages: IFloatChatMessage[],
+		callbacks: IFloatStreamCallbacks,
+		authToken?: string,
+		projectId?: string
+	): Promise<void> {
+		return this._modelClient.streamChat(messages, this._activeModel.id, callbacks, authToken, projectId);
 	}
 
 	public cancelActiveStream(): void {
