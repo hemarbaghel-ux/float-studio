@@ -12,6 +12,7 @@ import { FloatWorkspaceIndexer } from './workspace/floatWorkspaceIndexer.js';
 import { FloatModelClient, IFloatStreamCallbacks } from './model-runtime/floatModelClient.js';
 import { FLOAT_MODELS, getDefaultFloatModel, getFloatModel } from './model-runtime/floatModelRegistry.js';
 import { FloatBoundedAgentLoop } from './agent-runtime/floatAgentLoop.js';
+import { FloatAuthService, IFloatAuthService } from './auth/floatAuthService.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 
@@ -27,13 +28,22 @@ export interface IFloatService {
 	setActiveModel(modelId: string): boolean;
 	getAvailableModels(): IFloatModelInfo[];
 
+	getAuthService(): IFloatAuthService;
+	getModelClient(): FloatModelClient;
 	getProposalSession(): FloatProposalSession;
 	getCheckpointService(): FloatCheckpointService;
 	getBrainService(): FloatBrainService;
 	getWorkspaceIndexer(): FloatWorkspaceIndexer;
 	createAgentLoop(maxIterations?: number): FloatBoundedAgentLoop;
 
-	streamChat(messages: IFloatChatMessage[], callbacks: IFloatStreamCallbacks, authToken?: string, projectId?: string): Promise<void>;
+	streamChat(
+		messages: IFloatChatMessage[],
+		callbacks: IFloatStreamCallbacks,
+		authToken?: string,
+		projectId?: string,
+		contextItems?: Array<{ path: string; content: string }>,
+		conversationId?: string
+	): Promise<void>;
 	cancelActiveStream(): void;
 }
 
@@ -47,6 +57,7 @@ export class FloatService extends Disposable implements IFloatService {
 	public readonly onDidCreateProposal: Event<IFloatProposal> = this._onDidCreateProposal.event;
 
 	private _activeModel: IFloatModelInfo = getDefaultFloatModel();
+	private readonly _authService = this._register(new FloatAuthService());
 	private readonly _modelClient = new FloatModelClient();
 	private readonly _proposalSession = new FloatProposalSession();
 	private readonly _checkpointService = new FloatCheckpointService();
@@ -69,6 +80,14 @@ export class FloatService extends Disposable implements IFloatService {
 
 	public getAvailableModels(): IFloatModelInfo[] {
 		return FLOAT_MODELS;
+	}
+
+	public getAuthService(): IFloatAuthService {
+		return this._authService;
+	}
+
+	public getModelClient(): FloatModelClient {
+		return this._modelClient;
 	}
 
 	public getProposalSession(): FloatProposalSession {
@@ -95,9 +114,21 @@ export class FloatService extends Disposable implements IFloatService {
 		messages: IFloatChatMessage[],
 		callbacks: IFloatStreamCallbacks,
 		authToken?: string,
-		projectId?: string
+		projectId?: string,
+		contextItems?: Array<{ path: string; content: string }>,
+		conversationId?: string
 	): Promise<void> {
-		return this._modelClient.streamChat(messages, this._activeModel.id, callbacks, authToken, projectId);
+		const token = authToken || this._authService.getAuthToken() || undefined;
+		const projId = projectId || this._authService.getActiveProjectId() || 'default-project';
+		return this._modelClient.streamChat(
+			messages,
+			this._activeModel.id,
+			callbacks,
+			token,
+			projId,
+			contextItems,
+			conversationId
+		);
 	}
 
 	public cancelActiveStream(): void {

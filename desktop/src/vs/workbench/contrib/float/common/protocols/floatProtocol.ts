@@ -38,6 +38,15 @@ export interface IFloatModelInfo {
 	readonly contextWindow: number;
 	readonly supportsStreaming: boolean;
 	readonly isDefault?: boolean;
+	readonly upstreamModelId?: string;
+	readonly isRoutingAlias?: boolean;
+	readonly capabilities?: {
+		readonly coding: boolean;
+		readonly reasoning: boolean;
+		readonly vision: boolean;
+		readonly tools: boolean;
+		readonly streaming: boolean;
+	};
 }
 
 export interface IFloatInlineDiffRequest {

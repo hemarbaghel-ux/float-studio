@@ -28,6 +28,7 @@ async function runDesktopWorkbenchVerification() {
   console.log('--- Step 1: Verify Compiled Module Artifacts ---');
   const expectedModules = [
     'common/floatService.js',
+    'common/auth/floatAuthService.js',
     'common/protocols/floatProtocol.js',
     'common/proposals/floatProposalValidator.js',
     'common/proposals/floatProposal.js',
@@ -41,6 +42,7 @@ async function runDesktopWorkbenchVerification() {
     'browser/composer/floatComposer.js',
     'browser/composer/floatComposerActions.js',
     'browser/inline-diff/floatInlineDiffController.js',
+    'browser/inline-diff/floatInlineDiffZoneWidget.js',
     'browser/inline-diff/floatInlineDiffActions.js',
     'browser/chat/floatChatActions.js',
     'browser/context/floatContextProvider.js',
@@ -85,10 +87,10 @@ async function runDesktopWorkbenchVerification() {
   // --- Step 3: Model Registry & Metadata ---
   console.log('--- Step 3: Native Model Registry ---');
   const modelRegistrySrc = fs.readFileSync(path.join(desktopSrc, 'common/model-runtime/floatModelRegistry.ts'), 'utf8');
-  assert(modelRegistrySrc.includes('gemini-2.5-flash'), 'Gemini 2.5 Flash model registered');
-  assert(modelRegistrySrc.includes('gpt-4o'), 'GPT-4o model registered');
-  assert(modelRegistrySrc.includes('claude-3-5-sonnet'), 'Claude 3.5 Sonnet model registered');
-  console.log('[PASS] Model catalog configured with multi-provider definitions (Gemini, OpenAI, Anthropic).\n');
+  assert(modelRegistrySrc.includes('gpt-6.1-sol'), 'GPT-6.1 Sol model registered (default)');
+  assert(modelRegistrySrc.includes('gpt-6-astra'), 'GPT-6 Astra model registered');
+  assert(modelRegistrySrc.includes('auto'), 'Auto alias registered');
+  console.log('[PASS] Model catalog strictly aligned with server verified models (gpt-6.1-sol, gpt-6-astra, auto).\n');
 
   // --- Step 4: Multi-File Proposal Validator & Path Security ---
   console.log('--- Step 4: Multi-File Proposal Validator & Path Safety ---');

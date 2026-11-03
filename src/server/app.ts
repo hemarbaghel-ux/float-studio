@@ -332,12 +332,18 @@ export async function createApp(options: CreateAppOptions = {}) {
     // project belonging to another user is rejected with 403.
     let ownership: ProjectOwnershipResult | null = null;
     let effectiveProjectId: string | undefined = undefined;
-    if (projectId !== undefined && projectId !== null && String(projectId).trim() !== '') {
-      ownership = await verifyProjectOwnership(String(projectId), req.user.uid, { allowMissing: true });
+    const headerProjectId = typeof req.headers['x-float-project-id'] === 'string' ? req.headers['x-float-project-id'].trim() : undefined;
+    const bodyProjectId = projectId !== undefined && projectId !== null && String(projectId).trim() !== '' ? String(projectId).trim() : undefined;
+    if (headerProjectId && bodyProjectId && headerProjectId !== bodyProjectId) {
+      return res.status(400).json({ error: 'Conflicting project identifier provided in X-Float-Project-Id header and request body.' });
+    }
+    const candidateProjectId = bodyProjectId || headerProjectId;
+    if (candidateProjectId) {
+      ownership = await verifyProjectOwnership(candidateProjectId, req.user.uid, { allowMissing: true });
       if (!ownership.allowed) {
         return res.status(ownership.status).json({ error: ownership.error });
       }
-      effectiveProjectId = ownership.effectiveProjectId || String(projectId).trim();
+      effectiveProjectId = ownership.effectiveProjectId || candidateProjectId;
     }
 
     // Process and assemble codebase context items if provided
