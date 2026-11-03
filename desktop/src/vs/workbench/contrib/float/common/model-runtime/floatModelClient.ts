@@ -4,16 +4,36 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IFloatChatMessage } from '../protocols/floatProtocol.js';
+import { getFloatModel, getDefaultFloatModel } from './floatModelRegistry.js';
+
+export interface IFloatStreamResultMetadata {
+	requestedModelId: string;
+	executedModelId: string;
+	isRoutingAlias: boolean;
+	usage?: any;
+	contextExplanation?: any;
+}
 
 export interface IFloatStreamCallbacks {
 	onChunk: (chunk: string) => void;
 	onError: (error: Error) => void;
-	onComplete: () => void;
+	onComplete: (fullText: string, metadata?: IFloatStreamResultMetadata) => void;
+	onContext?: (contextInfo: any) => void;
+}
+
+export interface IFloatConversation {
+	readonly id: string;
+	projectId: string;
+	requestedModelId: string;
+	executedModelId: string;
+	messages: IFloatChatMessage[];
+	createdAt: number;
 }
 
 export class FloatModelClient {
 	private _activeAbortController: AbortController | null = null;
 	private _endpoint: string = 'http://localhost:3000/api/ai/chat';
+	private readonly _conversations = new Map<string, IFloatConversation>();
 
 	public setEndpoint(endpoint: string): void {
 		this._endpoint = endpoint;
@@ -21,6 +41,33 @@ export class FloatModelClient {
 
 	public getEndpoint(): string {
 		return this._endpoint;
+	}
+
+	// --- Strict Conversation Isolation ---
+	public getOrCreateConversation(id: string, projectId: string = 'default-project', modelId?: string): IFloatConversation {
+		let conv = this._conversations.get(id);
+		if (!conv) {
+			const requested = modelId || getDefaultFloatModel().id;
+			const regModel = getFloatModel(requested);
+			conv = {
+				id,
+				projectId,
+				requestedModelId: requested,
+				executedModelId: regModel?.upstreamModelId || requested,
+				messages: [],
+				createdAt: Date.now()
+			};
+			this._conversations.set(id, conv);
+		}
+		return conv;
+	}
+
+	public getConversation(id: string): IFloatConversation | undefined {
+		return this._conversations.get(id);
+	}
+
+	public clearConversation(id: string): void {
+		this._conversations.delete(id);
 	}
 
 	public cancelActiveStream(): void {
@@ -35,19 +82,40 @@ export class FloatModelClient {
 		modelId: string,
 		callbacks: IFloatStreamCallbacks,
 		authToken?: string,
-		projectId: string = 'default-project'
+		projectId: string = 'default-project',
+		contextItems?: Array<{ path: string; content: string }>,
+		conversationId?: string
 	): Promise<void> {
 		this.cancelActiveStream();
 		this._activeAbortController = new AbortController();
 		const signal = this._activeAbortController.signal;
 
+		// 1. Model resolution and capability validation
+		const registeredModel = getFloatModel(modelId);
+		const requestedModelId = modelId || getDefaultFloatModel().id;
+		const executedModelId = registeredModel?.upstreamModelId || requestedModelId;
+		const isRoutingAlias = Boolean(registeredModel?.isRoutingAlias);
+
+		// Record conversation state for session isolation
+		if (conversationId) {
+			const conv = this.getOrCreateConversation(conversationId, projectId, requestedModelId);
+			conv.projectId = projectId;
+			conv.requestedModelId = requestedModelId;
+			conv.executedModelId = executedModelId;
+			conv.messages = [...messages];
+		}
+
 		try {
 			const headers: Record<string, string> = {
 				'Content-Type': 'application/json',
-				'Accept': 'text/event-stream'
+				'Accept': 'text/event-stream',
+				'X-Float-Project-Id': projectId
 			};
 			if (authToken) {
 				headers['Authorization'] = `Bearer ${authToken}`;
+			}
+			if (conversationId) {
+				headers['X-Float-Conversation-Id'] = conversationId;
 			}
 
 			// Format messages cleanly for FLOAT's server model router
@@ -61,9 +129,10 @@ export class FloatModelClient {
 				headers,
 				body: JSON.stringify({
 					messages: formattedMessages,
-					model: modelId,
+					model: requestedModelId,
 					stream: true,
-					projectId
+					projectId,
+					contextItems: contextItems || []
 				}),
 				signal
 			});
@@ -75,7 +144,14 @@ export class FloatModelClient {
 					const json = JSON.parse(errorText);
 					parsedMsg = json.error || json.message || errorText;
 				} catch {}
-				throw new Error(`Upstream request failed (HTTP ${response.status}): ${parsedMsg || response.statusText}`);
+
+				const statusText = response.status === 401 ? 'Unauthorized (Authentication token missing or invalid)' :
+					response.status === 403 ? 'Forbidden (Access denied to project)' :
+					response.status === 429 ? 'Rate limit exceeded' :
+					response.status === 400 ? 'Invalid model or request payload' :
+					response.statusText;
+
+				throw new Error(`Upstream request failed (HTTP ${response.status} ${statusText}): ${parsedMsg || response.statusText}`);
 			}
 
 			const reader = response.body?.getReader();
@@ -85,6 +161,9 @@ export class FloatModelClient {
 
 			const decoder = new TextDecoder();
 			let sseBuffer = '';
+			let fullAccumulatedText = '';
+			let latestContextExplanation: any = null;
+			let latestUsage: any = null;
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -95,34 +174,51 @@ export class FloatModelClient {
 				sseBuffer += chunk;
 
 				// Process SSE double newline separated frames
-				const parts = sseBuffer.split('\n\n');
-				sseBuffer = parts.pop() || '';
+				const frames = sseBuffer.split('\n\n');
+				sseBuffer = frames.pop() || '';
 
-				for (const part of parts) {
-					const trimmed = part.trim();
-					if (!trimmed) {
+				for (const frame of frames) {
+					const trimmedFrame = frame.trim();
+					if (!trimmedFrame) {
 						continue;
 					}
 
-					// SSE data lines
-					if (trimmed.startsWith('data:')) {
-						const jsonStr = trimmed.slice(5).trim();
+					// Process lines within the SSE frame (handles multiline data: frames)
+					const lines = trimmedFrame.split('\n');
+					const dataLines: string[] = [];
+
+					for (const line of lines) {
+						const trimmedLine = line.trim();
+						if (trimmedLine.startsWith('data:')) {
+							dataLines.push(trimmedLine.slice(5).trim());
+						}
+					}
+
+					if (dataLines.length > 0) {
+						const payload = dataLines.join('\n');
 						try {
-							const event = JSON.parse(jsonStr);
+							const event = JSON.parse(payload);
 							if ((event.type === 'delta' || event.type === 'chunk') && typeof event.text === 'string') {
+								fullAccumulatedText += event.text;
 								callbacks.onChunk(event.text);
+							} else if (event.type === 'context_info' && event.contextExplanation) {
+								latestContextExplanation = event.contextExplanation;
+								callbacks.onContext?.(event.contextExplanation);
 							} else if (event.type === 'done') {
-								// Stream finished
+								if (event.usage) latestUsage = event.usage;
+								if (event.contextExplanation) latestContextExplanation = event.contextExplanation;
 							} else if (event.type === 'error') {
-								throw new Error(event.error || 'Stream error from model router');
+								throw new Error(event.error || event.message || 'Stream error from model router');
 							}
 						} catch (jsonErr: any) {
-							// If not valid JSON, treat raw payload as text chunk
-							callbacks.onChunk(jsonStr);
+							// If not valid JSON, treat raw payload as text delta
+							fullAccumulatedText += payload;
+							callbacks.onChunk(payload);
 						}
 					} else {
 						// Non-SSE raw chunk streaming fallback
-						callbacks.onChunk(trimmed);
+						fullAccumulatedText += trimmedFrame;
+						callbacks.onChunk(trimmedFrame);
 					}
 				}
 			}
@@ -134,15 +230,35 @@ export class FloatModelClient {
 					try {
 						const event = JSON.parse(trimmed.slice(5).trim());
 						if (event.text) {
+							fullAccumulatedText += event.text;
 							callbacks.onChunk(event.text);
 						}
 					} catch {}
 				} else {
+					fullAccumulatedText += trimmed;
 					callbacks.onChunk(trimmed);
 				}
 			}
 
-			callbacks.onComplete();
+			// Update conversation state with assistant response
+			if (conversationId) {
+				const conv = this.getOrCreateConversation(conversationId);
+				conv.messages.push({
+					id: `reply-${Date.now()}`,
+					role: 'assistant',
+					content: fullAccumulatedText,
+					timestamp: Date.now(),
+					model: executedModelId
+				});
+			}
+
+			callbacks.onComplete(fullAccumulatedText, {
+				requestedModelId,
+				executedModelId,
+				isRoutingAlias,
+				usage: latestUsage,
+				contextExplanation: latestContextExplanation
+			});
 		} catch (err: any) {
 			if (signal.aborted) {
 				callbacks.onError(new Error('Generation cancelled by user'));
