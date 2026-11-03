@@ -106,7 +106,7 @@ export class FloatCheckpointService {
 	 */
 	public restoreCheckpoint(
 		checkpointId: string,
-		currentWorkspaceFiles: Record<string, string>,
+		currentWorkspaceFiles: Record<string, string> = {},
 		options: IFloatRestorationOptions = {}
 	): IFloatRestorationResult {
 		const checkpoint = this.getCheckpoint(checkpointId);
