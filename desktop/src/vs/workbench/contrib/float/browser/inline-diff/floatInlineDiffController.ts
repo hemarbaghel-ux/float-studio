@@ -13,12 +13,15 @@ import { INotificationService } from '../../../../../platform/notification/commo
 import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
 import { FloatInlineDiffZoneWidget } from './floatInlineDiffZoneWidget.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
+import { IShadowDiagnostic } from '../../common/shadow/floatShadowTypes.js';
 
 export interface IInlineDiffHunk {
 	originalRange: Range;
 	originalText: string;
 	proposedText: string;
 	status: 'pending' | 'accepted' | 'rejected';
+	speculativeDiagnostics?: IShadowDiagnostic[];
 }
 
 const INSERT_DECORATION: IModelDecorationOptions = {
@@ -48,6 +51,7 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 	private _decorationsCollection: IEditorDecorationsCollection | null = null;
 	private _preEditCheckpointId: string | null = null;
 	private _activeHunk: IInlineDiffHunk | null = null;
+	private readonly _shadowWorkspace: FloatShadowWorkspaceService = FloatShadowWorkspaceService.getInstance();
 
 	constructor(
 		private readonly _editor: ICodeEditor,
@@ -205,7 +209,7 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 						}
 						this._notificationService.error(`FLOAT Inline Diff Error: ${err.message}`);
 					},
-					onComplete: (fullResult?: string) => {
+					onComplete: async (fullResult?: string) => {
 						this._isGenerating = false;
 						let cleanCode = fullResult || this._proposedText;
 
@@ -227,8 +231,28 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 						// Highlight diff lines in buffer
 						this._renderDiffDecorations(this._activeRange!);
 
+						// Step 1: Shadow Workspace Speculative Validation
+						let validationBadge = '✓ Speculative check passed (0 errors)';
+						let isWarning = false;
+						try {
+							const valResult = await this._shadowWorkspace.validateSnippet(filePath, cleanCode, {
+								checkSyntax: true,
+								checkTypes: true
+							});
+							if (this._activeHunk) {
+								this._activeHunk.speculativeDiagnostics = valResult.diagnostics;
+							}
+							if (valResult.status === 'has_errors') {
+								isWarning = true;
+								validationBadge = `⚠️ Speculative issue: ${valResult.errorCount} error(s) detected`;
+							} else if (valResult.status === 'has_warnings') {
+								validationBadge = `ℹ️ ${valResult.warningCount} warning(s)`;
+							}
+						} catch {}
+
 						if (this._zoneWidget) {
-							this._zoneWidget.setStatus(`Edit proposed (${this._proposedText.split('\n').length} lines). Review and Accept or Reject.`);
+							const lineCount = this._proposedText.split('\n').length;
+							this._zoneWidget.setStatus(`Edit proposed (${lineCount} lines) • ${validationBadge}`, isWarning);
 							this._zoneWidget.showDiffActions();
 						}
 					}

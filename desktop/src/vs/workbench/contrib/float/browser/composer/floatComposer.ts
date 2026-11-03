@@ -13,6 +13,7 @@ import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { FloatMultiFileDiffOrchestrator, IFloatMultiFileProposal } from '../../common/composer/floatMultiFileDiffOrchestrator.js';
 import { FloatComposerToolRegistry, IComposerFileSystem, IComposerCommandRunner } from '../../common/composer/floatComposerTools.js';
 import { FloatComposerAgent, IComposerAgentGoal, IComposerAgentExecution, IComposerAgentStep } from '../../common/composer/floatComposerAgent.js';
+import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
 
 export class FloatComposer extends Disposable {
 	private _activeProposal: IFloatProposal | null = null;
@@ -20,6 +21,7 @@ export class FloatComposer extends Disposable {
 	private readonly _orchestrator: FloatMultiFileDiffOrchestrator;
 	private readonly _toolRegistry: FloatComposerToolRegistry;
 	private readonly _agent: FloatComposerAgent;
+	private readonly _shadowWorkspace: FloatShadowWorkspaceService = FloatShadowWorkspaceService.getInstance();
 
 	constructor(
 		@IFloatService private readonly _floatService: IFloatService,
@@ -58,7 +60,7 @@ export class FloatComposer extends Disposable {
 		};
 
 		this._toolRegistry = new FloatComposerToolRegistry(fsAdapter, runnerAdapter);
-		this._agent = new FloatComposerAgent(this._floatService, this._toolRegistry, this._orchestrator);
+		this._agent = new FloatComposerAgent(this._floatService, this._toolRegistry, this._orchestrator, this._shadowWorkspace);
 	}
 
 	public get activeProposal(): IFloatProposal | null {
@@ -75,6 +77,10 @@ export class FloatComposer extends Disposable {
 
 	public get toolRegistry(): FloatComposerToolRegistry {
 		return this._toolRegistry;
+	}
+
+	public get shadowWorkspace(): FloatShadowWorkspaceService {
+		return this._shadowWorkspace;
 	}
 
 	public async generateComposerProposal(prompt: string, activeFilePath?: string): Promise<IFloatProposal | null> {
@@ -114,6 +120,20 @@ export class FloatComposer extends Disposable {
 				this._activeProposal.summary,
 				changes
 			);
+
+			// Run Shadow Workspace Speculative Validation
+			try {
+				const shadowSession = this._shadowWorkspace.createSession({
+					sessionId: `composer-proposal-${Date.now()}`,
+					baseFiles: Object.fromEntries(changes.map(c => [c.path, c.originalContent]))
+				});
+				for (const c of changes) {
+					this._shadowWorkspace.setFileOverlay(shadowSession.id, c.path, c.proposedContent);
+				}
+				const valResult = await this._shadowWorkspace.validateSession(shadowSession.id);
+				this._shadowWorkspace.disposeSession(shadowSession.id);
+				this._orchestrator.attachValidationResult(this._activeMultiFileProposal.id, valResult);
+			} catch {}
 
 			return this._activeProposal;
 		}
