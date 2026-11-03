@@ -153,21 +153,22 @@ async function runSmokeTest() {
       modelStatusLedger['gpt-6.1-sol'] = { status: 'UNVERIFIED', detail: 'OPENAI_API_KEY is not configured' };
     }
 
-    // 2b. Gemini Models
+    // 2b. Gemini Models (gemini-3.5-flash)
     if (geminiKey) {
       try {
         const ai = new GoogleGenAI({ apiKey: geminiKey });
         const res = await Promise.race([
-          ai.models.generateContent({ model: 'gemini-3.8-flash', contents: 'ping' }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('503 Request timed out / High demand')), 3000))
+          ai.models.generateContent({ model: 'gemini-3.5-flash', contents: 'Respond with exactly: PONG_GEMINI' }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('503 Request timed out / High demand')), 10000))
         ]) as any;
-        modelStatusLedger['gemini-3.8-flash'] = { status: 'VERIFIED', detail: `Upstream live response: ${res.text?.trim()}` };
+        const text = res.text?.trim() || '';
+        modelStatusLedger['gemini-3.5-flash'] = { status: 'VERIFIED', detail: `Upstream live response: "${text}"` };
       } catch (err: any) {
         const msg = err?.message?.includes('503') ? '503 High Demand / Temporarily Unavailable' : (err?.message || String(err));
-        modelStatusLedger['gemini-3.8-flash'] = { status: 'UNVERIFIED', detail: `Upstream error: ${msg}` };
+        modelStatusLedger['gemini-3.5-flash'] = { status: 'UNVERIFIED', detail: `Upstream error: ${msg}` };
       }
     } else {
-      modelStatusLedger['gemini-3.8-flash'] = { status: 'UNVERIFIED', detail: 'GEMINI_API_KEY is not configured' };
+      modelStatusLedger['gemini-3.5-flash'] = { status: 'UNVERIFIED', detail: 'GEMINI_API_KEY is not configured' };
     }
 
     // 2c. Anthropic Models
