@@ -805,7 +805,7 @@ export function AIPanel() {
           const proposalDraft = prepareAssistantProposal(accumulatedText, draftText, files);
           if (proposalDraft) {
             const saveResult = await useIDEStore.getState().saveProject();
-            if (saveResult.status !== 'synced') throw new Error(saveResult.message);
+            if (saveResult.status === 'error') throw new Error(saveResult.message);
             const workspace = useIDEStore.getState();
             if (!workspace.projectId) throw new Error('Save this workspace before creating a code proposal.');
             const changeSet = await createAssistantProposal({

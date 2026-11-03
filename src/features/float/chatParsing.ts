@@ -28,13 +28,13 @@ export function parseSegments(text: string): Segment[] {
     let body = rawBody;
 
     if (isDelete) {
-      const match = header.match(/^delete[ \t]+(?:path|filename|file)=["']?([^\s"'>`]+)["']?/i);
+      const match = header.match(/^delete[ \t]+(?:path|filename|file|filepath|title)=["']?([^\s"'>`]+)["']?/i);
       if (match) {
         extractedPath = match[1];
       }
     } else {
-      // 1. Check path attribute in header: path=..., filename=..., file=...
-      const attrMatch = header.match(/^([\w+.#-]*)[ \t]+(?:path|filename|file)=["']?([^\s"'>`]+)["']?/i);
+      // 1. Check path attribute in header: path=..., filename=..., file=..., filepath=..., title=...
+      const attrMatch = header.match(/^([\w+.#-]*)[ \t]+(?:path|filename|file|filepath|title)=["']?([^\s"'>`]+)["']?/i);
       if (attrMatch) {
         lang = attrMatch[1] || '';
         extractedPath = attrMatch[2];
@@ -45,12 +45,36 @@ export function parseSegments(text: string): Segment[] {
           lang = colonMatch[1];
           extractedPath = colonMatch[2];
         } else {
-          // 3. Check top-line comment inside body: // filepath: ... or # filepath: ...
-          const commentMatch = body.match(/^(?:\/\/\s*|#\s*|\/\*\s*)(?:filepath|file|path):\s*["']?([^\s"'>`*]+)["']?\s*(?:\*\/)?\r?\n/i);
-          if (commentMatch) {
-            lang = header.split(/\s+/)[0] || '';
-            extractedPath = commentMatch[1];
-            body = body.slice(commentMatch[0].length);
+          // 3. Check space format: lang path/to/file.ext
+          const spaceMatch = header.match(/^([\w+.#-]+)[ \t]+(["']?[^\s"'>`=]+\.[a-zA-Z0-9_-]+["']?)$/);
+          if (spaceMatch && !spaceMatch[2].startsWith('--') && (spaceMatch[2].includes('/') || spaceMatch[2].includes('\\') || spaceMatch[2].includes('.'))) {
+            lang = spaceMatch[1];
+            extractedPath = spaceMatch[2];
+          } else {
+            // 4. Check header is purely a path: path/to/file.ext
+            const rawPathMatch = header.match(/^([a-zA-Z0-9_.\-\\/]+\.[a-zA-Z0-9_-]+)$/);
+            if (rawPathMatch && (rawPathMatch[1].includes('/') || rawPathMatch[1].includes('\\') || rawPathMatch[1].includes('.'))) {
+              lang = '';
+              extractedPath = rawPathMatch[1];
+            } else {
+              // 5. Check top-line comment inside body: // filepath: ... or # filepath: ...
+              const commentMatch = body.match(/^(?:\/\/\s*|#\s*|\/\*\s*)(?:filepath|filename|file|path):\s*["']?([^\s"'>`*]+)["']?\s*(?:\*\/)?\r?\n/i);
+              if (commentMatch) {
+                lang = header.split(/\s+/)[0] || '';
+                extractedPath = commentMatch[1];
+                body = body.slice(commentMatch[0].length);
+              } else {
+                // 6. Check preceding heading or label right before code block
+                const preceding = text.slice(last, m.index);
+                const lines = preceding.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                const lastLine = lines[lines.length - 1] || '';
+                const headingMatch = lastLine.match(/^(?:###?\s*|\*\*|`|File:\s*`?|Path:\s*`?)([a-zA-Z0-9_.\-\\/]+\.[a-zA-Z0-9_-]+)(?:`|\*\*)?:?$/i);
+                if (headingMatch && (headingMatch[1].includes('/') || headingMatch[1].includes('.'))) {
+                  lang = header.split(/\s+/)[0] || '';
+                  extractedPath = headingMatch[1];
+                }
+              }
+            }
           }
         }
       }
