@@ -7,13 +7,50 @@ import { cn } from '../../lib/utils';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { useConsentStore } from '../../store/consentStore';
 
-export function SettingsModal({ onClose, initialSection }: { onClose: () => void; initialSection?: 'profile' | 'appearance' | 'editor' | 'integrations' | 'privacy' }) {
+export function SettingsModal({ onClose, initialSection }: { onClose: () => void; initialSection?: 'profile' | 'appearance' | 'editor' | 'models' | 'integrations' | 'privacy' }) {
   const { settings, updateSettings } = useIDEStore();
   const { user, logout } = useAuthStore();
   const { preferences, updateConsent, withdrawConsent, isSaving: isSavingConsent, error: consentError, clearError } = useConsentStore();
   const [copiedUid, setCopiedUid] = useState(false);
-  const [activeSection, setActiveSection] = useState<'profile' | 'appearance' | 'editor' | 'integrations' | 'privacy'>(initialSection || 'profile');
+  const [activeSection, setActiveSection] = useState<'profile' | 'appearance' | 'editor' | 'models' | 'integrations' | 'privacy'>(initialSection || 'profile');
   const [consentSuccessMsg, setConsentSuccessMsg] = useState<string | null>(null);
+  const [isTestingAi, setIsTestingAi] = useState(false);
+  const [aiHealthResult, setAiHealthResult] = useState<{ status: 'idle' | 'success' | 'unconfigured' | 'error'; message: string; details?: any } | null>(null);
+
+  const testAiConnection = async () => {
+    setIsTestingAi(true);
+    setAiHealthResult(null);
+    try {
+      const res = await fetch('/api/ai/health');
+      const data = await res.json();
+      if (!res.ok) {
+        setAiHealthResult({ status: 'error', message: data.error || 'Connection failed' });
+      } else {
+        const openai = data.providers?.openai || data.providers?.OpenAI;
+        if (!openai || !openai.configured) {
+          setAiHealthResult({
+            status: 'unconfigured',
+            message: 'OPENAI_API_KEY is not configured in the server environment. Set OPENAI_API_KEY to enable live model inference.'
+          });
+        } else if (openai.authenticated) {
+          const models = openai.accessibleModelIds?.join(', ') || 'gpt-6-astra, gpt-6.1-sol';
+          setAiHealthResult({
+            status: 'success',
+            message: `Successfully connected to OpenAI API. Credentials verified. Accessible models: ${models}`
+          });
+        } else {
+          setAiHealthResult({
+            status: 'error',
+            message: openai.error || 'Authentication with OpenAI failed with the configured key.'
+          });
+        }
+      }
+    } catch (err: any) {
+      setAiHealthResult({ status: 'error', message: err.message || 'Failed to reach AI service endpoint.' });
+    } finally {
+      setIsTestingAi(false);
+    }
+  };
 
   const copyUid = () => {
     if (user?.uid) {
@@ -88,6 +125,18 @@ export function SettingsModal({ onClose, initialSection }: { onClose: () => void
           >
             <Sliders size={14} />
             <span>Editor</span>
+          </button>
+          <button
+            onClick={() => setActiveSection('models')}
+            className={cn(
+              "flex items-center gap-2 px-3 py-2 text-xs font-medium border-b-2 transition-colors -mb-px cursor-pointer",
+              activeSection === 'models'
+                ? "border-slate-900 text-slate-900 dark:border-white dark:text-white font-semibold"
+                : "border-transparent text-slate-500 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white"
+            )}
+          >
+            <Sparkles size={14} />
+            <span>AI & Models</span>
           </button>
           <button
             onClick={() => setActiveSection('integrations')}
@@ -433,6 +482,89 @@ export function SettingsModal({ onClose, initialSection }: { onClose: () => void
                     value={settings.tabSize}
                     onChange={(e) => updateSettings({ tabSize: parseInt(e.target.value) || 2 })}
                   />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* AI & MODELS SECTION */}
+          {activeSection === 'models' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-[#8B949E] mb-2">
+                  AI Model Connection
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-[#8B949E] mb-4">
+                  FLOAT uses server-side configured AI model providers. Live credentials and upstream access are verified on the server.
+                </p>
+              </div>
+
+              {/* Provider Status Card */}
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-[#2A2A2A] bg-slate-50/50 dark:bg-[#141414] space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs">
+                      AI
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-white">OpenAI Provider</div>
+                      <div className="text-xs text-slate-500 dark:text-[#8B949E]">Models: GPT-6 Astra, GPT-6.1 Sol</div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isTestingAi}
+                    onClick={testAiConnection}
+                    className="px-3 py-1.5 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isTestingAi ? <Loader2 size={13} className="animate-spin" /> : <Activity size={13} />}
+                    <span>{isTestingAi ? 'Testing...' : 'Test Connection'}</span>
+                  </button>
+                </div>
+
+                {/* Health Check Feedback */}
+                {aiHealthResult && (
+                  <div className={cn(
+                    "p-3 rounded-xl text-xs flex items-start gap-2 mt-2",
+                    aiHealthResult.status === 'success'
+                      ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/40"
+                      : aiHealthResult.status === 'unconfigured'
+                        ? "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900/40"
+                        : "bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-900/40"
+                  )}>
+                    {aiHealthResult.status === 'success' ? (
+                      <Check size={14} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                    ) : aiHealthResult.status === 'unconfigured' ? (
+                      <AlertCircle size={14} className="shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                    ) : (
+                      <AlertCircle size={14} className="shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
+                    )}
+                    <div className="leading-relaxed">
+                      {aiHealthResult.message}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Supported Models Overview */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300">Operational Models</h4>
+                <div className="divide-y divide-slate-200 dark:divide-[#2A2A2A] rounded-xl border border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#141414] overflow-hidden text-xs">
+                  <div className="p-3 flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold text-slate-900 dark:text-white">GPT-6 Astra</span>
+                      <span className="text-slate-500 dark:text-[#8B949E] ml-2">(Default agent & coding model)</span>
+                    </div>
+                    <span className="text-slate-500 font-mono text-[11px]">gpt-6-astra</span>
+                  </div>
+                  <div className="p-3 flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold text-slate-900 dark:text-white">GPT-6.1 Sol</span>
+                      <span className="text-slate-500 dark:text-[#8B949E] ml-2">(High-reasoning deep coding model)</span>
+                    </div>
+                    <span className="text-slate-500 font-mono text-[11px]">gpt-6.1-sol</span>
+                  </div>
                 </div>
               </div>
             </div>

@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import {
   ArrowUp, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Copy, FileCode2, FilePlus2, FileX2, Files, History,
   Loader2, Play, RotateCcw, Square, Terminal as TerminalIcon, Trash2, X, Download, Save,
-  AlertCircle, ExternalLink, Code2,
+  AlertCircle, ExternalLink, Code2, Folder, Sparkles,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../lib/firebase';
@@ -23,6 +23,7 @@ import { MultiFileDiffCard } from '../composer/MultiFileDiffCard';
 import { createAssistantProposal } from '../proposals/proposalWorkflow';
 import { CODING_ASSISTANT_SYSTEM_PROMPT, diffRows, diffStats, parseSegments, type Segment } from './chatParsing';
 import { buildChatContextItems } from './chatContext';
+import { workspaceIndexManager } from '../../services/indexing/workspaceIndexManager';
 import { filesToMap, exportZip } from './projectIO';
 import { sandboxFs } from './workspaceFs';
 import { isShellCommand, runShell } from './sandbox';
@@ -30,6 +31,13 @@ import { AttachMenu, SlashMenu, slashMatches } from './ComposerExtras';
 import { ChatFeedbackButtons } from './ChatFeedbackButtons';
 
 type ChangeStatus = 'pending' | 'accepted' | 'rejected';
+
+interface MentionOption {
+  label: string;
+  insertText: string;
+  kind: 'file' | 'folder' | 'symbol' | 'codebase';
+  detail?: string;
+}
 
 interface ThreadMessage {
   id: string;
@@ -46,6 +54,14 @@ interface ThreadMessage {
   cancelled?: boolean;
   latencyMs?: number;
   modelId?: string;
+  contextExplanation?: {
+    intent?: string;
+    includedCount?: number;
+    omittedCount?: number;
+    totalContextChars?: number;
+    includedItems?: Array<{ id: string; name: string; type: string; source: string; chars: number; priority: number }>;
+    excludedItems?: Array<{ name: string; reason: string }>;
+  };
 }
 
 const MAX_CHECKPOINTS = 12;
@@ -357,10 +373,18 @@ export function ChatThread({ chatId }: { chatId: string }) {
             if (typeof data.text !== 'string') throw new Error('FLOAT returned an invalid text chunk.');
             full += data.text;
             patch({ content: full, latencyMs: currentElapsed });
+          } else if (data.type === 'context_info') {
+            if (data.contextExplanation) {
+              patch({ contextExplanation: data.contextExplanation });
+            }
           } else if (data.type === 'done') {
             receivedDone = true;
             if (typeof data.text === 'string' && data.text.length >= full.length) full = data.text;
-            patch({ content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed });
+            const patchObj: Partial<ThreadMessage> = { content: full, cancelled: !!data.cancelled, latencyMs: currentElapsed };
+            if (data.contextExplanation) {
+              patchObj.contextExplanation = data.contextExplanation;
+            }
+            patch(patchObj);
           } else if (data.type === 'error') {
             throw new Error(typeof data.error === 'string' ? data.error : 'Generation failed.');
           } else {
@@ -432,16 +456,19 @@ export function ChatThread({ chatId }: { chatId: string }) {
     [messages, streaming, historyLoading, selectedModel, chatId],
   );
 
-  // Auto-send the prompt typed on the home screen
+  // Listen for initialPrompt (e.g. from "Fix with FLOAT", "Debug with AI", or home screen)
+  const initialPromptVal = useIDEStore((s) => s.initialPrompt);
   useEffect(() => {
-    if (loadingProject || historyLoading || startedRef.current) return;
-    const initial = useIDEStore.getState().initialPrompt;
-    if (initial && useIDEStore.getState().projectId === chatId) {
-      startedRef.current = true;
-      useIDEStore.getState().setInitialPrompt(null);
-      void send(initial);
-    }
-  }, [loadingProject, historyLoading, chatId, send]);
+    if (loadingProject || historyLoading || !initialPromptVal || streaming) return;
+    useIDEStore.getState().setInitialPrompt(null);
+    void send(initialPromptVal);
+  }, [initialPromptVal, loadingProject, historyLoading, streaming, send]);
+
+  const handleFixTerminalError = (failedCmd: string, errorOutput: string) => {
+    const truncated = errorOutput.length > 2500 ? '...\n' + errorOutput.slice(-2500) : errorOutput;
+    const fixPrompt = "Fix the failure encountered when running `" + failedCmd + "`:\n```\n" + truncated + "\n```\nPlease analyze the error, locate the root cause, and propose a multi-file diff to fix it.";
+    void send(fixPrompt);
+  };
 
   /* ---------------------------- change review ---------------------------- */
 
@@ -507,21 +534,75 @@ export function ChatThread({ chatId }: { chatId: string }) {
 
   /* ---------------------------- composer keys ---------------------------- */
 
-  const mentionItems = mention ? paths.filter((p) => p.toLowerCase().includes(mention.query.toLowerCase())).slice(0, 8) : [];
+  const mentionItems: MentionOption[] = useMemo(() => {
+    if (!mention) return [];
+    const q = mention.query.toLowerCase().trim();
+    const results: MentionOption[] = [];
+
+    // 1. @codebase option
+    if ('codebase'.includes(q) || !q) {
+      results.push({ label: 'codebase', insertText: 'codebase', kind: 'codebase', detail: 'Full codebase retrieval' });
+    }
+
+    // 2. Folder options
+    const folderSet = new Set<string>();
+    for (const p of paths) {
+      const parts = p.split('/');
+      if (parts.length > 1) {
+        let acc = '';
+        for (let i = 0; i < parts.length - 1; i++) {
+          acc += (acc ? '/' : '') + parts[i];
+          folderSet.add(acc + '/');
+        }
+      }
+    }
+    for (const f of Array.from(folderSet)) {
+      if (!q || f.toLowerCase().includes(q)) {
+        results.push({ label: f, insertText: `folder:${f}`, kind: 'folder', detail: 'Directory context' });
+        if (results.length >= 7) break;
+      }
+    }
+
+    // 3. File options
+    for (const p of paths) {
+      if (!q || p.toLowerCase().includes(q)) {
+        results.push({ label: p, insertText: p, kind: 'file', detail: 'File' });
+        if (results.length >= 10) break;
+      }
+    }
+
+    // 4. Symbols from index
+    try {
+      const syms = workspaceIndexManager.getIndex(chatId).getAllSymbols(q).slice(0, 4);
+      for (const s of syms) {
+        results.push({
+          label: `${s.symbol.name} (${s.symbol.kind})`,
+          insertText: `symbol:${s.symbol.name}`,
+          kind: 'symbol',
+          detail: s.path
+        });
+      }
+    } catch {
+      // index not ready yet
+    }
+
+    return results.slice(0, 8);
+  }, [mention, paths, chatId]);
+
   const slashItems = slashMatches(input);
 
   const onInputChange = (value: string, caret: number) => {
     setInput(value);
     setSlashIndex(0);
     const upto = value.slice(0, caret);
-    const m = upto.match(/(?:^|\s)@([\w./-]*)$/);
+    const m = upto.match(/(?:^|\s)@([\w.:/-]*)$/);
     setMention(m ? { query: m[1], index: 0 } : null);
   };
 
-  const pickMention = (path: string) => {
+  const pickMention = (item: MentionOption) => {
     const el = textareaRef.current;
     const caret = el?.selectionStart ?? input.length;
-    const upto = input.slice(0, caret).replace(/@([\w./-]*)$/, `@${path} `);
+    const upto = input.slice(0, caret).replace(/@([\w.:/-]*)$/, `@${item.insertText} `);
     setInput(upto + input.slice(caret));
     setMention(null);
     requestAnimationFrame(() => el?.focus());
@@ -663,17 +744,31 @@ export function ChatThread({ chatId }: { chatId: string }) {
             <div className="relative bg-white dark:bg-[#121212] border border-slate-200 dark:border-white/10 rounded-2xl shadow-lg focus-within:border-slate-400 dark:focus-within:border-white/30">
               <SlashMenu prompt={input} index={Math.min(slashIndex, Math.max(0, slashItems.length - 1))} onPick={(t) => setInput(t)} />
               {mention && mentionItems.length > 0 && (
-                <div className="absolute left-3 right-3 bottom-full mb-2 z-40 rounded-xl border border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#141414] p-1 shadow-2xl">
-                  {mentionItems.map((p, i) => (
+                <div className="absolute left-3 right-3 bottom-full mb-2 z-40 rounded-xl border border-slate-200 dark:border-[#2A2A2A] bg-white dark:bg-[#141414] p-1 shadow-2xl max-h-56 overflow-y-auto">
+                  {mentionItems.map((item, i) => (
                     <button
-                      key={p}
+                      key={`${item.kind}-${item.insertText}`}
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        pickMention(p);
+                        pickMention(item);
                       }}
-                      className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-mono cursor-pointer ${i === mention.index ? 'bg-slate-100 dark:bg-white/10' : ''}`}
+                      className={`w-full flex items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs cursor-pointer ${i === mention.index ? 'bg-slate-100 dark:bg-white/10' : ''}`}
                     >
-                      <FileCode2 size={12} className="text-slate-400" /> {p}
+                      <div className="flex items-center gap-2 font-mono truncate">
+                        {item.kind === 'codebase' ? (
+                          <Sparkles size={12} className="text-purple-500 shrink-0" />
+                        ) : item.kind === 'folder' ? (
+                          <Folder size={12} className="text-amber-500 shrink-0" />
+                        ) : item.kind === 'symbol' ? (
+                          <Code2 size={12} className="text-blue-500 shrink-0" />
+                        ) : (
+                          <FileCode2 size={12} className="text-slate-400 shrink-0" />
+                        )}
+                        <span className="text-slate-800 dark:text-slate-200 truncate">{item.label}</span>
+                      </div>
+                      {item.detail && (
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0 ml-2">{item.detail}</span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -728,7 +823,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
               <X size={13} />
             </button>
           </div>
-          {drawer === 'files' ? <FilesPanel paths={paths} /> : <MiniTerminal />}
+          {drawer === 'files' ? <FilesPanel paths={paths} /> : <MiniTerminal onFixError={handleFixTerminalError} />}
         </aside>
       )}
 
@@ -819,6 +914,53 @@ function AssistantMessage({
           )}
         </div>
       )}
+      {msg.contextExplanation && (
+        <div className="px-1 text-[11px] text-slate-500 dark:text-[#7D8590]">
+          <details className="group/ctx">
+            <summary className="flex items-center gap-1.5 cursor-pointer hover:text-slate-800 dark:hover:text-[#C9D1D9] transition-colors select-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block" />
+              <span className="font-medium">Context Used:</span>
+              <span>{msg.contextExplanation.includedCount || 0} items</span>
+              {msg.contextExplanation.intent && (
+                <span className="px-1 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-white/5 uppercase font-mono font-semibold text-slate-600 dark:text-slate-400">
+                  {msg.contextExplanation.intent}
+                </span>
+              )}
+              <ChevronDown size={10} className="transition-transform group-open/ctx:rotate-180" />
+            </summary>
+            <div className="mt-1.5 p-2 bg-slate-50 dark:bg-[#161616] border border-slate-200/80 dark:border-white/5 rounded-lg space-y-1.5 max-w-[92%]">
+              <div className="font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between text-[10px]">
+                <span>Included Sources ({msg.contextExplanation.totalContextChars || 0} chars)</span>
+                {msg.contextExplanation.omittedCount ? (
+                  <span className="text-amber-600 dark:text-amber-400 font-normal">{msg.contextExplanation.omittedCount} excluded</span>
+                ) : null}
+              </div>
+              {msg.contextExplanation.includedItems && msg.contextExplanation.includedItems.length > 0 ? (
+                <div className="space-y-1 max-h-36 overflow-y-auto">
+                  {msg.contextExplanation.includedItems.map((item: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between text-[9px] font-mono text-slate-600 dark:text-slate-400">
+                      <span className="truncate max-w-[240px]" title={item.name}>✓ {item.name}</span>
+                      <span className="shrink-0 text-slate-400 dark:text-slate-500">{item.source} · {item.chars}c</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[9px] text-slate-400">No external files included.</div>
+              )}
+              {msg.contextExplanation.excludedItems && msg.contextExplanation.excludedItems.length > 0 && (
+                <div className="pt-1 border-t border-slate-200/60 dark:border-white/5 space-y-0.5">
+                  <span className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">Exclusions:</span>
+                  {msg.contextExplanation.excludedItems.map((ex: any, idx: number) => (
+                    <div key={idx} className="text-[9px] text-slate-400 dark:text-slate-500 truncate">
+                      • {ex.name} ({ex.reason})
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </details>
+        </div>
+      )}
       {segments.length === 0 && streaming && (
         <div className="flex items-center gap-2 text-xs text-slate-400">
           <Loader2 size={12} className="animate-spin" /> Thinking…
@@ -902,174 +1044,6 @@ function AssistantMessage({
   );
 }
 
-function CodeBlock({ children }: { children: React.ReactNode }) {
-  const [copied, setCopied] = useState(false);
-  const [running, setRunning] = useState(false);
-  const text = extractText(children);
-
-  // Extract language from props (e.g. className="language-typescript")
-  const childElement = React.isValidElement(children) ? children : null;
-  const className = (childElement?.props as any)?.className || '';
-  const langMatch = /language-([a-zA-Z0-9_-]+)/.exec(className);
-  const language = langMatch ? langMatch[1] : '';
-
-  const isTerminal = ['bash', 'sh', 'shell', 'zsh', 'terminal', 'cmd'].includes(language.toLowerCase());
-
-  const handleRun = async () => {
-    setRunning(true);
-    try {
-      const { output, code } = await runShell(text, sandboxFs());
-      const store = useIDEStore.getState();
-      store.addTerminalEntry({ type: 'command', content: text });
-      if (output) store.addTerminalEntry({ type: code === 0 ? 'output' : 'error', content: output });
-    } catch (err: any) {
-      const store = useIDEStore.getState();
-      store.addTerminalEntry({ type: 'error', content: `Error: ${err?.message || err}` });
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  const lines = text.split('\n');
-  if (lines.length > 1 && lines[lines.length - 1] === '') {
-    lines.pop();
-  }
-
-  return (
-    <div className="relative group my-3 rounded-xl border border-slate-200 dark:border-[#30363D] bg-[#0D1117] overflow-hidden shadow-sm not-prose">
-      {/* Codeblock header bar */}
-      <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#161B22] border-b border-[#30363D] text-[11px] text-[#8B949E] select-none">
-        <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#E06C75]/70 inline-block" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#E5C07B]/70 inline-block" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#98C379]/70 inline-block" />
-          <span className="font-mono uppercase font-semibold text-[#C9D1D9] ml-1">
-            {language || 'code'}
-          </span>
-          <span className="text-[10px] text-[#6E7681]">
-            ({lines.length} line{lines.length === 1 ? '' : 's'})
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {isTerminal && (
-            <button
-              onClick={handleRun}
-              disabled={running}
-              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-emerald-400 hover:bg-white/10 hover:text-emerald-300 transition-colors cursor-pointer"
-              aria-label="Run command in terminal"
-              title="Run command in workspace sandbox"
-            >
-              {running ? <Loader2 size={11} className="animate-spin text-emerald-400" /> : <Play size={10} className="fill-emerald-400 text-emerald-400" />}
-              <span>{running ? 'Running…' : 'Run'}</span>
-            </button>
-          )}
-          <button
-            onClick={() => {
-              void navigator.clipboard.writeText(text);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1200);
-            }}
-            className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] text-[#C9D1D9] hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
-            aria-label="Copy code"
-          >
-            {copied ? (
-              <>
-                <Check size={12} className="text-emerald-400" />
-                <span className="text-emerald-400 font-medium">Copied!</span>
-              </>
-            ) : (
-              <>
-                <Copy size={12} />
-                <span>Copy</span>
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Code body with line numbers and syntax highlighted tokens */}
-      <div className="overflow-x-auto p-3 text-xs leading-relaxed font-mono flex">
-        {/* Line numbers column */}
-        <div className="select-none text-right pr-3.5 border-r border-[#30363D]/80 text-[#484F58] shrink-0 font-mono text-[11px] leading-5">
-          {lines.map((_, idx) => (
-            <div key={idx}>{idx + 1}</div>
-          ))}
-        </div>
-        {/* Code content column */}
-        <div className="pl-3.5 flex-1 min-w-0 text-[#E6EDF3] font-mono text-[11px] leading-5">
-          {lines.map((line, idx) => (
-            <div key={idx} className="whitespace-pre">
-              {renderSyntaxHighlightedLine(line, language)}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function renderSyntaxHighlightedLine(line: string, _lang?: string): React.ReactNode {
-  if (!line) return '\u00A0';
-
-  // Check for whole line comments
-  const trimmed = line.trimStart();
-  if (trimmed.startsWith('//') || trimmed.startsWith('#')) {
-    const indent = line.slice(0, line.length - trimmed.length);
-    return (
-      <>
-        <span>{indent}</span>
-        <span className="text-[#8B949E] italic">{trimmed}</span>
-      </>
-    );
-  }
-
-  // Tokenize line using regex
-  const tokenRegex =
-    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\/[^\n]*|#[^\n]*|\b\d+(?:\.\d+)?\b|\b(?:import|export|default|from|const|let|var|function|return|if|else|for|while|switch|case|break|class|extends|implements|interface|type|async|await|try|catch|finally|throw|typeof|instanceof|void|def|elif|pass|lambda|with|as|in|is|yield|raise|except|self|new)\b|\b(?:true|false|null|undefined|None|True|False)\b|\b(?:string|number|boolean|any|unknown|never|Record|Array|Promise|Partial|React|FC)\b|[a-zA-Z_$][a-zA-Z0-9_$]*(?=\()|[a-zA-Z_$][a-zA-Z0-9_$]*|[^\s\w]|\s+)/g;
-
-  const KEYWORDS = new Set([
-    'import', 'export', 'default', 'from', 'const', 'let', 'var', 'function',
-    'return', 'if', 'else', 'for', 'while', 'switch', 'case', 'break',
-    'class', 'extends', 'implements', 'interface', 'type', 'async', 'await',
-    'try', 'catch', 'finally', 'throw', 'typeof', 'instanceof', 'void',
-    'def', 'elif', 'pass', 'lambda', 'with', 'as', 'in', 'is', 'yield', 'raise', 'except', 'self', 'new'
-  ]);
-
-  const CONSTANTS = new Set(['true', 'false', 'null', 'undefined', 'None', 'True', 'False']);
-  const TYPES = new Set(['string', 'number', 'boolean', 'any', 'unknown', 'never', 'Record', 'Array', 'Promise', 'Partial', 'React', 'FC']);
-
-  const parts: React.ReactNode[] = [];
-  let match: RegExpExecArray | null;
-  let idx = 0;
-
-  while ((match = tokenRegex.exec(line)) !== null) {
-    const token = match[0];
-    const key = `${idx++}-${token}`;
-
-    if (token.startsWith('//') || token.startsWith('#')) {
-      parts.push(<span key={key} className="text-[#8B949E] italic">{token}</span>);
-    } else if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) {
-      parts.push(<span key={key} className="text-[#A5D6FF]">{token}</span>);
-    } else if (/^\d+(\.\d+)?$/.test(token)) {
-      parts.push(<span key={key} className="text-[#79C0FF]">{token}</span>);
-    } else if (KEYWORDS.has(token)) {
-      parts.push(<span key={key} className="text-[#FF7B72] font-semibold">{token}</span>);
-    } else if (CONSTANTS.has(token)) {
-      parts.push(<span key={key} className="text-[#79C0FF] font-medium">{token}</span>);
-    } else if (TYPES.has(token)) {
-      parts.push(<span key={key} className="text-[#FFA657] font-medium">{token}</span>);
-    } else {
-      const nextChar = line[match.index + token.length];
-      if (nextChar === '(' && /^[a-zA-Z_$]/.test(token)) {
-        parts.push(<span key={key} className="text-[#D2A8FF]">{token}</span>);
-      } else {
-        parts.push(<span key={key}>{token}</span>);
-      }
-    }
-  }
-
-  return parts.length ? parts : line;
-}
 
 function extractText(node: React.ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -1146,7 +1120,7 @@ function FileChangeCard({
             ) : (
               <div
                 key={i}
-                className={`flex whitespace-pre ${r.type === 'add' ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300' : r.type === 'del' ? 'bg-rose-500/10 text-rose-800 dark:text-rose-300' : 'text-slate-600 dark:text-[#8B949E]'}`}
+                className={"flex whitespace-pre " + (r.type === 'add' ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300' : r.type === 'del' ? 'bg-rose-500/10 text-rose-800 dark:text-rose-300' : 'text-slate-600 dark:text-[#8B949E]')}
               >
                 <span className="w-9 shrink-0 text-right pr-2 text-slate-400 select-none">{r.oldNo ?? ''}</span>
                 <span className="w-9 shrink-0 text-right pr-2 text-slate-400 select-none">{r.newNo ?? ''}</span>
@@ -1161,7 +1135,119 @@ function FileChangeCard({
   );
 }
 
-/* ----------------------------------------------------------------------------------------- */
+function CodeBlock({ children }: { children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [runFailure, setRunFailure] = useState<{ cmd: string; output: string; exitCode: number } | null>(null);
+  const text = extractText(children);
+
+  // Extract language from props (e.g. className="language-typescript")
+  const childElement = React.isValidElement(children) ? children : null;
+  const className = (childElement?.props as any)?.className || '';
+  const langMatch = /language-([a-zA-Z0-9_-]+)/.exec(className);
+  const language = langMatch ? langMatch[1] : '';
+
+  const isTerminal = ['bash', 'sh', 'shell', 'zsh', 'terminal', 'cmd'].includes(language.toLowerCase());
+
+  const handleRun = async () => {
+    setRunning(true);
+    try {
+      const { output, code } = await runShell(text, sandboxFs());
+      const store = useIDEStore.getState();
+      store.addTerminalEntry({ type: 'command', content: text });
+      if (output) store.addTerminalEntry({ type: code === 0 ? 'output' : 'error', content: output });
+      if (code !== 0) {
+        setRunFailure({ cmd: text, output: output || 'Process exited with non-zero exit code.', exitCode: code });
+      } else {
+        setRunFailure(null);
+      }
+    } catch (err: any) {
+      const store = useIDEStore.getState();
+      const errMsg = err?.message || String(err);
+      store.addTerminalEntry({ type: 'error', content: "Error: " + errMsg });
+      setRunFailure({ cmd: text, output: errMsg, exitCode: 1 });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const lines = text.split('\n');
+  if (lines.length > 1 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+
+  return (
+    <div className="relative group my-3 rounded-xl border border-slate-200 dark:border-[#30363D] bg-[#0D1117] overflow-hidden shadow-sm not-prose">
+      {/* Codeblock header bar */}
+      <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#161B22] border-b border-[#30363D] text-[11px] text-[#8B949E] select-none">
+        <div className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#E06C75]/70 inline-block" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#E5C07B]/70 inline-block" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#98C379]/70 inline-block" />
+          <span className="font-mono uppercase font-semibold text-[#C9D1D9] ml-1">
+            {language || 'code'}
+          </span>
+          <span className="text-[10px] text-[#6E7681]">
+            ({lines.length} line{lines.length === 1 ? '' : 's'})
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {isTerminal && (
+            <button
+              onClick={handleRun}
+              disabled={running}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-emerald-400 hover:bg-white/10 hover:text-emerald-300 transition-colors cursor-pointer"
+              aria-label="Run command in terminal"
+              title="Run command in workspace sandbox"
+            >
+              {running ? <Loader2 size={11} className="animate-spin text-emerald-400" /> : <Play size={11} className="text-emerald-400 fill-emerald-400" />}
+              <span>{running ? 'Running…' : 'Run'}</span>
+            </button>
+          )}
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(text);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            className="flex items-center gap-1 text-[11px] hover:text-[#C9D1D9] transition-colors cursor-pointer"
+            title="Copy snippet"
+          >
+            {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+        </div>
+      </div>
+      {/* Code contents */}
+      <div className="relative">
+        <pre className="p-4 text-[12px] font-mono leading-relaxed overflow-x-auto text-[#E6EDF3]">
+          <code>{text}</code>
+        </pre>
+      </div>
+      {runFailure && (
+        <div className="p-2.5 bg-rose-950/40 border-t border-rose-800/50 flex items-center justify-between gap-2 text-rose-200 text-xs">
+          <div className="flex items-center gap-1.5 truncate">
+            <AlertCircle size={13} className="text-rose-400 shrink-0" />
+            <span className="font-medium text-rose-300">Command failed (exit code {runFailure.exitCode})</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const truncated = runFailure.output.length > 2500 ? '...\n' + runFailure.output.slice(-2500) : runFailure.output;
+              const prompt = "Fix the failure encountered when running `" + runFailure.cmd + "`:\n```\n" + truncated + "\n```\nPlease analyze the error, locate the root cause, and propose a multi-file diff to fix it.";
+              useIDEStore.getState().setInitialPrompt(prompt);
+            }}
+            className="px-2.5 py-1 text-[11px] font-semibold rounded bg-rose-600 hover:bg-rose-500 text-white flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
+            title="Send error stack trace to FLOAT AI for repair"
+          >
+            <Sparkles size={11} />
+            <span>Fix with FLOAT</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function FilesPanel({ paths }: { paths: string[] }) {
   const [selected, setSelected] = useState<string | null>(paths[0] ?? null);
@@ -1229,10 +1315,11 @@ function FilesPanel({ paths }: { paths: string[] }) {
   );
 }
 
-function MiniTerminal() {
+function MiniTerminal({ onFixError }: { onFixError?: (cmd: string, errorOutput: string) => void }) {
   const [lines, setLines] = useState<{ type: 'cmd' | 'out' | 'err'; text: string }[]>([]);
   const [cmd, setCmd] = useState('');
   const [busy, setBusy] = useState(false);
+  const [lastFailure, setLastFailure] = useState<{ cmd: string; output: string; exitCode: number } | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [hIdx, setHIdx] = useState(-1);
   const endRef = useRef<HTMLDivElement>(null);
@@ -1244,26 +1331,44 @@ function MiniTerminal() {
     setCmd('');
     setHistory((h) => [c, ...h].slice(0, 50));
     setHIdx(-1);
-    if (c === 'clear') return setLines([]);
+    if (c === 'clear') {
+      setLastFailure(null);
+      return setLines([]);
+    }
     setLines((l) => [...l, { type: 'cmd', text: c }]);
     setBusy(true);
     try {
       if (c.startsWith('python')) {
         const target = c.replace(/^python3?\s*/, '').trim();
         const map = filesToMap(useIDEStore.getState().files);
-        const code = target ? map[target] : undefined;
-        if (target && code === undefined) throw new Error(`python: can't open file '${target}'`);
-        const res = await runPythonCode(code ?? '', Object.entries(map).map(([path, content]) => ({ path, content })));
-        setLines((l) => [...l, { type: res.success ? 'out' : 'err', text: (res.success ? res.output : res.error) || '' }]);
+        const pyCode = target ? map[target] : undefined;
+        if (target && pyCode === undefined) throw new Error("python: can't open file '" + target + "'");
+        const res = await runPythonCode(pyCode ?? '', Object.entries(map).map(([path, content]) => ({ path, content })));
+        const outputText = (res.success ? res.output : res.error) || '';
+        setLines((l) => [...l, { type: res.success ? 'out' : 'err', text: outputText }]);
+        if (!res.success) {
+          setLastFailure({ cmd: c, output: outputText, exitCode: 1 });
+        } else {
+          setLastFailure(null);
+        }
       } else if (isShellCommand(c) || c === 'help') {
-        const { output, code } = await runShell(c, sandboxFs());
-        if (output) setLines((l) => [...l, { type: code === 0 ? 'out' : 'err', text: output }]);
+        const { output, code: shellExitCode } = await runShell(c, sandboxFs());
+        if (output) setLines((l) => [...l, { type: shellExitCode === 0 ? 'out' : 'err', text: output }]);
+        if (shellExitCode !== 0) {
+          setLastFailure({ cmd: c, output: output || 'Process failed.', exitCode: shellExitCode });
+        } else {
+          setLastFailure(null);
+        }
         persistProjectSoon();
       } else {
-        setLines((l) => [...l, { type: 'err', text: `${c.split(' ')[0]}: command not found (type help)` }]);
+        const notFoundText = c.split(' ')[0] + ': command not found (type help)';
+        setLines((l) => [...l, { type: 'err', text: notFoundText }]);
+        setLastFailure({ cmd: c, output: notFoundText, exitCode: 127 });
       }
     } catch (e: any) {
-      setLines((l) => [...l, { type: 'err', text: e?.message || String(e) }]);
+      const errStr = e?.message || String(e);
+      setLines((l) => [...l, { type: 'err', text: errStr }]);
+      setLastFailure({ cmd: c, output: errStr, exitCode: 1 });
     } finally {
       setBusy(false);
     }
@@ -1274,11 +1379,33 @@ function MiniTerminal() {
       <div className="flex-1 overflow-y-auto p-3 space-y-1">
         <div className="text-[#6E7681]">Python runs in Pyodide (python main.py). Supported browser sandbox commands: ls, cat, pwd, help.</div>
         {lines.map((l, i) => (
-          <div key={i} className={`whitespace-pre-wrap break-words ${l.type === 'cmd' ? 'text-white' : l.type === 'err' ? 'text-rose-400' : ''}`}>
-            {l.type === 'cmd' ? `$ ${l.text}` : l.text}
+          <div key={i} className={"whitespace-pre-wrap break-words " + (l.type === 'cmd' ? 'text-white' : l.type === 'err' ? 'text-rose-400' : '')}>
+            {l.type === 'cmd' ? '$ ' + l.text : l.text}
           </div>
         ))}
         {busy && <Loader2 size={12} className="animate-spin text-[#6E7681]" />}
+        {lastFailure && (
+          <div className="my-2 p-2.5 rounded-lg bg-rose-950/40 border border-rose-800/50 flex items-center justify-between gap-2 text-rose-200">
+            <div className="flex items-center gap-1.5 text-xs truncate">
+              <AlertCircle size={14} className="text-rose-400 shrink-0" />
+              <span className="font-semibold text-rose-300">Command failed</span>
+              <span className="text-rose-400 font-mono text-[10px]">(exit code {lastFailure.exitCode})</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (onFixError) {
+                  onFixError(lastFailure.cmd, lastFailure.output);
+                }
+              }}
+              className="px-2.5 py-1 text-xs font-semibold rounded bg-rose-600 hover:bg-rose-500 text-white flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
+              title="Send error stack trace to FLOAT AI for an automatic repair proposal"
+            >
+              <Sparkles size={12} />
+              <span>Fix with FLOAT</span>
+            </button>
+          </div>
+        )}
         <div ref={endRef} />
       </div>
       <div className="flex items-center gap-2 border-t border-white/10 px-3 py-2">

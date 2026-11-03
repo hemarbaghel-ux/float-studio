@@ -16,7 +16,7 @@ interface DiffReviewModalProps {
 }
 
 export function DiffReviewModal({ changeSet, onClose, onChangeSetUpdated }: DiffReviewModalProps) {
-  const { files, projectId, settings, updateFileContent, addFile, deleteFile, saveProject, updateAiMessageChangeSet } = useIDEStore();
+  const { files, projectId, settings, applyExecutionChanges, saveProject, updateAiMessageChangeSet } = useIDEStore();
 
   const [selectedChangeIdx, setSelectedChangeIdx] = useState(0);
   const [approvedPaths, setApprovedPaths] = useState<Set<string>>(() => {
@@ -98,53 +98,22 @@ export function DiffReviewModal({ changeSet, onClose, onChangeSetUpdated }: Diff
     return 'plaintext';
   };
 
-  // Helper to ensure parent folders exist in tree
-  const ensureFolders = (pathParts: string[]): string | null => {
-    let currentParentId: string | null = null;
-    let currentPath = '';
 
-    for (const part of pathParts) {
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-      const existing = flatFiles.find(f => f.path === currentPath);
-      if (existing) {
-        currentParentId = existing.id;
-      } else {
-        const newId = Math.random().toString(36).substring(7);
-        addFile(currentParentId, { id: newId, name: part, type: 'folder', children: [] });
-        currentParentId = newId;
-      }
-    }
-    return currentParentId;
-  };
-
-  // Apply changes to local store and cloud
+  // Apply changes to local store and cloud via unified applyExecutionChanges
   const applyLocally = async (pathsToApply: string[]) => {
+    const changedFiles: Array<{ path: string; content?: string }> = [];
+    const deletedFiles: string[] = [];
+
     for (const change of changeSet.changes) {
       if (!pathsToApply.includes(change.path)) continue;
-
-      const pathParts = change.path.split('/');
-      const fileName = pathParts.pop() || '';
-
       if (change.operation === 'modify' || change.operation === 'create') {
-        const existing = flatFiles.find(f => f.path === change.path);
-        if (existing) {
-          updateFileContent(existing.id, change.proposedContent || '');
-        } else if (change.operation === 'create') {
-          const parentId = ensureFolders(pathParts);
-          addFile(parentId, {
-            id: Math.random().toString(36).substring(7),
-            name: fileName,
-            type: 'file',
-            content: change.proposedContent || ''
-          });
-        }
+        changedFiles.push({ path: change.path, content: change.proposedContent || '' });
       } else if (change.operation === 'delete') {
-        const existing = flatFiles.find(f => f.path === change.path);
-        if (existing) {
-          deleteFile(existing.id);
-        }
+        deletedFiles.push(change.path);
       }
     }
+
+    applyExecutionChanges(changedFiles, deletedFiles);
     return saveProject();
   };
 

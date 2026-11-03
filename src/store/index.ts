@@ -51,6 +51,13 @@ Execution is performed live in the browser via Pyodide.
   }
 ];
 
+export interface WorkspaceCheckpoint {
+  id: string;
+  label: string;
+  timestamp: number;
+  files: FileNode[];
+}
+
 interface StoredProject {
   projectId: string;
   projectName: string;
@@ -117,6 +124,10 @@ interface IDEState {
   renameFile: (id: string, newName: string) => void;
   deleteFile: (id: string) => void;
   applyExecutionChanges: (changedFiles: Array<{ path: string; content?: string }>, deletedFiles: string[]) => void;
+  checkpoints: WorkspaceCheckpoint[];
+  createCheckpoint: (label: string) => string;
+  restoreCheckpoint: (checkpointId: string) => boolean;
+  restoreLastCheckpoint: () => boolean;
   
   // Tabs & Editor
   openTabs: OpenTab[];
@@ -254,14 +265,58 @@ const defaultSettings: EditorSettings = {
   fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace"
 };
 
-const findFile = (nodes: FileNode[], id: string): FileNode | null => {
-  for (const node of nodes) {
-    if (node.id === id) return node;
-    if (node.children) {
-      const found = findFile(node.children, id);
-      if (found) return found;
+export const normalizeFilePath = (pathStr: string): string => {
+  return (pathStr || '').replace(/\\/g, '/').replace(/^\/+/ , '').replace(/\/+$/, '').trim();
+};
+
+const findFile = (nodes: FileNode[], idOrPath: string): FileNode | null => {
+  if (!idOrPath) return null;
+
+  // 1. Direct ID match
+  const matchById = (items: FileNode[]): FileNode | null => {
+    for (const item of items) {
+      if (item.id === idOrPath) return item;
+      if (item.children) {
+        const found = matchById(item.children);
+        if (found) return found;
+      }
     }
+    return null;
+  };
+  const byId = matchById(nodes);
+  if (byId) return byId;
+
+  // 2. Full normalized path match
+  const normalized = normalizeFilePath(idOrPath);
+  const matchByPath = (items: FileNode[], prefix = ''): FileNode | null => {
+    for (const item of items) {
+      const itemPath = prefix ? `${prefix}/${item.name}` : item.name;
+      if (itemPath === normalized) return item;
+      if (item.children) {
+        const found = matchByPath(item.children, itemPath);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  const byPath = matchByPath(nodes);
+  if (byPath) return byPath;
+
+  // 3. Fallback: match by filename if query does not contain path separators
+  if (!idOrPath.includes('/') && !idOrPath.includes('\\')) {
+    const matchByName = (items: FileNode[]): FileNode | null => {
+      for (const item of items) {
+        if (item.name === idOrPath) return item;
+        if (item.children) {
+          const found = matchByName(item.children);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    return matchByName(nodes);
   }
+
   return null;
 };
 
@@ -274,6 +329,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
   projectId: initialProject.projectId,
   projectName: initialProject.projectName,
   files: initialProject.files,
+  checkpoints: [],
   projectLoadedFromCloud: false,
   projectCloudSaveStatus: 'idle',
   projectCloudSaveMessage: null,
@@ -681,8 +737,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       } catch {}
     }
 
+    const targetId = target ? target.id : id;
     const filterFiles = (nodes: FileNode[]): FileNode[] => {
-      return nodes.filter(n => n.id !== id).map(n => ({
+      return nodes.filter(n => n.id !== targetId).map(n => ({
         ...n,
         children: n.children ? filterFiles(n.children) : undefined
       }));
@@ -765,6 +822,55 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     if (state.projectId && state.projectName) saveStoredProject({ projectId: state.projectId, projectName: state.projectName, files: nextFiles, openTabs, activeFileId });
     return { files: nextFiles, openTabs, activeFileId };
   }),
+
+  createCheckpoint: (label: string) => {
+    const checkpointId = `ckpt-${Date.now()}-${uuidv4().slice(0, 8)}`;
+    const clonedFiles = JSON.parse(JSON.stringify(get().files)) as FileNode[];
+    const newCheckpoint: WorkspaceCheckpoint = {
+      id: checkpointId,
+      label: label || 'Workspace Checkpoint',
+      timestamp: Date.now(),
+      files: clonedFiles
+    };
+    set((state) => ({
+      checkpoints: [newCheckpoint, ...state.checkpoints].slice(0, 25)
+    }));
+    return checkpointId;
+  },
+
+  restoreCheckpoint: (checkpointId: string) => {
+    const cp = get().checkpoints.find(c => c.id === checkpointId);
+    if (!cp) return false;
+    const clonedFiles = JSON.parse(JSON.stringify(cp.files)) as FileNode[];
+    set({ files: clonedFiles });
+    if (get().projectId) {
+      try {
+        workspaceIndexManager.syncProject(get().projectId!, flattenFileTree(clonedFiles).map(f => ({
+          path: f.path || f.name,
+          name: f.name,
+          content: f.content || '',
+          type: f.type
+        })));
+      } catch {}
+    }
+    if (get().projectId && get().projectName) {
+      saveStoredProject({
+        projectId: get().projectId!,
+        projectName: get().projectName!,
+        files: clonedFiles,
+        openTabs: get().openTabs,
+        activeFileId: get().activeFileId
+      });
+    }
+    void get().saveProject();
+    return true;
+  },
+
+  restoreLastCheckpoint: () => {
+    const latest = get().checkpoints[0];
+    if (!latest) return false;
+    return get().restoreCheckpoint(latest.id);
+  },
 
   openFile: (id) => set((state) => {
     const existing = state.openTabs.find(t => t.fileId === id);

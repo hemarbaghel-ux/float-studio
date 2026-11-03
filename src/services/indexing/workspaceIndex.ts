@@ -7,7 +7,7 @@ import {
   BoundedContextItem,
   IndexStats
 } from './types';
-import { shouldIndexFile, normalizeWorkspacePath, isSensitivePath, isBinaryFile } from './fileFilter';
+import { shouldIndexFile, normalizeWorkspacePath, isSensitivePath, isBinaryFile, parseIgnorePatterns } from './fileFilter';
 import { extractSymbols } from './symbolExtractor';
 
 /**
@@ -65,8 +65,13 @@ export class WorkspaceIndex {
   /**
    * Initializes or bulk-updates the workspace index with a list of files.
    */
-  public indexProject(files: Array<{ path?: string; name?: string; content?: string; type?: string }>): void {
+  public indexProject(files: Array<{ path?: string; name?: string; content?: string; type?: string }>, ignorePatterns?: string[]): void {
     const activePaths = new Set<string>();
+    const patterns = [...(ignorePatterns || [])];
+    const gitignoreFile = files.find(f => (f.path === '.gitignore' || f.name === '.gitignore' || f.path === '.floatignore' || f.name === '.floatignore') && typeof f.content === 'string');
+    if (gitignoreFile && gitignoreFile.content) {
+      patterns.push(...parseIgnorePatterns(gitignoreFile.content));
+    }
 
     for (const file of files) {
       if (file.type === 'folder') continue;
@@ -74,12 +79,12 @@ export class WorkspaceIndex {
       const normPath = normalizeWorkspacePath(rawPath);
       if (!normPath) continue;
 
-      if (!shouldIndexFile(normPath, file.content)) {
+      if (!shouldIndexFile(normPath, file.content, patterns)) {
         continue;
       }
 
       activePaths.add(normPath);
-      this.updateFile(normPath, file.content || '');
+      this.updateFile(normPath, file.content || '', patterns);
     }
 
     // Prune files that are no longer part of the project
@@ -97,12 +102,12 @@ export class WorkspaceIndex {
    * Incrementally indexes or updates a single file in the workspace.
    * If content is unchanged (checked via hash), skips re-indexing.
    */
-  public updateFile(rawPath: string, content: string): boolean {
+  public updateFile(rawPath: string, content: string, ignorePatterns?: string[]): boolean {
     const path = normalizeWorkspacePath(rawPath);
     if (!path) return false;
 
     // Safety checks
-    if (!shouldIndexFile(path, content)) {
+    if (!shouldIndexFile(path, content, ignorePatterns)) {
       if (this.documents.has(path)) {
         this.removeFile(path);
       }

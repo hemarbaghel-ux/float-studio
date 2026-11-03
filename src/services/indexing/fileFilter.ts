@@ -64,7 +64,76 @@ export function isBinaryFile(filePath: string, content?: string): boolean {
   return false;
 }
 
-export function sanitizePath(rawPath: string): { safePath: string; error?: string } {
+/**
+ * Parses .gitignore or .floatignore lines into matching rules
+ */
+export function parseIgnorePatterns(ignoreContent: string): string[] {
+  if (!ignoreContent || typeof ignoreContent !== 'string') return [];
+  return ignoreContent
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'));
+}
+
+/**
+ * Checks if a path matches any pattern from .gitignore or .floatignore
+ */
+export function matchesIgnorePattern(filePath: string, patterns: string[]): boolean {
+  if (!filePath || !patterns || patterns.length === 0) return false;
+  const norm = normalizeWorkspacePath(filePath);
+  if (!norm) return false;
+  const segments = norm.split('/');
+
+  for (const rawPat of patterns) {
+    const pat = rawPat.trim();
+    if (!pat || pat.startsWith('#')) continue;
+
+    const isNegation = pat.startsWith('!');
+    const activePat = isNegation ? pat.slice(1).trim() : pat;
+    if (!activePat) continue;
+
+    const cleanPat = activePat.replace(/^\/+/, '').replace(/\/+$/, '');
+
+    // Directory match like 'coverage/' or 'dist/'
+    if (activePat.endsWith('/')) {
+      if (segments.some(seg => seg === cleanPat) || norm.startsWith(`${cleanPat}/`)) {
+        return !isNegation;
+      }
+    }
+
+    // Extension glob match like '*.log'
+    if (activePat.startsWith('*.')) {
+      const ext = activePat.slice(2).toLowerCase();
+      if (norm.toLowerCase().endsWith(`.${ext}`)) {
+        return !isNegation;
+      }
+    }
+
+    // Exact path or filename match
+    const fileName = segments[segments.length - 1];
+    if (cleanPat === norm || cleanPat === fileName || segments.includes(cleanPat)) {
+      return !isNegation;
+    }
+
+    // Wildcard match
+    if (activePat.includes('*')) {
+      const escaped = cleanPat.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+      const regexStr = '^' + escaped.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*') + '$';
+      try {
+        const regex = new RegExp(regexStr, 'i');
+        if (regex.test(norm) || regex.test(fileName)) {
+          return !isNegation;
+        }
+      } catch {
+        // ignore regex compilation failure
+      }
+    }
+  }
+
+  return false;
+}
+
+export function sanitizePath(rawPath: string, ignorePatterns?: string[]): { safePath: string; error?: string } {
   if (!rawPath || typeof rawPath !== 'string') {
     return { safePath: '', error: 'Path is required.' };
   }
@@ -78,14 +147,18 @@ export function sanitizePath(rawPath: string): { safePath: string; error?: strin
   if (isBinaryFile(norm)) {
     return { safePath: '', error: `Binary file "${norm}" is excluded from text operations.` };
   }
+  if (ignorePatterns && matchesIgnorePattern(norm, ignorePatterns)) {
+    return { safePath: '', error: `Path "${norm}" is ignored by workspace ignore rules.` };
+  }
   return { safePath: norm };
 }
 
-export function shouldIndexFile(filePath: string, content?: string): boolean {
+export function shouldIndexFile(filePath: string, content?: string, ignorePatterns?: string[]): boolean {
   if (!filePath || typeof filePath !== 'string') return false;
   if (isPathTraversal(filePath)) return false;
   const norm = normalizeWorkspacePath(filePath);
   if (isSensitivePath(norm)) return false;
   if (isBinaryFile(norm, content)) return false;
+  if (ignorePatterns && matchesIgnorePattern(norm, ignorePatterns)) return false;
   return true;
 }

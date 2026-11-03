@@ -27,12 +27,12 @@ export async function getEvalTask(id: string, ownerId: string): Promise<EvalTask
 
 export async function listEvalTasks(ownerId: string): Promise<EvalTask[]> {
   const snapshot = await taskCollection().where('ownerId', '==', ownerId).orderBy('createdAt', 'desc').limit(200).get();
-  return snapshot.docs.map((document) => document.data() as EvalTask);
+  return snapshot.docs.map((document: any) => document.data() as EvalTask);
 }
 
 export async function deleteEvalTask(id: string, ownerId: string): Promise<boolean> {
   const reference = taskCollection().doc(id);
-  return adminDb.runTransaction(async (transaction) => {
+  return adminDb.runTransaction(async (transaction: any) => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists || snapshot.get('ownerId') !== ownerId) return false;
     transaction.delete(reference);
@@ -50,12 +50,12 @@ export async function heartbeatEvalRun(id: string): Promise<void> {
 
 export async function listRunningEvalRuns(): Promise<EvalRun[]> {
   const snapshot = await runCollection().where('status', '==', 'running').get();
-  return snapshot.docs.map((document) => document.data() as EvalRun);
+  return snapshot.docs.map((document: any) => document.data() as EvalRun);
 }
 
 export async function failInterruptedEvalRun(id: string): Promise<boolean> {
   const reference = runCollection().doc(id);
-  return adminDb.runTransaction(async (transaction) => {
+  return adminDb.runTransaction(async (transaction: any) => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists || snapshot.get('status') !== 'running') return false;
     const heartbeatAt = Number(snapshot.get('heartbeatAt') || 0);
@@ -80,7 +80,7 @@ export async function getEvalRun(id: string, ownerId: string): Promise<EvalRun |
 
 export async function listEvalRuns(ownerId: string): Promise<EvalRun[]> {
   const snapshot = await runCollection().where('ownerId', '==', ownerId).orderBy('startedAt', 'desc').limit(200).get();
-  return snapshot.docs.map((document) => document.data() as EvalRun);
+  return snapshot.docs.map((document: any) => document.data() as EvalRun);
 }
 
 export async function saveEvalBenchmark(benchmark: Benchmark): Promise<void> {
@@ -89,7 +89,7 @@ export async function saveEvalBenchmark(benchmark: Benchmark): Promise<void> {
 
 export async function listEvalBenchmarks(ownerId: string): Promise<Benchmark[]> {
   const snapshot = await benchmarkCollection().where('ownerId', '==', ownerId).orderBy('createdAt', 'desc').limit(100).get();
-  return snapshot.docs.map((document) => document.data() as Benchmark);
+  return snapshot.docs.map((document: any) => document.data() as Benchmark);
 }
 
 export async function getEvalBenchmark(id: string, ownerId: string): Promise<Benchmark | null> {
@@ -104,5 +104,5 @@ export async function saveEvalReview(review: HumanReview): Promise<void> {
 
 export async function listEvalReviews(runId: string, ownerId: string): Promise<HumanReview[]> {
   const snapshot = await reviewCollection().where('runId', '==', runId).where('ownerId', '==', ownerId).get();
-  return snapshot.docs.map((document) => document.data() as HumanReview);
+  return snapshot.docs.map((document: any) => document.data() as HumanReview);
 }

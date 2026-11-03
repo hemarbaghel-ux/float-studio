@@ -63,7 +63,7 @@ export interface ContextExplanationItem {
   id: string;
   name: string;
   type: string;
-  source: 'explicit' | 'active_editor' | 'retrieval' | 'symbol' | 'git' | 'terminal' | 'conversation';
+  source: 'explicit' | 'folder' | 'active_editor' | 'retrieval' | 'symbol' | 'git' | 'terminal' | 'conversation';
   chars: number;
   priority: number;
 }
@@ -260,7 +260,15 @@ export class ContextBuilder {
       let priority = 3;
       let src: ContextExplanationItem['source'] = 'explicit';
 
-      if (item.type === 'selection') {
+      if (item.provenance === 'folder' || (item.id && item.id.startsWith('folder-'))) {
+        priority = 3;
+        src = 'folder';
+      } else if (item.provenance === 'symbol' || (item.id && item.id.startsWith('symbol-'))) {
+        priority = 2;
+        src = 'symbol';
+      } else if (item.provenance) {
+        src = item.provenance as any;
+      } else if (item.type === 'selection') {
         priority = 1;
         src = 'active_editor';
       } else if (item.type === 'terminal') {

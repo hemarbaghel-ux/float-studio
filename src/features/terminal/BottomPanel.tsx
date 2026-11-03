@@ -88,6 +88,19 @@ export function BottomPanel() {
     addTerminalEntry({ type: 'command', content: trimmed });
     setInputVal('');
 
+    const isDestructive = /^(?:rm\s|del\s|rmdir\s|git\s+(?:reset|clean|push|rebase)|npm\s+(?:uninstall|publish)|drop\s+table)/i.test(trimmed);
+    const isNetworkOrInstall = /^(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+add|pip\s+install|curl\s|wget\s)/i.test(trimmed);
+
+    if (isDestructive || isNetworkOrInstall) {
+      const promptText = isDestructive
+        ? `Command "${trimmed}" may delete files or overwrite history. Do you want to proceed?`
+        : `Command "${trimmed}" will install external packages or touch the network. Do you want to proceed?`;
+      if (typeof window !== 'undefined' && !window.confirm(promptText)) {
+        addTerminalEntry({ type: 'output', content: `[Cancelled by user: ${trimmed}]` });
+        return;
+      }
+    }
+
     if (trimmed === 'clear') {
       clearTerminal();
       return;

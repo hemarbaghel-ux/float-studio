@@ -1,6 +1,7 @@
 export interface FileNode {
   id: string;
   name: string;
+  path?: string;
   type: 'file' | 'folder';
   content?: string;
   children?: FileNode[];
@@ -73,6 +74,9 @@ export interface AIContextItem {
   sizeBytes?: number;
   mimeType?: string;
   imageDataUrl?: string;
+  provenance?: 'explicit' | 'folder' | 'symbol' | 'codebase' | 'active_file' | 'selection' | 'terminal';
+  reason?: string;
+  isTruncated?: boolean;
 }
 
 export interface EditorSettings {

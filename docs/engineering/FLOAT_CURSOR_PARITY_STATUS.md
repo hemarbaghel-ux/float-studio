@@ -274,3 +274,124 @@ Finish Phase 1 acceptance by adding per-model authentication/access checks and e
 - Rejections dispatch authenticated cancellation requests via `rejectProposalRequest` without mutating workspace files.
 - Added regression test `scripts/testComposerMultiFileDiff.ts` verifying file presence, action bar controls, cloud save gating, per-file acceptance, and keyboard accessibility hints; integrated into the standard `npm test` suite (now 51 suites).
 - Verification: `npm.cmd run lint` exited 0; all 51 test suites in `npm.cmd test` passed with 0 errors; `npm.cmd run build` produced Vite client and Node server bundles cleanly.
+
+## Continuation update — Phase 0 baseline reconciliation and Phase 1 core defects resolution
+
+- **Phase 0 Baseline & Reconciled Findings**:
+  1. *Proposal acceptance file identity defect*: Confirmed and fixed. `src/store/index.ts` `findFile` was searching by node ID only, failing on file paths like `src/App.tsx`. Updated `findFile` to resolve by ID, normalized relative path, and filename fallback; fixed `deleteFile` to delete by resolved `targetId`.
+  2. *Proposal parsing regex brittleness*: Confirmed and fixed. Upgraded `parseSegments` in `src/features/float/chatParsing.ts` to support quoted paths (`path="..."`), colon syntax (````tsx:src/file.ts````), `filename=`, `file=`, and top-line filepath comments (`// filepath: ...`, `# filepath: ...`), while isolating ordinary code snippets as text.
+  3. *Client and server path traversal*: Confirmed and harmonized. Updated `sanitizeProposalPath` in `src/server/proposals/proposalService.ts` to normalize leading `./` while strictly enforcing rejection of directory traversal (`..`), root Unix paths, Windows drive letters, null bytes, and sensitive files.
+  4. *Terminal execution duality*: Traced and confirmed. Browser Web Worker shell (`src/features/float/sandbox.ts`) is currently wired to the primary UI (interactive bottom panel and AI code block execution). `src/server/terminal/terminalService.ts` provides server-side session persistence.
+  5. *Virtual worker shell nature*: Confirmed. The browser worker shell is an in-memory virtual JavaScript POSIX shell and does not represent an unrestricted OS or native container terminal.
+  6. *Status bar placeholders*: Traced and confirmed. Model and cloud sync are dynamic; diagnostics and Git branch rely on local state fallbacks when validation or git repositories are not loaded.
+  7. *Truthful cloud sync*: Confirmed. `saveProject()` in `src/store/index.ts` marks `synced` only after verified generation transaction commits in Firestore.
+  8. *Upstream model verification*: Confirmed. `OPENAI_API_KEY` present in `.env` returns `401 Unauthorized` upstream; fails closed with explicit `AUTH_ERROR` without silent fallback or fabricated success.
+  9. *Demo mode isolation*: Confirmed. Authenticated user chat paths do not pass `demoMode: true`; credentials are required.
+  10. *Branch relationship & lockfile*: Confirmed. Working branch `codex/float-cursor-build` at HEAD `d7bfb34` is 2 commits ahead of remote `origin/main` (`197a32c`), with dirty lockfile preserved intact.
+
+- **Phase 1 Implementation Delivered**:
+  - `src/features/composer/MultiFileDiffCard.tsx` and `src/features/proposals/DiffReviewModal.tsx`: Switched `applyLocally` to unified `applyExecutionChanges`, ensuring automated folder creation, tab updates, workspace index updates, and cloud save gating.
+  - Added single-file Reject handler (`handleRejectSingleFile`) and full Changeset Undo (`handleUndo`) restoring exact `originalContent` and reverting proposal status cleanly.
+  - Added an **"AI & Models"** settings tab with an interactive **"Test Connection"** button in `src/features/settings/SettingsModal.tsx` querying `/api/ai/health`.
+  - Added `scripts/testPhase1AuditRegression.ts` with 21 automated regression checks; registered in `package.json` `test` runner.
+  - Fixed TS7006 implicit `any` parameter types across 6 server persistence modules.
+
+- **Verification Quality Baseline**:
+  - `npm.cmd run lint` (`tsc --noEmit`): Exited 0 with 0 errors.
+  - `npm.cmd test`: All 53/53 test suites passed with 0 failures.
+  - `npm.cmd run build`: Exited 0 (Vite client SPA 2,500 kB + Node server 495.6 kB).
+  - `git diff --check`: Exited 0 with line-ending normalization notices only.
+
+## Continuation update — Phases 2 through 8 complete: Cursor-level coding workflows and bounded agent mode
+
+### Phase 2 — Context Engine & Indexing (@ mentions, .gitignore, bounded character budget)
+- Implemented robust parsing and bounded expansion for `@file:<path>`, `@<path>`, `@folder:<path>`, `@symbol:<name>`, and `@codebase` in `src/features/float/chatContext.ts`.
+- Enforced strict character budgets (`MAX_EXPLICIT_FILE_CHARS = 8000`, `MAX_FOLDER_TOTAL_CHARS = 12000`, `MAX_TOTAL_CONTEXT_CHARS = 24000`) preventing context overflow.
+- Sanitized file filter in `src/services/indexing/fileFilter.ts`: added `.gitignore` and `.floatignore` glob parsing, path traversal checks, and strict credential exclusion (`.env*`, `credentials.json`, `id_rsa*`, `.key`, `.pem`).
+- Multi-project index isolation in `src/services/indexing/workspaceIndexManager.ts`: ensures indexing cache does not leak across project boundaries.
+- Server ContextBuilder provenance tracking in `src/server/contextBuilder.ts`: maps folder, symbol, and explicit mentions with full provenance.
+- Added context explanation collapsible badge in `src/features/float/ChatThread.tsx` displaying included sources, omitted files, and token budgets.
+- Verified with `scripts/testPhase2ContextRegression.ts` (8/8 test suites passed).
+
+### Phase 3 & 4 — Sandboxed Terminal, "Fix with AI" Auto-Repair Loop & Monaco Inline Edit (Ctrl+K)
+- Integrated execution exit code capture in `BottomPanel.tsx` and `MiniTerminal`. Non-zero exit codes automatically trigger failure banner: `[Command failed (exit code N)] [Fix with FLOAT]`.
+- Clicking "Fix with FLOAT" collects the failed command, exit code, active file, and last 40 lines of output/traceback, injecting them into the chat composer and focusing the thread.
+- Added confirmation dialogue for destructive terminal commands (`rm`, `del`, `git reset`, `npm uninstall`) and package installation notices.
+- Monaco Editor keybindings registered in `src/features/editor/CodeEditor.tsx`: `Ctrl+P` / `Cmd+P` command palette and `Ctrl+K` / `Cmd+K` inline assistant overlay (`InlineAssistantModal.tsx`).
+- Multi-file proposals in Composer: side-by-side diff review modal, per-file Accept/Reject toggles, and bulk Accept All / Reject All with cloud save confirmation.
+- Terminal secret redaction (`sanitizeTerminalOutput`) in `src/server/terminal/terminalService.ts` prevents token exfiltration into terminal logs.
+- Verified with `scripts/testPhase3TerminalRegression.ts` (4/4 test suites passed).
+
+### Phase 5 — Status Bar Realism & Cloud Save Synchronization
+- Refactored `src/features/shell/StatusBar.tsx`:
+  - Replaced hardcoded "0" diagnostics with live errors and warnings from `useValidationStore` and `executionError`.
+  - Replaced static line ending with dynamic `{lineEnding}` (CRLF vs LF detected from active file buffer).
+  - Connected Git branch indicator to active repository branch from `githubConn.metadata?.defaultBranch || 'local'`.
+  - Real-time dirty tab detection: displays amber `Unsaved changes` when open tabs are modified; emerald `Synced` only after Firestore transaction acknowledgement; `Saving...` during in-flight commits.
+
+### Phase 6 — Bounded Autonomous Agent Mode & Tool Execution Policy
+- Created authoritative `BoundedToolExecutor` in `src/server/agent/boundedToolExecutor.ts`:
+  - Enforces project-scoped authorization via `verifyProjectOwnership` and server-side policy via `ExecutionPolicyManager.evaluate`.
+  - Tool 1: `list_project_files` — lists non-sensitive workspace paths and byte sizes, strictly filtering credentials (`.env`, `id_rsa`, `credentials.json`).
+  - Tool 2: `read_project_file` — reads workspace files with 50,000 char budget; strictly rejects directory traversal (`../`) and secret paths.
+  - Tool 3: `search_codebase` — bounded lexical search across non-binary, non-sensitive files with max 25 results.
+  - Tool 4: `propose_changes` — creates structured, reviewable proposals (`pending_review`) with computed diff additions and deletions. Never silently mutates or writes to files.
+- Bounded Agent Loop Controller: enforces `maxIterations` (stops with `max_iterations_exceeded` if limit breached), timeout cap (30s), `AbortSignal` cancellation, and auditable execution trace.
+- Mounted authenticated endpoint `POST /api/projects/:projectId/agent/execute-tool` in `src/server/app.ts`.
+- Verified with `scripts/testPhase6AgentLoopRegression.ts` (7/7 test suites passed).
+
+### Phase 7 — Integrations Honesty, Turn Snapshots & Workspace Rollback
+- Added `WorkspaceCheckpoint` architecture to `src/store/index.ts`:
+  - `createCheckpoint(label)`: deep-clones file tree, timestamps, and preserves snapshot history (bounded at 25 checkpoints).
+  - `restoreCheckpoint(checkpointId)`: restores exact file tree, updates open tabs, and synchronizes workspace index and cloud storage.
+  - `restoreLastCheckpoint()`: instant rollback to immediately preceding snapshot.
+- Connected turn checkpoints into `src/features/float/ChatThread.tsx`: records pre-turn snapshot on every prompt and provides "Restore checkpoint" button.
+- Integrations router honesty: audited `gitRouter.ts` and `integrationsRouter.ts`. Unconfigured integrations fail closed with explicit 401 ("Connect GitHub in Settings → Integrations") without mock tokens, simulated PRs, or fabricated repositories.
+- Verified with `scripts/testPhase7IntegrationsAndCheckpoints.ts` (5/5 test suites passed).
+
+### Phase 8 — End-to-End Acceptance, Quality Gates & Release Verification
+- `npm.cmd run lint` (`tsc --noEmit`): Exits 0 with 0 errors across client and server.
+- Regression suites: Phase 1 (21/21 checks), Phase 2 (8/8 suites), Phase 3 (4/4 suites), Phase 6 (7/7 suites), Phase 7 (5/5 suites) all passed 100%.
+- `npm.cmd run build`: Exits 0; generated client Vite SPA (2,515.48 kB) and Node server bundle (`dist/server.cjs` 510.3 kB) cleanly.
+- Preserved user changes: `package-lock.json` kept intact without resets or overwrites.
+- Zero mock AI responses, simulated providers, or fake terminal execution.
+
+## Continuation update — Desktop Strategy: VS Code / VSCodium Extension Distribution & Release Gates
+
+### Product Decision & Distribution Strategy (Option A)
+- **Model**: Distribute FLOAT Studio as a native VS Code & VSCodium Extension (`float-vscodium-poc`) installable from Open VSX (`open-vsx.org`) and VS Code Marketplace, rather than maintaining a full custom Code-OSS fork and heavy OS installer build pipelines.
+- **Benefits**:
+  - Zero fork maintenance burden (no upstream merge conflicts with VS Code releases).
+  - Native integration with developer workbenches (native language servers, native terminals, native git).
+  - Fast download & zero-config installation (<10 MB vs ~350 MB desktop installer).
+  - Instant access to over 60,000 Open VSX extensions (Pyright, rust-analyzer, Clangd, Go, Prettier, ESLint).
+- **Standalone App Boundary**: Revisit a standalone branded Electron application only if user demand or product requirements make custom window shell controls essential.
+
+### Implemented & Verified Extension Architecture (`extensions/float-vscodium-poc`)
+1. **Local Hard Drive & Proposal Engine (`src/floatEngine.ts`)**:
+   - Scans local folders directly from disk with automatic `.env` and sensitive credential exclusion.
+   - Bounded character budget prompt assembly (`@file` mentions).
+   - Structured multi-file proposals (`pending_review`) with diff statistics.
+   - Strict human approval gating: explicit rejection leaves disk files 100% untouched; explicit acceptance writes directly to disk.
+   - Turn snapshots & one-click disk rollback.
+   - Verified via `scripts/testVscodiumPoCWorkflow.ts` (All 6/6 steps passed).
+2. **Native Workbench & UI Integration (`src/extension.ts`, `src/composerViewProvider.ts`, `src/inlineDiffController.ts`, `src/terminalMonitor.ts`)**:
+   - Activity Bar view container (`float-sidebar`, `$(sparkle)`) with native Composer Webview panel.
+   - `Ctrl+K` Inline Transformations: anchors floating prompt, highlights additions (green) and deletions (red strikethrough), with `Tab` accept and `Esc` reject.
+   - Terminal Auto-Repair: hooks terminal process exits to surface `[Fix with FLOAT]`.
+   - Verified via `scripts/verifyVscodiumWorkbenchIntegration.ts` against official VSCodium win32-x64 portable binary v1.143.17232 (All 4 stages passed).
+3. **Backend API Client, Streaming, Auth, Cancellation & Isolation (`src/floatApiClient.ts`)**:
+   - Real progressive SSE streaming from backend `/api/ai/chat` (`data: {"type": "delta", "text": "..."}`).
+   - Authentication & authorization: HTTP 401 on missing tokens, HTTP 403 on cross-project attempts, HTTP 200 on valid credentials.
+   - Client & server stream cancellation via `AbortController`.
+   - Error handling: HTTP 429 rate limits, network outages, and malformed chunks handled gracefully.
+   - Conversation and project isolation: strict scoping with zero state bleed between threads.
+   - Verified via `scripts/testVscodiumBackendIntegration.ts` (All 5/5 test suites passed).
+
+### Automated Extension Release Gates & VSIX Packaging
+- `npm run build:extension`: Compiles extension bundle to `dist/extension.js` via `esbuild`.
+- `npm run package:extension`: Packages manifest, README, and bundle into standard `.vsix` archive (`dist/float-vscodium-poc-1.0.0.vsix`, 2.77 MB).
+- `npm run test:extension`: Enforces all 3 desktop and backend integration suites (`testVscodiumPoCWorkflow`, `verifyVscodiumWorkbenchIntegration`, `testVscodiumBackendIntegration`), including Step 5 native VSCodium CLI extension registry verification (`float-ai.float-vscodium-poc@1.0.0`).
+- Integrated into root `npm test` release pipeline.
+- Distribution Documentation: Completed comprehensive guide at `docs/engineering/EXTENSION_DISTRIBUTION.md` detailing Open VSX and VS Code Marketplace publishing steps (`ovsx publish`, `vsce publish`).
+- All checks pass with exit code 0 (`npm run lint`, `npm run test:extension`, `git diff --check`).
