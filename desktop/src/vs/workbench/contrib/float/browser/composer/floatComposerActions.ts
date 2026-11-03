@@ -3,7 +3,7 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { Action2 } from '../../../../../platform/actions/common/actions.js';
+import { Action2, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
@@ -36,37 +36,116 @@ export class OpenFloatComposerAction extends Action2 {
 
 		const composer = new FloatComposer(floatService, notificationService, textFileService);
 
+		const modeChoice = await quickInputService.pick([
+			{ id: 'agent', label: '$(sparkle) Autonomous Agent Mode', description: 'Agent executes tools, runs tests, reads/edits files until goal is met' },
+			{ id: 'fast', label: '$(diff) Quick Multi-File Edit', description: 'Single-turn multi-file code generation and diff preview' }
+		], {
+			placeHolder: 'Select FLOAT Composer operating mode:'
+		});
+
+		if (!modeChoice) {
+			return;
+		}
+
 		const prompt = await quickInputService.input({
-			prompt: `FLOAT Composer (${floatService.getActiveModel().name}): Describe multi-file feature or fix`,
-			placeHolder: 'e.g. Add rate limiting middleware to express server and update test assertions'
+			prompt: `FLOAT Composer [${modeChoice.id === 'agent' ? 'Autonomous Agent' : 'Multi-File Edit'}] (${floatService.getActiveModel().name})`,
+			placeHolder: 'Describe your multi-file feature, refactor, or test repair...'
 		});
 
 		if (!prompt || !prompt.trim()) {
 			return;
 		}
 
-		notificationService.info(`FLOAT Composer generating proposal with ${floatService.getActiveModel().name}...`);
-		const proposal = await composer.generateComposerProposal(prompt.trim());
-
-		if (proposal && proposal.files.length > 0) {
-			const choice = await quickInputService.pick([
-				{ id: 'apply', label: `$(check) Apply Proposal (${proposal.files.length} files modified)`, description: proposal.summary },
-				{ id: 'reject', label: '$(x) Reject Proposal', description: 'Discard all proposed file changes' }
-			], {
-				placeHolder: `Proposal generated: ${proposal.files.length} file changes. Select action:`
+		if (modeChoice.id === 'agent') {
+			notificationService.info(`FLOAT Autonomous Composer running: "${prompt.trim()}"...`);
+			const execution = await composer.executeAutonomousGoal({
+				prompt: prompt.trim()
+			}, step => {
+				if (step.toolCall) {
+					notificationService.info(`Agent executing tool: ${step.toolCall.name}...`);
+				}
 			});
 
-			if (choice?.id === 'apply') {
-				const success = await composer.applyProposal(proposal.id);
-				if (success) {
-					notificationService.info(`Applied FLOAT Composer proposal: ${proposal.summary}`);
+			if (execution.proposal && execution.proposal.files.length > 0) {
+				const prop = execution.proposal;
+				const actionChoice = await quickInputService.pick([
+					{ id: 'applyAll', label: `$(check) Accept All Changes (${prop.files.length} files)`, description: `+${prop.stats.totalAdditions} / -${prop.stats.totalDeletions} lines across workspace` },
+					{ id: 'inspect', label: '$(eye) Inspect Individual Files', description: 'Review and accept/reject files individually' },
+					{ id: 'rejectAll', label: '$(x) Reject All Changes', description: 'Discard all staged edits' },
+					{ id: 'rollback', label: '$(history) Rollback Turn Checkpoint', description: 'Atomically restore workspace to pre-turn baseline' }
+				], {
+					placeHolder: `Autonomous Agent completed: ${prop.files.length} files modified. Select action:`
+				});
+
+				if (actionChoice?.id === 'applyAll') {
+					await composer.orchestrator.acceptAll(prop.id, async (p, content) => {
+						await composer.acceptFile(prop.id, p);
+					});
+					notificationService.info(`FLOAT Composer: All ${prop.files.length} files accepted and written to disk.`);
+				} else if (actionChoice?.id === 'rejectAll') {
+					composer.orchestrator.rejectAll(prop.id);
+					notificationService.info('FLOAT Composer: All proposals rejected.');
+				} else if (actionChoice?.id === 'rollback' && execution.checkpointId) {
+					await composer.rollbackTurn(execution.checkpointId);
 				}
 			} else {
-				await composer.rejectProposal(proposal.id);
-				notificationService.info('FLOAT Composer proposal discarded.');
+				notificationService.info('FLOAT Autonomous Agent finished execution. No files were modified.');
 			}
 		} else {
-			notificationService.warn('No structured multi-file proposal returned by model.');
+			// Fast mode
+			notificationService.info(`FLOAT Composer generating proposal with ${floatService.getActiveModel().name}...`);
+			const proposal = await composer.generateComposerProposal(prompt.trim());
+
+			if (proposal && proposal.files.length > 0) {
+				const choice = await quickInputService.pick([
+					{ id: 'apply', label: `$(check) Apply Proposal (${proposal.files.length} files modified)`, description: proposal.summary },
+					{ id: 'reject', label: '$(x) Reject Proposal', description: 'Discard all proposed file changes' }
+				], {
+					placeHolder: `Proposal generated: ${proposal.files.length} file changes. Select action:`
+				});
+
+				if (choice?.id === 'apply') {
+					await composer.applyProposal(proposal.id);
+				} else if (choice?.id === 'reject') {
+					composer.rejectProposal(proposal.id);
+				}
+			} else {
+				notificationService.info('FLOAT Composer did not detect any code blocks in the model response.');
+			}
 		}
 	}
 }
+
+export class RollbackFloatComposerTurnAction extends Action2 {
+	static readonly ID = 'float.composer.rollbackTurn';
+
+	constructor() {
+		super({
+			id: RollbackFloatComposerTurnAction.ID,
+			title: { value: 'FLOAT: Rollback Last Composer Turn', original: 'FLOAT: Rollback Last Composer Turn' },
+			f1: true
+		});
+	}
+
+	public override async run(accessor: ServicesAccessor): Promise<void> {
+		const floatService = accessor.get(IFloatService);
+		const notificationService = accessor.get(INotificationService);
+
+		const checkpoints = floatService.getCheckpointService().listCheckpoints();
+		if (checkpoints.length === 0) {
+			notificationService.info('No turn checkpoints available for rollback.');
+			return;
+		}
+
+		const latest = checkpoints[checkpoints.length - 1];
+		const result = await floatService.getCheckpointService().restoreCheckpoint(latest.id);
+		if (result.success) {
+			notificationService.info(`Successfully rolled back to checkpoint: ${latest.description} (${latest.id})`);
+		} else {
+			notificationService.error(`Rollback failed: ${result.error}`);
+		}
+	}
+}
+
+registerAction2(OpenFloatComposerAction);
+registerAction2(RollbackFloatComposerTurnAction);
