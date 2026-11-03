@@ -35,15 +35,32 @@ export class FloatContextProvider {
 					}
 				}
 			} else if (m.type === 'codebase') {
-				const indexed = indexer.getIndexedFiles();
-				const summary = `[Codebase Overview: ${indexed.length} files indexed]`;
+				// Query semantic vector index for bounded codebase context
+				const remainingBudget = Math.max(1000, this._maxChars - currentChars);
+				const cleanQuery = prompt.replace(/@codebase/gi, '').trim() || m.value || 'overview';
+				const bounded = indexer.retrieveBoundedContext(cleanQuery, remainingBudget);
+
+				let summary = `[Codebase Overview: ${indexer.getIndexedFiles().length} files indexed]`;
+				if (bounded.chunks.length > 0) {
+					summary = `[Codebase Semantic Context: ${bounded.chunks.length} relevant chunks]\n${bounded.formattedText}`;
+				}
+
 				if (currentChars + summary.length <= this._maxChars) {
 					resolvedFiles.push({ path: '@codebase', excerpt: summary });
 					currentChars += summary.length;
 				}
 			} else if (m.type === 'symbol' && m.value) {
-				const symbols = this._floatService.getBrainService().findSymbols(m.value, 5);
-				const symText = `[Symbols for ${m.value}: ${symbols.map(s => `${s.name} in ${s.filePath}:${s.line}`).join(', ')}]`;
+				// First check semantic vector chunks for actual implementation snippet
+				const symbolChunks = indexer.searchCodebase(m.value, 3);
+				let symText = '';
+				if (symbolChunks.length > 0 && symbolChunks[0].chunk.content) {
+					const top = symbolChunks[0].chunk;
+					symText = `[Symbol Implementation for ${m.value} (${top.filePath}:L${top.startLine}-L${top.endLine})]\n${top.content}`;
+				} else {
+					const symbols = this._floatService.getBrainService().findSymbols(m.value, 5);
+					symText = `[Symbols for ${m.value}: ${symbols.map(s => `${s.name} in ${s.filePath}:${s.line}`).join(', ')}]`;
+				}
+
 				if (currentChars + symText.length <= this._maxChars) {
 					resolvedFiles.push({ path: `@symbol:${m.value}`, excerpt: symText });
 					currentChars += symText.length;
