@@ -3,11 +3,11 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { IWorkbenchContribution } from '../../../common/contributions.js';
-import { ITerminalService } from '../../terminal/browser/terminal.js';
-import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { IWorkbenchContribution } from '../../../../common/contributions.js';
+import { ITerminalService } from '../../../terminal/browser/terminal.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { Disposable } from '../../../../../base/common/lifecycle.js';
 
 export class FloatTerminalListener extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.floatTerminalListener';

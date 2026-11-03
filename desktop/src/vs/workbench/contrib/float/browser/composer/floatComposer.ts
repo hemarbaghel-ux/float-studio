@@ -6,10 +6,10 @@
 import { IFloatService } from '../../common/floatService.js';
 import { IFloatProposal } from '../../common/protocols/floatProtocol.js';
 import { parseModelProposals } from '../../common/proposals/floatProposalValidator.js';
-import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
-import { URI } from '../../../../base/common/uri.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { Disposable } from '../../../../../base/common/lifecycle.js';
 
 export class FloatComposer extends Disposable {
 	private _activeProposal: IFloatProposal | null = null;

@@ -3,11 +3,11 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
-import { IEditorContribution } from '../../../../editor/common/editorCommon.js';
+import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
+import { IEditorContribution } from '../../../../../editor/common/editorCommon.js';
 import { IFloatService } from '../../common/floatService.js';
-import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { Disposable } from '../../../../../base/common/lifecycle.js';
 
 export class FloatInlineDiffController extends Disposable implements IEditorContribution {
 	static readonly ID = 'editor.contrib.floatInlineDiff';

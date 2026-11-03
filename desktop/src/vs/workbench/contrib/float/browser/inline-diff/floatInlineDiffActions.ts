@@ -3,13 +3,13 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { EditorAction2 } from '../../../../editor/browser/editorExtensions.js';
-import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
-import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { EditorAction2 } from '../../../../../editor/browser/editorExtensions.js';
+import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
+import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { FloatInlineDiffController } from './floatInlineDiffController.js';
-import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
-import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
-import { EditorContextKeys } from '../../../../editor/common/editorContextKeys.js';
+import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
+import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
 
 export class FloatInlineDiffAction extends EditorAction2 {
 	static readonly ID = 'float.inlineDiff.trigger';

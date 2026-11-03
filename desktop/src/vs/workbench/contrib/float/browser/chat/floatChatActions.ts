@@ -3,11 +3,11 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { Action2 } from '../../../../platform/actions/common/actions.js';
-import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
-import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
-import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { Action2 } from '../../../../../platform/actions/common/actions.js';
+import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
+import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 
 export class OpenFloatChatAction extends Action2 {
 	static readonly ID = 'float.chat.open';
