@@ -8,3 +8,15 @@ tools/
 *.zip
 .env*
 !.env.example
+
+# Desktop Code-OSS build artifacts and caches
+desktop/node_modules/
+desktop/out/
+desktop/out-build/
+desktop/out-vscode/
+desktop/.build/
+desktop/.temp/
+desktop/extensions/**/node_modules/
+desktop/extensions/**/out/
+desktop/extensions/**/dist/
+desktop/*.log
