@@ -193,6 +193,9 @@ import './contrib/chat/browser/chat.contribution.js';
 import './contrib/inlineChat/browser/inlineChat.contribution.js';
 import './contrib/mcp/browser/mcp.contribution.js';
 
+// FLOAT Native AI Subsystem
+import './contrib/float/browser/float.contribution.js';
+
 // Interactive
 import './contrib/interactive/browser/interactive.contribution.js';
 
