@@ -41,10 +41,11 @@ export class WorkspaceIndexManager {
    */
   public syncProject(
     projectId: string,
-    files: Array<{ path?: string; name?: string; content?: string; type?: string }>
+    files: Array<{ path?: string; name?: string; content?: string; type?: string }>,
+    ignorePatterns?: string[]
   ): WorkspaceIndex {
     const index = this.getIndex(projectId);
-    index.indexProject(files);
+    index.indexProject(files, ignorePatterns);
     return index;
   }
 

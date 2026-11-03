@@ -13,30 +13,91 @@ export type Segment =
  */
 export function parseSegments(text: string): Segment[] {
   const out: Segment[] = [];
-  const re = /```(?!delete)([\w+.#-]*)[ \t]+path=([^\s`]+)[^\n]*\n([\s\S]*?)(```|$)/g;
+  const blockRe = /```([^\n]*)\n([\s\S]*?)(```|$)/g;
   let last = 0;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    if (m.index > last) out.push({ kind: 'text', text: text.slice(last, m.index) });
-    const [, lang, rawPath, body, close] = m;
-    const path = rawPath.replace(/^\.?\/+/, '');
-    if (lang === 'delete') out.push({ kind: 'delete', path });
-    else out.push({ kind: 'file', path, lang, content: body.replace(/\n$/, ''), complete: close === '```' });
-    last = re.lastIndex;
-    if (!close) break;
+
+  while ((m = blockRe.exec(text))) {
+    const [, rawHeader, rawBody, close] = m;
+    const header = rawHeader.trim();
+
+    // Check if this block specifies a file path
+    const isDelete = /^delete\b/i.test(header);
+    let extractedPath: string | null = null;
+    let lang = '';
+    let body = rawBody;
+
+    if (isDelete) {
+      const match = header.match(/^delete[ \t]+(?:path|filename|file)=["']?([^\s"'>`]+)["']?/i);
+      if (match) {
+        extractedPath = match[1];
+      }
+    } else {
+      // 1. Check path attribute in header: path=..., filename=..., file=...
+      const attrMatch = header.match(/^([\w+.#-]*)[ \t]+(?:path|filename|file)=["']?([^\s"'>`]+)["']?/i);
+      if (attrMatch) {
+        lang = attrMatch[1] || '';
+        extractedPath = attrMatch[2];
+      } else {
+        // 2. Check colon format: lang:path/to/file.ext
+        const colonMatch = header.match(/^([\w+.#-]+):([^\s"'>`]+)$/);
+        if (colonMatch && (colonMatch[2].includes('/') || colonMatch[2].includes('\\') || colonMatch[2].includes('.'))) {
+          lang = colonMatch[1];
+          extractedPath = colonMatch[2];
+        } else {
+          // 3. Check top-line comment inside body: // filepath: ... or # filepath: ...
+          const commentMatch = body.match(/^(?:\/\/\s*|#\s*|\/\*\s*)(?:filepath|file|path):\s*["']?([^\s"'>`*]+)["']?\s*(?:\*\/)?\r?\n/i);
+          if (commentMatch) {
+            lang = header.split(/\s+/)[0] || '';
+            extractedPath = commentMatch[1];
+            body = body.slice(commentMatch[0].length);
+          }
+        }
+      }
+    }
+
+    if (extractedPath) {
+      if (m.index > last) {
+        out.push({ kind: 'text', text: text.slice(last, m.index) });
+      }
+      const cleanPath = extractedPath
+        .trim()
+        .replace(/^["']|["']$/g, '')
+        .replace(/\\/g, '/')
+        .replace(/^\.?\/+/, '');
+
+      if (isDelete) {
+        out.push({ kind: 'delete', path: cleanPath });
+      } else {
+        out.push({
+          kind: 'file',
+          path: cleanPath,
+          lang: lang || 'plaintext',
+          content: body.replace(/\n$/, ''),
+          complete: close === '```'
+        });
+      }
+      last = blockRe.lastIndex;
+      if (!close) break;
+    }
   }
-  // single-line delete form: ```delete path=x```
-  if (last < text.length) out.push({ kind: 'text', text: text.slice(last) });
+
+  if (last < text.length) {
+    out.push({ kind: 'text', text: text.slice(last) });
+  }
+
+  // Handle single-line delete forms: ```delete path=x``` (which have no newline after ```delete)
   return out
     .flatMap((s) => {
       if (s.kind !== 'text') return [s];
       const parts: Segment[] = [];
-      const dre = /```delete[ \t]+path=([^\s`]+)\s*```/g;
+      const dre = /```delete[ \t]+(?:path|filename|file)=["']?([^\s"'>`]+)["']?\s*```/gi;
       let i = 0;
       let d: RegExpExecArray | null;
       while ((d = dre.exec(s.text))) {
         if (d.index > i) parts.push({ kind: 'text', text: s.text.slice(i, d.index) });
-        parts.push({ kind: 'delete', path: d[1].replace(/^\.?\/+/, '') });
+        const cleanPath = d[1].trim().replace(/^["']|["']$/g, '').replace(/\\/g, '/').replace(/^\.?\/+/, '');
+        parts.push({ kind: 'delete', path: cleanPath });
         i = dre.lastIndex;
       }
       if (i < s.text.length) parts.push({ kind: 'text', text: s.text.slice(i) });

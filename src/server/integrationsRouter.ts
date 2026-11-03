@@ -795,7 +795,7 @@ integrationsRouter.post('/github/import', requireAuth, async (req: any, res: Res
 
     try {
       await writeProjectFileTreeAdmin(newProjectId, req.user.uid, generation, serializedFiles.chunks);
-      await adminDb.runTransaction(async (transaction) => {
+      await adminDb.runTransaction(async (transaction: any) => {
         transaction.set(projectRef, {
           ownerId: req.user.uid,
           name: projectName,

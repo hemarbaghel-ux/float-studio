@@ -78,7 +78,7 @@ export async function getIntegrationConnection(userId: string, provider: string)
 
 export async function listIntegrationConnections(userId: string): Promise<StoredIntegrationConnection[]> {
   const snapshot = await connections().where('userId', '==', userId).get();
-  return snapshot.docs.map((document) => fromDocument(document.data()));
+  return snapshot.docs.map((document: any) => fromDocument(document.data()));
 }
 
 export async function saveIntegrationConnection(connection: StoredIntegrationConnection): Promise<void> {
@@ -106,7 +106,7 @@ export async function saveOAuthState(record: OAuthStateRecord): Promise<void> {
 /** Atomically consumes OAuth state so it cannot be replayed across instances. */
 export async function consumeOAuthState(state: string): Promise<OAuthStateRecord | null> {
   const reference = states().doc(state);
-  return adminDb.runTransaction(async (transaction) => {
+  return adminDb.runTransaction(async (transaction: any) => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) return null;
     transaction.delete(reference);

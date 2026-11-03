@@ -1,0 +1,133 @@
+{
+  "name": "float-vscodium-poc",
+  "displayName": "FLOAT Studio for VS Code & VSCodium",
+  "description": "Cursor-class Bounded AI Coding Workflows for VS Code, VSCodium, and Code-OSS",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "float-sidebar",
+          "title": "FLOAT Studio",
+          "icon": "$(sparkle)"
+        }
+      ]
+    },
+    "views": {
+      "float-sidebar": [
+        {
+          "type": "webview",
+          "id": "float.composerView",
+          "name": "Composer & Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "float.openComposer",
+        "title": "FLOAT: Open Composer (Chat & Multi-File Diffs)",
+        "category": "FLOAT"
+      },
+      {
+        "command": "float.inlineEdit",
+        "title": "FLOAT: Inline Edit with AI (Ctrl+K)",
+        "category": "FLOAT"
+      },
+      {
+        "command": "float.acceptInlineHunk",
+        "title": "FLOAT: Accept Inline Transformation",
+        "category": "FLOAT"
+      },
+      {
+        "command": "float.rejectInlineHunk",
+        "title": "FLOAT: Reject Inline Transformation",
+        "category": "FLOAT"
+      },
+      {
+        "command": "float.openLocalWorkspace",
+        "title": "FLOAT: Open Local Workspace Folder",
+        "category": "FLOAT"
+      },
+      {
+        "command": "float.proposeChanges",
+        "title": "FLOAT: Generate Multi-File Code Proposal",
+        "category": "FLOAT"
+      },
+      {
+        "command": "float.fixTerminalError",
+        "title": "FLOAT: Fix Last Terminal Error",
+        "category": "FLOAT"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "float.openComposer",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i"
+      },
+      {
+        "command": "float.inlineEdit",
+        "key": "ctrl+k",
+        "mac": "cmd+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "float.acceptInlineHunk",
+        "key": "tab",
+        "when": "floatInlineEditActive"
+      },
+      {
+        "command": "float.rejectInlineHunk",
+        "key": "escape",
+        "when": "floatInlineEditActive"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "float.inlineEdit",
+          "group": "1_modification",
+          "order": 1
+        }
+      ]
+    },
+    "configuration": {
+      "title": "FLOAT Studio",
+      "properties": {
+        "float.backendUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "Base URL of the FLOAT backend server for AI model routing and SSE streaming."
+        },
+        "float.authToken": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer authentication token for accessing FLOAT API services."
+        },
+        "float.model": {
+          "type": "string",
+          "default": "gpt-6.1-sol",
+          "description": "Default AI model for code generation and multi-file proposals."
+        },
+        "float.autoFixTerminalErrors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prompt with 'Fix with FLOAT' when a terminal process exits with a non-zero exit code."
+        }
+      }
+    }
+  }
+}

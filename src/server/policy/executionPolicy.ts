@@ -22,6 +22,7 @@ import {
   isDurableFirestoreActive,
   saveServerDocDurable
 } from '../durableState';
+import { isSensitivePath, isPathTraversal } from '../../services/indexing/fileFilter';
 
 export type ExecutionPolicyMode = 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed' | 'auto';
 
@@ -131,12 +132,22 @@ export class ExecutionPolicyManager {
     const targetPath = String(request.args?.path || request.args?.filePath || '').trim();
     if (targetPath) {
       const normPath = targetPath.replace(/\\/g, '/');
-      const isOutside = normPath.includes('../') || normPath.startsWith('/etc/') || normPath.startsWith('/var/');
+      const isOutside = isPathTraversal(targetPath) || normPath.startsWith('/') || /^[a-z]:/i.test(normPath) || normPath.includes('../') || normPath.startsWith('/etc/') || normPath.startsWith('/var/');
       if (isOutside) {
         return {
           permitted: false,
           requiresHumanApproval: true,
           reason: `This ${request.category === 'read' ? 'reads' : 'edits'} a file outside your workspace.`
+        };
+      }
+
+      if (isSensitivePath(normPath)) {
+        return {
+          permitted: false,
+          requiresHumanApproval: true,
+          reason: (request.category === 'write' || request.toolName === 'propose_changes')
+            ? 'This edits a protected configuration file.'
+            : 'Access to sensitive credential or key file requires explicit confirmation.'
         };
       }
 

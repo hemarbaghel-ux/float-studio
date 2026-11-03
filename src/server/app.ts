@@ -18,6 +18,7 @@ import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredent
 import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './proposals/proposalService';
+import { BoundedToolExecutor } from './agent/boundedToolExecutor';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
 import { loadProjectFileTreeAdmin } from './projectContent';
@@ -687,6 +688,28 @@ ${selectedCode || fullCode}
     error: 'FLOAT planning workflows are unavailable. Use model chat for normal conversations.',
     code: 'AGENTS_UNAVAILABLE'
   }));
+
+  // Bounded Autonomous Agent Mode tool execution (Phase 6)
+  app.post('/api/projects/:projectId/agent/execute-tool', requireAuth, async (req: any, res: any) => {
+    try {
+      const { projectId } = req.params;
+      const { toolName, args, files } = req.body || {};
+
+      if (!toolName) {
+        return res.status(400).json({ error: 'Tool name is required.' });
+      }
+
+      const outcome = await BoundedToolExecutor.executeTool(
+        { toolName, args: args || {} },
+        { userId: req.user.uid, projectId, files }
+      );
+
+      res.json({ outcome });
+    } catch (error: any) {
+      console.error('Agent tool execution error:', error);
+      res.status(500).json({ error: error.message || 'Tool execution failed' });
+    }
+  });
   // Code Proposal Routes (Phase 5) — Strictly require a persisted owned project (`allowMissing: false`)
   // 1. Create a proposed change set
   app.post('/api/projects/:projectId/proposals', requireAuth, async (req: any, res: any) => {

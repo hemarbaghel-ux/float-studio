@@ -233,6 +233,11 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
       runActiveCode();
     });
 
+    // Add Quick Open command (Ctrl+P / Cmd+P)
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyP, () => {
+      document.dispatchEvent(new CustomEvent('open-command-palette'));
+    });
+
     // Add Inline Assistant command (Ctrl+K / Cmd+K)
     const openInlineAssistant = (instructionText?: string) => {
       const selection = editor.getSelection();

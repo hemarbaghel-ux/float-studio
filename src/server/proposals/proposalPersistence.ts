@@ -25,7 +25,7 @@ export async function saveAppliedCodeProposalForProjectRevision(
 
   const projectRef = adminDb.collection('projects').doc(proposal.projectId);
   const proposalRef = proposals().doc(proposal.id);
-  await adminDb.runTransaction(async (transaction) => {
+  await adminDb.runTransaction(async (transaction: any) => {
     const projectSnapshot = await transaction.get(projectRef);
     const proposalSnapshot = await transaction.get(proposalRef);
     if (!projectSnapshot.exists || !proposalSnapshot.exists) {
@@ -78,7 +78,7 @@ export async function getCodeProposal(id: string, ownerId: string): Promise<Code
 export async function listCodeProposals(projectId: string, ownerId: string): Promise<CodeProposal[]> {
   const snapshot = await proposals().where('ownerId', '==', ownerId).get();
   return snapshot.docs
-    .map((document) => document.data() as CodeProposal)
-    .filter((proposal) => proposal.projectId === projectId)
-    .sort((a, b) => b.createdAt - a.createdAt);
+    .map((document: any) => document.data() as CodeProposal)
+    .filter((proposal: CodeProposal) => proposal.projectId === projectId)
+    .sort((a: CodeProposal, b: CodeProposal) => b.createdAt - a.createdAt);
 }

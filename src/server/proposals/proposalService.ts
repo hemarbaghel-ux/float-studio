@@ -11,7 +11,11 @@ export function sanitizeProposalPath(rawPath: string): { safePath: string; error
   if (!rawPath || typeof rawPath !== 'string') {
     return { safePath: '', error: 'File path is required.' };
   }
-  const normalized = rawPath.trim().replace(/\\/g, '/');
+  let normalized = rawPath.trim().replace(/\\/g, '/');
+  // Normalize leading ./ safely so relative workspace paths work cleanly
+  if (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
   if (normalized.includes('\0') || normalized.startsWith('/') || /^[a-z]:/i.test(normalized) || normalized.split('/').some(part => !part || part === '.' || part === '..')) {
     return { safePath: '', error: 'Path traversal (../) is strictly forbidden.' };
   }

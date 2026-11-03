@@ -17,6 +17,8 @@ import {
 import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
 import { useIntegrationStore } from '../../store/integrationStore';
+import { useValidationStore } from '../../store/validationStore';
+import { flattenFileTree } from '../../lib/utils';
 
 function getLanguageLabel(fileName: string | null): string {
   if (!fileName) return 'Plain Text';
@@ -54,6 +56,12 @@ export function StatusBar() {
   } = useIDEStore();
 
   const { selectedModel, setSelectedModel, models } = useAIStore();
+  const { currentRun } = useValidationStore();
+  const executionError = useIDEStore((s) => s.executionError);
+  const openTabs = useIDEStore((s) => s.openTabs);
+  const totalErrors = (executionError ? 1 : 0) + (currentRun?.errorCount || 0);
+  const totalWarnings = currentRun?.warningCount || 0;
+  const hasUnsavedChanges = openTabs.some((t) => t.isModified);
   const { connections } = useIntegrationStore();
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
 
@@ -72,6 +80,14 @@ export function StatusBar() {
 
   const activeFileName = findFileName(files, activeFileId);
   const languageLabel = getLanguageLabel(activeFileName);
+
+  const activeFileContent = React.useMemo(() => {
+    if (!activeFileId) return '';
+    const flat = flattenFileTree(files);
+    const found = flat.find((f) => f.id === activeFileId);
+    return found?.content || '';
+  }, [files, activeFileId]);
+  const lineEnding = activeFileContent.includes('\r\n') ? 'CRLF' : 'LF';
 
   // Git status / branch
   const githubConn = connections.find(c => c.provider === 'github' && c.status === 'connected');
@@ -98,65 +114,53 @@ export function StatusBar() {
         {/* Git Branch / Source Control Trigger */}
         <button
           onClick={() => {
-            if (!leftSidebarOpen) toggleLeftSidebar();
-            setActiveSidebarView('source-control');
-          }}
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-300/60 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
-          title={`Git Branch: ${gitBranch} (Click to open Source Control)`}
-        >
-          <GitBranch size={12} className="text-slate-500 dark:text-slate-400" />
-          <span className="truncate max-w-[120px]">{gitBranch}</span>
-        </button>
-
-        {/* Problems / Validation Count */}
-        <button
-          onClick={() => {
             if (!bottomPanelOpen) toggleBottomPanel();
             setBottomPanelTab('problems');
           }}
           className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-300/60 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
-          title="Problems: 0 Errors, 0 Warnings"
+          title={`Problems: ${totalErrors} Errors, ${totalWarnings} Warnings`}
         >
           <div className="flex items-center gap-0.5">
-            <AlertCircle size={11} className="text-slate-400 dark:text-[#777]" />
-            <span>0</span>
+            <AlertCircle size={11} className={totalErrors > 0 ? "text-rose-500" : "text-slate-400 dark:text-[#777]"} />
+            <span className={totalErrors > 0 ? "text-rose-500 font-semibold" : ""}>{totalErrors}</span>
           </div>
           <div className="flex items-center gap-0.5 ml-0.5">
-            <AlertTriangle size={11} className="text-slate-400 dark:text-[#777]" />
-            <span>0</span>
+            <AlertTriangle size={11} className={totalWarnings > 0 ? "text-amber-500" : "text-slate-400 dark:text-[#777]"} />
+            <span className={totalWarnings > 0 ? "text-amber-500 font-semibold" : ""}>{totalWarnings}</span>
           </div>
         </button>
 
         {/* Cloud Save & Persistence State */}
         <div 
           className="hidden md:flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-          title={projectCloudSaveMessage || undefined}
+          title={hasUnsavedChanges ? 'You have unsaved changes in the editor (Ctrl+S to save)' : (projectCloudSaveMessage || undefined)}
         >
-          {projectCloudSaveStatus === 'saving' && (
+          {projectCloudSaveStatus === 'saving' ? (
             <>
               <Loader2 size={11} className="animate-spin text-blue-500" />
               <span>Saving…</span>
             </>
-          )}
-          {projectCloudSaveStatus === 'synced' && (
+          ) : hasUnsavedChanges ? (
+            <>
+              <Cloud size={11} className="text-amber-500" />
+              <span className="text-amber-500 font-medium">Unsaved changes</span>
+            </>
+          ) : projectCloudSaveStatus === 'synced' ? (
             <>
               <Check size={11} className="text-emerald-500" />
               <span>Synced</span>
             </>
-          )}
-          {projectCloudSaveStatus === 'local-only' && (
+          ) : projectCloudSaveStatus === 'local-only' ? (
             <>
               <CloudOff size={11} className="text-amber-500" />
               <span>Local only</span>
             </>
-          )}
-          {projectCloudSaveStatus === 'error' && (
+          ) : projectCloudSaveStatus === 'error' ? (
             <>
               <AlertCircle size={11} className="text-rose-500" />
-              <span>Cloud save error</span>
+              <span className="text-rose-500 font-semibold">Save failed</span>
             </>
-          )}
-          {projectCloudSaveStatus === 'idle' && (
+          ) : (
             <>
               <Cloud size={11} className="text-slate-400" />
               <span>Ready</span>
@@ -194,9 +198,9 @@ export function StatusBar() {
         {/* Line Endings */}
         <span 
           className="hidden lg:inline-block px-1.5 py-0.5 text-slate-500 dark:text-[#777]"
-          title="End of Line: LF"
+          title={`End of Line: ${lineEnding}`}
         >
-          LF
+          {lineEnding}
         </span>
 
         {/* Language Mode */}

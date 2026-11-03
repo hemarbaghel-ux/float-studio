@@ -724,7 +724,7 @@ async function saveWorkspaceAndLink(ctx: GitContext, files: Map<string, string>,
   await writeProjectFileTreeAdmin(ctx.projectId, ctx.ownerId, generation, serialized.chunks);
   const linkRef = links().doc(ctx.projectId);
   try {
-    await adminDb.runTransaction(async transaction => {
+    await adminDb.runTransaction(async (transaction: any) => {
       const current = await transaction.get(ctx.projectRef);
       if (!current.exists || current.get('ownerId') !== ctx.ownerId) throw httpError(409, 'Project ownership changed during the Git operation.');
       const unchanged = ctx.savedFileGeneration

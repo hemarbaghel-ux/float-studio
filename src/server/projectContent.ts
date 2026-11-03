@@ -16,7 +16,7 @@ export async function loadProjectFileTreeAdmin(
   if (typeof generation !== 'string') throw new Error('Project file snapshot is missing its generation ID.');
   const snapshot = await adminDb.collection('projects').doc(projectId)
     .collection('projectContent').where('generation', '==', generation).get();
-  const chunks = snapshot.docs.map(document => {
+  const chunks = snapshot.docs.map((document: any) => {
     const data = document.data();
     return {
       generation: data.generation,
@@ -56,7 +56,7 @@ export async function deleteProjectContentAdmin(projectId: string): Promise<void
     const snapshot = await fileCollection.limit(400).get();
     if (snapshot.empty) return;
     const batch = adminDb.batch();
-    snapshot.docs.forEach(document => batch.delete(document.ref));
+    snapshot.docs.forEach((document: any) => batch.delete(document.ref));
     await batch.commit();
   }
 }
@@ -67,7 +67,7 @@ export async function deleteProjectContentGenerationAdmin(projectId: string, gen
     const snapshot = await fileCollection.where('generation', '==', generation).limit(400).get();
     if (snapshot.empty) return;
     const batch = adminDb.batch();
-    snapshot.docs.forEach(document => batch.delete(document.ref));
+    snapshot.docs.forEach((document: any) => batch.delete(document.ref));
     await batch.commit();
   }
 }
