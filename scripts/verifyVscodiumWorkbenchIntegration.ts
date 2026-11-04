@@ -221,6 +221,10 @@ extensionModule.globalEngine.openLocalFolder(testFolder).then(async () => {
   // --- Step 5: Packaged VSIX Verification & Native Installation ---
   console.log('\n--- Step 5: Packaged VSIX Verification & Native Installation ---');
   const vsixPath = path.join(ROOT_DIR, 'dist', `${manifest.name}-${manifest.version}.vsix`);
+  if (!fs.existsSync(vsixPath)) {
+    console.log('[NOTE] VSIX package not found, generating on demand...');
+    require('child_process').execSync('node scripts/packageVscodiumExtension.cjs', { cwd: ROOT_DIR, stdio: 'inherit' });
+  }
   assert(fs.existsSync(vsixPath), `VSIX package must exist at ${vsixPath}`);
   console.log(`[PASS] VSIX archive verified at: ${vsixPath} (${(fs.statSync(vsixPath).size / 1024 / 1024).toFixed(2)} MB)`);
 
@@ -237,4 +241,5 @@ extensionModule.globalEngine.openLocalFolder(testFolder).then(async () => {
   console.log('\n======================================================');
   console.log('VSCodium Workbench Integration: All Verification Checks Passed!');
   console.log('======================================================');
+  process.exit(0);
 });

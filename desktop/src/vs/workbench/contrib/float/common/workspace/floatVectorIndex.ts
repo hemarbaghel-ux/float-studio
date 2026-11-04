@@ -18,6 +18,11 @@ export interface IBoundedContextResult {
 	formattedText: string;
 }
 
+export interface ISerializedVectorIndex {
+	chunks: ISemanticCodeChunk[];
+	vectors: Array<{ id: string; values: number[] }>;
+}
+
 const VECTOR_DIMS = 256;
 
 /**
@@ -94,6 +99,36 @@ export class FloatVectorIndex {
 		}
 	}
 
+	public serialize(): ISerializedVectorIndex {
+		const chunks = Array.from(this._chunks.values());
+		const vectors: Array<{ id: string; values: number[] }> = [];
+		for (const [id, vec] of this._vectors.entries()) {
+			vectors.push({ id, values: Array.from(vec) });
+		}
+		return { chunks, vectors };
+	}
+
+	public deserialize(data: ISerializedVectorIndex): void {
+		this.clear();
+		if (!data || !Array.isArray(data.chunks)) return;
+
+		for (const chunk of data.chunks) {
+			this._chunks.set(chunk.id, chunk);
+			let fileSet = this._fileChunks.get(chunk.filePath);
+			if (!fileSet) {
+				fileSet = new Set();
+				this._fileChunks.set(chunk.filePath, fileSet);
+			}
+			fileSet.add(chunk.id);
+		}
+
+		if (Array.isArray(data.vectors)) {
+			for (const v of data.vectors) {
+				this._vectors.set(v.id, new Float64Array(v.values));
+			}
+		}
+	}
+
 	public clear(): void {
 		this._chunks.clear();
 		this._vectors.clear();
@@ -163,22 +198,23 @@ export class FloatVectorIndex {
 			if (score > 10) {
 				ranked.push({
 					chunk,
-					score: Math.round(score * 10) / 10,
-					cosineSimilarity: Math.round(cosine * 1000) / 1000,
+					score,
+					cosineSimilarity: cosine,
 					signals
 				});
 			}
 		}
 
+		// Sort descending by score
 		ranked.sort((a, b) => b.score - a.score);
 		return ranked.slice(0, limit);
 	}
 
 	/**
-	 * Retrieves bounded code excerpts strictly capped by a character limit (token budget)
+	 * Extracts token-budgeted bounded semantic context for prompt injections
 	 */
 	public retrieveBoundedContext(query: string, maxChars: number = 6000): IBoundedContextResult {
-		const ranked = this.search(query, 12);
+		const ranked = this.search(query, 15);
 		const selected: IRankedCodeChunk[] = [];
 		const blocks: string[] = [];
 		let totalChars = 0;
@@ -187,8 +223,8 @@ export class FloatVectorIndex {
 			const header = `// --- ${r.chunk.filePath} (L${r.chunk.startLine}-${r.chunk.endLine}) [${r.chunk.symbolKind || 'block'}: ${r.chunk.symbolName || 'anonymous'}] ---`;
 			const block = `${header}\n${r.chunk.content}\n`;
 
-			if (totalChars + block.length > maxChars && selected.length > 0) {
-				break;
+			if (totalChars + block.length > maxChars) {
+				continue;
 			}
 
 			selected.push(r);

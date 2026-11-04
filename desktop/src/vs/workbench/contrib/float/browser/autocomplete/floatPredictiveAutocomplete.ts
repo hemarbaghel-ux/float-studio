@@ -22,6 +22,7 @@ import {
 	IFloatAutocompleteConfig,
 	IFloatAutocompleteTelemetry
 } from './floatAutocompleteTypes.js';
+import { isFloatAutocompleteGloballyEnabled } from './floatAutocompleteActions.js';
 
 export class FloatPredictiveAutocomplete extends Disposable implements InlineCompletionsProvider {
 	private _config: IFloatAutocompleteConfig = {
@@ -38,7 +39,10 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		completionsShownCount: 0,
 		completionsAcceptedCount: 0,
 		completionsRejectedCount: 0,
-		averageLatencyMs: 0
+		averageLatencyMs: 0,
+		averageCacheHitLatencyMs: 0,
+		averageModelNetworkLatencyMs: 0,
+		averageTotalLatencyMs: 0
 	};
 
 	private _cache: IFloatAutocompleteCacheEntry | null = null;
@@ -152,22 +156,32 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		context: InlineCompletionContext,
 		token: CancellationToken
 	): Promise<InlineCompletions | undefined> {
-		if (!this._config.enabled) {
+		const callStart = Date.now();
+
+		// Check both internal config, global toggle action state, and caller cancellation token
+		if (!this._config.enabled || !isFloatAutocompleteGloballyEnabled() || token?.isCancellationRequested) {
 			return undefined;
 		}
 
 		const ctx = this.extractContext(model, position);
 		const filePath = model.uri.path;
 
-		// 1. Cursor Tab Forward Cache Matching
-		// If user typed through part of our previously returned completion, slide it forward!
+		// 1. Cursor Tab Forward Cache Matching (<1ms local cache-hit latency)
 		if (this._cache && this._cache.filePath === filePath && this._cache.lineNumber === position.lineNumber) {
 			if (ctx.prefix.startsWith(this._cache.prefix)) {
 				const typedChars = ctx.prefix.slice(this._cache.prefix.length);
 				if (this._cache.completion.startsWith(typedChars)) {
 					const remaining = this._cache.completion.slice(typedChars.length);
 					if (remaining.length > 0) {
+						const cacheHitLatency = Date.now() - callStart;
 						this._telemetry.cacheHitsCount++;
+						this._updateCacheHitLatency(cacheHitLatency);
+						this._telemetry.lastMeasurement = {
+							type: 'cache_hit',
+							cacheHitLatencyMs: cacheHitLatency,
+							totalLatencyMs: cacheHitLatency
+						};
+
 						const insertRange = new Range(position.lineNumber, position.column, position.lineNumber, position.column);
 						return {
 							items: [
@@ -183,17 +197,20 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			}
 		}
 
-		// Invalidate previous cache on cache miss
+		// Invalidate cache on cache miss
 		this._cache = null;
 
-		// Cancel in-flight network request on new keystroke
+		// Cancel any prior in-flight request on new keystroke
 		if (this._activeAbortController) {
 			this._activeAbortController.abort();
 			this._activeAbortController = null;
 		}
 
 		// 2. Typing Debounce (50-150ms idle pause before firing API call)
+		const debounceStart = Date.now();
 		const proceed = await this._debounce();
+		const debounceDuration = Date.now() - debounceStart;
+
 		if (!proceed || token.isCancellationRequested) {
 			return undefined;
 		}
@@ -201,8 +218,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		// 3. Request Completion from Model Client
 		this._activeAbortController = new AbortController();
 		const signal = this._activeAbortController.signal;
+		const cancelSub = token?.onCancellationRequested?.(() => {
+			this._activeAbortController?.abort();
+		});
 		this._telemetry.requestsCount++;
-		const reqStart = Date.now();
+		const netStart = Date.now();
 
 		try {
 			const result = await this._floatService.completeCode(
@@ -218,8 +238,16 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 				signal
 			);
 
-			const latency = Date.now() - reqStart;
-			this._updateAverageLatency(latency);
+			const modelNetLatency = Date.now() - netStart;
+			const totalLatency = debounceDuration + modelNetLatency;
+
+			this._updateModelLatency(modelNetLatency, totalLatency);
+			this._telemetry.lastMeasurement = {
+				type: 'model_network',
+				debounceLatencyMs: debounceDuration,
+				modelNetworkLatencyMs: modelNetLatency,
+				totalLatencyMs: totalLatency
+			};
 
 			if (token.isCancellationRequested || result.cancelled || !result.completion) {
 				return undefined;
@@ -259,6 +287,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			}
 			return undefined;
 		} finally {
+			cancelSub?.dispose?.();
 			this._activeAbortController = null;
 		}
 	}
@@ -280,13 +309,30 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		// Clean up lifecycle resources
 	}
 
-	private _updateAverageLatency(newLatency: number): void {
-		if (this._telemetry.requestsCount <= 1) {
-			this._telemetry.averageLatencyMs = newLatency;
+	private _updateCacheHitLatency(latency: number): void {
+		if (this._telemetry.cacheHitsCount <= 1) {
+			this._telemetry.averageCacheHitLatencyMs = latency;
 		} else {
-			this._telemetry.averageLatencyMs = Math.round(
-				(this._telemetry.averageLatencyMs * (this._telemetry.requestsCount - 1) + newLatency) / this._telemetry.requestsCount
+			this._telemetry.averageCacheHitLatencyMs = Math.round(
+				(this._telemetry.averageCacheHitLatencyMs * (this._telemetry.cacheHitsCount - 1) + latency) / this._telemetry.cacheHitsCount
 			);
+		}
+	}
+
+	private _updateModelLatency(modelLatency: number, totalLatency: number): void {
+		const n = this._telemetry.requestsCount;
+		if (n <= 1) {
+			this._telemetry.averageModelNetworkLatencyMs = modelLatency;
+			this._telemetry.averageTotalLatencyMs = totalLatency;
+			this._telemetry.averageLatencyMs = totalLatency;
+		} else {
+			this._telemetry.averageModelNetworkLatencyMs = Math.round(
+				(this._telemetry.averageModelNetworkLatencyMs * (n - 1) + modelLatency) / n
+			);
+			this._telemetry.averageTotalLatencyMs = Math.round(
+				(this._telemetry.averageTotalLatencyMs * (n - 1) + totalLatency) / n
+			);
+			this._telemetry.averageLatencyMs = this._telemetry.averageTotalLatencyMs;
 		}
 	}
 }

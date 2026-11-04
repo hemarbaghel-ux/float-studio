@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import ts from 'typescript';
+import fs from 'node:fs';
+import path from 'node:path';
 import { IShadowDiagnostic, IShadowValidationOptions } from './floatShadowTypes.js';
 
 export class FloatShadowCompiler {
@@ -138,8 +140,8 @@ export class FloatShadowCompiler {
 	}
 
 	/**
-	 * Run in-memory semantic typecheck across a collection of virtual shadow files.
-	 * Resolves cross-file module imports in memory!
+	 * Run project-aware semantic typecheck across virtual shadow files and underlying project files.
+	 * Resolves cross-file module imports, respects tsconfig.json, and produces high-fidelity diagnostics.
 	 */
 	static checkVirtualFiles(
 		virtualFiles: Map<string, string>,
@@ -148,7 +150,7 @@ export class FloatShadowCompiler {
 		const diagnostics: IShadowDiagnostic[] = [];
 		const maxDiags = options.maxDiagnostics ?? 50;
 
-		// 1. First run syntax checks on all files
+		// 1. Run syntax checks on all virtual files
 		for (const [filePath, content] of virtualFiles.entries()) {
 			if (diagnostics.length >= maxDiags) break;
 			const syntaxErrors = this.checkSyntax(filePath, content);
@@ -169,7 +171,8 @@ export class FloatShadowCompiler {
 		}
 
 		try {
-			const compilerOptions: ts.CompilerOptions = {
+			const baseWorkspace = options.baseWorkspacePath;
+			let compilerOptions: ts.CompilerOptions = {
 				target: ts.ScriptTarget.ES2022,
 				module: ts.ModuleKind.ESNext,
 				moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -183,17 +186,68 @@ export class FloatShadowCompiler {
 				suppressImplicitAnyIndexErrors: true
 			};
 
-			// Build in-memory compiler host backed entirely by virtualFiles
+			// Load real tsconfig.json if present
+			let rawCompilerOptions: any = null;
+			if (virtualFiles.has('tsconfig.json')) {
+				try {
+					const parsed = JSON.parse(virtualFiles.get('tsconfig.json')!);
+					rawCompilerOptions = parsed.compilerOptions;
+				} catch {}
+			} else if (baseWorkspace && fs.existsSync(path.join(baseWorkspace, 'tsconfig.json'))) {
+				try {
+					const raw = fs.readFileSync(path.join(baseWorkspace, 'tsconfig.json'), 'utf8');
+					const parsed = JSON.parse(raw);
+					rawCompilerOptions = parsed.compilerOptions;
+				} catch {}
+			}
+
+			if (rawCompilerOptions) {
+				const converted = ts.convertCompilerOptionsFromJson(rawCompilerOptions, baseWorkspace || '/');
+				if (converted && converted.options) {
+					compilerOptions = { ...compilerOptions, ...converted.options, noEmit: true };
+				}
+			}
+
+			// Helper to resolve physical project path
+			const resolveDisk = (normPath: string): string | null => {
+				if (path.isAbsolute(normPath) && fs.existsSync(normPath)) return normPath;
+				const leadingSlash = '/' + normPath;
+				if (path.isAbsolute(leadingSlash) && fs.existsSync(leadingSlash)) return leadingSlash;
+				if (!baseWorkspace) return null;
+				const full = path.resolve(baseWorkspace, normPath);
+				if (fs.existsSync(full)) return full;
+				return null;
+			};
+
+			// In-memory compiler host backed by virtualFiles with disk fallback for unchanged project files
 			const host: ts.CompilerHost = {
 				getSourceFile: (fileName: string, languageVersion: ts.ScriptTarget) => {
 					const norm = fileName.replace(/\\/g, '/').replace(/^\.\//, '');
-					let content = virtualFiles.get(norm);
-					if (content === undefined) {
-						// Try suffix matching
+					let content: string | undefined = undefined;
+
+					if (virtualFiles.has(norm)) {
+						content = virtualFiles.get(norm);
+					} else {
 						for (const [k, v] of virtualFiles.entries()) {
 							if (k.endsWith(norm) || norm.endsWith(k)) {
 								content = v;
 								break;
+							}
+						}
+					}
+
+					// Disk fallback for unchanged project files
+					if (content === undefined) {
+						if (fs.existsSync(fileName)) {
+							try {
+								content = fs.readFileSync(fileName, 'utf8');
+							} catch {}
+						} else {
+							const disk = resolveDisk(norm);
+							if (disk) {
+								try {
+									content = fs.readFileSync(disk, 'utf8');
+								} catch {}
 							}
 						}
 					}
@@ -209,7 +263,6 @@ export class FloatShadowCompiler {
 						);
 					}
 
-					// Return minimal stub for common ambient globals if requested
 					if (fileName.includes('lib.d.ts') || fileName.includes('lib.es5.d.ts')) {
 						return ts.createSourceFile(
 							fileName,
@@ -223,7 +276,7 @@ export class FloatShadowCompiler {
 				},
 				getDefaultLibFileName: () => 'lib.d.ts',
 				writeFile: () => {},
-				getCurrentDirectory: () => '/',
+				getCurrentDirectory: () => baseWorkspace || '/',
 				getDirectories: () => [],
 				getCanonicalFileName: fileName => fileName.replace(/\\/g, '/'),
 				useCaseSensitiveFileNames: () => false,
@@ -234,34 +287,65 @@ export class FloatShadowCompiler {
 					for (const k of virtualFiles.keys()) {
 						if (k.endsWith(norm) || norm.endsWith(k)) return true;
 					}
-					return false;
+					if (fs.existsSync(fileName)) return true;
+					return resolveDisk(norm) !== null;
 				},
 				readFile: (fileName: string) => {
 					const norm = fileName.replace(/\\/g, '/').replace(/^\.\//, '');
-					return virtualFiles.get(norm);
+					if (virtualFiles.has(norm)) return virtualFiles.get(norm);
+					if (fs.existsSync(fileName)) {
+						try {
+							return fs.readFileSync(fileName, 'utf8');
+						} catch {}
+					}
+					const disk = resolveDisk(norm);
+					if (disk) {
+						try {
+							return fs.readFileSync(disk, 'utf8');
+						} catch {}
+					}
+					return undefined;
 				},
 				resolveModuleNames: (moduleNames: string[], containingFile: string) => {
 					return moduleNames.map(moduleName => {
-						// Handle relative imports
 						if (moduleName.startsWith('.')) {
-							const containingDir = containingFile.substring(0, containingFile.lastIndexOf('/'));
-							let resolved = `${containingDir}/${moduleName}`.replace(/\/+/g, '/').replace(/^\.\//, '');
+							const normContaining = containingFile.replace(/\\/g, '/');
+							const slashIdx = normContaining.lastIndexOf('/');
+							let containingDir = slashIdx >= 0 ? normContaining.substring(0, slashIdx) : '';
+							const normBase = baseWorkspace ? baseWorkspace.replace(/\\/g, '/') : '';
+							if (normBase && containingDir.startsWith(normBase)) {
+								containingDir = containingDir.substring(normBase.length).replace(/^\/+/,'');
+							}
+							let resolved = (containingDir ? `${containingDir}/${moduleName}` : moduleName)
+								.replace(/\/+/g, '/')
+								.replace(/^\.\//, '');
 							while (resolved.includes('/./')) resolved = resolved.replace('/./', '/');
 
-							const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js'];
-							for (const ext of extensions) {
-								const candidate = (resolved + ext).replace(/^\//, '');
-								if (virtualFiles.has(candidate)) {
+							const noJs = resolved.replace(/\.js$/, '');
+							const candidateSuffixes = [resolved, noJs, noJs + '.ts', noJs + '.tsx', noJs + '.d.ts', resolved + '.ts', noJs + '/index.ts'];
+
+							for (const cand of candidateSuffixes) {
+								const cleanCand = cand.replace(/^\//, '');
+								if (virtualFiles.has(cleanCand)) {
 									return {
-										resolvedFileName: candidate,
+										resolvedFileName: cleanCand,
 										isExternalLibraryImport: false,
-										extension: ext.endsWith('tsx') ? ts.Extension.Tsx : ts.Extension.Ts
+										extension: cleanCand.endsWith('tsx') ? ts.Extension.Tsx : ts.Extension.Ts
 									};
+								}
+								if (baseWorkspace) {
+									const disk = resolveDisk(cleanCand);
+									if (disk) {
+										return {
+											resolvedFileName: disk,
+											isExternalLibraryImport: false,
+											extension: disk.endsWith('tsx') ? ts.Extension.Tsx : ts.Extension.Ts
+										};
+									}
 								}
 							}
 						}
 
-						// External module / ambient fallback
 						return undefined;
 					});
 				}
@@ -274,7 +358,6 @@ export class FloatShadowCompiler {
 				if (diagnostics.length >= maxDiags) break;
 				if (!diag.file) continue;
 
-				// Skip external libs
 				if (diag.file.fileName.includes('lib.d.ts')) continue;
 
 				let line = 1;
@@ -289,16 +372,15 @@ export class FloatShadowCompiler {
 					? diag.messageText
 					: diag.messageText.messageText;
 
-				// Map diagnostic severity
 				const severity = diag.category === ts.DiagnosticCategory.Error
 					? 'error'
 					: diag.category === ts.DiagnosticCategory.Warning
 						? 'warning'
 						: 'info';
 
-				// Filter out noise: TS2307 (cannot find external module e.g. 'react' or 'express')
-				// unless it's a relative file in the workspace
-				if (diag.code === 2307 && !msg.includes("'./") && !msg.includes("'../")) {
+				// Filter out only uninstalled external non-relative modules (e.g. 'react', 'lodash' when not installed)
+				// Relative project imports MUST NOT be filtered!
+				if (diag.code === 2307 && !msg.includes("'./") && !msg.includes("'../") && !msg.includes("'@/")) {
 					continue;
 				}
 
@@ -314,8 +396,17 @@ export class FloatShadowCompiler {
 				});
 			}
 		} catch (err: any) {
-			// Resilient fallback
-			console.warn('[FloatShadowCompiler] Warning during semantic check:', err?.message || err);
+			console.warn('[FloatShadowCompiler] Internal failure during semantic check:', err?.message || err);
+			// Do NOT silently report clean when compiler fails internally!
+			diagnostics.push({
+				filePath: 'compiler',
+				line: 1,
+				column: 1,
+				code: 'TS_INTERNAL_COMPILATION_ERROR',
+				message: `Internal compiler error during shadow validation: ${err?.message || err}`,
+				severity: 'error',
+				source: 'Float Shadow TypeScript Compiler'
+			});
 		}
 
 		return diagnostics.slice(0, maxDiags);

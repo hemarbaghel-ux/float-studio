@@ -20,3 +20,5 @@ desktop/extensions/**/node_modules/
 desktop/extensions/**/out/
 desktop/extensions/**/dist/
 desktop/*.log
+
+tmp/

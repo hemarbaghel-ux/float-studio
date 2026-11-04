@@ -32,6 +32,8 @@ export interface IShadowValidationOptions {
 	crossFileResolution?: boolean;
 	maxDiagnostics?: number;
 	timeoutMs?: number;
+	baseWorkspacePath?: string;
+	fileReader?: (relPath: string) => string | undefined;
 }
 
 export interface IShadowValidationResult {

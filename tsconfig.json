@@ -36,6 +36,8 @@
     "tools",
     "coverage",
     "extensions",
-    "desktop"
+    "desktop",
+    "scripts",
+    "tmp"
   ]
 }

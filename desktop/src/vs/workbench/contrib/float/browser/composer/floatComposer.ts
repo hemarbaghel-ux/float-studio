@@ -14,6 +14,7 @@ import { FloatMultiFileDiffOrchestrator, IFloatMultiFileProposal } from '../../c
 import { FloatComposerToolRegistry, IComposerFileSystem, IComposerCommandRunner } from '../../common/composer/floatComposerTools.js';
 import { FloatComposerAgent, IComposerAgentGoal, IComposerAgentExecution, IComposerAgentStep } from '../../common/composer/floatComposerAgent.js';
 import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
+import { ProductionComposerFileSystem, ProductionComposerCommandRunner } from '../../common/composer/floatProductionAdapters.js';
 
 export class FloatComposer extends Disposable {
 	private _activeProposal: IFloatProposal | null = null;
@@ -28,38 +29,32 @@ export class FloatComposer extends Disposable {
 		@INotificationService private readonly _notificationService: INotificationService,
 		@ITextFileService private readonly _textFileService: ITextFileService,
 		customFs?: IComposerFileSystem,
-		customRunner?: IComposerCommandRunner
+		customRunner?: IComposerCommandRunner,
+		workspaceRoot?: string
 	) {
 		super();
 		this._orchestrator = new FloatMultiFileDiffOrchestrator();
 
-		// Default Code-OSS ITextFileService adapter
-		const fsAdapter: IComposerFileSystem = customFs ?? {
-			readFile: async (p: string) => {
-				const res = await this._textFileService.read(URI.file(p));
-				return res.value;
-			},
-			writeFile: async (p: string, content: string) => {
-				await this._textFileService.write(URI.file(p), content);
-			},
-			fileExists: async (p: string) => {
-				return await this._textFileService.exists(URI.file(p));
-			},
-			listDirectory: async (_p: string) => {
-				return [];
-			},
-			findFiles: async (_pattern: string) => {
-				return [];
+		const rootDir = workspaceRoot || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '.');
+
+		// Production file system adapter backed by real filesystem with safety guards
+		const fsAdapter: IComposerFileSystem = customFs ?? new ProductionComposerFileSystem(rootDir);
+
+		// Production command runner backed by real process execution with safety policy
+		const runnerAdapter: IComposerCommandRunner = customRunner ?? new ProductionComposerCommandRunner(rootDir);
+
+		// Semantic code searcher bridging workspace indexer to composer tools
+		const codeSearcher = async (query: string): Promise<string> => {
+			const indexer = this._floatService.getWorkspaceIndexer();
+			const ranked = indexer.searchCodebase(query, 5);
+			if (ranked.length > 0) {
+				return ranked.map(r => `File: ${r.chunk.filePath} (lines ${r.chunk.startLine}-${r.chunk.endLine})\n${r.chunk.content}`).join('\n\n---\n\n');
 			}
+			const files = await fsAdapter.findFiles(query);
+			return files.length > 0 ? files.join('\n') : 'No matching files or symbols found.';
 		};
 
-		const runnerAdapter: IComposerCommandRunner = customRunner ?? {
-			runCommand: async (_cmd: string) => {
-				return { exitCode: 0, stdout: 'Command executed in background terminal', stderr: '' };
-			}
-		};
-
-		this._toolRegistry = new FloatComposerToolRegistry(fsAdapter, runnerAdapter);
+		this._toolRegistry = new FloatComposerToolRegistry(fsAdapter, runnerAdapter, codeSearcher);
 		this._agent = new FloatComposerAgent(this._floatService, this._toolRegistry, this._orchestrator, this._shadowWorkspace);
 	}
 
@@ -147,7 +142,11 @@ export class FloatComposer extends Disposable {
 		signal?: AbortSignal
 	): Promise<IComposerAgentExecution> {
 		this._notificationService.info(`FLOAT Autonomous Composer starting goal: "${goal.prompt}"...`);
-		const execution = await this._agent.executeGoal(goal, onStep, signal);
+		const isolatedGoal: IComposerAgentGoal = {
+			isolateWorkspaceMutations: true,
+			...goal
+		};
+		const execution = await this._agent.executeGoal(isolatedGoal, onStep, signal);
 		if (execution.proposal) {
 			this._activeMultiFileProposal = execution.proposal;
 		}
@@ -156,44 +155,84 @@ export class FloatComposer extends Disposable {
 
 	public async applyProposal(proposalId: string): Promise<boolean> {
 		const proposal = this._floatService.getProposalSession().getProposal(proposalId);
-		if (!proposal) {
+		const multiProp = this._orchestrator.getProposal(proposalId);
+		if (!proposal && !multiProp) {
 			return false;
 		}
 
 		// Create rollback checkpoint
 		const snapshot: Record<string, string> = {};
-		for (const file of proposal.files) {
-			snapshot[file.path] = file.originalContent;
+		if (proposal) {
+			for (const file of proposal.files) {
+				snapshot[file.path] = file.originalContent;
+			}
+		} else if (multiProp) {
+			for (const file of multiProp.files) {
+				snapshot[file.path] = file.originalContent;
+			}
 		}
-		this._floatService.getCheckpointService().createCheckpoint(`Apply ${proposal.title}`, snapshot);
+		this._floatService.getCheckpointService().createCheckpoint(`Apply ${proposal?.title || multiProp?.title}`, snapshot);
 
-		// Apply files
-		for (const file of proposal.files) {
-			this._floatService.getProposalSession().applyFileChange(proposalId, file.path);
+		// Apply via orchestrator with concurrent edit conflict verification
+		const diskReader = async (p: string) => {
 			try {
-				const uri = URI.file(file.path);
-				await this._textFileService.write(uri, file.proposedContent);
-			} catch (e: any) {
-				this._notificationService.error(`Failed to write file ${file.path}: ${e.message}`);
+				const res = await this._textFileService.read(URI.file(p));
+				return res.value;
+			} catch {
+				return undefined;
+			}
+		};
+
+		const diskWriter = async (p: string, content: string) => {
+			await this._textFileService.write(URI.file(p), content);
+		};
+
+		if (multiProp) {
+			const res = await this._orchestrator.acceptAll(proposalId, diskWriter, diskReader);
+			if (!res.success) {
+				if (res.rolledBack) {
+					this._notificationService.error(`Transaction failed on ${res.failedFile || 'file'}: ${res.error}. Rolled back all changes to baseline state.`);
+				} else {
+					this._notificationService.warn(`FLOAT Composer detected concurrent conflicts in ${res.conflictedFiles.join(', ')}. Conflicted files preserved.`);
+				}
+				return false;
+			}
+		} else if (proposal) {
+			for (const file of proposal.files) {
+				this._floatService.getProposalSession().applyFileChange(proposalId, file.path);
+				try {
+					await this._textFileService.write(URI.file(file.path), file.proposedContent);
+				} catch (e: any) {
+					this._notificationService.error(`Failed to write file ${file.path}: ${e.message}`);
+				}
 			}
 		}
 
-		if (this._activeMultiFileProposal && this._activeMultiFileProposal.id === proposalId) {
-			await this._orchestrator.acceptAll(proposalId);
-		}
-
-		this._notificationService.info(`FLOAT Composer applied proposal: ${proposal.title}`);
+		this._notificationService.info(`FLOAT Composer applied proposal: ${proposal?.title || multiProp?.title}`);
 		return true;
 	}
 
 	public async acceptFile(proposalId: string, filePath: string): Promise<boolean> {
-		const success = await this._orchestrator.acceptFile(proposalId, filePath, async (p, content) => {
+		const diskReader = async (p: string) => {
+			try {
+				const res = await this._textFileService.read(URI.file(p));
+				return res.value;
+			} catch {
+				return undefined;
+			}
+		};
+
+		const diskWriter = async (p: string, content: string) => {
 			await this._textFileService.write(URI.file(p), content);
-		});
+		};
+
+		const success = await this._orchestrator.acceptFile(proposalId, filePath, diskWriter, diskReader);
 
 		if (success) {
 			this._floatService.getProposalSession().applyFileChange(proposalId, filePath);
 			this._notificationService.info(`Accepted file modification: ${filePath}`);
+		} else {
+			this._notificationService.warn(`Could not accept ${filePath}: File was modified concurrently or already accepted.`);
 		}
 		return success;
 	}
@@ -209,21 +248,24 @@ export class FloatComposer extends Disposable {
 
 	public rejectProposal(proposalId: string): boolean {
 		const proposal = this._floatService.getProposalSession().getProposal(proposalId);
-		if (!proposal) {
+		const multiProp = this._orchestrator.getProposal(proposalId);
+		if (!proposal && !multiProp) {
 			return false;
 		}
 
-		for (const file of proposal.files) {
-			this._floatService.getProposalSession().rejectFileChange(proposalId, file.path);
+		if (proposal) {
+			for (const file of proposal.files) {
+				this._floatService.getProposalSession().rejectFileChange(proposalId, file.path);
+			}
 		}
 
-		if (this._activeMultiFileProposal && this._activeMultiFileProposal.id === proposalId) {
+		if (multiProp) {
 			this._orchestrator.rejectAll(proposalId);
 		}
 
 		this._activeProposal = null;
 		this._activeMultiFileProposal = null;
-		this._notificationService.info(`FLOAT Composer rejected proposal: ${proposal.title}`);
+		this._notificationService.info(`FLOAT Composer rejected proposal: ${proposal?.title || multiProp?.title}`);
 		return true;
 	}
 
