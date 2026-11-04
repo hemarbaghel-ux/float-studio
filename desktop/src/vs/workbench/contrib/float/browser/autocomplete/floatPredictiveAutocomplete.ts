@@ -20,9 +20,12 @@ import {
 	IFloatInlineCompletionContext,
 	IFloatAutocompleteCacheEntry,
 	IFloatAutocompleteConfig,
-	IFloatAutocompleteTelemetry
+	IFloatAutocompleteTelemetry,
+	IRecentEditRecord,
+	ICursorJumpRecommendation
 } from './floatAutocompleteTypes.js';
 import { isFloatAutocompleteGloballyEnabled } from './floatAutocompleteActions.js';
+import { FloatNextActionSpeculator } from './floatNextActionSpeculator.js';
 
 export class FloatPredictiveAutocomplete extends Disposable implements InlineCompletionsProvider {
 	private _config: IFloatAutocompleteConfig = {
@@ -49,10 +52,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 	private _activeAbortController: AbortController | null = null;
 	private _debounceResolver: ((proceed: boolean) => void) | null = null;
 	private _debounceTimer: any = null;
+	private readonly _speculator = new FloatNextActionSpeculator();
 
 	constructor(
-		@IFloatService private readonly _floatService: IFloatService,
-		@ILanguageFeaturesService languageFeaturesService?: ILanguageFeaturesService
+		private readonly _floatService: IFloatService,
+		languageFeaturesService?: ILanguageFeaturesService
 	) {
 		super();
 		if (languageFeaturesService) {
@@ -70,6 +74,14 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 
 	public get telemetry(): IFloatAutocompleteTelemetry {
 		return { ...this._telemetry };
+	}
+
+	public get speculator(): FloatNextActionSpeculator {
+		return this._speculator;
+	}
+
+	public recordUserEdit(edit: IRecentEditRecord): void {
+		this._speculator.recordEdit(edit);
 	}
 
 	public clearCache(): void {
@@ -130,9 +142,9 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 	}
 
 	/**
-	 * Sanitizes raw model output for clean inline insertion
+	 * Sanitizes raw model output for clean inline insertion and deduplicates suffix overlap
 	 */
-	public sanitizeCompletion(rawCompletion: string): string {
+	public sanitizeCompletion(rawCompletion: string, suffix?: string): string {
 		if (!rawCompletion) return '';
 
 		let cleaned = rawCompletion;
@@ -143,6 +155,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 
 		// Normalize line endings to LF
 		cleaned = cleaned.replace(/\r\n/g, '\n');
+
+		// Deduplicate suffix overlap to prevent repeating existing code below cursor
+		if (suffix) {
+			cleaned = this._speculator.deduplicateSuffix(cleaned, suffix);
+		}
 
 		return cleaned;
 	}
@@ -215,7 +232,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			return undefined;
 		}
 
-		// 3. Request Completion from Model Client
+		// 3. Request Completion from Model Client with Cross-File Diff Prompting
 		this._activeAbortController = new AbortController();
 		const signal = this._activeAbortController.signal;
 		const cancelSub = token?.onCancellationRequested?.(() => {
@@ -225,9 +242,12 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		const netStart = Date.now();
 
 		try {
+			const promptContext = this._speculator.buildPromptContext(ctx);
+			const fullPrefix = promptContext ? `${promptContext}\n${ctx.prefix}` : ctx.prefix;
+
 			const result = await this._floatService.completeCode(
 				{
-					prefix: ctx.prefix,
+					prefix: fullPrefix,
 					suffix: ctx.suffix,
 					language: ctx.languageId,
 					fileName: ctx.fileName,
@@ -253,7 +273,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 				return undefined;
 			}
 
-			const cleanCompletion = this.sanitizeCompletion(result.completion);
+			const cleanCompletion = this.sanitizeCompletion(result.completion, ctx.suffix);
 			if (!cleanCompletion) {
 				return undefined;
 			}
@@ -274,6 +294,12 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 				insertText: cleanCompletion,
 				range: insertRange
 			};
+
+			// Predict cursor jump recommendation if signature was modified
+			const jump = this._speculator.predictCursorJump(ctx);
+			if (jump) {
+				(item as any).cursorJump = jump;
+			}
 
 			this._telemetry.completionsShownCount++;
 

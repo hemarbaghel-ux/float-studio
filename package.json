@@ -14,7 +14,7 @@
     "build": "vite build && esbuild src/server/app.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "build:extension": "node scripts/buildVscodiumExtension.cjs",
     "package:extension": "node scripts/packageVscodiumExtension.cjs",
-    "test:desktop": "node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testDesktopPhase4ModelClient.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testServerProjectAuthorization.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/verifyDesktopWorkbenchContributions.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testDesktopNativeInlineDiff.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/verifyRealElectronDesktopApp.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testComposerAutonomousAgent.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testShadowWorkspace.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testPredictiveAutocomplete.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testCodebaseSemanticIndex.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testIntegrationAndReliability.ts",
+    "test:desktop": "node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testDesktopPhase4ModelClient.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testServerProjectAuthorization.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/verifyDesktopWorkbenchContributions.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testDesktopNativeInlineDiff.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/verifyRealElectronDesktopApp.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testComposerAutonomousAgent.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testShadowWorkspace.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testPredictiveAutocomplete.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testCodebaseSemanticIndex.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testIntegrationAndReliability.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testPhase1MultiLanguageSemanticEngine.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testPhase2ShadowDaemon.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testPhase3NextActionSpeculation.ts && node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testPhase4AutonomousComposerAgent.ts",
     "test:extension": "npm run build:extension && npm run package:extension && node --max-old-space-size=4096 node_modules/tsx/dist/cli.mjs scripts/testVscodiumPoCWorkflow.ts && node --max-old-space-size=4096 node_modules/tsx/dist/cli.mjs scripts/verifyVscodiumWorkbenchIntegration.ts && node --max-old-space-size=4096 node_modules/tsx/dist/cli.mjs scripts/testVscodiumBackendIntegration.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
@@ -57,24 +57,20 @@
     "zustand": "^5.0.15"
   },
   "optionalDependencies": {
-    "node-pty": "^1.0.0",
-    "playwright": "^1.51.0"
+    "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@types/diff": "^7.0.2",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
-    "@types/pg": "^8.23.1",
-    "@types/uuid": "^11.0.0",
-    "autoprefixer": "^10.4.21",
+    "@types/pg": "^8.11.11",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@types/uuid": "^10.0.0",
+    "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.25.0",
-    "sharp": "^0.35.4",
-    "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.3"
-  },
-  "overrides": {
-    "@grpc/grpc-js": "^1.14.5",
-    "dompurify": "^3.4.16"
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
   }
 }

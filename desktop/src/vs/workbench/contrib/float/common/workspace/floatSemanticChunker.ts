@@ -9,7 +9,7 @@ export interface ISemanticCodeChunk {
 	id: string;
 	filePath: string;
 	symbolName?: string;
-	symbolKind?: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'method' | 'variable' | 'block';
+	symbolKind?: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'method' | 'variable' | 'block' | 'struct' | 'trait' | 'impl' | 'module' | 'section';
 	containerName?: string;
 	startLine: number;
 	endLine: number;
@@ -35,7 +35,7 @@ export function tokenizeCode(text: string): string[] {
 
 export class FloatSemanticChunker {
 	/**
-	 * Parses a source file into semantic AST chunks
+	 * Parses a source file into semantic AST chunks across TypeScript, Python, Rust, Go, C/C++, Java, C#, and Markdown
 	 */
 	public static chunkFile(filePath: string, content: string): ISemanticCodeChunk[] {
 		const normPath = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
@@ -43,8 +43,18 @@ export class FloatSemanticChunker {
 
 		if (['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'].includes(ext)) {
 			return this._chunkTypeScript(normPath, content);
-		} else if (ext === 'py') {
+		} else if (ext === 'py' || ext === 'pyi') {
 			return this._chunkPython(normPath, content);
+		} else if (ext === 'rs') {
+			return this._chunkRust(normPath, content);
+		} else if (ext === 'go') {
+			return this._chunkGo(normPath, content);
+		} else if (['c', 'cpp', 'cc', 'cxx', 'h', 'hpp', 'hxx'].includes(ext)) {
+			return this._chunkCpp(normPath, content);
+		} else if (['java', 'cs'].includes(ext)) {
+			return this._chunkJavaAndCSharp(normPath, content);
+		} else if (['md', 'markdown'].includes(ext)) {
+			return this._chunkMarkdown(normPath, content);
 		} else {
 			return this._chunkGeneric(normPath, content);
 		}
@@ -132,7 +142,6 @@ export class FloatSemanticChunker {
 
 		ts.forEachChild(sourceFile, node => visitNode(node));
 
-		// If no AST symbols found (or file is script), fallback to top-level blocks
 		if (chunks.length === 0) {
 			return this._chunkGeneric(filePath, content);
 		}
@@ -150,7 +159,6 @@ export class FloatSemanticChunker {
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			const lineNum = i + 1;
-			const trimmed = line.trim();
 
 			const classMatch = line.match(/^(\s*)class\s+([a-zA-Z0-9_]+)/);
 			const defMatch = line.match(/^(\s*)def\s+([a-zA-Z0-9_]+)/);
@@ -207,10 +215,438 @@ export class FloatSemanticChunker {
 		return chunks;
 	}
 
+	private static _chunkRust(filePath: string, content: string): ISemanticCodeChunk[] {
+		const chunks: ISemanticCodeChunk[] = [];
+		const lines = content.split(/\r?\n/);
+		let chunkIndex = 0;
+
+		let currentSymbol: { name: string; kind: ISemanticCodeChunk['symbolKind']; startLine: number; lines: string[]; braces: number } | null = null;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const lineNum = i + 1;
+
+			const fnMatch = line.match(/^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?fn\s+([a-zA-Z0-9_]+)/);
+			const structMatch = line.match(/^\s*(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+([a-zA-Z0-9_]+)/);
+			const enumMatch = line.match(/^\s*(?:pub(?:\s*\([^)]*\))?\s+)?enum\s+([a-zA-Z0-9_]+)/);
+			const traitMatch = line.match(/^\s*(?:pub(?:\s*\([^)]*\))?\s+)?trait\s+([a-zA-Z0-9_]+)/);
+			const implMatch = line.match(/^\s*impl(?:<[^>]*>)?\s+(?:([a-zA-Z0-9_]+)\s+for\s+)?([a-zA-Z0-9_]+)/);
+
+			const match = fnMatch || structMatch || enumMatch || traitMatch || implMatch;
+
+			if (match && !currentSymbol) {
+				let name = '';
+				let kind: ISemanticCodeChunk['symbolKind'] = 'function';
+
+				if (fnMatch) { name = fnMatch[1]; kind = 'function'; }
+				else if (structMatch) { name = structMatch[1]; kind = 'struct'; }
+				else if (enumMatch) { name = enumMatch[1]; kind = 'enum'; }
+				else if (traitMatch) { name = traitMatch[1]; kind = 'trait'; }
+				else if (implMatch) { name = implMatch[2] ? `${implMatch[1] ? implMatch[1] + '_for_' : ''}${implMatch[2]}` : 'impl'; kind = 'impl'; }
+
+				const openBraces = (line.match(/{/g) || []).length;
+				const closeBraces = (line.match(/}/g) || []).length;
+
+				currentSymbol = {
+					name,
+					kind,
+					startLine: lineNum,
+					lines: [line],
+					braces: openBraces - closeBraces
+				};
+
+				if (currentSymbol.braces <= 0 && (line.includes(';') || line.includes('}'))) {
+					const nodeContent = currentSymbol.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSymbol.name,
+						symbolKind: currentSymbol.kind,
+						startLine: currentSymbol.startLine,
+						endLine: lineNum,
+						content: nodeContent,
+						tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+					});
+					currentSymbol = null;
+				}
+			} else if (currentSymbol) {
+				currentSymbol.lines.push(line);
+				const openBraces = (line.match(/{/g) || []).length;
+				const closeBraces = (line.match(/}/g) || []).length;
+				currentSymbol.braces += (openBraces - closeBraces);
+
+				if (currentSymbol.braces <= 0) {
+					const nodeContent = currentSymbol.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSymbol.name,
+						symbolKind: currentSymbol.kind,
+						startLine: currentSymbol.startLine,
+						endLine: lineNum,
+						content: nodeContent,
+						tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+					});
+					currentSymbol = null;
+				}
+			}
+		}
+
+		if (currentSymbol) {
+			const nodeContent = currentSymbol.lines.join('\n');
+			chunks.push({
+				id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+				filePath,
+				symbolName: currentSymbol.name,
+				symbolKind: currentSymbol.kind,
+				startLine: currentSymbol.startLine,
+				endLine: lines.length,
+				content: nodeContent,
+				tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+			});
+		}
+
+		if (chunks.length === 0) {
+			return this._chunkGeneric(filePath, content);
+		}
+
+		return chunks;
+	}
+
+	private static _chunkGo(filePath: string, content: string): ISemanticCodeChunk[] {
+		const chunks: ISemanticCodeChunk[] = [];
+		const lines = content.split(/\r?\n/);
+		let chunkIndex = 0;
+
+		let currentSymbol: { name: string; kind: ISemanticCodeChunk['symbolKind']; startLine: number; lines: string[]; braces: number } | null = null;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const lineNum = i + 1;
+
+			const funcMatch = line.match(/^func\s+(?:\([^)]+\)\s+)?([a-zA-Z0-9_]+)/);
+			const typeStructMatch = line.match(/^type\s+([a-zA-Z0-9_]+)\s+struct/);
+			const typeInterfaceMatch = line.match(/^type\s+([a-zA-Z0-9_]+)\s+interface/);
+
+			const match = funcMatch || typeStructMatch || typeInterfaceMatch;
+
+			if (match && !currentSymbol) {
+				let name = '';
+				let kind: ISemanticCodeChunk['symbolKind'] = 'function';
+
+				if (funcMatch) { name = funcMatch[1]; kind = 'function'; }
+				else if (typeStructMatch) { name = typeStructMatch[1]; kind = 'struct'; }
+				else if (typeInterfaceMatch) { name = typeInterfaceMatch[1]; kind = 'interface'; }
+
+				const openBraces = (line.match(/{/g) || []).length;
+				const closeBraces = (line.match(/}/g) || []).length;
+
+				currentSymbol = {
+					name,
+					kind,
+					startLine: lineNum,
+					lines: [line],
+					braces: openBraces - closeBraces
+				};
+
+				if (currentSymbol.braces <= 0 && line.includes('}')) {
+					const nodeContent = currentSymbol.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSymbol.name,
+						symbolKind: currentSymbol.kind,
+						startLine: currentSymbol.startLine,
+						endLine: lineNum,
+						content: nodeContent,
+						tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+					});
+					currentSymbol = null;
+				}
+			} else if (currentSymbol) {
+				currentSymbol.lines.push(line);
+				const openBraces = (line.match(/{/g) || []).length;
+				const closeBraces = (line.match(/}/g) || []).length;
+				currentSymbol.braces += (openBraces - closeBraces);
+
+				if (currentSymbol.braces <= 0) {
+					const nodeContent = currentSymbol.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSymbol.name,
+						symbolKind: currentSymbol.kind,
+						startLine: currentSymbol.startLine,
+						endLine: lineNum,
+						content: nodeContent,
+						tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+					});
+					currentSymbol = null;
+				}
+			}
+		}
+
+		if (currentSymbol) {
+			const nodeContent = currentSymbol.lines.join('\n');
+			chunks.push({
+				id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+				filePath,
+				symbolName: currentSymbol.name,
+				symbolKind: currentSymbol.kind,
+				startLine: currentSymbol.startLine,
+				endLine: lines.length,
+				content: nodeContent,
+				tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+			});
+		}
+
+		if (chunks.length === 0) {
+			return this._chunkGeneric(filePath, content);
+		}
+
+		return chunks;
+	}
+
+	private static _chunkCpp(filePath: string, content: string): ISemanticCodeChunk[] {
+		const chunks: ISemanticCodeChunk[] = [];
+		const lines = content.split(/\r?\n/);
+		let chunkIndex = 0;
+
+		let currentSymbol: { name: string; kind: ISemanticCodeChunk['symbolKind']; startLine: number; lines: string[]; braces: number } | null = null;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const lineNum = i + 1;
+
+			const classMatch = line.match(/^\s*(?:class|struct)\s+([a-zA-Z0-9_]+)/);
+			const funcMatch = line.match(/^\s*(?:[a-zA-Z0-9_:<>&*]+\s+)+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*(?:const)?\s*\{/);
+
+			const match = classMatch || funcMatch;
+
+			if (match && !currentSymbol) {
+				const name = classMatch ? classMatch[1] : funcMatch![1];
+				const kind = classMatch ? 'class' : 'function';
+
+				const openBraces = (line.match(/{/g) || []).length;
+				const closeBraces = (line.match(/}/g) || []).length;
+
+				currentSymbol = {
+					name,
+					kind,
+					startLine: lineNum,
+					lines: [line],
+					braces: openBraces - closeBraces
+				};
+
+				if (currentSymbol.braces <= 0 && line.includes('}')) {
+					const nodeContent = currentSymbol.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSymbol.name,
+						symbolKind: currentSymbol.kind,
+						startLine: currentSymbol.startLine,
+						endLine: lineNum,
+						content: nodeContent,
+						tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+					});
+					currentSymbol = null;
+				}
+			} else if (currentSymbol) {
+				currentSymbol.lines.push(line);
+				const openBraces = (line.match(/{/g) || []).length;
+				const closeBraces = (line.match(/}/g) || []).length;
+				currentSymbol.braces += (openBraces - closeBraces);
+
+				if (currentSymbol.braces <= 0) {
+					const nodeContent = currentSymbol.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSymbol.name,
+						symbolKind: currentSymbol.kind,
+						startLine: currentSymbol.startLine,
+						endLine: lineNum,
+						content: nodeContent,
+						tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+					});
+					currentSymbol = null;
+				}
+			}
+		}
+
+		if (currentSymbol) {
+			const nodeContent = currentSymbol.lines.join('\n');
+			chunks.push({
+				id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+				filePath,
+				symbolName: currentSymbol.name,
+				symbolKind: currentSymbol.kind,
+				startLine: currentSymbol.startLine,
+				endLine: lines.length,
+				content: nodeContent,
+				tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+			});
+		}
+
+		if (chunks.length === 0) {
+			return this._chunkGeneric(filePath, content);
+		}
+
+		return chunks;
+	}
+
+	private static _chunkJavaAndCSharp(filePath: string, content: string): ISemanticCodeChunk[] {
+		const chunks: ISemanticCodeChunk[] = [];
+		const lines = content.split(/\r?\n/);
+		let chunkIndex = 0;
+
+		let currentSymbol: { name: string; kind: ISemanticCodeChunk['symbolKind']; startLine: number; lines: string[]; braces: number } | null = null;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const lineNum = i + 1;
+
+			const classMatch = line.match(/^\s*(?:public|private|protected|internal|static|final|abstract)?\s*(?:class|interface|record|enum)\s+([a-zA-Z0-9_]+)/);
+			const methodMatch = line.match(/^\s*(?:public|private|protected|internal|static|final|async|override|virtual)?\s+[a-zA-Z0-9_<>[\]?]+\s+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{/);
+
+			const match = classMatch || methodMatch;
+
+			if (match && !currentSymbol) {
+				const name = classMatch ? classMatch[1] : methodMatch![1];
+				const kind = classMatch ? 'class' : 'method';
+
+				const openBraces = (line.match(/{/g) || []).length;
+				const closeBraces = (line.match(/}/g) || []).length;
+
+				currentSymbol = {
+					name,
+					kind,
+					startLine: lineNum,
+					lines: [line],
+					braces: openBraces - closeBraces
+				};
+
+				if (currentSymbol.braces <= 0 && line.includes('}')) {
+					const nodeContent = currentSymbol.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSymbol.name,
+						symbolKind: currentSymbol.kind,
+						startLine: currentSymbol.startLine,
+						endLine: lineNum,
+						content: nodeContent,
+						tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+					});
+					currentSymbol = null;
+				}
+			} else if (currentSymbol) {
+				currentSymbol.lines.push(line);
+				const openBraces = (line.match(/{/g) || []).length;
+				const closeBraces = (line.match(/}/g) || []).length;
+				currentSymbol.braces += (openBraces - closeBraces);
+
+				if (currentSymbol.braces <= 0) {
+					const nodeContent = currentSymbol.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSymbol.name,
+						symbolKind: currentSymbol.kind,
+						startLine: currentSymbol.startLine,
+						endLine: lineNum,
+						content: nodeContent,
+						tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+					});
+					currentSymbol = null;
+				}
+			}
+		}
+
+		if (currentSymbol) {
+			const nodeContent = currentSymbol.lines.join('\n');
+			chunks.push({
+				id: `${filePath}#${currentSymbol.name}-${++chunkIndex}`,
+				filePath,
+				symbolName: currentSymbol.name,
+				symbolKind: currentSymbol.kind,
+				startLine: currentSymbol.startLine,
+				endLine: lines.length,
+				content: nodeContent,
+				tokens: tokenizeCode(`${currentSymbol.name} ${nodeContent}`)
+			});
+		}
+
+		if (chunks.length === 0) {
+			return this._chunkGeneric(filePath, content);
+		}
+
+		return chunks;
+	}
+
+	private static _chunkMarkdown(filePath: string, content: string): ISemanticCodeChunk[] {
+		const chunks: ISemanticCodeChunk[] = [];
+		const lines = content.split(/\r?\n/);
+		let chunkIndex = 0;
+
+		let currentSection: { name: string; startLine: number; lines: string[] } | null = null;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const lineNum = i + 1;
+			const headerMatch = line.match(/^#{1,4}\s+(.+)$/);
+
+			if (headerMatch) {
+				if (currentSection) {
+					const sectionContent = currentSection.lines.join('\n');
+					chunks.push({
+						id: `${filePath}#section-${++chunkIndex}`,
+						filePath,
+						symbolName: currentSection.name,
+						symbolKind: 'section',
+						startLine: currentSection.startLine,
+						endLine: lineNum - 1,
+						content: sectionContent,
+						tokens: tokenizeCode(`${currentSection.name} ${sectionContent}`)
+					});
+				}
+
+				currentSection = {
+					name: headerMatch[1].trim(),
+					startLine: lineNum,
+					lines: [line]
+				};
+			} else if (currentSection) {
+				currentSection.lines.push(line);
+			}
+		}
+
+		if (currentSection) {
+			const sectionContent = currentSection.lines.join('\n');
+			chunks.push({
+				id: `${filePath}#section-${++chunkIndex}`,
+				filePath,
+				symbolName: currentSection.name,
+				symbolKind: 'section',
+				startLine: currentSection.startLine,
+				endLine: lines.length,
+				content: sectionContent,
+				tokens: tokenizeCode(`${currentSection.name} ${sectionContent}`)
+			});
+		}
+
+		if (chunks.length === 0) {
+			return this._chunkGeneric(filePath, content);
+		}
+
+		return chunks;
+	}
+
 	private static _chunkGeneric(filePath: string, content: string): ISemanticCodeChunk[] {
 		const chunks: ISemanticCodeChunk[] = [];
 		const lines = content.split(/\r?\n/);
-		const blockSize = 50; // lines per block
+		const blockSize = 50;
 		const overlap = 10;
 
 		let start = 0;

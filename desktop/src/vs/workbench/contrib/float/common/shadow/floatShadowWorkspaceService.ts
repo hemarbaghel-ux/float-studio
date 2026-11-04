@@ -12,6 +12,7 @@ import {
 	ICreateShadowSessionOptions
 } from './floatShadowTypes.js';
 import { FloatShadowCompiler } from './floatShadowCompiler.js';
+import { FloatShadowDaemon, IShadowExecutionResult } from './floatShadowDaemon.js';
 
 export class FloatShadowWorkspaceService implements IFloatShadowWorkspaceService {
 	private static _instance: FloatShadowWorkspaceService | null = null;
@@ -24,7 +25,12 @@ export class FloatShadowWorkspaceService implements IFloatShadowWorkspaceService
 	}
 
 	private readonly _sessions = new Map<string, IShadowSession>();
+	private readonly _daemon = new FloatShadowDaemon();
 	private _sessionCounter = 0;
+
+	public get daemon(): FloatShadowDaemon {
+		return this._daemon;
+	}
 
 	createSession(options: ICreateShadowSessionOptions = {}): IShadowSession {
 		const id = options.sessionId || `shadow-session-${Date.now()}-${++this._sessionCounter}`;
@@ -157,6 +163,34 @@ export class FloatShadowWorkspaceService implements IFloatShadowWorkspaceService
 		return result;
 	}
 
+	/**
+	 * Creates an out-of-process physical shadow directory for real toolchain execution
+	 */
+	async createPhysicalShadowSandbox(sessionId: string): Promise<string> {
+		const session = this._sessions.get(sessionId);
+		if (!session) {
+			throw new Error(`Shadow session not found: ${sessionId}`);
+		}
+
+		return await this._daemon.createShadowSandbox(
+			sessionId,
+			session.baseWorkspacePath,
+			session.speculativeOverlays,
+			session.deletedFiles
+		);
+	}
+
+	/**
+	 * Executes a real project build/test command in the physical shadow sandbox
+	 */
+	async executeToolchainInShadow(
+		sessionId: string,
+		command: string,
+		timeoutMs?: number
+	): Promise<IShadowExecutionResult> {
+		return await this._daemon.executeToolchain(sessionId, command, timeoutMs);
+	}
+
 	async validateSnippet(
 		filePath: string,
 		content: string,
@@ -193,7 +227,7 @@ export class FloatShadowWorkspaceService implements IFloatShadowWorkspaceService
 		return FloatShadowCompiler.formatDiagnosticsForPrompt(diagnostics);
 	}
 
-	disposeSession(sessionId: string): void {
+	async disposeSession(sessionId: string): Promise<void> {
 		const session = this._sessions.get(sessionId);
 		if (session) {
 			session.baseFiles.clear();
@@ -201,11 +235,13 @@ export class FloatShadowWorkspaceService implements IFloatShadowWorkspaceService
 			session.deletedFiles.clear();
 			this._sessions.delete(sessionId);
 		}
+		await this._daemon.destroyShadowSandbox(sessionId);
 	}
 
-	disposeAllSessions(): void {
-		for (const id of this._sessions.keys()) {
-			this.disposeSession(id);
+	async disposeAllSessions(): Promise<void> {
+		for (const id of Array.from(this._sessions.keys())) {
+			await this.disposeSession(id);
 		}
+		await this._daemon.destroyAllSandboxes();
 	}
 }
