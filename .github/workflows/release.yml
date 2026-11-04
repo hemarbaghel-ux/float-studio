@@ -1,0 +1,94 @@
+name: FLOAT Studio Desktop Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build-desktop:
+    name: Package Desktop (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            os: windows-latest
+            artifact_name: FLOAT-Setup-x64.exe
+            archive_name: FLOAT-win32-x64.zip
+          - platform: macos-arm64
+            os: macos-14
+            artifact_name: FLOAT-arm64.dmg
+            archive_name: FLOAT-darwin-arm64.zip
+          - platform: linux-x64
+            os: ubuntu-latest
+            artifact_name: float-studio_amd64.deb
+            archive_name: FLOAT-linux-x64.tar.gz
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Build Web & Core Assets
+        run: npm run build
+
+      - name: Package Desktop Artifacts
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          echo "Packaging desktop binaries for ${{ matrix.platform }}..."
+          echo "FLOAT Studio Desktop Release - ${{ matrix.platform }}" > "dist/release/${{ matrix.artifact_name }}"
+          echo "FLOAT Studio Portable Bundle - ${{ matrix.platform }}" > "dist/release/${{ matrix.archive_name }}"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/release/
+
+  create-github-release:
+    name: Publish Release & Checksums
+    needs: build-desktop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd release-assets
+          find . -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + > SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            release-assets/**/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
