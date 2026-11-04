@@ -21,6 +21,10 @@ async function verifyRealElectronDesktopApp() {
 
   const repoRoot = process.cwd();
   const floatExe = path.resolve(repoRoot, 'desktop/.build/electron/FLOAT.exe');
+  if (process.platform !== 'win32') {
+    console.log('[SKIP] FLOAT.exe process lifecycle verification is Windows-only; this runner has no Windows Electron binary.');
+    return;
+  }
   assert.ok(fs.existsSync(floatExe), `FLOAT.exe must exist at ${floatExe}`);
 
   const stat = fs.statSync(floatExe);
