@@ -29,6 +29,7 @@
     "dist",
     "tools",
     "coverage",
-    "extensions"
+    "extensions",
+    "desktop"
   ]
 }
