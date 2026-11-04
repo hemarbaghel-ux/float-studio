@@ -1,7 +1,7 @@
 name: FLOAT Studio CI
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   push:
@@ -25,37 +25,6 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-
-      - name: Regenerate npm lockfile from cross-platform manifest
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-
-      - name: Upload regenerated lockfile for finalization
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-generated-package-lock
-          path: package-lock.json
-          if-no-files-found: error
-
-      - name: Commit synchronized npm lockfile to same-repository PR branch
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
-          if git diff --quiet -- package-lock.json; then
-            echo "package-lock.json is already synchronized."
-            exit 0
-          fi
-          cp package-lock.json "$RUNNER_TEMP/float-package-lock.json"
-          git fetch origin "refs/heads/$HEAD_REF:refs/remotes/origin/$HEAD_REF"
-          git switch --create "$HEAD_REF" "origin/$HEAD_REF"
-          cp "$RUNNER_TEMP/float-package-lock.json" package-lock.json
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "chore(deps): regenerate cross-platform npm lockfile"
-          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w 0)"
-          git -c http.extraheader="AUTHORIZATION: basic $AUTH_HEADER" push origin "HEAD:$HEAD_REF"
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
