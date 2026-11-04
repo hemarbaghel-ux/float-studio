@@ -6,7 +6,8 @@
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { EditorContributionInstantiation, registerEditorContribution } from '../../../../editor/browser/editorExtensions.js';
 import { registerAction2 } from '../../../../platform/actions/common/actions.js';
-import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
+import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution } from '../../../common/contributions.js';
+import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 
 import { IFloatService, FloatService } from '../common/floatService.js';
 import { FloatInlineDiffController } from './inline-diff/floatInlineDiffController.js';
@@ -16,6 +17,7 @@ import { OpenFloatChatAction } from './chat/floatChatActions.js';
 import { FloatTerminalListener } from './terminal/floatTerminalListener.js';
 import { FixWithFloatTerminalAction } from './terminal/floatTerminalActions.js';
 import { ToggleFloatAutocompleteAction } from './autocomplete/floatAutocompleteActions.js';
+import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutocomplete.js';
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
 registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
@@ -38,5 +40,29 @@ registerAction2(ToggleFloatAutocompleteAction);   // Alt+Shift+A (Predictive Aut
 registerWorkbenchContribution2(
 	FloatTerminalListener.ID,
 	FloatTerminalListener,
+	WorkbenchPhase.AfterRestored
+);
+
+// 5. Register Predictive Autocomplete (Cursor Tab) Contribution
+export class FloatPredictiveAutocompleteContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.floatPredictiveAutocomplete';
+
+	private readonly _provider: FloatPredictiveAutocomplete;
+
+	constructor(
+		@IFloatService floatService: IFloatService,
+		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService
+	) {
+		this._provider = new FloatPredictiveAutocomplete(floatService, languageFeaturesService);
+	}
+
+	public get provider(): FloatPredictiveAutocomplete {
+		return this._provider;
+	}
+}
+
+registerWorkbenchContribution2(
+	FloatPredictiveAutocompleteContribution.ID,
+	FloatPredictiveAutocompleteContribution,
 	WorkbenchPhase.AfterRestored
 );

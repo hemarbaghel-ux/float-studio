@@ -23,7 +23,7 @@ export interface IFloatOrchestratedFile {
 	originalContent: string;
 	proposedContent: string;
 	hunks: IDiffHunk[];
-	status: 'pending' | 'accepted' | 'rejected';
+	status: 'pending' | 'accepted' | 'rejected' | 'conflict';
 	stats: {
 		additions: number;
 		deletions: number;
@@ -39,7 +39,7 @@ export interface IFloatMultiFileProposal {
 	checkpointId?: string;
 	timestamp: number;
 	files: IFloatOrchestratedFile[];
-	status: 'pending' | 'partially_accepted' | 'accepted' | 'rejected';
+	status: 'pending' | 'partially_accepted' | 'accepted' | 'rejected' | 'conflict';
 	stats: {
 		totalFiles: number;
 		totalAdditions: number;
@@ -47,6 +47,17 @@ export interface IFloatMultiFileProposal {
 	};
 	speculativeDiagnostics?: IShadowDiagnostic[];
 	validationStatus?: 'clean' | 'has_errors' | 'has_warnings';
+}
+
+export interface ITransactionCommitResult {
+	success: boolean;
+	appliedCount: number;
+	conflictCount: number;
+	conflictedFiles: string[];
+	failedFile?: string;
+	error?: string;
+	rolledBack: boolean;
+	committedFiles: string[];
 }
 
 export function computeLineHunks(original: string, proposed: string): IDiffHunk[] {
@@ -58,7 +69,7 @@ export function computeLineHunks(original: string, proposed: string): IDiffHunk[
 	let pIdx = 0;
 	let hunkCounter = 0;
 
-	// Simple Myers-style greedy diff for structured hunk extraction
+	// Myers-style greedy diff for structured hunk extraction
 	while (oIdx < origLines.length || pIdx < propLines.length) {
 		if (oIdx < origLines.length && pIdx < propLines.length && origLines[oIdx] === propLines[pIdx]) {
 			// Unchanged context line
@@ -72,12 +83,9 @@ export function computeLineHunks(original: string, proposed: string): IDiffHunk[
 		const deletedBlock: string[] = [];
 		const addedBlock: string[] = [];
 
-		// Collect consecutive deletions and additions until next sync point
 		while (oIdx < origLines.length && (pIdx >= propLines.length || origLines[oIdx] !== propLines[pIdx])) {
-			// Look ahead in propLines to see if origLine matches soon
 			const matchAhead = propLines.slice(pIdx, pIdx + 5).indexOf(origLines[oIdx]);
 			if (matchAhead > 0) {
-				// There were insertions in proposed
 				for (let i = 0; i < matchAhead; i++) {
 					addedBlock.push(propLines[pIdx++]);
 				}
@@ -194,7 +202,8 @@ export class FloatMultiFileDiffOrchestrator {
 	public async acceptFile(
 		proposalId: string,
 		filePath: string,
-		onApplyFile?: (path: string, content: string) => Promise<void>
+		onApplyFile?: (path: string, content: string) => Promise<void>,
+		getCurrentDiskContent?: (path: string) => Promise<string | undefined> | string | undefined
 	): Promise<boolean> {
 		const prop = this._proposals.get(proposalId);
 		if (!prop) {
@@ -205,6 +214,16 @@ export class FloatMultiFileDiffOrchestrator {
 		const targetFile = prop.files.find(f => f.path === cleanPath);
 		if (!targetFile || targetFile.status === 'accepted') {
 			return false;
+		}
+
+		// Recheck original file hash / disk content before accepting to preserve concurrent user edits
+		if (getCurrentDiskContent) {
+			const currentDisk = await getCurrentDiskContent(cleanPath);
+			if (currentDisk !== undefined && currentDisk !== targetFile.originalContent) {
+				targetFile.status = 'conflict';
+				this._updateProposalStatus(prop);
+				return false; // Refuse clobbering concurrent user edit!
+			}
 		}
 
 		if (onApplyFile) {
@@ -243,27 +262,106 @@ export class FloatMultiFileDiffOrchestrator {
 
 	public async acceptAll(
 		proposalId: string,
-		onApplyFile?: (path: string, content: string) => Promise<void>
-	): Promise<boolean> {
+		onApplyFile?: (path: string, content: string) => Promise<void>,
+		getCurrentDiskContent?: (path: string) => Promise<string | undefined> | string | undefined,
+		atomicRollbackOnError: boolean = true,
+		onDeleteFile?: (path: string) => Promise<void>
+	): Promise<ITransactionCommitResult> {
 		const prop = this._proposals.get(proposalId);
 		if (!prop) {
-			return false;
+			return { success: false, appliedCount: 0, conflictCount: 0, conflictedFiles: [], rolledBack: false, committedFiles: [] };
 		}
+
+		let appliedCount = 0;
+		let conflictCount = 0;
+		const conflictedFiles: string[] = [];
+		const writtenFiles: Array<{ path: string; originalContent: string; proposedContent: string }> = [];
 
 		for (const file of prop.files) {
 			if (file.status !== 'accepted') {
-				if (onApplyFile) {
-					await onApplyFile(file.path, file.proposedContent);
+				if (getCurrentDiskContent) {
+					const currentDisk = await getCurrentDiskContent(file.path);
+					if (currentDisk !== undefined && currentDisk !== file.originalContent) {
+						file.status = 'conflict';
+						conflictCount++;
+						conflictedFiles.push(file.path);
+						continue; // Preserve concurrent user edit!
+					}
 				}
+
+				if (onApplyFile) {
+					try {
+						await onApplyFile(file.path, file.proposedContent);
+						writtenFiles.push({
+							path: file.path,
+							originalContent: file.originalContent,
+							proposedContent: file.proposedContent
+						});
+					} catch (err: any) {
+						// Transaction Failure Detected
+						file.status = 'conflict';
+						if (atomicRollbackOnError) {
+							// Roll back all previously written files in this transaction
+							for (let i = writtenFiles.length - 1; i >= 0; i--) {
+								const written = writtenFiles[i];
+								try {
+									if (written.originalContent === '' && onDeleteFile) {
+										await onDeleteFile(written.path);
+									} else {
+										await onApplyFile(written.path, written.originalContent);
+									}
+									const f = prop.files.find(pf => pf.path === written.path);
+									if (f) {
+										f.status = 'pending';
+										for (const h of f.hunks) h.status = 'pending';
+									}
+								} catch {}
+							}
+							this._updateProposalStatus(prop);
+							return {
+								success: false,
+								appliedCount: 0,
+								conflictCount: conflictCount + 1,
+								conflictedFiles: [...conflictedFiles, file.path],
+								failedFile: file.path,
+								error: err.message || String(err),
+								rolledBack: true,
+								committedFiles: []
+							};
+						} else {
+							// Return explicit recoverable partial-commit state without concealing
+							this._updateProposalStatus(prop);
+							return {
+								success: false,
+								appliedCount: writtenFiles.length,
+								conflictCount: conflictCount + 1,
+								conflictedFiles: [...conflictedFiles, file.path],
+								failedFile: file.path,
+								error: err.message || String(err),
+								rolledBack: false,
+								committedFiles: writtenFiles.map(w => w.path)
+							};
+						}
+					}
+				}
+
 				file.status = 'accepted';
+				appliedCount++;
 				for (const h of file.hunks) {
 					h.status = 'accepted';
 				}
 			}
 		}
 
-		prop.status = 'accepted';
-		return true;
+		this._updateProposalStatus(prop);
+		return {
+			success: conflictCount === 0,
+			appliedCount,
+			conflictCount,
+			conflictedFiles,
+			rolledBack: false,
+			committedFiles: writtenFiles.map(w => w.path)
+		};
 	}
 
 	public rejectAll(proposalId: string): boolean {
@@ -307,11 +405,14 @@ export class FloatMultiFileDiffOrchestrator {
 	}
 
 	private _updateProposalStatus(prop: IFloatMultiFileProposal): void {
+		const hasConflict = prop.files.some(f => f.status === 'conflict');
 		const allAccepted = prop.files.every(f => f.status === 'accepted');
 		const allRejected = prop.files.every(f => f.status === 'rejected');
 		const anyAccepted = prop.files.some(f => f.status === 'accepted');
 
-		if (allAccepted) {
+		if (hasConflict) {
+			prop.status = 'conflict';
+		} else if (allAccepted) {
 			prop.status = 'accepted';
 		} else if (allRejected) {
 			prop.status = 'rejected';

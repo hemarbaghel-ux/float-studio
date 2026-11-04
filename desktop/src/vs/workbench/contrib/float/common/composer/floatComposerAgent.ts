@@ -9,6 +9,7 @@ import { FloatMultiFileDiffOrchestrator, IFloatMultiFileProposal } from './float
 import { parseModelProposals } from '../proposals/floatProposalValidator.js';
 import { FloatShadowWorkspaceService } from '../shadow/floatShadowWorkspaceService.js';
 import { IShadowValidationResult } from '../shadow/floatShadowTypes.js';
+import { SpeculativeComposerFileSystem, IsolatedShadowWorkspaceCommandRunner } from './floatProductionAdapters.js';
 
 export interface IComposerAgentStep {
 	stepIndex: number;
@@ -24,6 +25,7 @@ export interface IComposerAgentGoal {
 	activeFilePath?: string;
 	enableShadowValidation?: boolean;
 	maxSpeculativeRepairs?: number;
+	isolateWorkspaceMutations?: boolean;
 }
 
 export interface IComposerAgentExecution {
@@ -54,14 +56,34 @@ export class FloatComposerAgent {
 		const maxSteps = goal.maxSteps ?? 10;
 		const enableShadowValidation = goal.enableShadowValidation ?? true;
 		const maxSpeculativeRepairs = goal.maxSpeculativeRepairs ?? 2;
+		const isolateMutations = goal.isolateWorkspaceMutations ?? false;
 		let speculativeRepairCount = 0;
 		const steps: IComposerAgentStep[] = [];
 
-		// 1. Snapshot initial state via CheckpointService
+		// When isolation is requested, route all tool mutations into speculative in-memory overlays
+		// AND run OS commands inside an isolated shadow workspace clone to protect the physical workspace.
+		let speculativeFs: SpeculativeComposerFileSystem | null = null;
+		let shadowCmdRunner: IsolatedShadowWorkspaceCommandRunner | null = null;
+		let scopedRegistry = this._toolRegistry;
+
+		if (isolateMutations) {
+			speculativeFs = new SpeculativeComposerFileSystem(this._toolRegistry.fileSystem);
+			const workspaceRoot = (this._toolRegistry.fileSystem as any).workspaceRoot || process.cwd();
+			shadowCmdRunner = new IsolatedShadowWorkspaceCommandRunner(workspaceRoot, speculativeFs.overlays);
+			scopedRegistry = this._toolRegistry.createScopedRegistry(speculativeFs, undefined, shadowCmdRunner);
+		}
+
+		const abortHandler = () => {
+			shadowCmdRunner?.abort();
+		};
+		signal?.addEventListener('abort', abortHandler);
+
+		try {
+			// 1. Snapshot initial state via CheckpointService
 		const initialSnapshot: Record<string, string> = {};
 		if (goal.activeFilePath) {
 			try {
-				initialSnapshot[goal.activeFilePath] = await this._toolRegistry.executeTool({
+				initialSnapshot[goal.activeFilePath] = await scopedRegistry.executeTool({
 					id: 'init-read',
 					name: 'read_file',
 					parameters: { path: goal.activeFilePath }
@@ -82,7 +104,7 @@ export class FloatComposerAgent {
 		};
 
 		// Format initial conversation messages
-		const toolListStr = this._toolRegistry.definitions
+		const toolListStr = scopedRegistry.definitions
 			.map(t => `- ${t.name}: ${t.description} (params: ${t.parameters.required.join(', ')})`)
 			.join('\n');
 
@@ -116,19 +138,25 @@ export class FloatComposerAgent {
 			let assistantResponse = '';
 
 			// Call model
-			await this._floatService.streamChat(
-				conversationHistory.map((m, idx) => ({
-					id: `conv-${idx}`,
-					role: m.role,
-					content: m.content,
-					timestamp: Date.now()
-				})),
-				{
-					onChunk: chunk => { assistantResponse += chunk; },
-					onError: err => { throw err; },
-					onComplete: () => {}
-				}
-			);
+			try {
+				await this._floatService.streamChat(
+					conversationHistory.map((m, idx) => ({
+						id: `conv-${idx}`,
+						role: m.role,
+						content: m.content,
+						timestamp: Date.now()
+					})),
+					{
+						onChunk: chunk => { assistantResponse += chunk; },
+						onError: err => { throw err; },
+						onComplete: () => {}
+					}
+				);
+			} catch (err: any) {
+				execution.status = 'failed';
+				execution.error = err.message || String(err);
+				return execution;
+			}
 
 			conversationHistory.push({ role: 'assistant', content: assistantResponse });
 
@@ -172,7 +200,7 @@ export class FloatComposerAgent {
 					if (filePath && !touchedFiles.has(filePath)) {
 						let original = '';
 						try {
-							original = await this._toolRegistry.executeTool({
+							original = await scopedRegistry.executeTool({
 								id: 'pre-read',
 								name: 'read_file',
 								parameters: { path: filePath }
@@ -183,14 +211,33 @@ export class FloatComposerAgent {
 				}
 
 				// Execute tool
-				const toolResult = await this._toolRegistry.executeTool(toolCall);
+				const toolResult = await scopedRegistry.executeTool(toolCall);
 
-				// Update proposed content tracker
-				if (toolCall.name === 'write_file') {
+				// Accurately update proposed content tracker for BOTH write_file AND edit_file
+				if (toolResult.success) {
 					const filePath = toolCall.parameters.path;
 					const tracked = touchedFiles.get(filePath);
-					if (tracked) {
-						tracked.proposed = toolCall.parameters.content;
+
+					if (toolCall.name === 'write_file') {
+						if (tracked) {
+							tracked.proposed = toolCall.parameters.content;
+						}
+						shadowCmdRunner?.updateOverlay(filePath, toolCall.parameters.content);
+					} else if (toolCall.name === 'edit_file') {
+						try {
+							const updatedContent = speculativeFs
+								? await speculativeFs.readFile(filePath)
+								: await scopedRegistry.executeTool({
+									id: 'post-read',
+									name: 'read_file',
+									parameters: { path: filePath }
+								}).then(r => r.output);
+
+							if (tracked) {
+								tracked.proposed = updatedContent;
+							}
+							shadowCmdRunner?.updateOverlay(filePath, updatedContent);
+						} catch {}
 					}
 				}
 
@@ -234,10 +281,23 @@ export class FloatComposerAgent {
 					});
 				}
 
+				// Synchronize any additional overlays that were created
+				if (speculativeFs) {
+					for (const [p, content] of speculativeFs.overlays.entries()) {
+						if (!touchedFiles.has(p)) {
+							proposalChanges.push({
+								path: p,
+								originalContent: speculativeFs.originalBaselines.get(p) || '',
+								proposedContent: content
+							});
+						}
+					}
+				}
+
 				// Add any files directly emitted in markdown code blocks
 				for (const p of parsed) {
 					for (const f of p.files) {
-						if (!touchedFiles.has(f.path)) {
+						if (!proposalChanges.some(c => c.path === f.path)) {
 							proposalChanges.push({
 								path: f.path,
 								originalContent: f.originalContent || '',
@@ -314,7 +374,13 @@ export class FloatComposerAgent {
 			}
 		}
 
-		execution.status = 'completed';
+		// If loop exited due to step exhaustion without conclusion
+		execution.status = 'failed';
+		execution.error = `Agent exceeded maximum allowed steps (${maxSteps}) without completing goal.`;
 		return execution;
+		} finally {
+			signal?.removeEventListener('abort', abortHandler);
+			shadowCmdRunner?.dispose();
+		}
 	}
 }

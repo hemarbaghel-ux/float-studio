@@ -125,7 +125,11 @@ export class FloatShadowWorkspaceService implements IFloatShadowWorkspaceService
 
 		const startTime = Date.now();
 		const files = this.getShadowFiles(sessionId);
-		const diagnostics = FloatShadowCompiler.checkVirtualFiles(files, options);
+		const mergedOptions: IShadowValidationOptions = {
+			baseWorkspacePath: session.baseWorkspacePath || undefined,
+			...options
+		};
+		const diagnostics = FloatShadowCompiler.checkVirtualFiles(files, mergedOptions);
 
 		const errorCount = diagnostics.filter(d => d.severity === 'error').length;
 		const warningCount = diagnostics.filter(d => d.severity === 'warning').length;

@@ -56,9 +56,26 @@ export class FloatComposerToolRegistry {
 
 	constructor(
 		private readonly _fs: IComposerFileSystem,
-		private readonly _runner: IComposerCommandRunner
+		private readonly _runner: IComposerCommandRunner,
+		private readonly _codeSearcher?: (query: string) => Promise<string>
 	) {
 		this._registerCoreTools();
+	}
+
+	public get fileSystem(): IComposerFileSystem {
+		return this._fs;
+	}
+
+	public get runner(): IComposerCommandRunner {
+		return this._runner;
+	}
+
+	public createScopedRegistry(
+		scopedFs: IComposerFileSystem,
+		scopedSearcher?: (query: string) => Promise<string>,
+		scopedRunner?: IComposerCommandRunner
+	): FloatComposerToolRegistry {
+		return new FloatComposerToolRegistry(scopedFs, scopedRunner ?? this._runner, scopedSearcher ?? this._codeSearcher);
 	}
 
 	public get definitions(): IComposerToolDefinition[] {
@@ -149,7 +166,7 @@ export class FloatComposerToolRegistry {
 		// 5. search_codebase
 		this.registerTool({
 			name: 'search_codebase',
-			description: 'Search for files matching a glob or symbol pattern across the workspace.',
+			description: 'Search for files or code symbols matching a query across the workspace.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -158,6 +175,9 @@ export class FloatComposerToolRegistry {
 				required: ['query']
 			}
 		}, async (params: { query: string }) => {
+			if (this._codeSearcher) {
+				return await this._codeSearcher(params.query);
+			}
 			const matches = await this._fs.findFiles(params.query);
 			return matches.length > 0 ? matches.join('\n') : 'No matching files found.';
 		});

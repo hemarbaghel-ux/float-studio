@@ -3,9 +3,12 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { FloatMerkleTree } from './floatMerkleTree.js';
 import { FloatSemanticChunker, ISemanticCodeChunk } from './floatSemanticChunker.js';
-import { FloatVectorIndex, IRankedCodeChunk, IBoundedContextResult } from './floatVectorIndex.js';
+import { FloatVectorIndex, IRankedCodeChunk, IBoundedContextResult, ISerializedVectorIndex } from './floatVectorIndex.js';
 
 const EXCLUDED_PATTERNS = [
 	/(^|[\\/])node_modules([\\/]|$)/i,
@@ -14,11 +17,13 @@ const EXCLUDED_PATTERNS = [
 	/(^|[\\/])build([\\/]|$)/i,
 	/(^|[\\/])out([\\/]|$)/i,
 	/(^|[\\/])\.build([\\/]|$)/i,
-	/(^|[\\/])\.env/i,
-	/(^|[\\/]).*\.pem$/i,
-	/(^|[\\/])id_rsa/i,
-	/(^|[\\/])id_ed25519/i,
-	/(^|[\\/])credentials\.json/i
+	/(^|[\\/])\.gemini([\\/]|$)/i,
+	/(^|[\\/])\.vscode([\\/]|$)/i,
+	/(^|[\\/])\.idea([\\/]|$)/i,
+	/(^|[\\/])\.env(\..+)?$/i,
+	/(^|[\\/]).*\.(pem|key|pfx|p12)$/i,
+	/(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)/i,
+	/(^|[\\/])(credentials|client_secret.*|service-account.*|serviceAccount.*|token|auth)\.json$/i
 ];
 
 export interface IFloatIndexedFile {
@@ -26,6 +31,19 @@ export interface IFloatIndexedFile {
 	readonly contentLength: number;
 	readonly isBinary: boolean;
 	readonly hash?: string;
+}
+
+export interface IFloatIndexMetadataPayload {
+	version: number;
+	timestamp: number;
+	embeddingArchitecture: 'sparse_token_hash_projection';
+	stats: {
+		fileCount: number;
+		chunkCount: number;
+		rootHash: string;
+	};
+	files: IFloatIndexedFile[];
+	vectorIndex?: ISerializedVectorIndex;
 }
 
 export class FloatWorkspaceIndexer {
@@ -39,6 +57,14 @@ export class FloatWorkspaceIndexer {
 
 	public get merkleTree(): FloatMerkleTree {
 		return this._merkleTree;
+	}
+
+	public search(query: string, limit?: number) {
+		return this._vectorIndex.search(query, limit);
+	}
+
+	public retrieveBoundedContext(query: string, maxChars?: number) {
+		return this._vectorIndex.retrieveBoundedContext(query, maxChars);
 	}
 
 	public isExcluded(filePath: string): boolean {
@@ -92,6 +118,128 @@ export class FloatWorkspaceIndexer {
 		return { indexed, skipped };
 	}
 
+	/**
+	 * Automatically discovers all code and config files in workspace and indexes them incrementally.
+	 */
+	public async discoverAndIndexWorkspace(rootPath: string): Promise<{ indexed: number; skipped: number }> {
+		let indexed = 0;
+		let skipped = 0;
+
+		if (!fs.existsSync(rootPath)) {
+			return { indexed, skipped };
+		}
+
+		const scanDir = async (dir: string, relBase: string) => {
+			const entries = await fsp.readdir(dir, { withFileTypes: true });
+			for (const entry of entries) {
+				const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
+				if (this.isExcluded(relPath)) {
+					skipped++;
+					continue;
+				}
+
+				const fullPath = path.join(dir, entry.name);
+				if (entry.isDirectory()) {
+					await scanDir(fullPath, relPath);
+				} else if (entry.isFile()) {
+					try {
+						// Only index text / code files under 2MB
+						const stat = await fsp.stat(fullPath);
+						if (stat.size > 2 * 1024 * 1024) {
+							skipped++;
+							continue;
+						}
+
+						const content = await fsp.readFile(fullPath, 'utf8');
+						if (this.indexFile(relPath, content)) {
+							indexed++;
+						} else {
+							skipped++;
+						}
+					} catch {
+						skipped++;
+					}
+				}
+			}
+		};
+
+		await scanDir(rootPath, '');
+		return { indexed, skipped };
+	}
+
+	// Filesystem Watcher Handlers
+	public onFileCreated(relPath: string, content: string): boolean {
+		return this.indexFile(relPath, content);
+	}
+
+	public onFileChanged(relPath: string, content: string): boolean {
+		return this.indexFile(relPath, content);
+	}
+
+	public onFileDeleted(relPath: string): void {
+		this.unregisterFile(relPath);
+	}
+
+	public onFileRenamed(oldRelPath: string, newRelPath: string, content?: string): void {
+		this.unregisterFile(oldRelPath);
+		if (content !== undefined) {
+			this.indexFile(newRelPath, content);
+		}
+	}
+
+	/**
+	 * Persists index metadata snapshot and serialized semantic vectors to disk for instant recovery after workbench restart.
+	 */
+	public async saveIndexMetadata(savePath: string): Promise<void> {
+		const payload: IFloatIndexMetadataPayload = {
+			version: 1,
+			timestamp: Date.now(),
+			embeddingArchitecture: 'sparse_token_hash_projection',
+			stats: this.getStats(),
+			files: this.getIndexedFiles(),
+			vectorIndex: this._vectorIndex.serialize()
+		};
+
+		await fsp.mkdir(path.dirname(savePath), { recursive: true });
+		await fsp.writeFile(savePath, JSON.stringify(payload, null, 2), 'utf8');
+	}
+
+	/**
+	 * Restores index metadata and serialized semantic vector chunks from disk snapshot.
+	 */
+	public async loadIndexMetadata(metaPath: string): Promise<boolean> {
+		if (!fs.existsSync(metaPath)) {
+			return false;
+		}
+
+		try {
+			const raw = await fsp.readFile(metaPath, 'utf8');
+			const payload: IFloatIndexMetadataPayload = JSON.parse(raw);
+			if (!payload.files || !Array.isArray(payload.files)) {
+				return false;
+			}
+
+			this.clear();
+
+			for (const file of payload.files) {
+				if (!this.isExcluded(file.relativePath)) {
+					this._files.set(file.relativePath, file);
+					if (file.hash) {
+						this._merkleTree.updateFile(file.relativePath, '');
+					}
+				}
+			}
+
+			if (payload.vectorIndex) {
+				this._vectorIndex.deserialize(payload.vectorIndex);
+			}
+
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	public registerFile(relativePath: string, contentLength: number, isBinary: boolean = false): boolean {
 		if (this.isExcluded(relativePath)) {
 			return false;
@@ -140,11 +288,17 @@ export class FloatWorkspaceIndexer {
 		return this._vectorIndex.retrieveBoundedContext(query, maxChars);
 	}
 
-	public getStats(): { fileCount: number; chunkCount: number; rootHash: string } {
+	public getStats(): {
+		fileCount: number;
+		chunkCount: number;
+		rootHash: string;
+		embeddingArchitecture: 'sparse_token_hash_projection';
+	} {
 		return {
 			fileCount: this._files.size,
 			chunkCount: this._vectorIndex.chunkCount,
-			rootHash: this._merkleTree.rootHash
+			rootHash: this._merkleTree.rootHash,
+			embeddingArchitecture: 'sparse_token_hash_projection' // Deterministic hash-based sparse projection, distinct from neural learned weights
 		};
 	}
 
