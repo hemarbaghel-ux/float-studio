@@ -8,8 +8,10 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
+import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { IFloatService } from '../../common/floatService.js';
 import { FloatComposer } from './floatComposer.js';
+import { FloatFloatingComposerWidget } from './floatFloatingComposerWidget.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 
@@ -33,9 +35,91 @@ export class OpenFloatComposerAction extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const floatService = accessor.get(IFloatService);
 		const textFileService = accessor.get(ITextFileService);
+		const codeEditorService = accessor.get(ICodeEditorService);
 
 		const composer = new FloatComposer(floatService, notificationService, textFileService);
+		const activeEditor = codeEditorService.getFocusedCodeEditor() || codeEditorService.getActiveCodeEditor();
 
+		// If an active code editor exists, present the sleek floating Composer widget overlay (Cursor style)
+		if (activeEditor) {
+			let widget = (activeEditor as any)._floatFloatingComposerWidget as FloatFloatingComposerWidget | undefined;
+			if (!widget) {
+				widget = new FloatFloatingComposerWidget(activeEditor, floatService.getActiveModel().name);
+				(activeEditor as any)._floatFloatingComposerWidget = widget;
+
+				widget.onSubmit(async e => {
+					if (e.mode === 'agent') {
+						widget!.setStatus('Agent executing tools and verifying with shadow daemon...');
+						const execution = await composer.executeAutonomousGoal({
+							prompt: e.prompt,
+							activeFilePath: activeEditor.getModel()?.uri.path
+						}, step => {
+							if (step.toolCall) {
+								widget!.setStatus(`Tool: ${step.toolCall.name}...`);
+							}
+						});
+
+						if (execution.validationResult) {
+							widget!.setShadowValidation(
+								execution.validationResult.status === 'clean',
+								execution.validationResult.errorCount,
+								execution.validationResult.warningCount
+							);
+						}
+
+						if (execution.proposal && execution.proposal.files.length > 0) {
+							widget!.setProposalReady(
+								execution.proposal.files.length,
+								execution.proposal.stats.totalAdditions,
+								execution.proposal.stats.totalDeletions
+							);
+						} else {
+							widget!.setStatus(execution.status === 'completed' ? 'Agent finished: no file changes needed.' : `Agent error: ${execution.error || 'Failed'}`);
+						}
+					} else {
+						widget!.setStatus('Generating multi-file proposal...');
+						const proposal = await composer.generateComposerProposal(e.prompt, activeEditor.getModel()?.uri.path);
+						if (proposal && proposal.files.length > 0) {
+							const additions = proposal.files.reduce((sum, f) => sum + (f.diff.match(/^\+[^+]/gm) || []).length, 0);
+							const deletions = proposal.files.reduce((sum, f) => sum + (f.diff.match(/^-[^-]/gm) || []).length, 0);
+							widget!.setProposalReady(proposal.files.length, additions, deletions);
+						} else {
+							widget!.setStatus('Completed: No code edits proposed.');
+						}
+					}
+				});
+
+				widget.onAccept(async () => {
+					if (composer.activeMultiFileProposal) {
+						await composer.orchestrator.acceptAll(composer.activeMultiFileProposal.id, async (p, content) => {
+							await composer.acceptFile(composer.activeMultiFileProposal!.id, p);
+						});
+						notificationService.info(`FLOAT Composer: Changes accepted and saved to disk.`);
+					} else if (composer.activeProposal) {
+						await composer.applyProposal(composer.activeProposal.id);
+					}
+				});
+
+				widget.onReject(() => {
+					if (composer.activeMultiFileProposal) {
+						composer.orchestrator.rejectAll(composer.activeMultiFileProposal.id);
+					} else if (composer.activeProposal) {
+						composer.rejectProposal(composer.activeProposal.id);
+					}
+					notificationService.info('FLOAT Composer: Proposal rejected.');
+				});
+			}
+
+			if (widget.isVisible) {
+				widget.hide();
+			} else {
+				widget.resetState();
+				widget.show();
+			}
+			return;
+		}
+
+		// Fallback for when no active editor is open (e.g. from terminal or empty workspace)
 		const modeChoice = await quickInputService.pick([
 			{ id: 'agent', label: '$(sparkle) Autonomous Agent Mode', description: 'Agent executes tools, runs tests, reads/edits files until goal is met' },
 			{ id: 'fast', label: '$(diff) Quick Multi-File Edit', description: 'Single-turn multi-file code generation and diff preview' }
