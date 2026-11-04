@@ -70,7 +70,7 @@ globalThis.window = {
 
 // Paths
 const REPO_ROOT = process.cwd();
-const DESKTOP_OUT = path.resolve(REPO_ROOT, 'desktop/out/vs/workbench/contrib/float');
+const DESKTOP_SRC = path.resolve(REPO_ROOT, 'desktop/src/vs/workbench/contrib/float');
 
 async function runNativeInlineDiffAcceptanceSuite() {
   console.log('================================================================');
@@ -101,7 +101,7 @@ async function runNativeInlineDiffAcceptanceSuite() {
   try {
     // --- Step 2: Model Registry & Authentication Consistency (Stage A) ---
     console.log('--- Step 2: Model Registry & Auth Stabilization ---');
-    const registryModule = await import(`file://${path.join(DESKTOP_OUT, 'common/model-runtime/floatModelRegistry.js').replace(/\\/g, '/')}`);
+    const registryModule = await import(`file://${path.join(DESKTOP_SRC, 'common/model-runtime/floatModelRegistry.ts').replace(/\\/g, '/')}`);
     const { getDefaultFloatModel, getFloatModel } = registryModule;
 
     const defaultModel = getDefaultFloatModel();
@@ -114,7 +114,7 @@ async function runNativeInlineDiffAcceptanceSuite() {
     assert.strictEqual(getFloatModel('claude-3-5-sonnet'), undefined, 'Unsupported Claude must not be in desktop registry');
     assert.strictEqual(getFloatModel('gpt-4o'), undefined, 'Unsupported GPT-4o must not be in desktop registry');
 
-    const authModule = await import(`file://${path.join(DESKTOP_OUT, 'common/auth/floatAuthService.js').replace(/\\/g, '/')}`);
+    const authModule = await import(`file://${path.join(DESKTOP_SRC, 'common/auth/floatAuthService.ts').replace(/\\/g, '/')}`);
     const { FloatAuthService } = authModule;
     const authService = new FloatAuthService();
 
@@ -130,7 +130,7 @@ async function runNativeInlineDiffAcceptanceSuite() {
 
     // --- Step 3: Hardened Checkpoint Architecture & Physical Restoration ---
     console.log('--- Step 3: Hardened Turn Checkpoint Architecture & Physical Restoration ---');
-    const checkpointModule = await import(`file://${path.join(DESKTOP_OUT, 'common/checkpoints/floatCheckpointService.js').replace(/\\/g, '/')}`);
+    const checkpointModule = await import(`file://${path.join(DESKTOP_SRC, 'common/checkpoints/floatCheckpointService.ts').replace(/\\/g, '/')}`);
     const { FloatCheckpointService } = checkpointModule;
     const checkpointService = new FloatCheckpointService();
 
@@ -472,7 +472,7 @@ async function runNativeInlineDiffAcceptanceSuite() {
     };
 
     // Mock FloatService integrating real CheckpointService & ModelClient
-    const modelClientModule = await import(`file://${path.join(DESKTOP_OUT, 'common/model-runtime/floatModelClient.js').replace(/\\/g, '/')}`);
+    const modelClientModule = await import(`file://${path.join(DESKTOP_SRC, 'common/model-runtime/floatModelClient.ts').replace(/\\/g, '/')}`);
     const { FloatModelClient } = modelClientModule;
     const modelClient = new FloatModelClient();
     modelClient.setEndpoint(testEndpoint);
@@ -501,7 +501,7 @@ async function runNativeInlineDiffAcceptanceSuite() {
     };
 
     // Load actual production FloatInlineDiffController
-    const controllerModule = await import(`file://${path.join(DESKTOP_OUT, 'browser/inline-diff/floatInlineDiffController.js').replace(/\\/g, '/')}`);
+    const controllerModule = await import(`file://${path.join(DESKTOP_SRC, 'browser/inline-diff/floatInlineDiffController.ts').replace(/\\/g, '/')}`);
     const { FloatInlineDiffController } = controllerModule;
 
     const controller = new FloatInlineDiffController(
