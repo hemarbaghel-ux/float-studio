@@ -61,7 +61,7 @@ async function runDesktopWorkbenchVerification() {
     const fullPath = path.join(desktopSrc, mod);
     assert(fs.existsSync(fullPath), `Native FLOAT source module missing: ${mod}`);
   }
-  console.log(`[PASS] All ${expectedModules.length} native FLOAT desktop modules compiled and verified.\n`);
+  console.log(`[PASS] All ${expectedModules.length} native FLOAT desktop source modules found and verified.\n`);
 
   // --- Step 2: Keybinding & Action Descriptors ---
   console.log('--- Step 2: Workbench Keybinding & Action Descriptors ---');
@@ -176,7 +176,7 @@ async function runDesktopWorkbenchVerification() {
   assert(terminalActionsSrc.includes('export class FixWithFloatTerminalAction'), 'Terminal recovery action must be exported');
   assert(terminalActionsSrc.includes("static readonly ID = 'float.composer.openWithTerminalError'"), 'Terminal recovery action ID must be stable');
   assert(actionFile.includes('FixWithFloatTerminalAction'), 'Terminal recovery action must be imported by the workbench contribution');
-  console.log('[PASS] Terminal failure action registered (float.composer.openWithTerminalError).\\n');
+  console.log('[PASS] Terminal failure action registered (float.composer.openWithTerminalError).\n');
 
   console.log('================================================================');
   console.log('  ALL 7 NATIVE WORKBENCH SUBSYSTEM VERIFICATIONS PASSED (100%)  ');
