@@ -25,7 +25,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
-    "@esbuild/win32-x64": "^0.28.2",
     "@google-cloud/firestore": "^9.4.0",
     "@google/genai": "^2.4.0",
     "@monaco-editor/loader": "^1.7.0",
