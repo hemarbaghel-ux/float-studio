@@ -42,3 +42,7 @@ export class ToggleFloatAutocompleteAction extends Action2 {
 export function isFloatAutocompleteGloballyEnabled(): boolean {
 	return _autocompleteEnabled;
 }
+
+export function setFloatAutocompleteGloballyEnabled(enabled: boolean): void {
+	_autocompleteEnabled = enabled;
+}

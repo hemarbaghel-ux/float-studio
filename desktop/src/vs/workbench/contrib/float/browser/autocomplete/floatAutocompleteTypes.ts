@@ -52,3 +52,30 @@ export interface IFloatAutocompleteTelemetry {
 	averageTotalLatencyMs: number;
 	lastMeasurement?: IFloatAutocompleteLatencyMeasurement;
 }
+
+export interface ICursorJumpRecommendation {
+	targetFilePath: string;
+	targetLine: number;
+	targetColumn: number;
+	reason: string;
+	suggestedReplacement?: string;
+	confidence: number;
+}
+
+export interface IRecentEditRecord {
+	filePath: string;
+	timestamp: number;
+	startLine: number;
+	startColumn: number;
+	endLine: number;
+	endColumn: number;
+	oldText: string;
+	newText: string;
+}
+
+export interface INextActionSpeculationResult {
+	ghostText: string;
+	cursorJump?: ICursorJumpRecommendation;
+	source: 'cache' | 'model';
+	confidence: number;
+}
