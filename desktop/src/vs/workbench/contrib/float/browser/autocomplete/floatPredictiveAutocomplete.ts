@@ -8,6 +8,7 @@ import { Position } from '../../../../../editor/common/core/position.js';
 import { Range } from '../../../../../editor/common/core/range.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import {
 	InlineCompletionsProvider,
 	InlineCompletions,
@@ -53,6 +54,12 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 	private _debounceResolver: ((proceed: boolean) => void) | null = null;
 	private _debounceTimer: any = null;
 	private readonly _speculator = new FloatNextActionSpeculator();
+
+	private readonly _onDidShowCursorJump = this._register(new Emitter<{ position: Position; recommendation: ICursorJumpRecommendation }>());
+	public readonly onDidShowCursorJump: Event<{ position: Position; recommendation: ICursorJumpRecommendation }> = this._onDidShowCursorJump.event;
+
+	private readonly _onDidHideCursorJump = this._register(new Emitter<void>());
+	public readonly onDidHideCursorJump: Event<void> = this._onDidHideCursorJump.event;
 
 	constructor(
 		private readonly _floatService: IFloatService,
@@ -318,8 +325,14 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		}
 	}
 
-	public handleItemDidShow(_completions: InlineCompletions, _item: InlineCompletion, _updatedInsertText: string): void {
-		// Telemetry hook
+	public handleItemDidShow(_completions: InlineCompletions, item: InlineCompletion, _updatedInsertText: string): void {
+		if ((item as any).cursorJump) {
+			const pos = item.range instanceof Range ? item.range.getEndPosition() : new Position((item.range as any).endLineNumber || 1, (item.range as any).endColumn || 1);
+			this._onDidShowCursorJump.fire({
+				position: pos,
+				recommendation: (item as any).cursorJump
+			});
+		}
 	}
 
 	public handlePartialAccept(_completions: InlineCompletions, _item: InlineCompletion, _acceptedCharacters: number): void {
@@ -329,10 +342,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 	public handleRejection(_completions: InlineCompletions, _item: InlineCompletion): void {
 		this._telemetry.completionsRejectedCount++;
 		this._cache = null;
+		this._onDidHideCursorJump.fire();
 	}
 
 	public freeInlineCompletions(_completions: InlineCompletions): void {
-		// Clean up lifecycle resources
+		this._onDidHideCursorJump.fire();
 	}
 
 	private _updateCacheHitLatency(latency: number): void {
