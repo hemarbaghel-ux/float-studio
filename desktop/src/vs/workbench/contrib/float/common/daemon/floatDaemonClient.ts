@@ -219,6 +219,18 @@ export class FloatDaemonClient extends Disposable {
 		return this.call('semantic_search', { query, topK });
 	}
 
+	public async chunkFileSemantics(filePath: string, content: string): Promise<any> {
+		return this.call('semantic_chunk_file', { filePath, content });
+	}
+
+	public async persistIndex(storageDir?: string): Promise<any> {
+		return this.call('semantic_persist_index', { storageDir });
+	}
+
+	public async loadIndex(storageDir?: string): Promise<any> {
+		return this.call('semantic_load_index', { storageDir });
+	}
+
 	public async getSymbols(query?: string): Promise<any> {
 		return this.call('semantic_get_symbols', { query });
 	}
