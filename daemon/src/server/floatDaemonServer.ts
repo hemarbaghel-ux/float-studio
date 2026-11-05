@@ -28,6 +28,9 @@ import { FloatShadowDiagnosticDiffCollector } from '../../../desktop/src/vs/work
 import { FloatSyntaxContextSlicer } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatSyntaxContextSlicer.js';
 import { FloatCursorJumpPredictor } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatCursorJumpPredictor.js';
 import { FloatSpeculativeTokenStreamer } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatSpeculativeTokenStreamer.js';
+import { FloatMultiFileSyncDiffEditor } from '../../../desktop/src/vs/workbench/contrib/float/browser/diff/floatMultiFileSyncDiffEditor.js';
+import { FloatTerminalPtyAgent } from '../../../desktop/src/vs/workbench/contrib/float/browser/terminal/floatTerminalPtyAgent.js';
+import { FloatDagTaskPlanner } from '../../../desktop/src/vs/workbench/contrib/float/common/planner/floatDagTaskPlanner.js';
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;
@@ -51,6 +54,9 @@ export class FloatDaemonServer {
 	private readonly _syntaxSlicer: FloatSyntaxContextSlicer;
 	private readonly _jumpPredictor: FloatCursorJumpPredictor;
 	private readonly _speculativeStreamer: FloatSpeculativeTokenStreamer;
+	private readonly _multiDiffEditor: FloatMultiFileSyncDiffEditor;
+	private readonly _terminalAgent: FloatTerminalPtyAgent;
+	private readonly _dagPlanner: FloatDagTaskPlanner;
 
 	constructor(options?: IFloatDaemonOptions) {
 		this._pipePath = options?.pipeName || this._resolveDefaultPipePath();
@@ -66,6 +72,9 @@ export class FloatDaemonServer {
 		this._syntaxSlicer = new FloatSyntaxContextSlicer(this._indexer);
 		this._jumpPredictor = new FloatCursorJumpPredictor();
 		this._speculativeStreamer = new FloatSpeculativeTokenStreamer();
+		this._multiDiffEditor = new FloatMultiFileSyncDiffEditor();
+		this._terminalAgent = new FloatTerminalPtyAgent();
+		this._dagPlanner = new FloatDagTaskPlanner();
 	}
 
 	public getPipePath(): string {
@@ -506,6 +515,61 @@ export class FloatDaemonServer {
 							metrics,
 							results
 						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'composer_multi_diff_review': {
+					const { files, action, hunkId, targetFile } = params;
+					if (files) {
+						for (const f of files) {
+							this._multiDiffEditor.loadDiff(f.filePath, f.originalContent, f.proposedContent);
+						}
+					}
+					if (action === 'accept_hunk' && hunkId && targetFile) {
+						this._multiDiffEditor.acceptHunk(targetFile, hunkId);
+					} else if (action === 'reject_hunk' && hunkId && targetFile) {
+						this._multiDiffEditor.rejectHunk(targetFile, hunkId);
+					} else if (action === 'accept_all') {
+						this._multiDiffEditor.acceptAll(targetFile);
+					} else if (action === 'reject_all') {
+						this._multiDiffEditor.rejectAll(targetFile);
+					}
+
+					const stats = this._multiDiffEditor.getAggregatedStats();
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: stats
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'terminal_pty_analyze_logs': {
+					const { rawOutput } = params;
+					const analysis = this._terminalAgent.analyzeTerminalOutput(rawOutput || '');
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: analysis
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'dag_plan_and_execute': {
+					const { goal, tasks } = params;
+					const planner = new FloatDagTaskPlanner();
+					for (const t of (tasks || [])) {
+						planner.addTask(t);
+					}
+					const summary = await planner.executePlan(goal || 'Execute goal', async () => true);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: summary
 					};
 					socket.write(FloatIpcFramer.encode(res));
 					break;

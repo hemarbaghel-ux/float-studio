@@ -223,6 +223,18 @@ export class FloatDaemonClient extends Disposable {
 		return this.call('tab_speculate_keystrokes', { prediction, keystrokes });
 	}
 
+	public async reviewMultiDiff(options: any): Promise<any> {
+		return this.call('composer_multi_diff_review', options);
+	}
+
+	public async analyzeTerminalPty(rawOutput: string): Promise<any> {
+		return this.call('terminal_pty_analyze_logs', { rawOutput });
+	}
+
+	public async executeDagPlan(goal: string, tasks: any[]): Promise<any> {
+		return this.call('dag_plan_and_execute', { goal, tasks });
+	}
+
 	public async ping(): Promise<any> {
 		return this.call('ping');
 	}
