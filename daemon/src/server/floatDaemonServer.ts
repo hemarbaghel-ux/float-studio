@@ -18,6 +18,8 @@ import {
 import { FloatShadowDaemon } from '../../../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowDaemon.js';
 import { FloatNextActionSpeculator } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatNextActionSpeculator.js';
 import { FloatVectorIndex } from '../../../desktop/src/vs/workbench/contrib/float/common/workspace/floatVectorIndex.js';
+import { FloatTreeSitterIndexer } from '../indexer/floatTreeSitterIndexer.js';
+import { FloatVectorEngine } from '../vector/floatVectorEngine.js';
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;
@@ -31,11 +33,15 @@ export class FloatDaemonServer {
 	private _isShuttingDown: boolean = false;
 	private readonly _shadowDaemon: FloatShadowDaemon;
 	private readonly _speculator: FloatNextActionSpeculator;
+	private readonly _indexer: FloatTreeSitterIndexer;
+	private readonly _vectorEngine: FloatVectorEngine;
 
 	constructor(options?: IFloatDaemonOptions) {
 		this._pipePath = options?.pipeName || this._resolveDefaultPipePath();
 		this._shadowDaemon = new FloatShadowDaemon();
 		this._speculator = new FloatNextActionSpeculator();
+		this._indexer = new FloatTreeSitterIndexer();
+		this._vectorEngine = new FloatVectorEngine();
 	}
 
 	public getPipePath(): string {
@@ -218,6 +224,71 @@ export class FloatDaemonServer {
 						summary: { status: 'completed', stepsExecuted: totalSteps }
 					};
 					socket.write(FloatIpcFramer.encode(endMsg));
+					break;
+				}
+
+				case 'semantic_index_file': {
+					const { filePath, content } = params;
+					const indexRes = this._indexer.indexFile(filePath, content);
+					const chunks = this._vectorEngine.chunkFile(filePath, content);
+					this._vectorEngine.clearFileChunks(filePath);
+					this._vectorEngine.addChunks(chunks);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							delta: indexRes.delta,
+							symbolsCount: indexRes.node.symbols.length,
+							chunksCount: chunks.length,
+							fileHash: indexRes.node.fileHash
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'semantic_search': {
+					const { query, topK } = params;
+					const results = this._vectorEngine.search(query, topK || 5);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							query,
+							totalChunksIndexed: this._vectorEngine.totalChunks,
+							matches: results.map(r => ({
+								filePath: r.chunk.filePath,
+								startLine: r.chunk.startLine,
+								endLine: r.chunk.endLine,
+								snippet: r.chunk.content.substring(0, 200),
+								score: Math.round(r.score * 1000) / 1000,
+								matchType: r.matchType
+							}))
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'semantic_get_symbols': {
+					const { query } = params;
+					const syms = query ? this._indexer.findSymbolsByName(query) : this._indexer.getAllSymbols();
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							totalSymbols: syms.length,
+							symbols: syms.slice(0, 50).map(s => ({
+								filePath: s.filePath,
+								name: s.symbol.name,
+								kind: s.symbol.kind,
+								language: s.symbol.language,
+								signature: s.symbol.signature,
+								line: s.symbol.startLine
+							}))
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
 					break;
 				}
 
