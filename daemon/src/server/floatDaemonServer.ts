@@ -22,6 +22,9 @@ import { FloatTreeSitterIndexer } from '../indexer/floatTreeSitterIndexer.js';
 import { FloatVectorEngine } from '../vector/floatVectorEngine.js';
 import { FloatAstSemanticChunker } from '../chunker/floatAstSemanticChunker.js';
 import { FloatDiskIndexStore } from '../storage/floatDiskIndexStore.js';
+import { FloatShadowWorkspaceManager } from '../shadow/floatShadowWorkspaceManager.js';
+import { FloatSandboxedProcessRunner } from '../sandbox/floatSandboxedProcessRunner.js';
+import { FloatShadowDiagnosticDiffCollector } from '../../../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowDiagnosticDiffCollector.js';
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;
@@ -39,6 +42,9 @@ export class FloatDaemonServer {
 	private readonly _vectorEngine: FloatVectorEngine;
 	private readonly _semanticChunker: FloatAstSemanticChunker;
 	private readonly _diskStore: FloatDiskIndexStore;
+	private readonly _shadowManager: FloatShadowWorkspaceManager;
+	private readonly _sandboxRunner: FloatSandboxedProcessRunner;
+	private readonly _diagnosticCollector: FloatShadowDiagnosticDiffCollector;
 
 	constructor(options?: IFloatDaemonOptions) {
 		this._pipePath = options?.pipeName || this._resolveDefaultPipePath();
@@ -48,6 +54,9 @@ export class FloatDaemonServer {
 		this._vectorEngine = new FloatVectorEngine();
 		this._semanticChunker = new FloatAstSemanticChunker(this._indexer);
 		this._diskStore = new FloatDiskIndexStore(path.join(os.tmpdir(), 'float-daemon-index'));
+		this._shadowManager = new FloatShadowWorkspaceManager();
+		this._sandboxRunner = new FloatSandboxedProcessRunner();
+		this._diagnosticCollector = new FloatShadowDiagnosticDiffCollector();
 	}
 
 	public getPipePath(): string {
@@ -354,6 +363,92 @@ export class FloatDaemonServer {
 							totalSymbols: loaded?.manifest.totalSymbols || 0,
 							totalChunks: loaded?.manifest.totalChunks || 0
 						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'shadow_create_cow_workspace': {
+					const { sourceRoot, sessionId } = params;
+					const session = await this._shadowManager.createShadowWorkspace(sourceRoot, sessionId);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							sessionId: session.sessionId,
+							shadowRoot: session.shadowRoot,
+							sourceRoot: session.sourceRoot,
+							trackedFilesCount: session.trackedFiles.size
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'shadow_apply_cow_edits': {
+					const { sessionId, relativePath, newContent } = params;
+					await this._shadowManager.applyShadowEdit(sessionId, relativePath, newContent);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							applied: true,
+							sessionId,
+							relativePath
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'shadow_get_diff': {
+					const { sessionId } = params;
+					const diff = this._shadowManager.getShadowDiff(sessionId);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: diff
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'shadow_run_sandboxed_toolchain': {
+					const { sessionId, command, args, timeoutMs } = params;
+					const session = this._shadowManager.getSession(sessionId);
+					if (!session) {
+						throw new Error(`Shadow session not found: ${sessionId}`);
+					}
+					const execRes = await this._sandboxRunner.runInShadowWorkspace(session.shadowRoot, command, args, { timeoutMs });
+					const diagnostics = this._diagnosticCollector.parseDiagnostics(execRes.stdout + '\n' + execRes.stderr);
+					const repairPrompt = this._diagnosticCollector.generateRepairPrompt(diagnostics);
+
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							command,
+							exitCode: execRes.exitCode,
+							stdout: execRes.stdout,
+							stderr: execRes.stderr,
+							durationMs: execRes.durationMs,
+							timedOut: execRes.timedOut,
+							diagnosticsCount: diagnostics.length,
+							diagnostics,
+							repairPrompt
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'shadow_teardown_workspace': {
+					const { sessionId } = params;
+					const cleaned = await this._shadowManager.teardownSession(sessionId);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: { cleaned, sessionId }
 					};
 					socket.write(FloatIpcFramer.encode(res));
 					break;
