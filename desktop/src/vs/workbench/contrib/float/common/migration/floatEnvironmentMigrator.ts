@@ -52,12 +52,14 @@ export class FloatEnvironmentMigrator {
 	private _resolveDefaultFloatConfigDir(): string {
 		const platform = process.platform;
 		if (platform === 'win32') {
-			const appData = process.env['APPDATA'] || path.join(this._homedir, 'AppData', 'Roaming');
+			const isDefaultHome = this._homedir === os.homedir();
+			const appData = (isDefaultHome && process.env['APPDATA']) ? process.env['APPDATA'] : path.join(this._homedir, 'AppData', 'Roaming');
 			return path.join(appData, 'FloatStudio', 'User');
 		} else if (platform === 'darwin') {
 			return path.join(this._homedir, 'Library', 'Application Support', 'FloatStudio', 'User');
 		} else {
-			const configHome = process.env['XDG_CONFIG_HOME'] || path.join(this._homedir, '.config');
+			const isDefaultHome = this._homedir === os.homedir();
+			const configHome = (isDefaultHome && process.env['XDG_CONFIG_HOME']) ? process.env['XDG_CONFIG_HOME'] : path.join(this._homedir, '.config');
 			return path.join(configHome, 'FloatStudio', 'User');
 		}
 	}
@@ -77,12 +79,14 @@ export class FloatEnvironmentMigrator {
 
 		let userConfigPath = '';
 		if (platform === 'win32') {
-			const appData = process.env['APPDATA'] || path.join(this._homedir, 'AppData', 'Roaming');
+			const isDefaultHome = this._homedir === os.homedir();
+			const appData = (isDefaultHome && process.env['APPDATA']) ? process.env['APPDATA'] : path.join(this._homedir, 'AppData', 'Roaming');
 			userConfigPath = path.join(appData, configSubdir, 'User');
 		} else if (platform === 'darwin') {
 			userConfigPath = path.join(this._homedir, 'Library', 'Application Support', configSubdir, 'User');
 		} else {
-			const configHome = process.env['XDG_CONFIG_HOME'] || path.join(this._homedir, '.config');
+			const isDefaultHome = this._homedir === os.homedir();
+			const configHome = (isDefaultHome && process.env['XDG_CONFIG_HOME']) ? process.env['XDG_CONFIG_HOME'] : path.join(this._homedir, '.config');
 			userConfigPath = path.join(configHome, configSubdir, 'User');
 		}
 

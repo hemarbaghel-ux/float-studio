@@ -38,6 +38,8 @@
     "extensions",
     "desktop",
     "scripts",
-    "tmp"
+    "tmp",
+    "daemon",
+    "benchmarks"
   ]
 }
