@@ -6,6 +6,7 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 
 // 1. IPC Protocol & Daemon
 import { FloatIpcProtocol } from '../desktop/src/vs/workbench/contrib/float/common/daemon/floatIpcProtocol.js';
