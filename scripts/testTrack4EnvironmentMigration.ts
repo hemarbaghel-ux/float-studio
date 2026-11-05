@@ -18,17 +18,13 @@ async function runTests() {
 	try {
 		// Mock home directory structure
 		const mockHome = path.join(testTmpDir, 'home');
-		const mockAppData = path.join(testTmpDir, 'appdata');
 		const mockTargetConfig = path.join(testTmpDir, 'float-target-user');
 
-		// Set temporary process env overrides
-		const oldAppData = process.env['APPDATA'];
-		process.env['APPDATA'] = mockAppData;
+		const migrator = new FloatEnvironmentMigrator(mockHome, mockTargetConfig);
 
-		// 1. Setup Mock VS Code Environment
-		const vsCodeUserDir = path.join(mockAppData, 'Code', 'User');
+		// 1. Setup Mock VS Code Environment using OS-appropriate source paths
+		const { userConfigPath: vsCodeUserDir, extensionsPath: vsCodeExtDir } = migrator.resolveSourcePaths('vscode');
 		const vsCodeSnippetsDir = path.join(vsCodeUserDir, 'snippets');
-		const vsCodeExtDir = path.join(mockHome, '.vscode', 'extensions');
 
 		fs.mkdirSync(vsCodeSnippetsDir, { recursive: true });
 		fs.mkdirSync(vsCodeExtDir, { recursive: true });
@@ -78,8 +74,6 @@ async function runTests() {
 			{ key: 'ctrl+i', command: 'float.action.openComposer' }
 		];
 		fs.writeFileSync(path.join(mockTargetConfig, 'keybindings.json'), JSON.stringify(existingFloatKeybindings, null, 2), 'utf8');
-
-		const migrator = new FloatEnvironmentMigrator(mockHome, mockTargetConfig);
 
 		// =========================================================================
 		// Test 1: Detection of Installed Environments
@@ -145,11 +139,6 @@ async function runTests() {
 		assert(liveResult.extensionsDiscovered.includes('dbaeumer.vscode-eslint'));
 		assert(liveResult.extensionsDiscovered.includes('rust-lang.rust-analyzer'));
 		console.log('  ✓ Non-destructive merge verified: float settings guarded, shortcuts and extensions imported.');
-
-		// Clean up env override
-		if (oldAppData) {
-			process.env['APPDATA'] = oldAppData;
-		}
 
 		console.log('\n✅ All Track 4 Migration Importer tests PASSED successfully!\n');
 	} finally {
