@@ -5,11 +5,12 @@
 
 import * as crypto from 'crypto';
 import * as path from 'path';
+import { FloatTreeSitterGrammarRegistry } from '../grammars/floatTreeSitterGrammarRegistry.js';
 
 export interface IFloatAstNode {
 	id: string;
 	name: string;
-	kind: 'function' | 'class' | 'interface' | 'method' | 'variable' | 'type' | 'module';
+	kind: 'function' | 'class' | 'interface' | 'method' | 'variable' | 'type' | 'module' | 'struct' | 'enum';
 	language: string;
 	startLine: number;
 	endLine: number;
@@ -38,10 +39,12 @@ export interface IFloatIncrementalIndexDelta {
 
 export class FloatTreeSitterIndexer {
 	private readonly _fileNodes = new Map<string, IFloatFileMerkleNode>();
+	private readonly _grammarRegistry = new FloatTreeSitterGrammarRegistry();
 
 	public parseFileSymbols(filePath: string, content: string): IFloatFileMerkleNode {
 		const ext = path.extname(filePath).toLowerCase();
-		const language = this._detectLanguage(ext);
+		const profile = this._grammarRegistry.getProfileByExtension(ext);
+		const language = profile ? profile.languageId : 'generic';
 		const fileHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
 
 		const symbols = this._extractSymbolsByLanguage(language, content);
@@ -101,82 +104,27 @@ export class FloatTreeSitterIndexer {
 		return this.getAllSymbols().filter(s => s.symbol.name.toLowerCase().includes(lower));
 	}
 
-	private _detectLanguage(ext: string): string {
-		switch (ext) {
-			case '.ts':
-			case '.tsx':
-				return 'typescript';
-			case '.js':
-			case '.jsx':
-			case '.mjs':
-			case '.cjs':
-				return 'javascript';
-			case '.py':
-			case '.pyi':
-				return 'python';
-			case '.rs':
-				return 'rust';
-			case '.go':
-				return 'go';
-			case '.cpp':
-			case '.cc':
-			case '.c':
-			case '.h':
-			case '.hpp':
-				return 'cpp';
-			case '.java':
-				return 'java';
-			default:
-				return 'generic';
-		}
-	}
-
 	private _extractSymbolsByLanguage(language: string, content: string): IFloatAstNode[] {
-		const lines = content.split('\n');
+		const profile = this._grammarRegistry.getProfile(language);
+		if (!profile) {
+			return [];
+		}
+
 		const symbols: IFloatAstNode[] = [];
+		const lines = content.split('\n');
 
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			const lineNum = i + 1;
 
-			if (language === 'typescript' || language === 'javascript') {
-				// Functions
-				const fnMatch = line.match(/(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)\s*\(([^)]*)\)/);
-				if (fnMatch) {
-					symbols.push(this._createAstNode(fnMatch[1], 'function', language, lineNum, lineNum, `function ${fnMatch[1]}(${fnMatch[2]})`));
-				}
-				// Classes
-				const classMatch = line.match(/(?:export\s+)?class\s+([a-zA-Z0-9_$]+)/);
-				if (classMatch) {
-					symbols.push(this._createAstNode(classMatch[1], 'class', language, lineNum, lineNum, `class ${classMatch[1]}`));
-				}
-				// Interfaces
-				const ifaceMatch = line.match(/(?:export\s+)?interface\s+([a-zA-Z0-9_$]+)/);
-				if (ifaceMatch) {
-					symbols.push(this._createAstNode(ifaceMatch[1], 'interface', language, lineNum, lineNum, `interface ${ifaceMatch[1]}`));
-				}
-			} else if (language === 'python') {
-				const pyFnMatch = line.match(/^\s*(?:async\s+)?def\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/);
-				if (pyFnMatch) {
-					symbols.push(this._createAstNode(pyFnMatch[1], 'function', language, lineNum, lineNum, `def ${pyFnMatch[1]}(${pyFnMatch[2]})`));
-				}
-				const pyClassMatch = line.match(/^\s*class\s+([a-zA-Z0-9_]+)/);
-				if (pyClassMatch) {
-					symbols.push(this._createAstNode(pyClassMatch[1], 'class', language, lineNum, lineNum, `class ${pyClassMatch[1]}`));
-				}
-			} else if (language === 'rust') {
-				const rustFnMatch = line.match(/(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/);
-				if (rustFnMatch) {
-					symbols.push(this._createAstNode(rustFnMatch[1], 'function', language, lineNum, lineNum, `fn ${rustFnMatch[1]}(${rustFnMatch[2]})`));
-				}
-				const rustStructMatch = line.match(/(?:pub\s+)?struct\s+([a-zA-Z0-9_]+)/);
-				if (rustStructMatch) {
-					symbols.push(this._createAstNode(rustStructMatch[1], 'class', language, lineNum, lineNum, `struct ${rustStructMatch[1]}`));
-				}
-			} else if (language === 'go') {
-				const goFnMatch = line.match(/func\s+(?:\([^\)]+\)\s+)?([a-zA-Z0-9_]+)\s*\(([^)]*)\)/);
-				if (goFnMatch) {
-					symbols.push(this._createAstNode(goFnMatch[1], 'function', language, lineNum, lineNum, `func ${goFnMatch[1]}(${goFnMatch[2]})`));
+			for (const pattern of profile.symbolPatterns) {
+				pattern.regex.lastIndex = 0;
+				let match: RegExpExecArray | null;
+				while ((match = pattern.regex.exec(line)) !== null) {
+					const symName = match[pattern.captureGroupIndex];
+					if (symName && symName.length > 0) {
+						symbols.push(this._createAstNode(symName, pattern.kind as any, language, lineNum, lineNum, line.trim()));
+					}
 				}
 			}
 		}
