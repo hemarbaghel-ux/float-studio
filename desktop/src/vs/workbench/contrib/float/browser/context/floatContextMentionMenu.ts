@@ -73,6 +73,38 @@ export class FloatContextMentionMenu extends Disposable {
 		this._renderItems();
 	}
 
+	public getFilteredOptions(inputQuery: string): IContextMentionItem[] {
+		const clean = inputQuery.startsWith('@') ? inputQuery.substring(1).toLowerCase() : inputQuery.toLowerCase();
+		if (!clean) {
+			return [...BUILTIN_CONTEXT_MENTIONS];
+		}
+		return BUILTIN_CONTEXT_MENTIONS.filter(m =>
+			m.key.toLowerCase().includes(clean) || m.description.toLowerCase().includes(clean)
+		);
+	}
+
+	public formatMentionPill(mentionKey: string, value?: string): string {
+		switch (mentionKey) {
+			case 'codebase':
+			case '@codebase':
+				return '[@codebase]';
+			case 'file':
+			case '@file':
+				return `[@file: ${value || 'current'}]`;
+			case 'git':
+			case '@git':
+				return '[@git: diff]';
+			case 'terminal':
+			case '@terminal':
+				return '[@terminal: last-error]';
+			case 'web':
+			case '@web':
+				return `[@web: ${value || 'search'}]`;
+			default:
+				return `[@${mentionKey.replace(/^@/, '')}]`;
+		}
+	}
+
 	public selectNext(): void {
 		if (this._items.length === 0) return;
 		this._selectedIndex = (this._selectedIndex + 1) % this._items.length;

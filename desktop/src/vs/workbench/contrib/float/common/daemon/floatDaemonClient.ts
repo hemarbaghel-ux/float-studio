@@ -211,6 +211,18 @@ export class FloatDaemonClient extends Disposable {
 		return this.call('predict_next_edit', options);
 	}
 
+	public async indexFileSemantics(filePath: string, content: string): Promise<any> {
+		return this.call('semantic_index_file', { filePath, content });
+	}
+
+	public async searchSemantics(query: string, topK: number = 5): Promise<any> {
+		return this.call('semantic_search', { query, topK });
+	}
+
+	public async getSymbols(query?: string): Promise<any> {
+		return this.call('semantic_get_symbols', { query });
+	}
+
 	private _rejectAllPending(err: Error): void {
 		for (const [id, pending] of this._pendingRequests.entries()) {
 			clearTimeout(pending.timer);
