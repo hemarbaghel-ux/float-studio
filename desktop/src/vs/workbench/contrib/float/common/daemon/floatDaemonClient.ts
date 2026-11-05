@@ -191,6 +191,26 @@ export class FloatDaemonClient extends Disposable {
 		this._socket.write(FloatIpcFramer.encode(request));
 	}
 
+	public async createCowShadowWorkspace(sourceRoot: string, sessionId?: string): Promise<any> {
+		return this.call('shadow_create_cow_workspace', { sourceRoot, sessionId });
+	}
+
+	public async applyCowShadowEdit(sessionId: string, relativePath: string, newContent: string): Promise<any> {
+		return this.call('shadow_apply_cow_edits', { sessionId, relativePath, newContent });
+	}
+
+	public async getCowShadowDiff(sessionId: string): Promise<any> {
+		return this.call('shadow_get_diff', { sessionId });
+	}
+
+	public async runCowShadowToolchain(sessionId: string, command: string, args: string[] = [], timeoutMs?: number): Promise<any> {
+		return this.call('shadow_run_sandboxed_toolchain', { sessionId, command, args, timeoutMs });
+	}
+
+	public async teardownCowShadowWorkspace(sessionId: string): Promise<any> {
+		return this.call('shadow_teardown_workspace', { sessionId });
+	}
+
 	public async ping(): Promise<any> {
 		return this.call('ping');
 	}
