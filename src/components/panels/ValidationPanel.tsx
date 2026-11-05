@@ -549,7 +549,7 @@ export function ValidationPanel({ className, onClose }: ValidationPanelProps) {
                         Recommended Steps
                       </h4>
                       <ul className="space-y-1.5 list-disc pl-4 text-slate-600 dark:text-[#A0AEC0]">
-                        {explanation.suggestedSteps.map((step, i) => (
+                        {explanation.suggestedSteps.map((step: any, i: number) => (
                           <li key={i}>{step}</li>
                         ))}
                       </ul>
