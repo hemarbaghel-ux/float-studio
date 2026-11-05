@@ -315,10 +315,10 @@ export function ValidationPanel({ className, onClose }: ValidationPanelProps) {
 
           <div className="divide-y divide-slate-200/60 dark:divide-[#202020] text-xs">
             {currentRun ? (
-              currentRun.checks.map((check, idx) => {
+              currentRun.checks.map((check: any, idx: number) => {
                 const isExpanded = expandedCheckIdx === idx;
-                const errCount = check.diagnostics.filter(d => d.severity === 'error').length;
-                const warnCount = check.diagnostics.filter(d => d.severity === 'warning').length;
+                const errCount = check.diagnostics.filter((d: any) => d.severity === 'error').length;
+                const warnCount = check.diagnostics.filter((d: any) => d.severity === 'warning').length;
 
                 return (
                   <div key={idx} className="p-3 transition-colors hover:bg-slate-100/60 dark:hover:bg-[#161616]">

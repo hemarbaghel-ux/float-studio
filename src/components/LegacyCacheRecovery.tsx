@@ -6,7 +6,7 @@ import { useAutomations } from '../features/float/automationStore';
 import { inspectLegacyCache, migrateLegacyCache, type LegacyCacheInventory } from '../services/legacyCacheMigration';
 
 export function LegacyCacheRecovery() {
-  const user = useAuthStore((state) => state.user);
+  const user = useAuthStore((state: any) => state.user);
   const [inventory, setInventory] = useState<LegacyCacheInventory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
@@ -31,8 +31,8 @@ export function LegacyCacheRecovery() {
     setError(null);
     try {
       migrateLegacyCache(localStorage, user.uid);
-      useAutomations.setState((state) => ({
-        automations: state.automations.map((automation) =>
+      useAutomations.setState((state: any) => ({
+        automations: state.automations.map((automation: any) =>
           automation.ownerId ? automation : { ...automation, ownerId: user.uid },
         ),
       }));

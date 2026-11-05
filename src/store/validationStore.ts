@@ -66,7 +66,7 @@ export const useValidationStore = create<ValidationState>((set, get) => ({
     set({ filterSeverity: filter });
   },
 
-  setSelectedDiagnostic: (diagnostic) => {
+  setSelectedDiagnostic: (diagnostic: any) => {
     set({ selectedDiagnostic: diagnostic, explanation: null, explanationError: null });
   },
 
@@ -78,7 +78,7 @@ export const useValidationStore = create<ValidationState>((set, get) => ({
     set({ currentRun: null, errorMessage: null, selectedDiagnostic: null, explanation: null });
   },
 
-  runValidation: async ({ projectId, target = 'current_project', proposalId = null, files, requestedChecks }) => {
+  runValidation: async ({ projectId, target = 'current_project', proposalId = null, files, requestedChecks }: any) => {
     if (get().isRunning) return;
 
     set({ 
@@ -145,7 +145,7 @@ export const useValidationStore = create<ValidationState>((set, get) => ({
     }
   },
 
-  explainError: async ({ projectId, diagnostic, targetFileContent }) => {
+  explainError: async ({ projectId, diagnostic, targetFileContent }: any) => {
     set({ isExplaining: true, explanationError: null, explanation: null, selectedDiagnostic: diagnostic });
 
     try {
