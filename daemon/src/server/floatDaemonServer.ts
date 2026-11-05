@@ -25,6 +25,9 @@ import { FloatDiskIndexStore } from '../storage/floatDiskIndexStore.js';
 import { FloatShadowWorkspaceManager } from '../shadow/floatShadowWorkspaceManager.js';
 import { FloatSandboxedProcessRunner } from '../sandbox/floatSandboxedProcessRunner.js';
 import { FloatShadowDiagnosticDiffCollector } from '../../../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowDiagnosticDiffCollector.js';
+import { FloatSyntaxContextSlicer } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatSyntaxContextSlicer.js';
+import { FloatCursorJumpPredictor } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatCursorJumpPredictor.js';
+import { FloatSpeculativeTokenStreamer } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatSpeculativeTokenStreamer.js';
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;
@@ -45,6 +48,9 @@ export class FloatDaemonServer {
 	private readonly _shadowManager: FloatShadowWorkspaceManager;
 	private readonly _sandboxRunner: FloatSandboxedProcessRunner;
 	private readonly _diagnosticCollector: FloatShadowDiagnosticDiffCollector;
+	private readonly _syntaxSlicer: FloatSyntaxContextSlicer;
+	private readonly _jumpPredictor: FloatCursorJumpPredictor;
+	private readonly _speculativeStreamer: FloatSpeculativeTokenStreamer;
 
 	constructor(options?: IFloatDaemonOptions) {
 		this._pipePath = options?.pipeName || this._resolveDefaultPipePath();
@@ -57,6 +63,9 @@ export class FloatDaemonServer {
 		this._shadowManager = new FloatShadowWorkspaceManager();
 		this._sandboxRunner = new FloatSandboxedProcessRunner();
 		this._diagnosticCollector = new FloatShadowDiagnosticDiffCollector();
+		this._syntaxSlicer = new FloatSyntaxContextSlicer(this._indexer);
+		this._jumpPredictor = new FloatCursorJumpPredictor();
+		this._speculativeStreamer = new FloatSpeculativeTokenStreamer();
 	}
 
 	public getPipePath(): string {
@@ -449,6 +458,54 @@ export class FloatDaemonServer {
 						id,
 						type: 'response',
 						result: { cleaned, sessionId }
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'tab_slice_syntax_context': {
+					const { filePath, content, cursorLine, cursorColumn } = params;
+					const slice = this._syntaxSlicer.sliceContext(filePath, content, cursorLine, cursorColumn);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: slice
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'tab_predict_cursor_jumps': {
+					const { symbolName, oldSignature, newSignature, workspaceFiles } = params;
+					const jumps = this._jumpPredictor.predictRemoteJumps(symbolName, oldSignature, newSignature, workspaceFiles || {});
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							symbolName,
+							totalJumps: jumps.length,
+							jumps
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'tab_speculate_keystrokes': {
+					const { prediction, keystrokes } = params;
+					this._speculativeStreamer.setSpeculativePrediction(prediction);
+					const results: any[] = [];
+					for (const char of (keystrokes || '')) {
+						results.push(this._speculativeStreamer.onKeystroke(char));
+					}
+					const metrics = this._speculativeStreamer.getMetrics();
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							metrics,
+							results
+						}
 					};
 					socket.write(FloatIpcFramer.encode(res));
 					break;

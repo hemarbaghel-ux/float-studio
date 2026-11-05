@@ -211,6 +211,18 @@ export class FloatDaemonClient extends Disposable {
 		return this.call('shadow_teardown_workspace', { sessionId });
 	}
 
+	public async sliceSyntaxContext(filePath: string, content: string, cursorLine: number, cursorColumn: number = 1): Promise<any> {
+		return this.call('tab_slice_syntax_context', { filePath, content, cursorLine, cursorColumn });
+	}
+
+	public async predictCursorJumps(symbolName: string, oldSignature: string, newSignature: string, workspaceFiles: Record<string, string>): Promise<any> {
+		return this.call('tab_predict_cursor_jumps', { symbolName, oldSignature, newSignature, workspaceFiles });
+	}
+
+	public async testSpeculativeKeystrokes(prediction: string, keystrokes: string): Promise<any> {
+		return this.call('tab_speculate_keystrokes', { prediction, keystrokes });
+	}
+
 	public async ping(): Promise<any> {
 		return this.call('ping');
 	}
