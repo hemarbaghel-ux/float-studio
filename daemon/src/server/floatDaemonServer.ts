@@ -20,6 +20,8 @@ import { FloatNextActionSpeculator } from '../../../desktop/src/vs/workbench/con
 import { FloatVectorIndex } from '../../../desktop/src/vs/workbench/contrib/float/common/workspace/floatVectorIndex.js';
 import { FloatTreeSitterIndexer } from '../indexer/floatTreeSitterIndexer.js';
 import { FloatVectorEngine } from '../vector/floatVectorEngine.js';
+import { FloatAstSemanticChunker } from '../chunker/floatAstSemanticChunker.js';
+import { FloatDiskIndexStore } from '../storage/floatDiskIndexStore.js';
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;
@@ -35,6 +37,8 @@ export class FloatDaemonServer {
 	private readonly _speculator: FloatNextActionSpeculator;
 	private readonly _indexer: FloatTreeSitterIndexer;
 	private readonly _vectorEngine: FloatVectorEngine;
+	private readonly _semanticChunker: FloatAstSemanticChunker;
+	private readonly _diskStore: FloatDiskIndexStore;
 
 	constructor(options?: IFloatDaemonOptions) {
 		this._pipePath = options?.pipeName || this._resolveDefaultPipePath();
@@ -42,6 +46,8 @@ export class FloatDaemonServer {
 		this._speculator = new FloatNextActionSpeculator();
 		this._indexer = new FloatTreeSitterIndexer();
 		this._vectorEngine = new FloatVectorEngine();
+		this._semanticChunker = new FloatAstSemanticChunker(this._indexer);
+		this._diskStore = new FloatDiskIndexStore(path.join(os.tmpdir(), 'float-daemon-index'));
 	}
 
 	public getPipePath(): string {
@@ -286,6 +292,67 @@ export class FloatDaemonServer {
 								signature: s.symbol.signature,
 								line: s.symbol.startLine
 							}))
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'semantic_chunk_file': {
+					const { filePath, content } = params;
+					const chunks = this._semanticChunker.chunkFile(filePath, content);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							filePath,
+							chunksCount: chunks.length,
+							chunks: chunks.map(c => ({
+								id: c.id,
+								symbolName: c.symbolName,
+								symbolKind: c.symbolKind,
+								startLine: c.startLine,
+								endLine: c.endLine,
+								content: c.content
+							}))
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'semantic_persist_index': {
+					const storageDir = params?.storageDir;
+					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
+					const indexedFiles = this._indexer.getIndexedFiles();
+					const nodes = indexedFiles.map(f => this._indexer.getFileNode(f)!).filter(Boolean);
+					const writeRes = await store.saveIndex(nodes, []);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							saved: true,
+							manifestPath: writeRes.manifestPath,
+							bytesWritten: writeRes.bytesWritten,
+							totalFiles: nodes.length
+						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'semantic_load_index': {
+					const storageDir = params?.storageDir;
+					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
+					const loaded = await store.loadIndex();
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: {
+							loaded: loaded !== null,
+							totalFiles: loaded?.manifest.totalFiles || 0,
+							totalSymbols: loaded?.manifest.totalSymbols || 0,
+							totalChunks: loaded?.manifest.totalChunks || 0
 						}
 					};
 					socket.write(FloatIpcFramer.encode(res));
