@@ -60,8 +60,9 @@ export class FloatComposerAgent {
 		let speculativeRepairCount = 0;
 		const steps: IComposerAgentStep[] = [];
 
-		// When isolation is requested, route all tool mutations into speculative in-memory overlays
-		// AND run OS commands inside an isolated shadow workspace clone to protect the physical workspace.
+		// When isolation is requested, route file mutations into speculative in-memory overlays
+		// and run commands in a disposable workspace copy. This is NOT an OS sandbox.
+		// Commands fail closed unless the original runner has an explicit user-approval handler.
 		let speculativeFs: SpeculativeComposerFileSystem | null = null;
 		let shadowCmdRunner: IsolatedShadowWorkspaceCommandRunner | null = null;
 		let scopedRegistry = this._toolRegistry;
@@ -69,7 +70,12 @@ export class FloatComposerAgent {
 		if (isolateMutations) {
 			speculativeFs = new SpeculativeComposerFileSystem(this._toolRegistry.fileSystem);
 			const workspaceRoot = (this._toolRegistry.fileSystem as any).workspaceRoot || process.cwd();
-			shadowCmdRunner = new IsolatedShadowWorkspaceCommandRunner(workspaceRoot, speculativeFs.overlays);
+			shadowCmdRunner = new IsolatedShadowWorkspaceCommandRunner(
+				workspaceRoot,
+				speculativeFs.overlays,
+				30000,
+				this._toolRegistry.runner.requestExecutionApproval?.bind(this._toolRegistry.runner)
+			);
 			scopedRegistry = this._toolRegistry.createScopedRegistry(speculativeFs, undefined, shadowCmdRunner);
 		}
 

@@ -5,6 +5,14 @@
 
 export type ShadowDiagnosticSeverity = 'error' | 'warning' | 'info';
 
+/** Explicit user consent request. This is not an OS sandbox or privilege boundary. */
+export interface IFloatCommandApprovalRequest {
+	command: string;
+	workingDirectory: string;
+	workspaceRoot: string;
+}
+export type IFloatCommandApprovalHandler = (request: IFloatCommandApprovalRequest) => Promise<boolean>;
+
 export interface IShadowDiagnostic {
 	filePath: string;
 	line: number;

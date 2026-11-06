@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { exec, ChildProcess } from 'node:child_process';
-import { IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
+import { IFloatCommandApprovalHandler, IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 
@@ -35,15 +35,19 @@ const SENSITIVE_OR_HEAVY_DIRS = new Set([
 ]);
 
 /**
- * OS-Level Copy-on-Write (CoW) Shadow Workspace Daemon.
- *
- * Provides physical process-isolated speculative execution of real toolchains
- * (e.g. `tsc --noEmit`, `cargo check`, `pytest`, `npm run build`) against speculative
- * changesets without touching a single byte of the original user workspace.
+ * Speculative workspace-copy daemon.
+ * It does NOT provide OS-level process isolation: commands retain the current user's
+ * OS privileges. This runner fails closed unless the workbench supplies UI approval.
  */
 export class FloatShadowDaemon {
 	private readonly _shadowRootDir: string;
 	private readonly _activeSandboxes = new Map<string, string>(); // sessionId -> shadowDirPath
+	private readonly _sourceRoots = new Map<string, string>();
+	private _commandApprovalHandler?: IFloatCommandApprovalHandler;
+
+	public setCommandApprovalHandler(handler?: IFloatCommandApprovalHandler): void {
+		this._commandApprovalHandler = handler;
+	}
 
 	constructor(customRootDir?: string) {
 		this._shadowRootDir = customRootDir || path.join(os.tmpdir(), `float-shadow-daemon-${process.pid}`);
@@ -102,6 +106,7 @@ export class FloatShadowDaemon {
 		}
 
 		this._activeSandboxes.set(sessionId, sandboxDir);
+		this._sourceRoots.set(sessionId, path.resolve(workspaceRoot));
 		return sandboxDir;
 	}
 
@@ -140,7 +145,7 @@ export class FloatShadowDaemon {
 	}
 
 	/**
-	 * Executes a permitted toolchain command inside the isolated shadow sandbox
+	 * Executes in a workspace copy after explicit workbench approval; no handler means no execution.
 	 */
 	public async executeToolchain(
 		sessionId: string,
@@ -164,6 +169,41 @@ export class FloatShadowDaemon {
 					column: 1,
 					code: 'SECURITY_BLOCKED',
 					message: `Command refused by FLOAT Security Policy: ${command}`,
+					severity: 'error',
+					source: 'Float Shadow Daemon'
+				}],
+				success: false,
+				shadowDirectory: sandboxDir
+			};
+		}
+
+		let approved = false;
+		if (this._commandApprovalHandler) {
+			try {
+				approved = await this._commandApprovalHandler({
+					command,
+					workingDirectory: sandboxDir,
+					workspaceRoot: this._sourceRoots.get(sessionId) || sandboxDir
+				}) === true;
+			} catch {
+				approved = false;
+			}
+		}
+		if (!approved) {
+			const message = this._commandApprovalHandler
+				? '[COMMAND BLOCKED] User denied command execution. No command was executed.'
+				: '[COMMAND BLOCKED] No interactive approval handler is connected. No command was executed.';
+			return {
+				exitCode: 126,
+				stdout: '',
+				stderr: message,
+				durationMs: 0,
+				diagnostics: [{
+					filePath: '.',
+					line: 1,
+					column: 1,
+					code: 'COMMAND_APPROVAL_REQUIRED',
+					message,
 					severity: 'error',
 					source: 'Float Shadow Daemon'
 				}],
@@ -280,6 +320,7 @@ export class FloatShadowDaemon {
 				await fsp.rm(sandboxDir, { recursive: true, force: true });
 			} catch {}
 			this._activeSandboxes.delete(sessionId);
+			this._sourceRoots.delete(sessionId);
 		}
 	}
 

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
+import { IFloatCommandApprovalRequest } from '../shadow/floatShadowTypes.js';
 
 export interface IComposerToolDefinition {
 	name: string;
@@ -43,6 +44,7 @@ export interface IComposerFileSystem {
 }
 
 export interface IComposerCommandRunner {
+	requestExecutionApproval?(request: IFloatCommandApprovalRequest): Promise<boolean>;
 	runCommand(command: string, cwd?: string): Promise<{
 		exitCode: number;
 		stdout: string;
