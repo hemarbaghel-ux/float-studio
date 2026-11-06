@@ -19,6 +19,9 @@ import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurit
  * This is path hardening, not a substitute for OS-level isolation.
  */
 export function resolveComposerWorkspacePath(workspaceRoot: string, relPath: string): string {
+	if (isComposerSandboxSensitivePath(relPath)) {
+		throw new Error('[SECURITY] Access to excluded workspace path denied: ' + relPath);
+	}
 	const clean = relPath === '.' || relPath === '' ? '.' : sanitizeProposalPath(relPath);
 	const rootResolved = fs.realpathSync(workspaceRoot);
 	const resolved = path.resolve(rootResolved, clean);

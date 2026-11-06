@@ -8,6 +8,7 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { IFloatService } from '../../common/floatService.js';
 import { FloatComposer } from './floatComposer.js';
@@ -36,8 +37,10 @@ export class OpenFloatComposerAction extends Action2 {
 		const floatService = accessor.get(IFloatService);
 		const textFileService = accessor.get(ITextFileService);
 		const codeEditorService = accessor.get(ICodeEditorService);
+		const workspaceContextService = accessor.get(IWorkspaceContextService);
+		const workspaceRoot = workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
 
-		const composer = new FloatComposer(floatService, notificationService, textFileService);
+		const composer = new FloatComposer(floatService, notificationService, textFileService, undefined, undefined, workspaceRoot);
 		const activeEditor = codeEditorService.getFocusedCodeEditor() || codeEditorService.getActiveCodeEditor();
 
 		// If an active code editor exists, present the sleek floating Composer widget overlay (Cursor style)
