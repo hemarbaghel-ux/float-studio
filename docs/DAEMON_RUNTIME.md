@@ -9,7 +9,7 @@ FLOAT starts its sidecar daemon as a Code-OSS Electron Utility Process Worker.
 - The utility process—not the renderer—creates a randomized named pipe (Windows) or Unix socket below a private temporary directory (POSIX).
 - The utility process owns the Node.js `FloatDaemonClient`, connects it to the daemon server, and verifies health before announcing startup.
 - The renderer receives a narrow RPC facade. It does not import Node.js `fs`, `net`, `os`, `path`, `crypto` or the socket client.
-- Daemon method forwarding is allowlisted. Shadow/toolchain execution methods are not exposed through this channel.
+- Daemon method forwarding is allowlisted to health and in-memory semantic-index operations. The pre-existing daemon persistence handlers are not exposed until their disk round-trip is corrected; shadow/toolchain execution methods are also blocked.
 - The daemon starts with `allowSandboxExecution: false`; legacy shadow/toolchain handlers fail closed.
 - Index snapshots are stored outside the opened repository under the current user's `~/.float-studio/daemon-index/<workspace-hash>` directory. The utility process creates POSIX storage folders with owner-only permissions.
 - Unexpected worker exits trigger bounded exponential restart attempts. Workbench shutdown stops the daemon and removes its temporary socket directory.

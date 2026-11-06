@@ -44,8 +44,7 @@ const ALLOWED_DAEMON_METHODS = new Set([
   'semantic_search',
   'semantic_get_symbols',
   'semantic_chunk_file',
-  'semantic_persist_index',
-  'semantic_load_index'
+
 ]);
 
 /**
@@ -62,7 +61,22 @@ export class FloatDaemonWorkerChannel implements IServerChannel<string> {
   constructor(
     private readonly _createServer: FloatDaemonServerFactory = options => new FloatDaemonServer(options),
     private readonly _createClient: FloatDaemonClientFactory = pipeName => new FloatDaemonClient({ pipeName })
-  ) {}
+  ) {
+    // Best-effort removal if the utility process exits unexpectedly before the
+    // workbench can issue an orderly stop command.
+    process.once('exit', () => this._cleanupRuntimeDirectorySync());
+  }
+
+  private _cleanupRuntimeDirectorySync(): void {
+    if (this._runtimeDirectory) {
+      try {
+        fs.rmSync(this._runtimeDirectory, { recursive: true, force: true });
+      } catch {
+        // Process shutdown must not be blocked by best-effort temp cleanup.
+      }
+      this._runtimeDirectory = undefined;
+    }
+  }
 
   public async call<T>(_context: string, command: string, arg?: unknown): Promise<T> {
     switch (command) {
@@ -113,22 +127,24 @@ export class FloatDaemonWorkerChannel implements IServerChannel<string> {
     await this._stop();
 
     const runtimeDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'float-daemon-'));
-    if (process.platform !== 'win32') {
-      await fs.promises.chmod(runtimeDirectory, 0o700);
-    }
-
-    const pipeName = process.platform === 'win32'
-      ? `\\\\.\\pipe\\float-daemon-${options.instanceId}`
-      : path.join(runtimeDirectory, 'daemon.sock');
-
-    const server = this._createServer({
-      pipeName,
-      storageDir,
-      allowSandboxExecution: false
-    });
+    let server: IFloatDaemonWorkerServer | undefined;
     let client: IFloatDaemonWorkerClient | undefined;
 
     try {
+      if (process.platform !== 'win32') {
+        await fs.promises.chmod(runtimeDirectory, 0o700);
+      }
+
+      const pipeName = process.platform === 'win32'
+        ? `\\\\.\\pipe\\float-daemon-${options.instanceId}`
+        : path.join(runtimeDirectory, 'daemon.sock');
+
+      server = this._createServer({
+        pipeName,
+        storageDir,
+        allowSandboxExecution: false
+      });
+
       await server.start();
       client = this._createClient(pipeName);
       await client.connect(5_000);
@@ -145,7 +161,7 @@ export class FloatDaemonWorkerChannel implements IServerChannel<string> {
       return { status: 'running', pid: process.pid };
     } catch (error) {
       client?.dispose();
-      await server.stop().catch(() => undefined);
+      await server?.stop().catch(() => undefined);
       await fs.promises.rm(runtimeDirectory, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }

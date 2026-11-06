@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -74,10 +74,12 @@ async function main(): Promise<void> {
     assert.equal(callResult.method, 'semantic_search');
     assert.equal(clients[0].calls[0].timeoutMs, 10_000);
 
-    await assert.rejects(
-      () => channel.call('test-window', 'callDaemon', { method: 'run_shadow_toolchain', params: {} }),
-      /not available/
-    );
+    for (const blockedMethod of ['run_shadow_toolchain', 'semantic_persist_index', 'semantic_load_index', 'shadow_create_cow_workspace']) {
+      await assert.rejects(
+        () => channel.call('test-window', 'callDaemon', { method: blockedMethod, params: {} }),
+        /not available/
+      );
+    }
     await assert.rejects(
       () => channel.call('test-window', 'callDaemon', { method: 'semantic_search', params: {}, timeoutMs: 999_999 }),
       /timeoutMs/
