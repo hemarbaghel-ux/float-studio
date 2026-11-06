@@ -99,7 +99,7 @@ async function runMasterAuditRegressionTests() {
     { id: 'gpt-6.1-sol', expectedUpstream: 'gpt-6.1-sol', expectedProvider: 'openai' },
     { id: 'gemini-3.8-flash', expectedUpstream: 'gemini-3.8-flash', expectedProvider: 'google' }
   ];
-  for (const { id, expectedUpstream } of selectedModels) {
+  for (const { id, expectedUpstream, expectedProvider } of selectedModels) {
     useAIStore.getState().setSelectedModel(id);
     check(useAIStore.getState().selectedModel === id, `useAIStore preserves selected model "${id}"`);
     const vmEntry = VERIFIED_MODELS.find(m => m.id === id);
