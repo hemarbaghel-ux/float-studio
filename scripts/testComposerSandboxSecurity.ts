@@ -1,0 +1,115 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { ProductionComposerFileSystem } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
+import {
+  buildFloatDockerSandboxArgs,
+  DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE
+} from '../desktop/src/vs/workbench/contrib/float/common/composer/floatDockerSandboxRunner.js';
+
+async function main(): Promise<void> {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'float-composer-security-'));
+  const workspace = path.join(tempRoot, 'workspace-root');
+  const sibling = path.join(tempRoot, 'workspace-root-evil');
+  const dependencies = path.join(workspace, 'node_modules');
+
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.mkdirSync(sibling, { recursive: true });
+  fs.mkdirSync(dependencies, { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'safe.txt'), 'safe', 'utf8');
+  fs.writeFileSync(path.join(sibling, 'outside.txt'), 'outside', 'utf8');
+
+  try {
+    const fileSystem = new ProductionComposerFileSystem(workspace);
+    await fileSystem.writeFile('safe.txt', 'updated');
+    assert.equal(await fileSystem.readFile('safe.txt'), 'updated');
+
+    const escapeLink = path.join(workspace, 'escape');
+    let symlinkSupported = true;
+    try {
+      fs.symlinkSync(sibling, escapeLink, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN') {
+        symlinkSupported = false;
+      } else {
+        throw error;
+      }
+    }
+    if (symlinkSupported) {
+      await assert.rejects(
+        () => fileSystem.writeFile('escape/new-secret.txt', 'nope'),
+        /\[SECURITY\]/
+      );
+      assert.equal(fs.existsSync(path.join(sibling, 'new-secret.txt')), false);
+    }
+
+    const outsideFile = path.join(sibling, 'outside-hardlink.txt');
+    const hardlinkInside = path.join(workspace, 'hardlink.txt');
+    fs.writeFileSync(outsideFile, 'outside-original', 'utf8');
+    let hardlinkSupported = true;
+    try {
+      fs.linkSync(outsideFile, hardlinkInside);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN') {
+        hardlinkSupported = false;
+      } else {
+        throw error;
+      }
+    }
+    if (hardlinkSupported) {
+      await assert.rejects(() => fileSystem.writeFile('hardlink.txt', 'mutated'), /\[SECURITY\]/);
+      assert.equal(fs.readFileSync(outsideFile, 'utf8'), 'outside-original');
+    }
+
+    const command = 'node -e "console.log(1 + 1)"';
+    const args = buildFloatDockerSandboxArgs({
+      workspaceRoot: workspace,
+      dependenciesDirectory: dependencies,
+      command,
+      cwd: '.',
+      image: DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE,
+      containerName: 'float-security-test'
+    });
+
+    for (const flag of [
+      '--network=none',
+      '--cap-drop=ALL',
+      '--security-opt=no-new-privileges',
+      '--pids-limit=128',
+      '--memory=1g',
+      '--memory-swap=1g',
+      '--cpus=1',
+      '--read-only',
+      '--pull=missing'
+    ]) {
+      assert.ok(args.includes(flag), 'Docker sandbox must include ' + flag);
+    }
+
+    assert.ok(args.find(arg => arg.includes('target=/workspace/node_modules,readonly')),
+      'node_modules must be mounted read-only');
+    assert.ok(args.includes(command), 'model command must be one Docker CLI argument');
+    assert.ok(args.includes('sh') && args.includes('-lc'), 'commands are interpreted inside the container');
+    assert.equal(args.some(arg => /(?:OPENAI|ANTHROPIC|GEMINI|GOOGLE|AWS|AZURE)_API_KEY/.test(arg)), false,
+      'container arguments must not forward common provider secrets');
+
+    assert.throws(() => buildFloatDockerSandboxArgs({
+      workspaceRoot: workspace,
+      command,
+      cwd: '../workspace-root-evil',
+      image: DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE,
+      containerName: 'float-security-test'
+    }), /Path traversal|escapes/);
+
+    console.log('Composer sandbox security: path boundary checks and Docker policy assertions passed.');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+main().catch(error => {
+  console.error('Composer sandbox security test failed:', error);
+  process.exit(1);
+});
