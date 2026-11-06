@@ -8,6 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { FloatDockerSandboxRunner } from './floatDockerSandboxRunner.js';
+import { copyComposerWorkspace } from './floatSandboxWorkspaceCopy.js';
 import { IComposerFileSystem, IComposerCommandRunner } from './floatComposerTools.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
@@ -257,18 +258,10 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 }
 
 export class ProductionComposerCommandRunner implements IComposerCommandRunner {
-	private readonly _sandboxRunner: FloatDockerSandboxRunner;
-
 	constructor(
 		protected readonly _workspaceRoot: string,
 		protected readonly _timeoutMs: number = 30000
-	) {
-		this._sandboxRunner = new FloatDockerSandboxRunner(
-			this._workspaceRoot,
-			path.join(this._workspaceRoot, 'node_modules'),
-			this._timeoutMs
-		);
-	}
+	) {}
 
 	public get workspaceRoot(): string {
 		return this._workspaceRoot;
@@ -282,8 +275,32 @@ export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 		if (!FloatSecurityGuard.isCommandSafe(command)) {
 			return { exitCode: 1, stdout: '', stderr: '[SECURITY REJECTION] Command refused by FLOAT Security Policy.' };
 		}
+
 		const safeCwd = !cwd || cwd === '.' || cwd === '' ? '.' : sanitizeProposalPath(cwd);
-		return await this._sandboxRunner.run(command, { cwd: safeCwd, timeoutMs: this._timeoutMs });
+		const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'float-composer-command-'));
+		const scratchWorkspace = path.join(scratchRoot, 'workspace');
+
+		try {
+			copyComposerWorkspace(this._workspaceRoot, scratchWorkspace);
+			const runner = new FloatDockerSandboxRunner(
+				scratchWorkspace,
+				path.join(this._workspaceRoot, 'node_modules'),
+				this._timeoutMs
+			);
+			return await runner.run(command, { cwd: safeCwd, timeoutMs: this._timeoutMs });
+		} catch (error) {
+			return {
+				exitCode: 1,
+				stdout: '',
+				stderr: '[SANDBOX PREPARATION FAILED] ' + (error instanceof Error ? error.message : String(error))
+			};
+		} finally {
+			try {
+				fs.rmSync(scratchRoot, { recursive: true, force: true });
+			} catch {
+				// Best-effort cleanup; no command is run against the original workspace.
+			}
+		}
 	}
 }
 
@@ -327,32 +344,24 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 
 	private _initShadowWorkspace(overlays?: Map<string, string>): void {
 		fs.mkdirSync(this._shadowDir, { recursive: true });
-
-		if (fs.existsSync(this._originalWorkspaceRoot)) {
-			const mirrorDir = (src: string, dest: string) => {
-				const entries = fs.readdirSync(src, { withFileTypes: true });
-				for (const entry of entries) {
-					if (SENSITIVE_OR_IGNORED_DIRS.has(entry.name)) {
-						continue;
-					}
-					const srcPath = path.join(src, entry.name);
-					const destPath = path.join(dest, entry.name);
-					if (entry.isDirectory()) {
-						fs.mkdirSync(destPath, { recursive: true });
-						mirrorDir(srcPath, destPath);
-					} else if (entry.isFile()) {
-						fs.copyFileSync(srcPath, destPath);
-					}
-				}
-			};
-			mirrorDir(this._originalWorkspaceRoot, this._shadowDir);
-		}
+		copyComposerWorkspace(this._originalWorkspaceRoot, this._shadowDir);
 
 		if (overlays) {
 			for (const [relPath, content] of overlays.entries()) {
 				const target = resolveComposerWorkspacePath(this._shadowDir, relPath);
 				fs.mkdirSync(path.dirname(target), { recursive: true });
-				fs.writeFileSync(target, content, 'utf8');
+				const safeTarget = resolveComposerWorkspacePath(this._shadowDir, relPath);
+				const noFollow = (fs.constants as any).O_NOFOLLOW || 0;
+				const descriptor = fs.openSync(
+					safeTarget,
+					fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+					0o666
+				);
+				try {
+					fs.writeFileSync(descriptor, content, 'utf8');
+				} finally {
+					fs.closeSync(descriptor);
+				}
 			}
 		}
 	}

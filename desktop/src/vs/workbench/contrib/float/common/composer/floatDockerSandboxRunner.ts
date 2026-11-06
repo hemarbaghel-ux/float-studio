@@ -78,7 +78,7 @@ export function buildFloatDockerSandboxArgs(options: IFloatDockerSandboxOptions)
     '--mount', 'type=bind,source=' + toMountSource(workspaceRoot) + ',target=/workspace',
     '--workdir', containerCwd,
     '--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-    '--env=HOME=/tmp/float-home',
+    '--env=HOME=/tmp',
     '--env=TMPDIR=/tmp',
     '--env=CI=true',
     '--env=npm_config_cache=/tmp/npm-cache'

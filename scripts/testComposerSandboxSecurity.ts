@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { ProductionComposerFileSystem, IsolatedShadowWorkspaceCommandRunner } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
+import { copyComposerWorkspace } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatSandboxWorkspaceCopy.js';
 import {
   buildFloatDockerSandboxArgs,
   DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE
@@ -18,9 +19,26 @@ async function main(): Promise<void> {
   fs.mkdirSync(sibling, { recursive: true });
   fs.mkdirSync(dependencies, { recursive: true });
   fs.writeFileSync(path.join(workspace, 'safe.txt'), 'safe', 'utf8');
+  fs.writeFileSync(path.join(workspace, '.env'), 'FLOAT_API_KEY=do-not-copy', 'utf8');
+  fs.writeFileSync(path.join(workspace, '.npmrc'), '//registry.example/:_authToken=do-not-copy', 'utf8');
+  fs.writeFileSync(path.join(workspace, 'credentials.json'), '{"private_key":"do-not-copy"}', 'utf8');
+  fs.mkdirSync(path.join(workspace, 'secrets'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'secrets', 'provider.json'), '{"api_key":"do-not-copy"}', 'utf8');
+  fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'src', 'app.ts'), 'export const safe = true;', 'utf8');
   fs.writeFileSync(path.join(sibling, 'outside.txt'), 'outside', 'utf8');
 
   try {
+
+    const copyDestination = path.join(tempRoot, 'safe-copy');
+    const copyStats = copyComposerWorkspace(workspace, copyDestination);
+    assert.ok(copyStats.filesCopied >= 2, 'normal project source files should be copied');
+    assert.equal(fs.existsSync(path.join(copyDestination, 'src', 'app.ts')), true);
+    for (const excluded of ['.env', '.npmrc', 'credentials.json', path.join('secrets', 'provider.json')]) {
+      assert.equal(fs.existsSync(path.join(copyDestination, excluded)), false, 'sensitive file must not enter command workspace: ' + excluded);
+    }
+    assert.equal(fs.existsSync(path.join(copyDestination, 'node_modules')), false, 'dependency directory must not be copied');
+
     const fileSystem = new ProductionComposerFileSystem(workspace);
     await fileSystem.writeFile('safe.txt', 'updated');
     assert.equal(await fileSystem.readFile('safe.txt'), 'updated');

@@ -8,6 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { FloatDockerSandboxRunner } from '../composer/floatDockerSandboxRunner.js';
+import { copyComposerWorkspace } from '../composer/floatSandboxWorkspaceCopy.js';
 import { IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
@@ -76,7 +77,7 @@ export class FloatShadowDaemon {
 
 		// 1. Mirror unchanged workspace files using hardlinks or fast copies
 		if (fs.existsSync(workspaceRoot)) {
-			await this._mirrorDirectory(workspaceRoot, sandboxDir, deletedFiles);
+			copyComposerWorkspace(workspaceRoot, sandboxDir, deletedFiles);
 		}
 
 		// Do not link host dependencies into the writable shadow directory.
@@ -110,29 +111,6 @@ export class FloatShadowDaemon {
 	/**
 	 * Recursively copies regular files and directories; symlinks are not followed.
 	 */
-	private async _mirrorDirectory(srcDir: string, destDir: string, deletedFiles: Set<string>, relPrefix: string = ''): Promise<void> {
-		const entries = fs.readdirSync(srcDir, { withFileTypes: true });
-
-		for (const entry of entries) {
-			const entryRelPath = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
-			const normRel = entryRelPath.replace(/\\/g, '/');
-
-			if (SENSITIVE_OR_HEAVY_DIRS.has(entry.name) || deletedFiles.has(normRel)) {
-				continue;
-			}
-
-			const srcPath = path.join(srcDir, entry.name);
-			const destPath = path.join(destDir, entry.name);
-
-			if (entry.isDirectory()) {
-				fs.mkdirSync(destPath, { recursive: true });
-				await this._mirrorDirectory(srcPath, destPath, deletedFiles, normRel);
-			} else if (entry.isFile()) {
-				// Hard links are shared inodes, not isolation. Always copy file data.
-				fs.copyFileSync(srcPath, destPath);
-			}
-		}
-	}
 
 	/**
 	 * Executes a permitted toolchain command inside the isolated shadow sandbox
