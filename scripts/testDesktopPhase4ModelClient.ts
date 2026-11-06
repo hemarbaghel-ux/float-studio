@@ -69,6 +69,10 @@ async function runTests() {
     const modelIds = FLOAT_MODELS.map(m => m.id);
     assert.ok(modelIds.includes('gpt-6.1-sol'), 'gpt-6.1-sol must be registered');
     assert.ok(modelIds.includes('gpt-6-astra'), 'gpt-6-astra must be registered');
+    assert.ok(modelIds.includes('gemini-3.8-flash'), 'Gemini 3.8 Flash must be registered in the native desktop model registry');
+    assert.strictEqual(getFloatModel('gemini-3.8-flash')?.provider, 'google', 'Gemini 3.8 Flash must route through the Google provider');
+    assert.strictEqual(getFloatModel('gemini-3.8-flash')?.upstreamModelId, 'gemini-3.8-flash', 'Gemini 3.8 Flash must preserve its exact upstream model ID');
+    assert.strictEqual(getFloatModel('gemini-3.8-flash')?.contextWindow, 1048576, 'Gemini 3.8 Flash must expose its 1M-token context window');
     assert.ok(modelIds.includes('auto'), 'auto routing alias must be registered');
 
     const autoModel = getFloatModel('auto');
