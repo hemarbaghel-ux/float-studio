@@ -63,7 +63,7 @@ export class FloatComposer extends Disposable {
 	}
 
 	private async _resolveContextItems(prompt: string, activeFilePath?: string): Promise<Array<{ path: string; content: string }>> {
-		if (!/@codebase\\b|@symbol\\b/i.test(prompt)) {
+		if (!/@codebase\b|@symbol\b/i.test(prompt)) {
 			return [];
 		}
 		const indexer = this._floatService.getWorkspaceIndexer();

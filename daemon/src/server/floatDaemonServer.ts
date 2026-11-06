@@ -362,7 +362,8 @@ export class FloatDaemonServer {
 							saved: true,
 							manifestPath: writeRes.manifestPath,
 							bytesWritten: writeRes.bytesWritten,
-							totalFiles: nodes.length
+							totalFiles: nodes.length,
+							totalChunks: chunks.length
 						}
 					};
 					socket.write(FloatIpcFramer.encode(res));

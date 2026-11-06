@@ -45,7 +45,7 @@ export class OpenFloatChatAction extends Action2 {
 		}
 
 		const contextItems: Array<{ path: string; content: string }> = [];
-		if (/@codebase\\b|@symbol\\b/i.test(prompt)) {
+		if (/@codebase\b|@symbol\b/i.test(prompt)) {
 			const workspaceFolder = workspaceContextService.getWorkspace().folders[0];
 			if (workspaceFolder) {
 				try {
