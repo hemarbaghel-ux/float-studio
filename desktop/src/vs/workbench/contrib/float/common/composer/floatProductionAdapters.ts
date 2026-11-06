@@ -200,6 +200,9 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 
 	public async readFile(relPath: string): Promise<string> {
 		const norm = sanitizeProposalPath(relPath);
+		if (isComposerSandboxSensitivePath(norm)) {
+			throw new Error(`[SECURITY] Access denied to sensitive file: ${relPath}`);
+		}
 		if (this._deletedFiles.has(norm)) {
 			throw new Error(`File not found (marked deleted): ${norm}`);
 		}
@@ -215,6 +218,9 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 
 	public async writeFile(relPath: string, content: string): Promise<void> {
 		const norm = sanitizeProposalPath(relPath);
+		if (isComposerSandboxSensitivePath(norm)) {
+			throw new Error(`[SECURITY] Writing to sensitive file prohibited: ${relPath}`);
+		}
 		if (!this._originalBaselines.has(norm)) {
 			try {
 				const existing = await this._baseFs.readFile(norm);
@@ -229,6 +235,7 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 
 	public async fileExists(relPath: string): Promise<boolean> {
 		const norm = sanitizeProposalPath(relPath);
+		if (isComposerSandboxSensitivePath(norm)) return false;
 		if (this._deletedFiles.has(norm)) {
 			return false;
 		}
@@ -239,6 +246,7 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 	}
 
 	public async listDirectory(relPath: string, recursive: boolean = false): Promise<string[]> {
+		if (isComposerSandboxSensitivePath(relPath)) return [];
 		const baseList = await this._baseFs.listDirectory(relPath, recursive);
 		const resultSet = new Set<string>();
 
@@ -250,7 +258,7 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 		}
 
 		for (const ovPath of this._overlays.keys()) {
-			if (relPath === '.' || relPath === '' || ovPath.startsWith(relPath)) {
+			if (!isComposerSandboxSensitivePath(ovPath) && (relPath === '.' || relPath === '' || ovPath.startsWith(relPath))) {
 				resultSet.add(ovPath);
 			}
 		}

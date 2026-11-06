@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { ProductionComposerFileSystem, IsolatedShadowWorkspaceCommandRunner, resolveComposerWorkspacePath, resolveComposerWorkspaceRelativePath } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
+import { ProductionComposerFileSystem, SpeculativeComposerFileSystem, IsolatedShadowWorkspaceCommandRunner, resolveComposerWorkspacePath, resolveComposerWorkspaceRelativePath } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
 import { copyComposerWorkspace } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatSandboxWorkspaceCopy.js';
 import {
   buildFloatDockerSandboxArgs,
@@ -74,6 +74,11 @@ async function main(): Promise<void> {
     assert.throws(() => resolveComposerWorkspacePath(workspace, '../workspace-root-evil/outside.txt'), /Path traversal/);
 
     const fileSystem = new ProductionComposerFileSystem(workspace);
+    const speculativeFs = new SpeculativeComposerFileSystem(fileSystem);
+    await assert.rejects(() => speculativeFs.writeFile('.aws/credentials', 'fake-secret'), /Writing to sensitive file prohibited/);
+    await assert.rejects(() => speculativeFs.readFile('.ssh/id_ed25519'), /Access denied to sensitive file/);
+    assert.equal(await speculativeFs.fileExists('.aws/credentials'), false);
+    assert.deepEqual(await speculativeFs.listDirectory('.aws', true), []);
     await fileSystem.writeFile('safe.txt', 'updated');
     assert.equal(await fileSystem.readFile('safe.txt'), 'updated');
     for (const deniedPath of ['.env', '.npmrc', 'credentials.json', '.aws/credentials', '.ssh/id_ed25519', 'secrets/provider.json']) {
