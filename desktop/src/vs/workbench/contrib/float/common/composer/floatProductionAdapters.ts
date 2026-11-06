@@ -11,6 +11,7 @@ import { exec, ChildProcess } from 'node:child_process';
 import { IComposerFileSystem, IComposerCommandRunner } from './floatComposerTools.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
+import { IFloatCommandApprovalHandler, IFloatCommandApprovalRequest } from '../shadow/floatShadowTypes.js';
 
 const SENSITIVE_OR_IGNORED_DIRS = new Set([
 	'node_modules',
@@ -230,11 +231,17 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 	constructor(
 		protected readonly _workspaceRoot: string,
-		protected readonly _timeoutMs: number = 30000
+		protected readonly _timeoutMs: number = 30000,
+		private readonly _approvalHandler?: IFloatCommandApprovalHandler
 	) {}
 
 	public get workspaceRoot(): string {
 		return this._workspaceRoot;
+	}
+
+	public async requestExecutionApproval(request: IFloatCommandApprovalRequest): Promise<boolean> {
+		if (!this._approvalHandler) return false;
+		try { return await this._approvalHandler(request) === true; } catch { return false; }
 	}
 
 	public async runCommand(command: string, cwd?: string): Promise<{
@@ -250,7 +257,20 @@ export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 			};
 		}
 
-		const execCwd = cwd ? path.resolve(this._workspaceRoot, sanitizeProposalPath(cwd)) : this._workspaceRoot;
+		let execCwd: string;
+		try {
+			execCwd = cwd ? path.resolve(this._workspaceRoot, sanitizeProposalPath(cwd)) : this._workspaceRoot;
+			const root = path.resolve(this._workspaceRoot);
+			if (execCwd !== root && !execCwd.startsWith(root + path.sep)) throw new Error('Command working directory escaped the workspace.');
+		} catch (error: any) {
+			return { exitCode: 1, stdout: '', stderr: `[SECURITY REJECTION] ${error.message || 'Invalid command working directory.'}` };
+		}
+		const approved = await this.requestExecutionApproval({
+			command, workingDirectory: execCwd, workspaceRoot: path.resolve(this._workspaceRoot)
+		});
+		if (!approved) {
+			return { exitCode: 126, stdout: '', stderr: '[COMMAND BLOCKED] User approval is required before Composer can run a command. No command was executed.' };
+		}
 
 		// Sanitize environment
 		const safeEnv: Record<string, string | undefined> = { ...process.env };
@@ -279,10 +299,10 @@ export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 }
 
 /**
- * Isolated Shadow Workspace Command Runner.
- * Executes commands inside an isolated temporary directory mirroring the workspace and speculative overlays.
- * Any command side-effects (file creation, modification, deletion, build scripts) are strictly quarantined to
- * the shadow sandbox. The original physical workspace remains 100% UNTOUCHED before acceptance.
+ * Speculative Shadow Workspace Command Runner.
+ * Commands run as the current OS user in a temporary workspace copy with credential files and dependency
+ * directories omitted. The copy is NOT an OS-level sandbox: processes can still access the host filesystem,
+ * network, and user privileges. Interactive user approval is required before every command.
  */
 export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRunner {
 	private readonly _shadowDir: string;
@@ -292,7 +312,8 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 	constructor(
 		private readonly _originalWorkspaceRoot: string,
 		speculativeOverlays?: Map<string, string>,
-		private readonly _timeoutMs: number = 30000
+		private readonly _timeoutMs: number = 30000,
+		private readonly _approvalHandler?: IFloatCommandApprovalHandler
 	) {
 		this._shadowDir = path.join(
 			os.tmpdir(),
@@ -309,6 +330,11 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 		return this._originalWorkspaceRoot;
 	}
 
+	public async requestExecutionApproval(request: IFloatCommandApprovalRequest): Promise<boolean> {
+		if (!this._approvalHandler) return false;
+		try { return await this._approvalHandler(request) === true; } catch { return false; }
+	}
+
 	private _initShadowWorkspace(overlays?: Map<string, string>): void {
 		fs.mkdirSync(this._shadowDir, { recursive: true });
 
@@ -318,12 +344,6 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 				const entries = fs.readdirSync(src, { withFileTypes: true });
 				for (const entry of entries) {
 					if (SENSITIVE_OR_IGNORED_DIRS.has(entry.name)) {
-						if (entry.name === 'node_modules' && process.platform === 'win32') {
-							// Link node_modules via junction on Windows for instant dependency access
-							try {
-								fs.symlinkSync(path.join(src, entry.name), path.join(dest, entry.name), 'junction');
-							} catch {}
-						}
 						continue;
 					}
 					const srcPath = path.join(src, entry.name);
@@ -333,6 +353,8 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 						fs.mkdirSync(destPath, { recursive: true });
 						mirrorDir(srcPath, destPath);
 					} else if (entry.isFile()) {
+						const relativePath = path.relative(this._originalWorkspaceRoot, srcPath).replace(/\\/g, '/');
+						if (SENSITIVE_FILE_PATTERNS.some(pattern => pattern.test(relativePath))) continue;
 						fs.copyFileSync(srcPath, destPath);
 					}
 				}
@@ -375,7 +397,21 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 			};
 		}
 
-		const execCwd = cwd ? path.resolve(this._shadowDir, sanitizeProposalPath(cwd)) : this._shadowDir;
+		let execCwd: string;
+		try {
+			execCwd = cwd ? path.resolve(this._shadowDir, sanitizeProposalPath(cwd)) : this._shadowDir;
+			if (execCwd !== this._shadowDir && !execCwd.startsWith(this._shadowDir + path.sep)) {
+				throw new Error('Command working directory escaped the speculative workspace copy.');
+			}
+		} catch (error: any) {
+			return { exitCode: 1, stdout: '', stderr: `[SECURITY REJECTION] ${error.message || 'Invalid command working directory.'}` };
+		}
+		const approved = await this.requestExecutionApproval({
+			command, workingDirectory: execCwd, workspaceRoot: this._originalWorkspaceRoot
+		});
+		if (!approved) {
+			return { exitCode: 126, stdout: '', stderr: '[COMMAND BLOCKED] User approval is required before Composer can run a command. No command was executed.' };
+		}
 
 		const safeEnv: Record<string, string | undefined> = { ...process.env };
 		delete safeEnv['AIzaSy_KEY'];

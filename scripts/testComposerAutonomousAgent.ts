@@ -14,6 +14,7 @@ import assert from 'assert';
 import path from 'path';
 import fs from 'fs';
 import { FloatComposerToolRegistry, IComposerFileSystem, IComposerCommandRunner } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatComposerTools.js';
+import { ProductionComposerCommandRunner, IsolatedShadowWorkspaceCommandRunner } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
 import { FloatMultiFileDiffOrchestrator, computeLineHunks } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatMultiFileDiffOrchestrator.js';
 import { FloatComposerAgent, IComposerAgentGoal } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatComposerAgent.js';
 import { FloatCheckpointService } from '../desktop/src/vs/workbench/contrib/float/common/checkpoints/floatCheckpointService.js';
@@ -61,6 +62,50 @@ async function runStep4Tests() {
   fs.writeFileSync(path.join(tempWorkspace, fileA), initialCalculator, 'utf8');
   fs.writeFileSync(path.join(tempWorkspace, fileB), initialTypes, 'utf8');
   fs.writeFileSync(path.join(tempWorkspace, fileC), initialTest, 'utf8');
+
+  // --- Suite 0: Command Execution Requires Explicit User Approval ---
+  console.log('--- Suite 0: Command Approval & Fail-Closed Behavior ---');
+  {
+    const noApproval = new ProductionComposerCommandRunner(tempWorkspace, 5000);
+    const blocked = await noApproval.runCommand(`node -e "process.stdout.write('must-not-run')"`);
+    assert.strictEqual(blocked.exitCode, 126);
+    assert(blocked.stderr.includes('User approval is required'));
+
+    const deniedRunner = new ProductionComposerCommandRunner(tempWorkspace, 5000, async () => false);
+    const denied = await deniedRunner.runCommand(`node -e "process.stdout.write('must-not-run')"`);
+    assert.strictEqual(denied.exitCode, 126);
+
+    let capturedApproval: any;
+    const approvedRunner = new ProductionComposerCommandRunner(tempWorkspace, 5000, async request => {
+      capturedApproval = request;
+      return true;
+    });
+    const approved = await approvedRunner.runCommand(`node -e "process.stdout.write('approved-command')"`);
+    assert.strictEqual(approved.exitCode, 0);
+    assert(approved.stdout.includes('approved-command'));
+    assert.strictEqual(capturedApproval.workspaceRoot, tempWorkspace);
+
+    const shadowNoApproval = new IsolatedShadowWorkspaceCommandRunner(tempWorkspace);
+    try {
+      const shadowBlocked = await shadowNoApproval.runCommand(`node -e "process.stdout.write('must-not-run')"`);
+      assert.strictEqual(shadowBlocked.exitCode, 126);
+    } finally {
+      shadowNoApproval.dispose();
+    }
+
+    const shadowApproved = new IsolatedShadowWorkspaceCommandRunner(tempWorkspace, undefined, 5000, async request => {
+      assert.strictEqual(request.workspaceRoot, tempWorkspace);
+      return true;
+    });
+    try {
+      const result = await shadowApproved.runCommand(`node -e "process.stdout.write('approved-copy-command')"`);
+      assert.strictEqual(result.exitCode, 0);
+      assert(result.stdout.includes('approved-copy-command'));
+      assert.notStrictEqual(shadowApproved.shadowDir, tempWorkspace);
+    } finally {
+      shadowApproved.dispose();
+    }
+  }
 
   // --- Suite 1: Tool Registry & File Operations ---
   console.log('--- Suite 1: Tool Registry & Path Security ---');

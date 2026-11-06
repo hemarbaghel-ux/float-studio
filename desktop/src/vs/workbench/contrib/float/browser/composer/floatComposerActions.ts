@@ -11,6 +11,7 @@ import { ITextFileService } from '../../../../services/textfile/common/textfiles
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { IFloatService } from '../../common/floatService.js';
 import { FloatComposer } from './floatComposer.js';
+import { IFloatCommandApprovalHandler } from '../../common/shadow/floatShadowTypes.js';
 import { FloatFloatingComposerWidget } from './floatFloatingComposerWidget.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
@@ -37,7 +38,16 @@ export class OpenFloatComposerAction extends Action2 {
 		const textFileService = accessor.get(ITextFileService);
 		const codeEditorService = accessor.get(ICodeEditorService);
 
-		const composer = new FloatComposer(floatService, notificationService, textFileService);
+        const commandApprovalHandler: IFloatCommandApprovalHandler = async request => {
+            const choice = await quickInputService.pick([
+                { id: 'approve', label: '$(check) Run this command', description: 'Runs with your current OS-user permissions. The workspace copy is not a security sandbox.' },
+                { id: 'deny', label: '$(x) Block command', description: 'Do not execute; Composer will receive an approval-denied result.' }
+            ], {
+                placeHolder: `Review command: ${request.command} | CWD: ${request.workingDirectory} | Workspace: ${request.workspaceRoot}`
+            });
+            return choice?.id === 'approve';
+        };
+        const composer = new FloatComposer(floatService, notificationService, textFileService, undefined, undefined, undefined, commandApprovalHandler);
 		const activeEditor = codeEditorService.getFocusedCodeEditor() || codeEditorService.getActiveCodeEditor();
 
 		// If an active code editor exists, present the sleek floating Composer widget overlay (Cursor style)

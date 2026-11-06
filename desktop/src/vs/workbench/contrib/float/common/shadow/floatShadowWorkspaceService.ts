@@ -12,6 +12,7 @@ import {
 	ICreateShadowSessionOptions
 } from './floatShadowTypes.js';
 import { FloatShadowCompiler } from './floatShadowCompiler.js';
+import { IFloatCommandApprovalHandler } from './floatShadowTypes.js';
 import { FloatShadowDaemon, IShadowExecutionResult } from './floatShadowDaemon.js';
 
 export class FloatShadowWorkspaceService implements IFloatShadowWorkspaceService {
@@ -30,6 +31,10 @@ export class FloatShadowWorkspaceService implements IFloatShadowWorkspaceService
 
 	public get daemon(): FloatShadowDaemon {
 		return this._daemon;
+	}
+
+	public setCommandApprovalHandler(handler?: IFloatCommandApprovalHandler): void {
+		this._daemon.setCommandApprovalHandler(handler);
 	}
 
 	createSession(options: ICreateShadowSessionOptions = {}): IShadowSession {

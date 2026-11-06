@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { exec, ChildProcess } from 'node:child_process';
-import { IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
+import { IFloatCommandApprovalHandler, IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 
@@ -34,16 +34,28 @@ const SENSITIVE_OR_HEAVY_DIRS = new Set([
 	'.idea'
 ]);
 
+const SENSITIVE_FILE_PATTERNS = [
+	/(^|[\\/])\\.env(\\..+)?$/i,
+	/(^|[\\/]).*\\.(pem|key|pfx|p12)$/i,
+	/(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)/i,
+	/(^|[\\/])(credentials|client_secret.*|service-account.*|serviceAccount.*|token|auth)\\.json$/i
+];
+
 /**
- * OS-Level Copy-on-Write (CoW) Shadow Workspace Daemon.
- *
- * Provides physical process-isolated speculative execution of real toolchains
- * (e.g. `tsc --noEmit`, `cargo check`, `pytest`, `npm run build`) against speculative
- * changesets without touching a single byte of the original user workspace.
+ * Speculative workspace-copy daemon.
+ * Files are copied, never hard-linked, and credential/dependency directories are omitted.
+ * This is NOT an OS-level sandbox: commands retain the current user's OS privileges.
+ * The runner fails closed unless the workbench supplies explicit UI approval.
  */
 export class FloatShadowDaemon {
 	private readonly _shadowRootDir: string;
 	private readonly _activeSandboxes = new Map<string, string>(); // sessionId -> shadowDirPath
+	private readonly _sourceRoots = new Map<string, string>();
+	private _commandApprovalHandler?: IFloatCommandApprovalHandler;
+
+	public setCommandApprovalHandler(handler?: IFloatCommandApprovalHandler): void {
+		this._commandApprovalHandler = handler;
+	}
 
 	constructor(customRootDir?: string) {
 		this._shadowRootDir = customRootDir || path.join(os.tmpdir(), `float-shadow-daemon-${process.pid}`);
@@ -55,8 +67,7 @@ export class FloatShadowDaemon {
 	}
 
 	/**
-	 * Creates a zero-mutation physical shadow sandbox mirroring the workspace.
-	 * Uses filesystem hard links for unchanged files to achieve sub-50ms instantiation with 0-byte duplicate disk storage.
+	 * Creates a disposable workspace copy with speculative overlays. Files are copied, never hard-linked.
 	 */
 	public async createShadowSandbox(
 		sessionId: string,
@@ -70,24 +81,15 @@ export class FloatShadowDaemon {
 		}
 		fs.mkdirSync(sandboxDir, { recursive: true });
 
-		// 1. Mirror unchanged workspace files using hardlinks or fast copies
+		// 1. Copy workspace files without sharing file inodes with the source workspace
 		if (fs.existsSync(workspaceRoot)) {
 			await this._mirrorDirectory(workspaceRoot, sandboxDir, deletedFiles);
 		}
 
-		// 2. Link node_modules and dependencies directly so toolchains resolve cleanly
-		const nodeModulesSrc = path.join(workspaceRoot, 'node_modules');
-		const nodeModulesDest = path.join(sandboxDir, 'node_modules');
-		if (fs.existsSync(nodeModulesSrc) && !fs.existsSync(nodeModulesDest)) {
-			try {
-				// Create junction on Windows or symlink on POSIX
-				fs.symlinkSync(nodeModulesSrc, nodeModulesDest, 'junction');
-			} catch {
-				// If symlink permission denied, continue
-			}
-		}
+		// 2. Dependency directories are deliberately not linked back to the source workspace.
+		// Commands that require dependencies must install them into this disposable copy.
 
-		// 3. Write speculative overlays directly into the sandbox (copy-on-write isolation)
+		// 3. Write speculative overlays directly into the disposable workspace copy
 		for (const [relPath, content] of speculativeOverlays.entries()) {
 			const norm = sanitizeProposalPath(relPath);
 			if (deletedFiles.has(norm)) continue;
@@ -102,11 +104,12 @@ export class FloatShadowDaemon {
 		}
 
 		this._activeSandboxes.set(sessionId, sandboxDir);
+		this._sourceRoots.set(sessionId, path.resolve(workspaceRoot));
 		return sandboxDir;
 	}
 
 	/**
-	 * Recursively mirrors directory structure and hardlinks unchanged project files
+	 * Recursively copies files into a workspace copy without sharing source file inodes
 	 */
 	private async _mirrorDirectory(srcDir: string, destDir: string, deletedFiles: Set<string>, relPrefix: string = ''): Promise<void> {
 		const entries = fs.readdirSync(srcDir, { withFileTypes: true });
@@ -126,21 +129,14 @@ export class FloatShadowDaemon {
 				fs.mkdirSync(destPath, { recursive: true });
 				await this._mirrorDirectory(srcPath, destPath, deletedFiles, normRel);
 			} else if (entry.isFile()) {
-				try {
-					// Use hardlink for instant zero-copy mirroring
-					fs.linkSync(srcPath, destPath);
-				} catch {
-					// Fallback to copy if cross-device or permission restricted
-					try {
-						fs.copyFileSync(srcPath, destPath);
-					} catch {}
-				}
+				if (SENSITIVE_FILE_PATTERNS.some(pattern => pattern.test(normRel))) continue;
+				fs.copyFileSync(srcPath, destPath);
 			}
 		}
 	}
 
 	/**
-	 * Executes a permitted toolchain command inside the isolated shadow sandbox
+	 * Executes in a workspace copy after explicit workbench approval; no handler means no execution.
 	 */
 	public async executeToolchain(
 		sessionId: string,
@@ -164,6 +160,41 @@ export class FloatShadowDaemon {
 					column: 1,
 					code: 'SECURITY_BLOCKED',
 					message: `Command refused by FLOAT Security Policy: ${command}`,
+					severity: 'error',
+					source: 'Float Shadow Daemon'
+				}],
+				success: false,
+				shadowDirectory: sandboxDir
+			};
+		}
+
+		let approved = false;
+		if (this._commandApprovalHandler) {
+			try {
+				approved = await this._commandApprovalHandler({
+					command,
+					workingDirectory: sandboxDir,
+					workspaceRoot: this._sourceRoots.get(sessionId) || sandboxDir
+				}) === true;
+			} catch {
+				approved = false;
+			}
+		}
+		if (!approved) {
+			const message = this._commandApprovalHandler
+				? '[COMMAND BLOCKED] User denied command execution. No command was executed.'
+				: '[COMMAND BLOCKED] No interactive approval handler is connected. No command was executed.';
+			return {
+				exitCode: 126,
+				stdout: '',
+				stderr: message,
+				durationMs: 0,
+				diagnostics: [{
+					filePath: '.',
+					line: 1,
+					column: 1,
+					code: 'COMMAND_APPROVAL_REQUIRED',
+					message,
 					severity: 'error',
 					source: 'Float Shadow Daemon'
 				}],
@@ -280,6 +311,7 @@ export class FloatShadowDaemon {
 				await fsp.rm(sandboxDir, { recursive: true, force: true });
 			} catch {}
 			this._activeSandboxes.delete(sessionId);
+			this._sourceRoots.delete(sessionId);
 		}
 	}
 

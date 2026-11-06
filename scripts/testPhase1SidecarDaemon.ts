@@ -58,11 +58,11 @@ async function runTests() {
 		assert(fs.existsSync(sandboxRes.sandboxRoot), 'Physical sandbox must exist on disk');
 		console.log(`  ✓ Shadow sandbox created via Daemon IPC in ${sandboxRes.durationMs}ms at ${sandboxRes.sandboxRoot}`);
 
-		// Toolchain execution through daemon
+		// Sidecar has no UI approval channel: command execution must fail closed.
 		const toolchainRes = await client.runShadowToolchain('daemon-session-1', 'node', ['-v'], 10000);
-		assert.strictEqual(toolchainRes.exitCode, 0);
-		assert(toolchainRes.stdout.includes('v'));
-		console.log(`  ✓ Toolchain executed in isolated daemon sandbox: ${toolchainRes.stdout.trim()}`);
+		assert.strictEqual(toolchainRes.exitCode, 126);
+		assert(toolchainRes.stderr.includes('no interactive user-approval channel'));
+		console.log('  ✓ Sidecar IPC refused command execution without workbench approval.');
 
 		// Sandbox cleanup
 		const cleanupRes = await client.cleanupShadowSandbox('daemon-session-1');

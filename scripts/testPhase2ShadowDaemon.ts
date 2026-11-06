@@ -6,7 +6,7 @@ import { FloatShadowDaemon } from '../desktop/src/vs/workbench/contrib/float/com
 import { FloatShadowWorkspaceService } from '../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowWorkspaceService.js';
 
 async function runPhase2Tests() {
-	console.log('🧪 Starting Phase 2: OS-Level Shadow Workspace Virtualization Tests...\n');
+	console.log('🧪 Starting Phase 2: Speculative Workspace Copy & Command Approval Tests...\n');
 
 	const testWorkspaceDir = path.join(os.tmpdir(), `float-phase2-test-ws-${Date.now()}`);
 	fs.mkdirSync(testWorkspaceDir, { recursive: true });
@@ -51,17 +51,30 @@ async function runPhase2Tests() {
 		assert(fs.readFileSync(mathTs, 'utf8').includes('return a + b'), 'Original math.ts must remain completely untouched!');
 		console.log('  ✓ Original workspace untouched by speculative overlay.');
 
-		// Test 2: Toolchain Execution in Isolation
-		console.log('\nTest 2: Toolchain Execution in Isolation...');
-		// Run a node command inside sandbox verifying environment
+		// Test 2: Commands fail closed without an interactive UI approval handler.
+		console.log('\nTest 2: Command Approval Gate...');
+		const blockedWithoutApproval = await daemon.executeToolchain(
+			sessionId,
+			`node -e "console.log(require('./package.json').name)"`
+		);
+		assert.strictEqual(blockedWithoutApproval.exitCode, 126, 'Command must be blocked without an approval handler');
+		assert(blockedWithoutApproval.stderr.includes('No interactive approval handler'));
+		assert.strictEqual(blockedWithoutApproval.success, false);
+
+		daemon.setCommandApprovalHandler(async request => request.command.startsWith('node -e'));
 		const execResult = await daemon.executeToolchain(
 			sessionId,
-			'node -e "console.log(require(\'./package.json\').name)"'
+			`node -e "console.log(require('./package.json').name)"`
 		);
-
-		assert.strictEqual(execResult.exitCode, 0, 'Toolchain command should exit 0');
-		assert(execResult.stdout.includes('test-pkg'), 'Output should contain test-pkg');
-		console.log(`  ✓ Toolchain executed in isolated shadow sandbox (${execResult.durationMs}ms): ${execResult.stdout.trim()}`);
+		assert.strictEqual(execResult.exitCode, 0);
+		assert(execResult.stdout.includes('test-pkg'));
+		console.log(`  ✓ Toolchain executed after explicit approval in a workspace copy (${execResult.durationMs}ms).`);
+		const shadowWrite = await daemon.executeToolchain(
+			sessionId,
+			`node -e "require('fs').writeFileSync('math.ts','changed only in shadow copy')"`
+		);
+		assert.strictEqual(shadowWrite.exitCode, 0, 'Approved command writes to its temporary workspace');
+		assert(fs.readFileSync(mathTs, 'utf8').includes('return a + b'), 'Approved command must not mutate the original file through a hard link');
 
 		// Test 3: Security Policy Enforcement
 		console.log('\nTest 3: Security Policy Enforcement in Shadow Sandbox...');
@@ -107,7 +120,7 @@ async function runPhase2Tests() {
 		assert(!fs.existsSync(sandboxDir), 'Sandbox directory should be removed on destruction');
 		console.log('  ✓ Sandbox directory cleaned up completely.');
 
-		console.log('\n✅ All Phase 2 OS-Level Shadow Workspace Daemon tests PASSED successfully!\n');
+		console.log('\n✅ All Phase 2 speculative workspace tests PASSED successfully!\n');
 	} finally {
 		await daemon.destroyAllSandboxes();
 		try {

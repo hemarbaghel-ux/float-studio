@@ -3,7 +3,7 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { spawn, ChildProcess } from 'child_process';
+
 
 export interface IFloatProcessExecutionResult {
 	command: string;
@@ -40,77 +40,20 @@ export class FloatSandboxedProcessRunner {
 	}
 
 	public async runInShadowWorkspace(
-		shadowCwd: string,
+		_shadowCwd: string,
 		command: string,
 		args: string[] = [],
-		options: IFloatProcessRunnerOptions = {}
+		_options: IFloatProcessRunnerOptions = {}
 	): Promise<IFloatProcessExecutionResult> {
-		const timeoutMs = options.timeoutMs || 15000;
-		const maxOutputChars = options.maxOutputChars || 500000;
-		const startTime = Date.now();
-
-		if (!FloatSandboxedProcessRunner.isCommandPermitted(command)) {
-			throw new Error(`Command "${command}" is not permitted in sandboxed shadow workspace`);
-		}
-
-		return new Promise<IFloatProcessExecutionResult>((resolve) => {
-			let stdout = '';
-			let stderr = '';
-			let timedOut = false;
-
-			const isCmd = process.platform === 'win32' && (command.endsWith('.cmd') || command.endsWith('.bat'));
-			const child: ChildProcess = spawn(command, args, {
-				cwd: shadowCwd,
-				env: { ...process.env, ...options.env, CI: 'true', FLOAT_SHADOW: 'true' },
-				shell: isCmd
-			});
-
-			const timer = setTimeout(() => {
-				timedOut = true;
-				try {
-					child.kill('SIGTERM');
-				} catch {}
-			}, timeoutMs);
-
-			child.stdout?.on('data', (data: Buffer) => {
-				if (stdout.length < maxOutputChars) {
-					stdout += data.toString('utf8');
-				}
-			});
-
-			child.stderr?.on('data', (data: Buffer) => {
-				if (stderr.length < maxOutputChars) {
-					stderr += data.toString('utf8');
-				}
-			});
-
-			child.on('close', (code: number | null) => {
-				clearTimeout(timer);
-				const durationMs = Date.now() - startTime;
-				resolve({
-					command,
-					args,
-					exitCode: code,
-					stdout: stdout.trim(),
-					stderr: stderr.trim(),
-					durationMs,
-					timedOut
-				});
-			});
-
-			child.on('error', (err: Error) => {
-				clearTimeout(timer);
-				const durationMs = Date.now() - startTime;
-				resolve({
-					command,
-					args,
-					exitCode: 1,
-					stdout,
-					stderr: `${stderr}\n${err.message}`.trim(),
-					durationMs,
-					timedOut
-				});
-			});
-		});
-	}
-}
+		// This sidecar IPC route cannot request interactive workbench approval.
+		// Do not accept a caller-supplied boolean as proof of user consent.
+		return {
+			command,
+			args,
+			exitCode: 126,
+			stdout: '',
+			stderr: '[COMMAND BLOCKED] This daemon IPC path has no interactive user-approval channel. No command was executed.',
+			durationMs: 0,
+			timedOut: false
+		};
+	}}

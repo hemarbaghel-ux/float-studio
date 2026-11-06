@@ -14,6 +14,7 @@ import { FloatMultiFileDiffOrchestrator, IFloatMultiFileProposal } from '../../c
 import { FloatComposerToolRegistry, IComposerFileSystem, IComposerCommandRunner } from '../../common/composer/floatComposerTools.js';
 import { FloatComposerAgent, IComposerAgentGoal, IComposerAgentExecution, IComposerAgentStep } from '../../common/composer/floatComposerAgent.js';
 import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
+import { IFloatCommandApprovalHandler } from '../../common/shadow/floatShadowTypes.js';
 import { ProductionComposerFileSystem, ProductionComposerCommandRunner } from '../../common/composer/floatProductionAdapters.js';
 
 export class FloatComposer extends Disposable {
@@ -30,7 +31,8 @@ export class FloatComposer extends Disposable {
 		@ITextFileService private readonly _textFileService: ITextFileService,
 		customFs?: IComposerFileSystem,
 		customRunner?: IComposerCommandRunner,
-		workspaceRoot?: string
+		workspaceRoot?: string,
+		commandApprovalHandler?: IFloatCommandApprovalHandler
 	) {
 		super();
 		this._orchestrator = new FloatMultiFileDiffOrchestrator();
@@ -41,7 +43,8 @@ export class FloatComposer extends Disposable {
 		const fsAdapter: IComposerFileSystem = customFs ?? new ProductionComposerFileSystem(rootDir);
 
 		// Production command runner backed by real process execution with safety policy
-		const runnerAdapter: IComposerCommandRunner = customRunner ?? new ProductionComposerCommandRunner(rootDir);
+		const runnerAdapter: IComposerCommandRunner = customRunner ?? new ProductionComposerCommandRunner(rootDir, 30000, commandApprovalHandler);
+		this._shadowWorkspace.setCommandApprovalHandler(commandApprovalHandler);
 
 		// Semantic code searcher bridging workspace indexer to composer tools
 		const codeSearcher = async (query: string): Promise<string> => {
