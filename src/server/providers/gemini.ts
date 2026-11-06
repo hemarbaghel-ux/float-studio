@@ -148,6 +148,29 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     return model;
   }
 
+  private buildGenerationConfig(request: AIProviderRequest, apiModel: string): Record<string, any> {
+    const config: Record<string, any> = {};
+    if (request.systemInstruction) {
+      config.systemInstruction = request.systemInstruction;
+    }
+    if (request.reasoningEffort && apiModel.includes('3.8-flash')) {
+      config.thinkingConfig = { thinkingLevel: request.reasoningEffort };
+    } else if (request.reasoningEffort && apiModel.includes('2.0-flash')) {
+      const budgetMap = { low: 1024, medium: 4096, high: 8192 };
+      config.thinkingConfig = { thinkingBudget: budgetMap[request.reasoningEffort] || 4096 };
+    }
+    if (request.tools?.length) {
+      config.tools = [{
+        functionDeclarations: request.tools.map(tool => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters
+        }))
+      }];
+    }
+    return config;
+  }
+
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
     if (!this.isConfigured()) {
       throw new AIProviderError(
@@ -163,23 +186,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       const contents = this.normalizeMessages(request.messages);
       const apiModel = this.resolveApiModel(request.apiModelId || request.model);
 
-      const config: Record<string, any> = {};
-      if (request.systemInstruction) {
-        config.systemInstruction = request.systemInstruction;
-      }
-      if (request.reasoningEffort && apiModel.includes('2.0-flash')) {
-        const budgetMap = { low: 1024, medium: 4096, high: 8192 };
-        config.thinkingConfig = { thinkingBudget: budgetMap[request.reasoningEffort] || 4096 };
-      }
-      if (request.tools?.length) {
-        config.tools = [{
-          functionDeclarations: request.tools.map(tool => ({
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters
-          }))
-        }];
-      }
+      const config = this.buildGenerationConfig(request, apiModel);
 
       const response = await ai.models.generateContent({
         model: apiModel,
@@ -232,23 +239,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       const contents = this.normalizeMessages(request.messages);
       const apiModel = this.resolveApiModel(request.apiModelId || request.model);
 
-      const config: Record<string, any> = {};
-      if (request.systemInstruction) {
-        config.systemInstruction = request.systemInstruction;
-      }
-      if (request.reasoningEffort && apiModel.includes('2.0-flash')) {
-        const budgetMap = { low: 1024, medium: 4096, high: 8192 };
-        config.thinkingConfig = { thinkingBudget: budgetMap[request.reasoningEffort] || 4096 };
-      }
-      if (request.tools?.length) {
-        config.tools = [{
-          functionDeclarations: request.tools.map(tool => ({
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters
-          }))
-        }];
-      }
+      const config = this.buildGenerationConfig(request, apiModel);
 
       const responseStream = await ai.models.generateContentStream({
         model: apiModel,

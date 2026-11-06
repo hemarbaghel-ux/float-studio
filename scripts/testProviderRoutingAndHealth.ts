@@ -139,6 +139,20 @@ async function runTests() {
     assert(capabilityError?.code === 'INVALID_REQUEST' && /does not support streaming/.test(capabilityError.message), 'Model capability registry rejects unsupported streaming before provider execution');
   } finally { astraDescriptor.capabilities.streaming = savedStreaming; }
 
+  // Test Gemini generation options without making a network request or consuming provider quota.
+  const geminiConfigAdapter = new GoogleGeminiAdapter();
+  const geminiRequestConfig = (geminiConfigAdapter as any).buildGenerationConfig({
+    systemInstruction: 'You are a coding assistant.',
+    reasoningEffort: 'high',
+    tools: [{
+      name: 'read_file',
+      description: 'Read a project file.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }
+    }]
+  }, 'gemini-3.8-flash');
+  assert(geminiRequestConfig.thinkingConfig?.thinkingLevel === 'high', 'Gemini 3.8 uses the supported thinkingLevel setting');
+  assert(geminiRequestConfig.tools?.[0]?.functionDeclarations?.[0]?.name === 'read_file', 'Gemini converts FLOAT tools into Google function declarations');
+
   // Test Gemini routing without making a network request or consuming provider quota.
   const mockGeminiRouter = new ModelRouter();
   let capturedGeminiModel = '';
