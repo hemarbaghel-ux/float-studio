@@ -89,10 +89,21 @@ export class FloatWorkspaceIndexer {
 	}
 
 	public isIndexableFile(filePath: string): boolean {
-		if (!filePath || this.isExcluded(filePath)) {
+		if (!filePath || filePath.includes('\0') || this.isExcluded(filePath)) {
 			return false;
 		}
-		const baseName = path.posix.basename(filePath.replace(/\\/g, '/')).toLowerCase();
+		const normalized = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+		const portablePath = path.posix.normalize(normalized);
+		if (
+			portablePath === '.' ||
+			portablePath === '..' ||
+			portablePath.startsWith('../') ||
+			path.posix.isAbsolute(portablePath) ||
+			/^[a-zA-Z]:\//.test(portablePath)
+		) {
+			return false;
+		}
+		const baseName = path.posix.basename(portablePath).toLowerCase();
 		const extension = path.posix.extname(baseName);
 		return INDEXABLE_TEXT_EXTENSIONS.has(extension) || INDEXABLE_EXTENSIONLESS_NAMES.has(baseName);
 	}
@@ -174,21 +185,31 @@ export class FloatWorkspaceIndexer {
 					skipped++;
 					continue;
 				}
-
 				if (!this.isIndexableFile(relPath)) {
 					skipped++;
 					continue;
 				}
 
 				const normalized = relPath.replace(/\\/g, '/').replace(/^\.\//, '');
-				discovered.add(normalized);
 				try {
-					const stat = await fsp.stat(fullPath);
-					if (stat.size > 2 * 1024 * 1024) {
+					const stat = await fsp.lstat(fullPath);
+					if (!stat.isFile() || stat.isSymbolicLink()) {
 						skipped++;
 						continue;
 					}
-					const content = await fsp.readFile(fullPath, 'utf8');
+					if (stat.size > 2 * 1024 * 1024) {
+						this.unregisterFile(normalized);
+						skipped++;
+						continue;
+					}
+					const buffer = await fsp.readFile(fullPath);
+					if (buffer.includes(0)) {
+						this.unregisterFile(normalized);
+						skipped++;
+						continue;
+					}
+					const content = buffer.toString('utf8');
+					discovered.add(normalized);
 					if (this.indexFile(normalized, content)) {
 						indexed++;
 					} else {
@@ -199,6 +220,7 @@ export class FloatWorkspaceIndexer {
 				}
 			}
 		};
+
 
 		await scanDir(rootPath, '');
 		for (const existing of this._files.keys()) {

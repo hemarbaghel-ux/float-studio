@@ -50,6 +50,17 @@ async function main(): Promise<void> {
     assert.equal(hasFile(indexer, 'src/billing.ts'), true);
     assert.equal(hasFile(indexer, '../outside.ts'), false);
 
+    // Added directory events trigger a bounded full rescan; deleted directory events remove descendants.
+    const nestedDir = path.join(sourceDir, 'generated');
+    await fs.mkdir(nestedDir, { recursive: true });
+    const nestedFile = path.join(nestedDir, 'worker.ts');
+    await fs.writeFile(nestedFile, 'export function startQuasarWorker() { return true; }', 'utf8');
+    await lifecycle.handleFileChanges({ added: [nestedDir] });
+    assert.equal(hasFile(indexer, 'src/generated/worker.ts'), true);
+    await fs.rm(nestedDir, { recursive: true, force: true });
+    await lifecycle.handleFileChanges({ deleted: [nestedDir] });
+    assert.equal(hasFile(indexer, 'src/generated/worker.ts'), false);
+
     // Delete events remove the file's chunks and Merkle entry.
     await fs.rm(addedPath);
     await lifecycle.handleFileChanges({ deleted: [addedPath] });

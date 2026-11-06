@@ -158,12 +158,6 @@ export class FloatWorkspaceIndexLifecycle {
           return;
         }
 
-        if (!this._indexer.isIndexableFile(relativePath)) {
-          this._indexer.unregisterPath(relativePath);
-          changedIndex = true;
-          return;
-        }
-
         const absolutePath = path.resolve(root, relativePath);
         let stat: fs.Stats;
         try {
@@ -189,7 +183,7 @@ export class FloatWorkspaceIndexLifecycle {
           return;
         }
 
-        if (!stat.isFile()) {
+        if (!stat.isFile() || !this._indexer.isIndexableFile(relativePath)) {
           this._indexer.unregisterPath(relativePath);
           changedIndex = true;
           return;
@@ -215,7 +209,6 @@ export class FloatWorkspaceIndexLifecycle {
           this._report(error);
         }
       };
-
       for (const resourcePath of added) {
         await upsert(resourcePath);
       }
@@ -252,9 +245,12 @@ export class FloatWorkspaceIndexLifecycle {
     if (this._disposed) {
       return;
     }
+    const hadPendingSave = this._saveTimer !== undefined;
     this._cancelSaveTimer();
     this._disposed = true;
-    void this._queue.then(() => this._persistCurrentWorkspace()).catch(error => this._report(error));
+    if (hadPendingSave) {
+      void this._queue.then(() => this._persistCurrentWorkspace()).catch(error => this._report(error));
+    }
   }
 
   private _relativeWorkspacePath(root: string, resourcePath: string): string | undefined {
