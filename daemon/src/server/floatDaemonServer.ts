@@ -34,6 +34,7 @@ import { FloatDagTaskPlanner } from '../../../desktop/src/vs/workbench/contrib/f
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;
+	storageDir?: string;
 	maxConnections?: number;
 }
 
@@ -65,7 +66,7 @@ export class FloatDaemonServer {
 		this._indexer = new FloatTreeSitterIndexer();
 		this._vectorEngine = new FloatVectorEngine();
 		this._semanticChunker = new FloatAstSemanticChunker(this._indexer);
-		this._diskStore = new FloatDiskIndexStore(path.join(os.tmpdir(), 'float-daemon-index'));
+		this._diskStore = new FloatDiskIndexStore(options?.storageDir || path.join(os.tmpdir(), 'float-daemon-index', String(process.pid)));
 		this._shadowManager = new FloatShadowWorkspaceManager();
 		this._sandboxRunner = new FloatSandboxedProcessRunner();
 		this._diagnosticCollector = new FloatShadowDiagnosticDiffCollector();
