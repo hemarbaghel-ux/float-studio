@@ -26,7 +26,7 @@ export function resolveComposerWorkspaceRelativePath(workspaceRoot: string, cand
 	if (!candidatePath || typeof candidatePath !== 'string' || candidatePath.includes('\0')) {
 		throw new Error('[SECURITY] Invalid empty or null-byte workspace path.');
 	}
-	const rootResolved = fs.realpathSync(workspaceRoot);
+	const rootResolved = path.resolve(workspaceRoot);
 	const normalizedCandidate = candidatePath.replace(/\\/g, path.sep);
 	const candidateResolved = path.isAbsolute(normalizedCandidate)
 		? path.resolve(normalizedCandidate)
