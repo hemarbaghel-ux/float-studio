@@ -62,11 +62,14 @@ function main(): void {
   assert.equal(diversified[0].chunk.id, 'dup-a');
   assert.equal(diversified[1].chunk.id, 'independent', 'MMR should choose a less-redundant result when normalized relevance is close');
 
-  // Serialization must preserve a clean, rebuildable inverted index.
+  // Serialization must rebuild searchable BM25 postings from the saved chunks.
+  index.addChunk(chunk('persist-id', 'src/persist.ts', 'postRestoreHandler', ['postrestore', 'handler']));
   const restored = new FloatVectorIndex();
   restored.deserialize(index.serialize());
-  assert.equal(restored.chunkCount, 0);
-  restored.addChunk(chunk('after-restore', 'src/after.ts', 'postRestoreHandler', ['postrestore', 'handler']));
+  assert.equal(restored.chunkCount, 1);
+  assert.equal(restored.search('postrestore', 5)[0]?.chunk.symbolName, 'postRestoreHandler');
+  assert.equal(restored.search('afterrestore', 5)[0]?.chunk.symbolName, 'afterRestoreHandler');
+  restored.addChunk(chunk('after-restore', 'src/after.ts', 'afterRestoreHandler', ['afterrestore', 'handler']));
   assert.equal(restored.search('postrestore', 5)[0]?.chunk.symbolName, 'postRestoreHandler');
 
   console.log('Vector index maintenance: stable-id replacement, stale BM25 cleanup, file removal and normalized MMR passed.');
