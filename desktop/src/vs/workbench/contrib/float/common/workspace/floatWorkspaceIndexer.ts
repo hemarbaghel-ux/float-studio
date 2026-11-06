@@ -10,9 +10,19 @@ import { FloatMerkleTree } from './floatMerkleTree.js';
 import { FloatSemanticChunker, ISemanticCodeChunk } from './floatSemanticChunker.js';
 import { FloatVectorIndex, IRankedCodeChunk, IBoundedContextResult, ISerializedVectorIndex } from './floatVectorIndex.js';
 
+const INDEXABLE_TEXT_EXTENSIONS = new Set([
+	'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.jsonc', '.md', '.mdx',
+	'.py', '.pyi', '.rs', '.go', '.c', '.h', '.cc', '.cpp', '.cxx', '.hpp', '.java',
+	'.cs', '.css', '.scss', '.less', '.html', '.htm', '.xml', '.yaml', '.yml', '.toml',
+	'.sql', '.sh', '.bash', '.ps1', '.bat', '.cmd', '.vue', '.svelte', '.php', '.rb',
+	'.swift', '.kt', '.kts', '.dart', '.lua', '.ex', '.exs', '.erl', '.hrl', '.graphql',
+	'.gql', '.proto', '.tf', '.hcl', '.gradle', '.properties', '.ini'
+]);
+
 const EXCLUDED_PATTERNS = [
 	/(^|[\\/])node_modules([\\/]|$)/i,
 	/(^|[\\/])\.git([\\/]|$)/i,
+	/(^|[\\/])\.float([\\/]|$)/i,
 	/(^|[\\/])dist([\\/]|$)/i,
 	/(^|[\\/])build([\\/]|$)/i,
 	/(^|[\\/])out([\\/]|$)/i,
@@ -124,12 +134,13 @@ export class FloatWorkspaceIndexer {
 	public async discoverAndIndexWorkspace(rootPath: string): Promise<{ indexed: number; skipped: number }> {
 		let indexed = 0;
 		let skipped = 0;
+		const discovered = new Set<string>();
 
 		if (!fs.existsSync(rootPath)) {
 			return { indexed, skipped };
 		}
 
-		const scanDir = async (dir: string, relBase: string) => {
+		const scanDir = async (dir: string, relBase: string): Promise<void> => {
 			const entries = await fsp.readdir(dir, { withFileTypes: true });
 			for (const entry of entries) {
 				const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
@@ -141,29 +152,47 @@ export class FloatWorkspaceIndexer {
 				const fullPath = path.join(dir, entry.name);
 				if (entry.isDirectory()) {
 					await scanDir(fullPath, relPath);
-				} else if (entry.isFile()) {
-					try {
-						// Only index text / code files under 2MB
-						const stat = await fsp.stat(fullPath);
-						if (stat.size > 2 * 1024 * 1024) {
-							skipped++;
-							continue;
-						}
+					continue;
+				}
+				if (!entry.isFile()) {
+					// Never follow symlinks or special files during automatic indexing.
+					skipped++;
+					continue;
+				}
 
-						const content = await fsp.readFile(fullPath, 'utf8');
-						if (this.indexFile(relPath, content)) {
-							indexed++;
-						} else {
-							skipped++;
-						}
-					} catch {
+				const extension = path.extname(entry.name).toLowerCase();
+				const extensionless = new Set(['dockerfile', 'makefile', 'justfile', '.gitignore', '.gitattributes', '.editorconfig']);
+				if (!INDEXABLE_TEXT_EXTENSIONS.has(extension) && !extensionless.has(entry.name.toLowerCase())) {
+					skipped++;
+					continue;
+				}
+
+				const normalized = relPath.replace(/\\/g, '/').replace(/^\.\//, '');
+				discovered.add(normalized);
+				try {
+					const stat = await fsp.stat(fullPath);
+					if (stat.size > 2 * 1024 * 1024) {
+						skipped++;
+						continue;
+					}
+					const content = await fsp.readFile(fullPath, 'utf8');
+					if (this.indexFile(normalized, content)) {
+						indexed++;
+					} else {
 						skipped++;
 					}
+				} catch {
+					skipped++;
 				}
 			}
 		};
 
 		await scanDir(rootPath, '');
+		for (const existing of this._files.keys()) {
+			if (!discovered.has(existing)) {
+				this.unregisterFile(existing);
+			}
+		}
 		return { indexed, skipped };
 	}
 
@@ -201,7 +230,14 @@ export class FloatWorkspaceIndexer {
 		};
 
 		await fsp.mkdir(path.dirname(savePath), { recursive: true });
-		await fsp.writeFile(savePath, JSON.stringify(payload, null, 2), 'utf8');
+		const temporaryPath = `${savePath}.tmp-${process.pid}-${Date.now()}`;
+		try {
+			await fsp.writeFile(temporaryPath, JSON.stringify(payload, null, 2), 'utf8');
+			await fsp.rename(temporaryPath, savePath);
+		} catch (error) {
+			await fsp.rm(temporaryPath, { force: true }).catch(() => undefined);
+			throw error;
+		}
 	}
 
 	/**
@@ -215,19 +251,24 @@ export class FloatWorkspaceIndexer {
 		try {
 			const raw = await fsp.readFile(metaPath, 'utf8');
 			const payload: IFloatIndexMetadataPayload = JSON.parse(raw);
-			if (!payload.files || !Array.isArray(payload.files)) {
+			if (payload.version !== 1 || !Array.isArray(payload.files)) {
 				return false;
 			}
 
 			this.clear();
-
+			const restoredHashes: Array<{ path: string; hash: string }> = [];
 			for (const file of payload.files) {
-				if (!this.isExcluded(file.relativePath)) {
+				if (!this.isExcluded(file.relativePath) && !file.isBinary) {
 					this._files.set(file.relativePath, file);
 					if (file.hash) {
-						this._merkleTree.updateFile(file.relativePath, '');
+						restoredHashes.push({ path: file.relativePath, hash: file.hash });
 					}
 				}
+			}
+			this._merkleTree.restoreFileHashes(restoredHashes);
+			if (payload.stats?.rootHash && payload.stats.rootHash !== this._merkleTree.rootHash) {
+				this.clear();
+				return false;
 			}
 
 			if (payload.vectorIndex) {

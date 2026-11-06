@@ -10,6 +10,9 @@
  */
 
 import assert from 'node:assert';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { FloatMerkleTree } from '../desktop/src/vs/workbench/contrib/float/common/workspace/floatMerkleTree.ts';
 import { FloatSemanticChunker } from '../desktop/src/vs/workbench/contrib/float/common/workspace/floatSemanticChunker.ts';
 import { FloatVectorIndex } from '../desktop/src/vs/workbench/contrib/float/common/workspace/floatVectorIndex.ts';
@@ -226,6 +229,30 @@ def load_dataset(path):
 		assert(symbolContext.excerpt.includes('authenticate(user: string)'));
 
 		console.log('  -> PASS: @codebase and @symbol mentions grounded with real semantic code excerpts');
+	}
+
+	// -------------------------------------------------------------
+	// Suite 6: Durable metadata, vectors, and Merkle hash recovery
+	// -------------------------------------------------------------
+	console.log('\\n--- Suite 6: Durable Index Persistence & Recovery ---');
+	{
+		const root = await mkdtemp(path.join(tmpdir(), 'float-index-roundtrip-'));
+		try {
+			const metadataPath = path.join(root, '.float', 'index-meta.json');
+			const source = new FloatWorkspaceIndexer();
+			source.indexFile('src/auth/session.ts', 'export function verifySessionToken(token: string) { return token.length > 0; }');
+			const originalHash = source.merkleTree.getFileHash('src/auth/session.ts');
+			await source.saveIndexMetadata(metadataPath);
+
+			const restored = new FloatWorkspaceIndexer();
+			assert.strictEqual(await restored.loadIndexMetadata(metadataPath), true);
+			assert.strictEqual(restored.merkleTree.getFileHash('src/auth/session.ts'), originalHash);
+			assert(restored.searchCodebase('verify session token', 5).some(result => result.chunk.filePath === 'src/auth/session.ts'));
+			assert.strictEqual(restored.getStats().chunkCount, source.getStats().chunkCount);
+			console.log('  -> PASS: Searchable chunks and exact Merkle hashes survive indexer restart');
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	}
 
 	console.log('\n================================================================');

@@ -353,7 +353,8 @@ export class FloatDaemonServer {
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const indexedFiles = this._indexer.getIndexedFiles();
 					const nodes = indexedFiles.map(f => this._indexer.getFileNode(f)!).filter(Boolean);
-					const writeRes = await store.saveIndex(nodes, []);
+					const chunks = this._vectorEngine.getAllChunks();
+					const writeRes = await store.saveIndex(nodes, chunks);
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -372,6 +373,10 @@ export class FloatDaemonServer {
 					const storageDir = params?.storageDir;
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const loaded = await store.loadIndex();
+					if (loaded) {
+						this._indexer.restoreNodes(loaded.nodes);
+						this._vectorEngine.restoreChunks(loaded.chunks);
+					}
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -379,7 +384,7 @@ export class FloatDaemonServer {
 							loaded: loaded !== null,
 							totalFiles: loaded?.manifest.totalFiles || 0,
 							totalSymbols: loaded?.manifest.totalSymbols || 0,
-							totalChunks: loaded?.manifest.totalChunks || 0
+							totalChunks: loaded?.chunks.length || 0
 						}
 					};
 					socket.write(FloatIpcFramer.encode(res));

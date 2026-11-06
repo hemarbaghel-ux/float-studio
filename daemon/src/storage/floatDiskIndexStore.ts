@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { IFloatFileMerkleNode } from '../indexer/floatTreeSitterIndexer.js';
-import { IFloatSemanticChunk } from '../chunker/floatAstSemanticChunker.js';
+import { IFloatCodeChunk } from '../vector/floatVectorEngine.js';
 
 export interface IFloatIndexManifest {
 	version: number;
@@ -21,7 +21,7 @@ export interface IFloatIndexManifest {
 export interface IFloatStoredIndexPayload {
 	manifest: IFloatIndexManifest;
 	nodes: IFloatFileMerkleNode[];
-	chunks: IFloatSemanticChunk[];
+	chunks: IFloatCodeChunk[];
 }
 
 export class FloatDiskIndexStore {
@@ -41,7 +41,7 @@ export class FloatDiskIndexStore {
 		}
 	}
 
-	public async saveIndex(nodes: IFloatFileMerkleNode[], chunks: IFloatSemanticChunk[]): Promise<{ bytesWritten: number; manifestPath: string }> {
+	public async saveIndex(nodes: IFloatFileMerkleNode[], chunks: IFloatCodeChunk[]): Promise<{ bytesWritten: number; manifestPath: string }> {
 		await this.ensureDirectory();
 
 		const totalSymbols = nodes.reduce((sum, n) => sum + (n.symbols ? n.symbols.length : 0), 0);

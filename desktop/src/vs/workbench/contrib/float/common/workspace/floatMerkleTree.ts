@@ -52,6 +52,19 @@ export class FloatMerkleTree {
 		return true;
 	}
 
+	/** Restore path/hash pairs from a validated metadata snapshot. */
+	public restoreFileHashes(entries: Array<{ path: string; hash: string }>): void {
+		this._fileHashes.clear();
+		for (const entry of entries) {
+			const norm = entry.path.replace(/\\/g, '/').replace(/^\.\//, '');
+			if (!norm || norm.startsWith('/') || /^[a-zA-Z]:/.test(norm) || !/^[a-f0-9]{64}$/i.test(entry.hash)) {
+				throw new Error(`Invalid persisted Merkle entry: ${entry.path}`);
+			}
+			this._fileHashes.set(norm, entry.hash.toLowerCase());
+		}
+		this._recalculateRoot();
+	}
+
 	public removeFile(filePath: string): boolean {
 		const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
 		if (this._fileHashes.delete(norm)) {
