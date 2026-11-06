@@ -61,7 +61,7 @@ export class ModelRouter {
   getConfiguredModelIds(): string[] {
     this.ensureAdaptersRegistered();
     return MODEL_REGISTRY
-      .filter((model) => this.adapters.get(model.providerId)?.isConfigured())
+      .filter((model) => model.selectable && this.adapters.get(model.providerId)?.isConfigured())
       .map((model) => model.id);
   }
 
@@ -199,7 +199,7 @@ export class ModelRouter {
 
     if (!adapter.isConfigured() && !request.demoMode) {
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", ${route.provider === 'google' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'} in the server environment.`,
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${route.provider === 'google' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'} in the server environment.`,
         'AUTH_ERROR',
         adapter.name,
         401
@@ -266,7 +266,7 @@ export class ModelRouter {
 
     if (!adapter.isConfigured() && !request.demoMode) {
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure OPENAI_API_KEY in the server environment.`,
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${route.provider === 'google' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'} in the server environment.`,
         'AUTH_ERROR',
         adapter.name,
         401
