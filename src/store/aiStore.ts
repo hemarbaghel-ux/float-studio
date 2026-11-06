@@ -95,6 +95,7 @@ export const useAIStore = create<AIStore>((set) => ({
   recentModels: getInitialRecents(),
   providers: {
     openai: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' },
+    google: { enabled: true, configured: false, defaultModel: 'gemini-3.8-flash' },
     auto: { enabled: true, configured: false, defaultModel: 'gpt-6-astra' }
   },
   preferences: {
@@ -226,7 +227,7 @@ export const useAIStore = create<AIStore>((set) => ({
             exactModelId: model.apiModelId,
             apiModelId: model.apiModelId,
             providerId: model.providerId,
-            provider: model.providerId === 'openai' ? 'OpenAI' : model.providerId,
+            provider: model.providerId === 'openai' ? 'OpenAI' : model.providerId === 'google' ? 'Google Gemini' : model.providerId,
             displayName: model.displayName,
             shortName: model.displayName,
             family: model.providerId,

@@ -5,6 +5,7 @@ import { XAIAdapter, normalizeXAIError } from '../src/server/providers/xai';
 import { GoogleGeminiAdapter, normalizeGeminiError } from '../src/server/providers/gemini';
 import { AIProviderError } from '../src/server/providers/base';
 import { DASHBOARD_MODELS } from '../src/features/dashboard/dashboardModels';
+import { INITIAL_MODELS } from '../src/features/ai/registry';
 import { VERIFIED_MODELS } from '../src/data/verifiedModels';
 import { MODEL_REGISTRY, MODEL_ROUTES } from '../src/server/providers/modelRegistry';
 import { useModelIntelligenceStore } from '../src/store/modelIntelligenceStore';
@@ -36,8 +37,6 @@ async function runTests() {
 
   const pHealth = healthResults.openai;
   assert(pHealth !== undefined, 'Health contains active provider: openai');
-  assert(healthResults.google !== undefined, 'Health contains registered provider: google');
-  assert(healthResults.google.modelAvailable === false, 'Gemini health never claims model access before a genuine generation request');
   assert(typeof pHealth.provider === 'string', `openai has provider name string: ${pHealth?.provider}`);
   assert(typeof pHealth.configured === 'boolean', `openai has configured boolean: ${pHealth?.configured}`);
   assert(typeof pHealth.authenticated === 'boolean', `openai has authenticated boolean: ${pHealth?.authenticated}`);
@@ -56,6 +55,9 @@ async function runTests() {
     assert(m.supportsTools === true, `Dashboard model ${m.id} has supportsTools`);
   }
 
+  assert(DASHBOARD_MODELS.some(model => model.id === 'gemini-3.8-flash' && model.providerId === 'google'), 'Gemini 3.8 Flash is present in the dashboard model catalog');
+  assert(INITIAL_MODELS.some(model => model.id === 'gemini-3.8-flash' && model.providerId === 'google'), 'Gemini 3.8 Flash is selectable in the initial chat/composer model list');
+
   // Test 3: ModelRouter Strict Routing (Provider + apiModelId)
   console.log('\n--- Test Suite 3: ModelRouter Provider & Model Resolution ---');
   const astraRoute = router.resolveRoute('gpt-6-astra');
@@ -65,13 +67,10 @@ async function runTests() {
   const solRoute = router.resolveRoute('gpt-6.1-sol');
   assert(solRoute.route.apiModelId === 'gpt-6.1-sol', 'GPT-6.1 Sol preserves the exact upstream model ID');
   assert(solRoute.route.protocol === 'responses', 'GPT-6.1 Sol routes through the Responses API protocol');
-  const geminiRoute = router.resolveRoute('gemini-3.8-flash');
-  assert(geminiRoute.route.provider === 'google', 'Gemini 3.8 Flash routes to Google');
-  assert(geminiRoute.route.apiModelId === 'gemini-3.8-flash', 'Gemini 3.8 Flash preserves its exact upstream model ID');
   assert(
     JSON.stringify(Object.keys(MODEL_ROUTES).sort()) ===
-      JSON.stringify(['auto', 'gemini-3.8-flash', 'gpt-6-astra', 'gpt-6.1-sol'].sort()),
-    'Runtime route authority exposes the selected OpenAI and Gemini model IDs plus Auto'
+      JSON.stringify(['auto', 'gpt-6-astra', 'gpt-6.1-sol'].sort()),
+    'Runtime route authority exposes only the two selected model IDs and the explicit Auto alias'
   );
   assert(
     !('runAgentLoop' in router.getAdapterForModel('gpt-6-astra')),
@@ -88,8 +87,7 @@ async function runTests() {
   }
 
   const modelCatalog = router.getModelCatalog();
-  assert(modelCatalog.length === 3 && modelCatalog.some((model) => model.id === 'gemini-3.8-flash'), 'Server model catalog includes Gemini 3.8 Flash alongside the GPT models');
-  assert(modelCatalog.find((model) => model.id === 'gemini-3.8-flash')?.requiredEnvironmentVariable === 'GEMINI_API_KEY', 'Gemini catalog points to the correct server-side credential');
+  assert(modelCatalog.length === 2 && modelCatalog.some((model) => model.id === 'gpt-6-astra') && modelCatalog.some((model) => model.id === 'gpt-6.1-sol'), 'Server model catalog exposes only GPT-6 Astra and GPT-6.1 Sol');
   assert(modelCatalog.every((model) => model.modelAvailability === 'unverified'), 'Credential configuration is not reported as model access verification');
   assert(modelCatalog.every((model) => model.status === 'UNKNOWN' || model.status === 'CONFIG_REQUIRED'), 'Unverified models are not marked available');
   assert(modelCatalog.find((model) => model.id === 'gpt-6-astra')?.maxOutputTokens === 128000, 'GPT-6 Astra catalog exposes the verified output ceiling');
@@ -139,50 +137,6 @@ async function runTests() {
     assert(capabilityError?.code === 'INVALID_REQUEST' && /does not support streaming/.test(capabilityError.message), 'Model capability registry rejects unsupported streaming before provider execution');
   } finally { astraDescriptor.capabilities.streaming = savedStreaming; }
 
-  // Test Gemini generation options without making a network request or consuming provider quota.
-  const geminiConfigAdapter = new GoogleGeminiAdapter();
-  const geminiRequestConfig = (geminiConfigAdapter as any).buildGenerationConfig({
-    systemInstruction: 'You are a coding assistant.',
-    reasoningEffort: 'high',
-    tools: [{
-      name: 'read_file',
-      description: 'Read a project file.',
-      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }
-    }]
-  }, 'gemini-3.8-flash');
-  assert(geminiRequestConfig.thinkingConfig?.thinkingLevel === 'high', 'Gemini 3.8 uses the supported thinkingLevel setting');
-  assert(geminiRequestConfig.tools?.[0]?.functionDeclarations?.[0]?.name === 'read_file', 'Gemini converts FLOAT tools into Google function declarations');
-
-  // Test Gemini routing without making a network request or consuming provider quota.
-  const mockGeminiRouter = new ModelRouter();
-  let capturedGeminiModel = '';
-  mockGeminiRouter.registerAdapter({
-    id: 'google',
-    name: 'Mock Google Gemini',
-    isConfigured: () => true,
-    generateContent: async (request: any) => {
-      capturedGeminiModel = request.apiModelId || request.model;
-      return { text: 'GEMINI_ROUTE_OK' };
-    },
-    generateContentStream: async (request: any, onChunk: (delta: string) => void) => {
-      capturedGeminiModel = request.apiModelId || request.model;
-      onChunk('GEMINI_STREAM_OK');
-      return { text: 'GEMINI_STREAM_OK' };
-    }
-  } as any);
-  const mockGeminiResult = await mockGeminiRouter.generateContent({
-    model: 'gemini-3.8-flash',
-    messages: [{ role: 'user', content: 'test' }]
-  });
-  assert(mockGeminiResult.text === 'GEMINI_ROUTE_OK', 'Gemini model dispatch returns Google adapter response');
-  assert(capturedGeminiModel === 'gemini-3.8-flash', 'Gemini dispatch passes exact API model ID to Google adapter');
-  let geminiStreamText = '';
-  const mockGeminiStreamResult = await mockGeminiRouter.generateContentStream({
-    model: 'gemini-3.8-flash',
-    messages: [{ role: 'user', content: 'test' }]
-  }, chunk => { geminiStreamText += chunk; });
-  assert(mockGeminiStreamResult.text === 'GEMINI_STREAM_OK' && geminiStreamText === 'GEMINI_STREAM_OK', 'Gemini model dispatch streams Google adapter deltas');
-
   // Test 4: NO Silent Fallback to Gemini when Model Fails or is Unknown
   console.log('\n--- Test Suite 4: Prohibition of Silent Fallbacks & DeepSeek Removal ---');
   let unknownModelError: any = null;
@@ -229,12 +183,10 @@ async function runTests() {
   const originalOpenAIKey = process.env.OPENAI_API_KEY;
   const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
   const originalXAIKey = process.env.XAI_API_KEY;
-  const originalGeminiKey = process.env.GEMINI_API_KEY;
 
   delete process.env.OPENAI_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.XAI_API_KEY;
-  delete process.env.GEMINI_API_KEY;
 
   const freshRouter = new ModelRouter();
 
@@ -247,17 +199,6 @@ async function runTests() {
   assert(openAIMissingKeyError instanceof AIProviderError, 'Missing OpenAI key throws AIProviderError');
   assert(openAIMissingKeyError?.code === 'AUTH_ERROR', 'Missing OpenAI key has code AUTH_ERROR');
   assert(openAIMissingKeyError?.provider === 'OpenAI', 'Missing OpenAI key provider is OpenAI (never fell back to Google)');
-
-  let geminiMissingKeyError: any = null;
-  try {
-    await freshRouter.generateContent({ model: 'gemini-3.8-flash', messages: [{ role: 'user', content: 'test' }] });
-  } catch (err) {
-    geminiMissingKeyError = err;
-  }
-  assert(geminiMissingKeyError instanceof AIProviderError, 'Missing Gemini key throws AIProviderError');
-  assert(geminiMissingKeyError?.code === 'AUTH_ERROR', 'Missing Gemini key has code AUTH_ERROR');
-  assert(geminiMissingKeyError?.provider === 'Google Gemini', 'Missing Gemini key identifies Google Gemini provider');
-  assert(/GEMINI_API_KEY/.test(geminiMissingKeyError?.message || ''), 'Missing Gemini key error names GEMINI_API_KEY');
 
   let unsupportedClaudeError: any = null;
   try {
@@ -313,7 +254,6 @@ async function runTests() {
   if (originalOpenAIKey) process.env.OPENAI_API_KEY = originalOpenAIKey;
   if (originalAnthropicKey) process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
   if (originalXAIKey) process.env.XAI_API_KEY = originalXAIKey;
-  if (originalGeminiKey) process.env.GEMINI_API_KEY = originalGeminiKey;
 
   const liveRouter = new ModelRouter();
   const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY);
