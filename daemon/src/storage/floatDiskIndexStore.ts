@@ -36,8 +36,9 @@ export class FloatDiskIndexStore {
 	}
 
 	public async ensureDirectory(): Promise<void> {
-		if (!fs.existsSync(this._storageDir)) {
-			await fs.promises.mkdir(this._storageDir, { recursive: true });
+		await fs.promises.mkdir(this._storageDir, { recursive: true, mode: 0o700 });
+		if (process.platform !== 'win32') {
+			await fs.promises.chmod(this._storageDir, 0o700);
 		}
 	}
 

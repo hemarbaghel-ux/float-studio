@@ -3,6 +3,7 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -137,7 +138,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
       ? '\\\\.\\pipe\\float-daemon-' + generateUuid()
       : path.join(runtimeDirectory, 'daemon.sock');
 
-    const storageDir = this._resolveStorageDirectory(runtimeDirectory);
+    const storageDir = this._resolveStorageDirectory();
     this._storageDirectory = storageDir;
     const worker = await this._utilityProcessService.createWorker({
       moduleId: FLOAT_DAEMON_WORKER_MODULE,
@@ -181,7 +182,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
       return;
     }
 
-    const activeStorageDirectory = this._resolveStorageDirectory(this._runtimeDirectory || os.tmpdir());
+    const activeStorageDirectory = this._resolveStorageDirectory();
     const currentStorageDirectory = this._storageDirectory;
     if (activeStorageDirectory === currentStorageDirectory) {
       return;
@@ -193,12 +194,15 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
       .catch(error => this._logService.warn('[FLOAT] Daemon restart after workspace change failed:', error));
   }
 
-  private _resolveStorageDirectory(runtimeDirectory: string): string {
-    const folder = this._workspaceContextService.getWorkspace().folders[0];
-    if (folder?.uri.scheme === 'file') {
-      return path.join(folder.uri.fsPath, '.float', 'daemon-index');
-    }
-    return path.join(runtimeDirectory, 'index');
+  private _resolveStorageDirectory(): string {
+    const workspace = this._workspaceContextService.getWorkspace();
+    const firstFolder = workspace.folders[0];
+    const identity = workspace.id || firstFolder?.uri.toString() || 'empty-workspace';
+    const workspaceKey = crypto.createHash('sha256').update(identity, 'utf8').digest('hex');
+    // Keep private code-index snapshots outside the opened repository. A hostile
+    // workspace must not be able to redirect the daemon's persistence path with
+    // a committed .float symlink.
+    return path.join(os.homedir(), '.float-studio', 'daemon-index', workspaceKey);
   }
 
   private _handleWorkerTermination(worker: IUtilityProcessWorker, reason: { code?: number; signal?: string }): void {

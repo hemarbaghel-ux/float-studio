@@ -9,7 +9,7 @@ FLOAT starts its sidecar daemon as a Code-OSS Electron Utility Process Worker.
 - The daemon listens on a per-window randomized local named pipe (Windows) or Unix socket under a private temporary directory (POSIX).
 - The existing `FloatDaemonClient` connects to that local endpoint and performs a health check before the runtime is reported as ready.
 - An unexpected worker exit moves the runtime to `failed` and triggers bounded exponential restart attempts.
-- Closing or reloading the workbench stops the daemon and removes its temporary runtime directory. The daemon's index snapshot is stored in the local workspace's `.float/daemon-index` directory; empty or remote workspaces use temporary storage.
+- Closing or reloading the workbench stops the daemon and removes its temporary runtime directory. The daemon's index snapshot is stored under the current user's `~/.float-studio/daemon-index/<workspace-hash>` directory, outside the opened repository. The storage directory is created with owner-only permissions on POSIX systems.
 
 ## Building
 
