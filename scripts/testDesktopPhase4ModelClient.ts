@@ -20,7 +20,7 @@ import http from 'http';
 import { AddressInfo } from 'net';
 import { FloatModelClient } from '../desktop/src/vs/workbench/contrib/float/common/model-runtime/floatModelClient.js';
 import { FloatAuthService } from '../desktop/src/vs/workbench/contrib/float/common/auth/floatAuthService.js';
-import { FLOAT_MODELS, getFloatModel, getDefaultFloatModel } from '../desktop/src/vs/workbench/contrib/float/common/model-runtime/floatModelRegistry.js';
+import { FLOAT_MODELS, getFloatModel, getDefaultFloatModel, calculateModelCost } from '../desktop/src/vs/workbench/contrib/float/common/model-runtime/floatModelRegistry.js';
 import { ISecretStorageService } from '../desktop/src/vs/platform/secrets/common/secrets.js';
 
 class MockSecretStorageService implements ISecretStorageService {
@@ -74,7 +74,46 @@ async function runTests() {
     const autoModel = getFloatModel('auto');
     assert.strictEqual(autoModel?.isRoutingAlias, true, 'auto must be flagged as routing alias');
     assert.strictEqual(autoModel?.upstreamModelId, 'gpt-6-astra', 'auto must route to gpt-6-astra');
-    console.log('  -> PASS: Desktop registry perfectly consistent with server models');
+    const geminiPaidCost = calculateModelCost('gemini-3.8-flash', 1_000_000, 1_000_000);
+    assert.strictEqual(geminiPaidCost, 4.5, 'Gemini 3.8 Flash paid-tier estimator must use $0.75 input + $3.75 output per 1M tokens');
+    console.log('  -> PASS: Desktop registry and Gemini paid-tier cost metadata are aligned');
+  }
+
+  // Suite 0.1: Native desktop client preserves the Google model ID through the API boundary.
+  {
+    console.log('[Suite 0.1] Native Gemini model request routing...');
+    let receivedModel: string | undefined;
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        receivedModel = JSON.parse(body).model;
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end('data: {"type":"delta","text":"Gemini desktop route"}\\n\\n');
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const client = new FloatModelClient();
+    client.setEndpoint(`http://127.0.0.1:${port}/api/ai/chat`);
+    let metadata: any = null;
+    await new Promise<void>((resolve, reject) => {
+      client.streamChat(
+        [{ role: 'user', content: 'Verify Gemini desktop route' }],
+        'gemini-3.8-flash',
+        {
+          onChunk: () => {},
+          onError: reject,
+          onComplete: (_text, result) => { metadata = result; resolve(); }
+        }
+      );
+    });
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    assert.strictEqual(receivedModel, 'gemini-3.8-flash', 'Native desktop client must send Gemini 3.8 Flash model ID unchanged');
+    assert.strictEqual(metadata.requestedModelId, 'gemini-3.8-flash');
+    assert.strictEqual(metadata.executedModelId, 'gemini-3.8-flash');
+    assert.strictEqual(metadata.isRoutingAlias, false);
+    console.log('  -> PASS: Native desktop stream sends exact Gemini model ID to FLOAT server');
   }
 
   // Suite 1: Progressive SSE Streaming with Split Frames
