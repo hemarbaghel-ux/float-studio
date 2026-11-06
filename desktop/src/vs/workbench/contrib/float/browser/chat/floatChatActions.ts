@@ -33,8 +33,6 @@ export class OpenFloatChatAction extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const floatService = accessor.get(IFloatService);
 		const daemonRuntimeService = accessor.get(IFloatDaemonRuntimeService);
-		const resolvedContext = await new FloatDaemonContextResolver(floatService, daemonRuntimeService).resolveContext(prompt.trim());
-		const contextItems = resolvedContext.files.map(file => ({ path: file.path, content: file.excerpt }));
 
 		const prompt = await quickInputService.input({
 			prompt: `FLOAT Chat (${floatService.getActiveModel().name}): Ask about your codebase`,
@@ -44,6 +42,9 @@ export class OpenFloatChatAction extends Action2 {
 		if (!prompt || !prompt.trim()) {
 			return;
 		}
+
+		const resolvedContext = await new FloatDaemonContextResolver(floatService, daemonRuntimeService).resolveContext(prompt.trim());
+		const contextItems = resolvedContext.files.map(file => ({ path: file.path, content: file.excerpt }));
 
 		notificationService.info(`[FLOAT Chat] Requesting answer using ${floatService.getActiveModel().name}...`);
 		let accumulatedText = '';
