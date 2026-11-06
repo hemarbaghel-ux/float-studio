@@ -55,7 +55,7 @@ async function runPhase2Tests() {
 		console.log('\nTest 2: Command Approval Gate...');
 		const blockedWithoutApproval = await daemon.executeToolchain(
 			sessionId,
-			'node -e "console.log(require(\\'./package.json\\').name)"'
+			`node -e "console.log(require('./package.json').name)"`
 		);
 		assert.strictEqual(blockedWithoutApproval.exitCode, 126, 'Command must be blocked without an approval handler');
 		assert(blockedWithoutApproval.stderr.includes('No interactive approval handler'));
@@ -64,7 +64,7 @@ async function runPhase2Tests() {
 		daemon.setCommandApprovalHandler(async request => request.command.startsWith('node -e'));
 		const execResult = await daemon.executeToolchain(
 			sessionId,
-			'node -e "console.log(require(\\'./package.json\\').name)"'
+			`node -e "console.log(require('./package.json').name)"`
 		);
 		assert.strictEqual(execResult.exitCode, 0);
 		assert(execResult.stdout.includes('test-pkg'));

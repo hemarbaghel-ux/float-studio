@@ -67,12 +67,12 @@ async function runStep4Tests() {
   console.log('--- Suite 0: Command Approval & Fail-Closed Behavior ---');
   {
     const noApproval = new ProductionComposerCommandRunner(tempWorkspace, 5000);
-    const blocked = await noApproval.runCommand('node -e "process.stdout.write(\\'must-not-run\\')"');
+    const blocked = await noApproval.runCommand(`node -e "process.stdout.write('must-not-run')"`);
     assert.strictEqual(blocked.exitCode, 126);
     assert(blocked.stderr.includes('User approval is required'));
 
     const deniedRunner = new ProductionComposerCommandRunner(tempWorkspace, 5000, async () => false);
-    const denied = await deniedRunner.runCommand('node -e "process.stdout.write(\\'must-not-run\\')"');
+    const denied = await deniedRunner.runCommand(`node -e "process.stdout.write('must-not-run')"`);
     assert.strictEqual(denied.exitCode, 126);
 
     let capturedApproval: any;
@@ -80,14 +80,14 @@ async function runStep4Tests() {
       capturedApproval = request;
       return true;
     });
-    const approved = await approvedRunner.runCommand('node -e "process.stdout.write(\\'approved-command\\')"');
+    const approved = await approvedRunner.runCommand(`node -e "process.stdout.write('approved-command')"`);
     assert.strictEqual(approved.exitCode, 0);
     assert(approved.stdout.includes('approved-command'));
     assert.strictEqual(capturedApproval.workspaceRoot, tempWorkspace);
 
     const shadowNoApproval = new IsolatedShadowWorkspaceCommandRunner(tempWorkspace);
     try {
-      const shadowBlocked = await shadowNoApproval.runCommand('node -e "process.stdout.write(\\'must-not-run\\')"');
+      const shadowBlocked = await shadowNoApproval.runCommand(`node -e "process.stdout.write('must-not-run')"`);
       assert.strictEqual(shadowBlocked.exitCode, 126);
     } finally {
       shadowNoApproval.dispose();
@@ -98,7 +98,7 @@ async function runStep4Tests() {
       return true;
     });
     try {
-      const result = await shadowApproved.runCommand('node -e "process.stdout.write(\\'approved-copy-command\\')"');
+      const result = await shadowApproved.runCommand(`node -e "process.stdout.write('approved-copy-command')"`);
       assert.strictEqual(result.exitCode, 0);
       assert(result.stdout.includes('approved-copy-command'));
       assert.notStrictEqual(shadowApproved.shadowDir, tempWorkspace);
