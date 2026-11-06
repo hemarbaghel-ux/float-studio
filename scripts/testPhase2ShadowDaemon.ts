@@ -23,7 +23,7 @@ async function runPhase2Tests() {
 	const daemon = new FloatShadowDaemon();
 
 	try {
-		// Test 1: Fast Sandbox Creation & File Hardlinking/Mirroring
+		// Test 1: Copy-based Sandbox Creation & Mirroring
 		console.log('Test 1: Fast Sandbox Creation & Mirroring...');
 		const sessionId = 'test-session-1';
 		const overlays = new Map<string, string>();
@@ -41,6 +41,9 @@ async function runPhase2Tests() {
 		const sandboxIndex = path.join(sandboxDir, 'index.ts');
 		assert(fs.existsSync(sandboxIndex), 'Unchanged index.ts should exist in sandbox');
 		assert.strictEqual(fs.readFileSync(sandboxIndex, 'utf8'), fs.readFileSync(indexTs, 'utf8'));
+		fs.writeFileSync(sandboxIndex, 'sandbox-only mutation', 'utf8');
+		assert.strictEqual(fs.readFileSync(indexTs, 'utf8'), 'import { add } from "./math";\nconsole.log(add(10, 20));\n', 'Changing an unchanged shadow copy must not mutate the original file');
+		fs.writeFileSync(sandboxIndex, 'import { add } from "./math";\nconsole.log(add(10, 20));\n', 'utf8');
 
 		// Verify math.ts in sandbox has the speculative overlay
 		const sandboxMath = path.join(sandboxDir, 'math.ts');
@@ -61,7 +64,7 @@ async function runPhase2Tests() {
 
 		assert.strictEqual(execResult.exitCode, 0, 'Toolchain command should exit 0');
 		assert(execResult.stdout.includes('test-pkg'), 'Output should contain test-pkg');
-		console.log(`  ✓ Toolchain executed in isolated shadow sandbox (${execResult.durationMs}ms): ${execResult.stdout.trim()}`);
+		console.log(`  ✓ Toolchain executed in a network-disabled Docker sandbox over the disposable shadow copy (${execResult.durationMs}ms): ${execResult.stdout.trim()}`);
 
 		// Test 3: Security Policy Enforcement
 		console.log('\nTest 3: Security Policy Enforcement in Shadow Sandbox...');

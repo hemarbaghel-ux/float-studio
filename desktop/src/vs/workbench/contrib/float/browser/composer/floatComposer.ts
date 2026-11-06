@@ -14,7 +14,7 @@ import { FloatMultiFileDiffOrchestrator, IFloatMultiFileProposal } from '../../c
 import { FloatComposerToolRegistry, IComposerFileSystem, IComposerCommandRunner } from '../../common/composer/floatComposerTools.js';
 import { FloatComposerAgent, IComposerAgentGoal, IComposerAgentExecution, IComposerAgentStep } from '../../common/composer/floatComposerAgent.js';
 import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
-import { ProductionComposerFileSystem, ProductionComposerCommandRunner } from '../../common/composer/floatProductionAdapters.js';
+import { ProductionComposerFileSystem, ProductionComposerCommandRunner, resolveComposerWorkspacePath, resolveComposerWorkspaceRelativePath } from '../../common/composer/floatProductionAdapters.js';
 
 export class FloatComposer extends Disposable {
 	private _activeProposal: IFloatProposal | null = null;
@@ -23,6 +23,7 @@ export class FloatComposer extends Disposable {
 	private readonly _toolRegistry: FloatComposerToolRegistry;
 	private readonly _agent: FloatComposerAgent;
 	private readonly _shadowWorkspace: FloatShadowWorkspaceService = FloatShadowWorkspaceService.getInstance();
+	private readonly _workspaceRoot: string;
 
 	constructor(
 		@IFloatService private readonly _floatService: IFloatService,
@@ -35,7 +36,8 @@ export class FloatComposer extends Disposable {
 		super();
 		this._orchestrator = new FloatMultiFileDiffOrchestrator();
 
-		const rootDir = workspaceRoot || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '.');
+		this._workspaceRoot = workspaceRoot || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '.');
+		const rootDir = this._workspaceRoot;
 
 		// Production file system adapter backed by real filesystem with safety guards
 		const fsAdapter: IComposerFileSystem = customFs ?? new ProductionComposerFileSystem(rootDir);
@@ -78,7 +80,16 @@ export class FloatComposer extends Disposable {
 		return this._shadowWorkspace;
 	}
 
+	private _workspaceRelativePath(candidatePath?: string): string | undefined {
+		return candidatePath ? resolveComposerWorkspaceRelativePath(this._workspaceRoot, candidatePath) : undefined;
+	}
+
+	private _workspaceUri(relativePath: string): URI {
+		return URI.file(resolveComposerWorkspacePath(this._workspaceRoot, relativePath));
+	}
+
 	public async generateComposerProposal(prompt: string, activeFilePath?: string): Promise<IFloatProposal | null> {
+		const workspaceRelativeActiveFilePath = this._workspaceRelativePath(activeFilePath);
 		this._notificationService.info(`FLOAT Composer generating multi-file proposal for: "${prompt}"...`);
 
 		const messages = [
@@ -87,7 +98,7 @@ export class FloatComposer extends Disposable {
 				role: 'user' as const,
 				content: prompt,
 				timestamp: Date.now(),
-				activeFileContext: activeFilePath
+				activeFileContext: workspaceRelativeActiveFilePath
 			}
 		];
 
@@ -98,7 +109,7 @@ export class FloatComposer extends Disposable {
 			onComplete: () => {}
 		});
 
-		const proposals = parseModelProposals(fullResponse, activeFilePath);
+		const proposals = parseModelProposals(fullResponse, workspaceRelativeActiveFilePath);
 		if (proposals.length > 0) {
 			this._activeProposal = proposals[0];
 			this._floatService.getProposalSession().addProposal(this._activeProposal);
@@ -143,8 +154,9 @@ export class FloatComposer extends Disposable {
 	): Promise<IComposerAgentExecution> {
 		this._notificationService.info(`FLOAT Autonomous Composer starting goal: "${goal.prompt}"...`);
 		const isolatedGoal: IComposerAgentGoal = {
-			isolateWorkspaceMutations: true,
-			...goal
+			...goal,
+			activeFilePath: this._workspaceRelativePath(goal.activeFilePath),
+			isolateWorkspaceMutations: true
 		};
 		const execution = await this._agent.executeGoal(isolatedGoal, onStep, signal);
 		if (execution.proposal) {
@@ -176,7 +188,7 @@ export class FloatComposer extends Disposable {
 		// Apply via orchestrator with concurrent edit conflict verification
 		const diskReader = async (p: string) => {
 			try {
-				const res = await this._textFileService.read(URI.file(p));
+				const res = await this._textFileService.read(this._workspaceUri(p));
 				return res.value;
 			} catch {
 				return undefined;
@@ -184,7 +196,7 @@ export class FloatComposer extends Disposable {
 		};
 
 		const diskWriter = async (p: string, content: string) => {
-			await this._textFileService.write(URI.file(p), content);
+			await this._textFileService.write(this._workspaceUri(p), content);
 		};
 
 		if (multiProp) {
@@ -201,7 +213,7 @@ export class FloatComposer extends Disposable {
 			for (const file of proposal.files) {
 				this._floatService.getProposalSession().applyFileChange(proposalId, file.path);
 				try {
-					await this._textFileService.write(URI.file(file.path), file.proposedContent);
+					await this._textFileService.write(this._workspaceUri(file.path), file.proposedContent);
 				} catch (e: any) {
 					this._notificationService.error(`Failed to write file ${file.path}: ${e.message}`);
 				}
@@ -215,7 +227,7 @@ export class FloatComposer extends Disposable {
 	public async acceptFile(proposalId: string, filePath: string): Promise<boolean> {
 		const diskReader = async (p: string) => {
 			try {
-				const res = await this._textFileService.read(URI.file(p));
+				const res = await this._textFileService.read(this._workspaceUri(p));
 				return res.value;
 			} catch {
 				return undefined;
@@ -223,7 +235,7 @@ export class FloatComposer extends Disposable {
 		};
 
 		const diskWriter = async (p: string, content: string) => {
-			await this._textFileService.write(URI.file(p), content);
+			await this._textFileService.write(this._workspaceUri(p), content);
 		};
 
 		const success = await this._orchestrator.acceptFile(proposalId, filePath, diskWriter, diskReader);
@@ -276,7 +288,7 @@ export class FloatComposer extends Disposable {
 			for (const action of result.actions) {
 				if (action.action === 'modified_restored' || action.action === 'deleted_recreated') {
 					if (action.content !== undefined) {
-						await this._textFileService.write(URI.file(action.path), action.content);
+						await this._textFileService.write(this._workspaceUri(action.path), action.content);
 					}
 				}
 			}

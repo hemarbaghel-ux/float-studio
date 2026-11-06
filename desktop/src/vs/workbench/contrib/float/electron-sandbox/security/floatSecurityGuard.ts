@@ -5,6 +5,10 @@
 
 import { sanitizeProposalPath } from '../../common/proposals/floatProposalValidator.js';
 
+/**
+ * Lightweight deny-list for obviously destructive command strings. This is
+ * defense in depth only; Composer execution must use FloatDockerSandboxRunner.
+ */
 export class FloatSecurityGuard {
 	public static validateSafePath(path: string): string {
 		return sanitizeProposalPath(path);

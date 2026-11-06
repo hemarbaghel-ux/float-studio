@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { exec, ChildProcess } from 'node:child_process';
+import { FloatDockerSandboxRunner } from '../composer/floatDockerSandboxRunner.js';
+import { copyComposerWorkspace } from '../composer/floatSandboxWorkspaceCopy.js';
 import { IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
@@ -22,28 +23,17 @@ export interface IShadowExecutionResult {
 	shadowDirectory: string;
 }
 
-const SENSITIVE_OR_HEAVY_DIRS = new Set([
-	'node_modules',
-	'.git',
-	'dist',
-	'build',
-	'out',
-	'.build',
-	'.gemini',
-	'.vscode',
-	'.idea'
-]);
-
 /**
- * OS-Level Copy-on-Write (CoW) Shadow Workspace Daemon.
+ * Copy-based Shadow Workspace Daemon with containerized toolchain execution.
  *
- * Provides physical process-isolated speculative execution of real toolchains
- * (e.g. `tsc --noEmit`, `cargo check`, `pytest`, `npm run build`) against speculative
- * changesets without touching a single byte of the original user workspace.
+ * It creates disposable copies of the source workspace, then asks Docker to run
+ * toolchain commands with networking disabled and dependencies mounted read-only.
  */
 export class FloatShadowDaemon {
 	private readonly _shadowRootDir: string;
 	private readonly _activeSandboxes = new Map<string, string>(); // sessionId -> shadowDirPath
+	private readonly _dependenciesBySession = new Map<string, string>();
+	private readonly _activeRunners = new Map<string, FloatDockerSandboxRunner>();
 
 	constructor(customRootDir?: string) {
 		this._shadowRootDir = customRootDir || path.join(os.tmpdir(), `float-shadow-daemon-${process.pid}`);
@@ -55,8 +45,7 @@ export class FloatShadowDaemon {
 	}
 
 	/**
-	 * Creates a zero-mutation physical shadow sandbox mirroring the workspace.
-	 * Uses filesystem hard links for unchanged files to achieve sub-50ms instantiation with 0-byte duplicate disk storage.
+	 * Creates an independent, copy-based shadow workspace. Hard links are never used.
 	 */
 	public async createShadowSandbox(
 		sessionId: string,
@@ -65,78 +54,41 @@ export class FloatShadowDaemon {
 		deletedFiles: Set<string> = new Set()
 	): Promise<string> {
 		const sandboxDir = path.join(this._shadowRootDir, `sandbox-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+		this._activeRunners.get(sessionId)?.abort();
+		this._activeRunners.delete(sessionId);
+		this._dependenciesBySession.delete(sessionId);
 		if (fs.existsSync(sandboxDir)) {
 			await fsp.rm(sandboxDir, { recursive: true, force: true });
 		}
 		fs.mkdirSync(sandboxDir, { recursive: true });
 
-		// 1. Mirror unchanged workspace files using hardlinks or fast copies
+		// 1. Copy permitted workspace files; symlinks and credential paths are excluded.
 		if (fs.existsSync(workspaceRoot)) {
-			await this._mirrorDirectory(workspaceRoot, sandboxDir, deletedFiles);
+			copyComposerWorkspace(workspaceRoot, sandboxDir, deletedFiles);
 		}
 
-		// 2. Link node_modules and dependencies directly so toolchains resolve cleanly
+		// Do not link host dependencies into the writable shadow directory.
+		// Docker mounts the original node_modules directory read-only at execution time.
 		const nodeModulesSrc = path.join(workspaceRoot, 'node_modules');
-		const nodeModulesDest = path.join(sandboxDir, 'node_modules');
-		if (fs.existsSync(nodeModulesSrc) && !fs.existsSync(nodeModulesDest)) {
-			try {
-				// Create junction on Windows or symlink on POSIX
-				fs.symlinkSync(nodeModulesSrc, nodeModulesDest, 'junction');
-			} catch {
-				// If symlink permission denied, continue
+		if (fs.existsSync(nodeModulesSrc)) {
+			const dependencyStat = fs.lstatSync(nodeModulesSrc);
+			if (dependencyStat.isDirectory() && !dependencyStat.isSymbolicLink()) {
+				this._dependenciesBySession.set(sessionId, nodeModulesSrc);
 			}
 		}
 
-		// 3. Write speculative overlays directly into the sandbox (copy-on-write isolation)
+		// 2. Apply speculative overlays to the disposable copy.
 		for (const [relPath, content] of speculativeOverlays.entries()) {
 			const norm = sanitizeProposalPath(relPath);
 			if (deletedFiles.has(norm)) continue;
 
 			const destFile = path.join(sandboxDir, norm);
 			fs.mkdirSync(path.dirname(destFile), { recursive: true });
-			// Break hardlink before writing to ensure complete isolation
-			if (fs.existsSync(destFile)) {
-				try { fs.unlinkSync(destFile); } catch {}
-			}
 			fs.writeFileSync(destFile, content, 'utf8');
 		}
 
 		this._activeSandboxes.set(sessionId, sandboxDir);
 		return sandboxDir;
-	}
-
-	/**
-	 * Recursively mirrors directory structure and hardlinks unchanged project files
-	 */
-	private async _mirrorDirectory(srcDir: string, destDir: string, deletedFiles: Set<string>, relPrefix: string = ''): Promise<void> {
-		const entries = fs.readdirSync(srcDir, { withFileTypes: true });
-
-		for (const entry of entries) {
-			const entryRelPath = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
-			const normRel = entryRelPath.replace(/\\/g, '/');
-
-			if (SENSITIVE_OR_HEAVY_DIRS.has(entry.name) || deletedFiles.has(normRel)) {
-				continue;
-			}
-
-			const srcPath = path.join(srcDir, entry.name);
-			const destPath = path.join(destDir, entry.name);
-
-			if (entry.isDirectory()) {
-				fs.mkdirSync(destPath, { recursive: true });
-				await this._mirrorDirectory(srcPath, destPath, deletedFiles, normRel);
-			} else if (entry.isFile()) {
-				try {
-					// Use hardlink for instant zero-copy mirroring
-					fs.linkSync(srcPath, destPath);
-				} catch {
-					// Fallback to copy if cross-device or permission restricted
-					try {
-						fs.copyFileSync(srcPath, destPath);
-					} catch {}
-				}
-			}
-		}
 	}
 
 	/**
@@ -172,40 +124,29 @@ export class FloatShadowDaemon {
 			};
 		}
 
-		const startTime = Date.now();
-		const safeEnv: Record<string, string | undefined> = { ...process.env };
-		delete safeEnv['AIzaSy_KEY'];
-		delete safeEnv['OPENAI_API_KEY'];
-		delete safeEnv['ANTHROPIC_API_KEY'];
-		delete safeEnv['GITHUB_TOKEN'];
-		delete safeEnv['GEMINI_API_KEY'];
+		const runner = new FloatDockerSandboxRunner(
+			sandboxDir,
+			this._dependenciesBySession.get(sessionId),
+			timeoutMs
+		);
+		this._activeRunners.set(sessionId, runner);
 
-		return new Promise<IShadowExecutionResult>((resolve) => {
-			exec(command, {
-				cwd: sandboxDir,
-				timeout: timeoutMs,
-				maxBuffer: 8 * 1024 * 1024,
-				env: safeEnv
-			}, (error, stdoutBuf, stderrBuf) => {
-				const durationMs = Date.now() - startTime;
-				const stdout = stdoutBuf ? stdoutBuf.toString() : '';
-				const stderr = stderrBuf ? stderrBuf.toString() : (error ? error.message : '');
-				const exitCode = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
-				const success = exitCode === 0;
+		const commandResult = await runner.run(command, { cwd: '.', timeoutMs });
+		if (this._activeRunners.get(sessionId) === runner) {
+			this._activeRunners.delete(sessionId);
+		}
 
-				const diagnostics = this._parseToolchainDiagnostics(stdout, stderr, sandboxDir);
+		const diagnostics = this._parseToolchainDiagnostics(commandResult.stdout, commandResult.stderr, sandboxDir);
+		return {
+			exitCode: commandResult.exitCode,
+			stdout: commandResult.stdout,
+			stderr: commandResult.stderr,
+			durationMs: commandResult.durationMs,
+			diagnostics,
+			success: commandResult.exitCode === 0,
+			shadowDirectory: sandboxDir
+		};
 
-				resolve({
-					exitCode,
-					stdout,
-					stderr,
-					durationMs,
-					diagnostics,
-					success,
-					shadowDirectory: sandboxDir
-				});
-			});
-		});
 	}
 
 	/**
@@ -275,6 +216,9 @@ export class FloatShadowDaemon {
 	 */
 	public async destroyShadowSandbox(sessionId: string): Promise<void> {
 		const sandboxDir = this._activeSandboxes.get(sessionId);
+		this._activeRunners.get(sessionId)?.abort();
+		this._activeRunners.delete(sessionId);
+		this._dependenciesBySession.delete(sessionId);
 		if (sandboxDir && fs.existsSync(sandboxDir)) {
 			try {
 				await fsp.rm(sandboxDir, { recursive: true, force: true });
