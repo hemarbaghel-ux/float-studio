@@ -142,6 +142,8 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
   {
     id: 'gemini-3.8-flash',
     exactModelId: 'gemini-3.8-flash',
+    upstreamModelId: 'gemini-3.8-flash',
+    isInternalAlias: false,
     displayName: 'Gemini 3.8 Flash',
     providerId: 'google',
     family: 'gemini-3',

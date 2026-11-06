@@ -77,13 +77,27 @@ async function runMasterAuditRegressionTests() {
   // 2. Model Catalog Reconciliation: Verified Upstream IDs vs Internal FLOAT Aliases
   console.log('\n--- 2. Model Catalog, Alias Reconciliation & AI Store Integrity ---');
   const router = new ModelRouter();
-  check(DASHBOARD_MODELS.length === 2, 'DASHBOARD_MODELS has consolidated dashboard selector models (GPT-6 Astra & GPT-6.1 Sol)');
-  check(VERIFIED_MODELS.length === 2, 'VERIFIED_MODELS contains only GPT-6 Astra and GPT-6.1 Sol');
-  check(INITIAL_MODELS.length === 2 && VALID_FLOAT_MODELS.length === 2 && INITIAL_MODELS.every((model) => ['gpt-6-astra', 'gpt-6.1-sol'].includes(model.id)), 'Client selection exposes only GPT-6 Astra and GPT-6.1 Sol');
+  check(
+    DASHBOARD_MODELS.length === 3 &&
+      DASHBOARD_MODELS.some(model => model.id === 'gemini-3.8-flash' && model.providerId === 'google'),
+    'DASHBOARD_MODELS exposes GPT-6 Astra, GPT-6.1 Sol, and Gemini 3.8 Flash'
+  );
+  check(
+    VERIFIED_MODELS.length === 3 &&
+      VERIFIED_MODELS.some(model => model.id === 'gemini-3.8-flash' && model.providerId === 'google'),
+    'VERIFIED_MODELS includes the explicitly supported Gemini 3.8 Flash model'
+  );
+  check(
+    INITIAL_MODELS.length === 3 &&
+      VALID_FLOAT_MODELS.length === 3 &&
+      INITIAL_MODELS.some(model => model.id === 'gemini-3.8-flash' && model.providerId === 'google'),
+    'Client selection exposes the two GPT models and Gemini 3.8 Flash'
+  );
 
-  const selectedModels: Array<{ id: string; expectedUpstream: string }> = [
-    { id: 'gpt-6-astra', expectedUpstream: 'gpt-6-astra' },
-    { id: 'gpt-6.1-sol', expectedUpstream: 'gpt-6.1-sol' }
+  const selectedModels: Array<{ id: string; expectedUpstream: string; expectedProvider: 'openai' | 'google' }> = [
+    { id: 'gpt-6-astra', expectedUpstream: 'gpt-6-astra', expectedProvider: 'openai' },
+    { id: 'gpt-6.1-sol', expectedUpstream: 'gpt-6.1-sol', expectedProvider: 'openai' },
+    { id: 'gemini-3.8-flash', expectedUpstream: 'gemini-3.8-flash', expectedProvider: 'google' }
   ];
   for (const { id, expectedUpstream } of selectedModels) {
     useAIStore.getState().setSelectedModel(id);
@@ -91,11 +105,12 @@ async function runMasterAuditRegressionTests() {
     const vmEntry = VERIFIED_MODELS.find(m => m.id === id);
     const resolved = router.resolveRoute(id);
     check(
+      resolved.route.provider === expectedProvider &&
       !resolved.route.isInternalAlias &&
       resolved.route.upstreamModelId === expectedUpstream &&
       vmEntry?.isInternalAlias === false &&
       vmEntry?.upstreamModelId === expectedUpstream,
-      `Model "${id}" preserves its exact selectable upstreamModelId="${expectedUpstream}"`
+      `Model "${id}" routes to ${expectedProvider} and preserves its exact selectable upstreamModelId="${expectedUpstream}"`
     );
   }
   let removedModelError: any;
