@@ -8,6 +8,7 @@ import {
 import { OpenAIAdapter } from './openai';
 import { GoogleGeminiAdapter } from './gemini';
 import {
+  MODEL_REGISTRY,
   MODEL_ROUTES,
   ModelProtocol,
   getModelDescriptor,
