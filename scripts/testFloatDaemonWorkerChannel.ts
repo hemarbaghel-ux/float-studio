@@ -78,7 +78,7 @@ async function main(): Promise<void> {
       timeoutMs: 10_000
     });
     assert.equal(callResult.method, 'semantic_search');
-    assert.equal(clients[0].calls[0].timeoutMs, 10_000);
+    assert.equal(clients[0].calls.find(call => call.method === 'semantic_search')?.timeoutMs, 10_000);
 
     for (const blockedMethod of ['run_shadow_toolchain', 'semantic_persist_index', 'semantic_load_index', 'shadow_create_cow_workspace']) {
       await assert.rejects(
