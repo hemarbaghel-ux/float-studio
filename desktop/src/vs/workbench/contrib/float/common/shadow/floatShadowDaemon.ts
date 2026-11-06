@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { exec, ChildProcess } from 'node:child_process';
+import { FloatDockerSandboxRunner } from '../composer/floatDockerSandboxRunner.js';
 import { IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
@@ -44,6 +44,8 @@ const SENSITIVE_OR_HEAVY_DIRS = new Set([
 export class FloatShadowDaemon {
 	private readonly _shadowRootDir: string;
 	private readonly _activeSandboxes = new Map<string, string>(); // sessionId -> shadowDirPath
+	private readonly _dependenciesBySession = new Map<string, string>();
+	private readonly _activeRunners = new Map<string, FloatDockerSandboxRunner>();
 
 	constructor(customRootDir?: string) {
 		this._shadowRootDir = customRootDir || path.join(os.tmpdir(), `float-shadow-daemon-${process.pid}`);
@@ -75,15 +77,13 @@ export class FloatShadowDaemon {
 			await this._mirrorDirectory(workspaceRoot, sandboxDir, deletedFiles);
 		}
 
-		// 2. Link node_modules and dependencies directly so toolchains resolve cleanly
+		// Do not link host dependencies into the writable shadow directory.
+		// Docker mounts the original node_modules directory read-only at execution time.
 		const nodeModulesSrc = path.join(workspaceRoot, 'node_modules');
-		const nodeModulesDest = path.join(sandboxDir, 'node_modules');
-		if (fs.existsSync(nodeModulesSrc) && !fs.existsSync(nodeModulesDest)) {
-			try {
-				// Create junction on Windows or symlink on POSIX
-				fs.symlinkSync(nodeModulesSrc, nodeModulesDest, 'junction');
-			} catch {
-				// If symlink permission denied, continue
+		if (fs.existsSync(nodeModulesSrc)) {
+			const dependencyStat = fs.lstatSync(nodeModulesSrc);
+			if (dependencyStat.isDirectory() && !dependencyStat.isSymbolicLink()) {
+				this._dependenciesBySession.set(sessionId, nodeModulesSrc);
 			}
 		}
 
@@ -126,15 +126,8 @@ export class FloatShadowDaemon {
 				fs.mkdirSync(destPath, { recursive: true });
 				await this._mirrorDirectory(srcPath, destPath, deletedFiles, normRel);
 			} else if (entry.isFile()) {
-				try {
-					// Use hardlink for instant zero-copy mirroring
-					fs.linkSync(srcPath, destPath);
-				} catch {
-					// Fallback to copy if cross-device or permission restricted
-					try {
-						fs.copyFileSync(srcPath, destPath);
-					} catch {}
-				}
+				// Hard links are shared inodes, not isolation. Always copy file data.
+				fs.copyFileSync(srcPath, destPath);
 			}
 		}
 	}
@@ -172,40 +165,29 @@ export class FloatShadowDaemon {
 			};
 		}
 
-		const startTime = Date.now();
-		const safeEnv: Record<string, string | undefined> = { ...process.env };
-		delete safeEnv['AIzaSy_KEY'];
-		delete safeEnv['OPENAI_API_KEY'];
-		delete safeEnv['ANTHROPIC_API_KEY'];
-		delete safeEnv['GITHUB_TOKEN'];
-		delete safeEnv['GEMINI_API_KEY'];
+		const runner = new FloatDockerSandboxRunner(
+			sandboxDir,
+			this._dependenciesBySession.get(sessionId),
+			timeoutMs
+		);
+		this._activeRunners.set(sessionId, runner);
 
-		return new Promise<IShadowExecutionResult>((resolve) => {
-			exec(command, {
-				cwd: sandboxDir,
-				timeout: timeoutMs,
-				maxBuffer: 8 * 1024 * 1024,
-				env: safeEnv
-			}, (error, stdoutBuf, stderrBuf) => {
-				const durationMs = Date.now() - startTime;
-				const stdout = stdoutBuf ? stdoutBuf.toString() : '';
-				const stderr = stderrBuf ? stderrBuf.toString() : (error ? error.message : '');
-				const exitCode = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
-				const success = exitCode === 0;
+		const commandResult = await runner.run(command, { cwd: '.', timeoutMs });
+		if (this._activeRunners.get(sessionId) === runner) {
+			this._activeRunners.delete(sessionId);
+		}
 
-				const diagnostics = this._parseToolchainDiagnostics(stdout, stderr, sandboxDir);
+		const diagnostics = this._parseToolchainDiagnostics(commandResult.stdout, commandResult.stderr, sandboxDir);
+		return {
+			exitCode: commandResult.exitCode,
+			stdout: commandResult.stdout,
+			stderr: commandResult.stderr,
+			durationMs: commandResult.durationMs,
+			diagnostics,
+			success: commandResult.exitCode === 0,
+			shadowDirectory: sandboxDir
+		};
 
-				resolve({
-					exitCode,
-					stdout,
-					stderr,
-					durationMs,
-					diagnostics,
-					success,
-					shadowDirectory: sandboxDir
-				});
-			});
-		});
 	}
 
 	/**
@@ -275,6 +257,9 @@ export class FloatShadowDaemon {
 	 */
 	public async destroyShadowSandbox(sessionId: string): Promise<void> {
 		const sandboxDir = this._activeSandboxes.get(sessionId);
+		this._activeRunners.get(sessionId)?.abort();
+		this._activeRunners.delete(sessionId);
+		this._dependenciesBySession.delete(sessionId);
 		if (sandboxDir && fs.existsSync(sandboxDir)) {
 			try {
 				await fsp.rm(sandboxDir, { recursive: true, force: true });

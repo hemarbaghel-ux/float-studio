@@ -37,5 +37,8 @@ jobs:
       - name: Production build (client + server bundles)
         run: npm run build
 
+      - name: Prepare Composer sandbox image for integration tests
+        run: docker pull node:22-bookworm-slim
+
       - name: Run full verification suite (Chat, Models, Persistence, Security)
         run: npm test

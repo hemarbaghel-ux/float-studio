@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { exec, ChildProcess } from 'node:child_process';
+import { FloatDockerSandboxRunner } from './floatDockerSandboxRunner.js';
 import { IComposerFileSystem, IComposerCommandRunner } from './floatComposerTools.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
@@ -40,23 +40,37 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 
 	private _resolve(relPath: string): string {
 		const clean = relPath === '.' || relPath === '' ? '.' : sanitizeProposalPath(relPath);
-		const resolved = path.resolve(this._workspaceRoot, clean);
-		const rootResolved = path.resolve(this._workspaceRoot);
+		const rootResolved = fs.realpathSync(this._workspaceRoot);
+		const resolved = path.resolve(rootResolved, clean);
+		const relative = path.relative(rootResolved, resolved);
 
-		// Path traversal escape guard
-		if (!resolved.startsWith(rootResolved)) {
-			throw new Error(`[SECURITY] Path traversal escape attempt blocked: ${relPath}`);
+		// Do not use startsWith(): a sibling such as /workspace-evil shares that prefix.
+		if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+			throw new Error('[SECURITY] Path traversal escape attempt blocked: ' + relPath);
 		}
 
-		// Symlink escape guard
-		if (fs.existsSync(resolved)) {
+		// Reject symlinks/junctions in every existing component. A target-only
+		// realpath check misses not-yet-created files beneath an escaping symlink.
+		let current = rootResolved;
+		const segments = relative ? relative.split(path.sep).filter(Boolean) : [];
+		for (let index = 0; index < segments.length; index++) {
+			current = path.join(current, segments[index]);
 			try {
-				const real = fs.realpathSync(resolved);
-				if (!real.startsWith(rootResolved)) {
-					throw new Error(`[SECURITY] Symlink traversal escape attempt blocked: ${relPath}`);
+				const stat = fs.lstatSync(current);
+				if (stat.isSymbolicLink()) {
+					throw new Error('[SECURITY] Symlink traversal blocked: ' + relPath);
 				}
-			} catch (e: any) {
-				if (e.message.includes('[SECURITY]')) throw e;
+				if (index < segments.length - 1 && !stat.isDirectory()) {
+					throw new Error('[SECURITY] Non-directory path component blocked: ' + relPath);
+				}
+				if (index === segments.length - 1 && stat.isFile() && stat.nlink > 1) {
+					throw new Error('[SECURITY] Hard-linked workspace file blocked: ' + relPath);
+				}
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+					break;
+				}
+				throw error;
 			}
 		}
 
@@ -228,10 +242,18 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 }
 
 export class ProductionComposerCommandRunner implements IComposerCommandRunner {
+	private readonly _sandboxRunner: FloatDockerSandboxRunner;
+
 	constructor(
 		protected readonly _workspaceRoot: string,
 		protected readonly _timeoutMs: number = 30000
-	) {}
+	) {
+		this._sandboxRunner = new FloatDockerSandboxRunner(
+			this._workspaceRoot,
+			path.join(this._workspaceRoot, 'node_modules'),
+			this._timeoutMs
+		);
+	}
 
 	public get workspaceRoot(): string {
 		return this._workspaceRoot;
@@ -243,50 +265,24 @@ export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 		stderr: string;
 	}> {
 		if (!FloatSecurityGuard.isCommandSafe(command)) {
-			return {
-				exitCode: 1,
-				stdout: '',
-				stderr: `[SECURITY REJECTION] Command refused by FLOAT Security Policy: "${command}"`
-			};
+			return { exitCode: 1, stdout: '', stderr: '[SECURITY REJECTION] Command refused by FLOAT Security Policy.' };
 		}
-
-		const execCwd = cwd ? path.resolve(this._workspaceRoot, sanitizeProposalPath(cwd)) : this._workspaceRoot;
-
-		// Sanitize environment
-		const safeEnv: Record<string, string | undefined> = { ...process.env };
-		delete safeEnv['AIzaSy_KEY'];
-		delete safeEnv['OPENAI_API_KEY'];
-		delete safeEnv['ANTHROPIC_API_KEY'];
-		delete safeEnv['GITHUB_TOKEN'];
-		delete safeEnv['GEMINI_API_KEY'];
-
-		return new Promise((resolve) => {
-			exec(command, {
-				cwd: execCwd,
-				timeout: this._timeoutMs,
-				maxBuffer: 4 * 1024 * 1024,
-				env: safeEnv
-			}, (error, stdout, stderr) => {
-				const exitCode = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
-				resolve({
-					exitCode,
-					stdout: stdout ? stdout.toString() : '',
-					stderr: stderr ? stderr.toString() : (error ? error.message : '')
-				});
-			});
-		});
+		const safeCwd = !cwd || cwd === '.' || cwd === '' ? '.' : sanitizeProposalPath(cwd);
+		return await this._sandboxRunner.run(command, { cwd: safeCwd, timeoutMs: this._timeoutMs });
 	}
 }
 
 /**
  * Isolated Shadow Workspace Command Runner.
- * Executes commands inside an isolated temporary directory mirroring the workspace and speculative overlays.
- * Any command side-effects (file creation, modification, deletion, build scripts) are strictly quarantined to
- * the shadow sandbox. The original physical workspace remains 100% UNTOUCHED before acceptance.
+ *
+ * Composer writes speculative files into a disposable copy. Toolchain commands
+ * run in a network-disabled Docker container; the copied workspace is the only
+ * writable bind mount and the original node_modules directory is read-only.
+ * The temporary directory itself is not an OS sandbox.
  */
 export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRunner {
 	private readonly _shadowDir: string;
-	private _activeChild: ChildProcess | null = null;
+	private readonly _sandboxRunner: FloatDockerSandboxRunner;
 	private _disposed: boolean = false;
 
 	constructor(
@@ -296,9 +292,14 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 	) {
 		this._shadowDir = path.join(
 			os.tmpdir(),
-			`float-shadow-cmd-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+			'float-shadow-cmd-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7)
 		);
 		this._initShadowWorkspace(speculativeOverlays);
+		this._sandboxRunner = new FloatDockerSandboxRunner(
+			this._shadowDir,
+			path.join(this._originalWorkspaceRoot, 'node_modules'),
+			this._timeoutMs
+		);
 	}
 
 	public get shadowDir(): string {
@@ -312,23 +313,15 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 	private _initShadowWorkspace(overlays?: Map<string, string>): void {
 		fs.mkdirSync(this._shadowDir, { recursive: true });
 
-		// Mirror original files into shadow workspace (excluding heavy node_modules/.git)
 		if (fs.existsSync(this._originalWorkspaceRoot)) {
 			const mirrorDir = (src: string, dest: string) => {
 				const entries = fs.readdirSync(src, { withFileTypes: true });
 				for (const entry of entries) {
 					if (SENSITIVE_OR_IGNORED_DIRS.has(entry.name)) {
-						if (entry.name === 'node_modules' && process.platform === 'win32') {
-							// Link node_modules via junction on Windows for instant dependency access
-							try {
-								fs.symlinkSync(path.join(src, entry.name), path.join(dest, entry.name), 'junction');
-							} catch {}
-						}
 						continue;
 					}
 					const srcPath = path.join(src, entry.name);
 					const destPath = path.join(dest, entry.name);
-
 					if (entry.isDirectory()) {
 						fs.mkdirSync(destPath, { recursive: true });
 						mirrorDir(srcPath, destPath);
@@ -337,11 +330,9 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 					}
 				}
 			};
-
 			mirrorDir(this._originalWorkspaceRoot, this._shadowDir);
 		}
 
-		// Apply speculative overlays into shadow directory
 		if (overlays) {
 			for (const [relPath, content] of overlays.entries()) {
 				const target = path.join(this._shadowDir, sanitizeProposalPath(relPath));
@@ -366,51 +357,15 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 		if (this._disposed) {
 			return { exitCode: 1, stdout: '', stderr: 'Command runner disposed.' };
 		}
-
 		if (!FloatSecurityGuard.isCommandSafe(command)) {
-			return {
-				exitCode: 1,
-				stdout: '',
-				stderr: `[SECURITY REJECTION] Command refused by FLOAT Security Policy: "${command}"`
-			};
+			return { exitCode: 1, stdout: '', stderr: '[SECURITY REJECTION] Command refused by FLOAT Security Policy.' };
 		}
-
-		const execCwd = cwd ? path.resolve(this._shadowDir, sanitizeProposalPath(cwd)) : this._shadowDir;
-
-		const safeEnv: Record<string, string | undefined> = { ...process.env };
-		delete safeEnv['AIzaSy_KEY'];
-		delete safeEnv['OPENAI_API_KEY'];
-		delete safeEnv['ANTHROPIC_API_KEY'];
-		delete safeEnv['GITHUB_TOKEN'];
-		delete safeEnv['GEMINI_API_KEY'];
-
-		return new Promise((resolve) => {
-			const child = exec(command, {
-				cwd: execCwd,
-				timeout: this._timeoutMs,
-				maxBuffer: 4 * 1024 * 1024,
-				env: safeEnv
-			}, (error, stdout, stderr) => {
-				this._activeChild = null;
-				const exitCode = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
-				resolve({
-					exitCode,
-					stdout: stdout ? stdout.toString() : '',
-					stderr: stderr ? stderr.toString() : (error ? error.message : '')
-				});
-			});
-
-			this._activeChild = child;
-		});
+		const safeCwd = !cwd || cwd === '.' || cwd === '' ? '.' : sanitizeProposalPath(cwd);
+		return await this._sandboxRunner.run(command, { cwd: safeCwd, timeoutMs: this._timeoutMs });
 	}
 
 	public abort(): void {
-		if (this._activeChild) {
-			try {
-				this._activeChild.kill('SIGTERM');
-			} catch {}
-			this._activeChild = null;
-		}
+		this._sandboxRunner.abort();
 	}
 
 	public dispose(): void {
@@ -420,6 +375,8 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 			if (fs.existsSync(this._shadowDir)) {
 				fs.rmSync(this._shadowDir, { recursive: true, force: true });
 			}
-		} catch {}
+		} catch {
+			// Best-effort cleanup of the disposable shadow directory.
+		}
 	}
 }
