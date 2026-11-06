@@ -76,7 +76,7 @@ async function main(): Promise<void> {
     const fileSystem = new ProductionComposerFileSystem(workspace);
     const speculativeFs = new SpeculativeComposerFileSystem(fileSystem);
     await assert.rejects(() => speculativeFs.writeFile('.aws/credentials', 'fake-secret'), /Writing to sensitive file prohibited/);
-    await assert.rejects(() => speculativeFs.readFile('.ssh/id_ed25519'), /Access denied to sensitive file/);
+    await assert.rejects(() => speculativeFs.readFile('.aws/credentials'), /Access denied to sensitive file/);
     assert.equal(await speculativeFs.fileExists('.aws/credentials'), false);
     assert.deepEqual(await speculativeFs.listDirectory('.aws', true), []);
     await fileSystem.writeFile('safe.txt', 'updated');
