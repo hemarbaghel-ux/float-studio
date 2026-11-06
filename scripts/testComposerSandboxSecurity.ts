@@ -22,6 +22,10 @@ async function main(): Promise<void> {
   fs.writeFileSync(path.join(workspace, '.env'), 'FLOAT_API_KEY=do-not-copy', 'utf8');
   fs.writeFileSync(path.join(workspace, '.npmrc'), '//registry.example/:_authToken=do-not-copy', 'utf8');
   fs.writeFileSync(path.join(workspace, 'credentials.json'), '{"private_key":"do-not-copy"}', 'utf8');
+  fs.mkdirSync(path.join(workspace, '.aws'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, '.aws', 'credentials'), '[default]\\naws_access_key_id = do-not-copy', 'utf8');
+  fs.mkdirSync(path.join(workspace, '.ssh'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, '.ssh', 'id_ed25519'), 'PRIVATE KEY MATERIAL', 'utf8');
   fs.mkdirSync(path.join(workspace, 'secrets'), { recursive: true });
   fs.writeFileSync(path.join(workspace, 'secrets', 'provider.json'), '{"api_key":"do-not-copy"}', 'utf8');
   fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
@@ -34,7 +38,7 @@ async function main(): Promise<void> {
     const copyStats = copyComposerWorkspace(workspace, copyDestination);
     assert.ok(copyStats.filesCopied >= 2, 'normal project source files should be copied');
     assert.equal(fs.existsSync(path.join(copyDestination, 'src', 'app.ts')), true);
-    for (const excluded of ['.env', '.npmrc', 'credentials.json', path.join('secrets', 'provider.json')]) {
+    for (const excluded of ['.env', '.npmrc', 'credentials.json', path.join('secrets', 'provider.json'), path.join('.aws', 'credentials'), path.join('.ssh', 'id_ed25519')]) {
       assert.equal(fs.existsSync(path.join(copyDestination, excluded)), false, 'sensitive file must not enter command workspace: ' + excluded);
     }
     assert.equal(fs.existsSync(path.join(copyDestination, 'node_modules')), false, 'dependency directory must not be copied');
@@ -42,6 +46,12 @@ async function main(): Promise<void> {
     const fileSystem = new ProductionComposerFileSystem(workspace);
     await fileSystem.writeFile('safe.txt', 'updated');
     assert.equal(await fileSystem.readFile('safe.txt'), 'updated');
+    for (const deniedPath of ['.env', '.npmrc', 'credentials.json', '.aws/credentials', '.ssh/id_ed25519', 'secrets/provider.json']) {
+      await assert.rejects(() => fileSystem.readFile(deniedPath), /Access denied/);
+    }
+    const visiblePaths = await fileSystem.listDirectory('.', true);
+    assert.equal(visiblePaths.some(filePath => filePath.startsWith('.aws/')), false);
+    assert.equal(visiblePaths.some(filePath => filePath.startsWith('.ssh/')), false);
 
     const escapeLink = path.join(workspace, 'escape');
     let symlinkSupported = true;

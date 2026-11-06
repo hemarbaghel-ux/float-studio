@@ -11,15 +11,29 @@ const EXCLUDED_DIRECTORIES = new Set([
   'node_modules', 'dist', 'build', 'out', '.build',
   '.gemini', '.vscode', '.idea',
   '.ssh', '.aws', '.azure', '.config', '.gnupg', '.kube', '.docker',
-  '.npm', 'secrets', 'secret', 'credentials'
+  '.npm', '.local', 'secrets', '.secrets', 'secret', 'credentials', 'private'
 ]);
 
 const SENSITIVE_FILE_PATTERNS = [
   /(^|\/)\.env(?:\.[^/]*)?$/i,
-  /(^|\/)(?:\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.gitconfig|\.yarnrc\.yml)$/i,
-  /(^|\/)(?:id_(?:rsa|ed25519|ecdsa|dsa)[^/]*|[^/]+\.(?:pem|key|p12|pfx|jks|keystore|ppk|tfstate))$/i,
-  /(^|\/)(?:credentials?|client[_-]?secret[^/]*|service[-_]account[^/]*|serviceAccount[^/]*|token|auth)\.json$/i
+  /(^|\/)(?:\.npmrc|\.pnpmrc|\.pypirc|\.netrc|\.git-credentials|\.gitconfig|\.yarnrc\.yml)$/i,
+  /(^|\/)\.cargo\/credentials(?:\.[^/]*)?$/i,
+  /(^|\/)(?:id_(?:rsa|ed25519|ecdsa|dsa)[^/]*|[^/]+\.(?:pem|key|crt|cer|der|p12|pfx|jks|keystore|ppk|tfstate))$/i,
+  /(^|\/)[^/]*(?:credential|client[_-]?secret|service[-_]?account|adminsdk|private[_-]?key|access[_-]?token|refresh[_-]?token)[^/]*\.(?:json|ya?ml|txt)$/i,
+  /(^|\/)(?:credentials?|secrets?|token|auth)\.(?:json|ya?ml|txt)$/i
 ];
+
+export function isComposerSandboxExcludedDirectory(directoryName: string): boolean {
+  return EXCLUDED_DIRECTORIES.has(directoryName.toLowerCase());
+}
+
+export function isComposerSandboxSensitivePath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (normalized.split('/').some(segment => isComposerSandboxExcludedDirectory(segment))) {
+    return true;
+  }
+  return SENSITIVE_FILE_PATTERNS.some(pattern => pattern.test(normalized));
+}
 
 export interface IComposerWorkspaceCopyStats {
   directoriesCopied: number;
@@ -28,9 +42,9 @@ export interface IComposerWorkspaceCopyStats {
 }
 
 /**
- * Copies only ordinary project files into a disposable Composer workspace.
- * Symlinks, special files, VCS directories, dependency folders and common
- * credential/configuration files are deliberately excluded.
+ * Copies ordinary project files into a disposable Composer workspace.
+ * Symlinks, special files, VCS/dependency directories, common credential
+ * stores, dotenv files and private-key material are deliberately excluded.
  */
 export function copyComposerWorkspace(
   sourceRoot: string,
@@ -42,13 +56,12 @@ export function copyComposerWorkspace(
   const sourceToDestination = path.relative(source, destination);
   const destinationToSource = path.relative(destination, source);
 
-  if (sourceToDestination === '' || (!sourceToDestination.startsWith('..' + path.sep) && sourceToDestination !== '..' && !path.isAbsolute(sourceToDestination))) {
-    throw new Error('Composer workspace copy destination must not be inside the source workspace.');
-  }
-  if (destinationToSource === '' || (!destinationToSource.startsWith('..' + path.sep) && destinationToSource !== '..' && !path.isAbsolute(destinationToSource))) {
-    throw new Error('Composer workspace copy destination must not contain the source workspace.');
-  }
+  const isWithin = (relative: string): boolean =>
+    relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
 
+  if (isWithin(sourceToDestination) || isWithin(destinationToSource)) {
+    throw new Error('Composer workspace copy source and destination must be disjoint directories.');
+  }
   if (!fs.statSync(source).isDirectory()) {
     throw new Error('Composer workspace source must be a directory.');
   }
@@ -60,10 +73,7 @@ export function copyComposerWorkspace(
     for (const entry of fs.readdirSync(currentSource, { withFileTypes: true })) {
       const relativePath = prefix ? prefix + '/' + entry.name : entry.name;
       const normalized = relativePath.replace(/\\/g, '/');
-      const segments = normalized.split('/');
-      const excludedByDirectory = segments.some(segment => EXCLUDED_DIRECTORIES.has(segment.toLowerCase()));
-      const excludedByFile = SENSITIVE_FILE_PATTERNS.some(pattern => pattern.test(normalized));
-      if (excludedByDirectory || excludedByFile || extraExcludedPaths.has(normalized)) {
+      if (isComposerSandboxSensitivePath(normalized) || extraExcludedPaths.has(normalized)) {
         stats.filesSkipped++;
         continue;
       }
@@ -71,7 +81,7 @@ export function copyComposerWorkspace(
       const sourcePath = path.join(currentSource, entry.name);
       const destinationPath = path.join(currentDestination, entry.name);
 
-      // Dirent checks avoid following symlinks and exclude sockets/devices/FIFOs.
+      // Dirent checks deliberately avoid following symlinks and special files.
       if (entry.isDirectory()) {
         fs.mkdirSync(destinationPath, { recursive: true });
         stats.directoriesCopied++;

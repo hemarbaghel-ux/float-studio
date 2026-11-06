@@ -23,18 +23,6 @@ export interface IShadowExecutionResult {
 	shadowDirectory: string;
 }
 
-const SENSITIVE_OR_HEAVY_DIRS = new Set([
-	'node_modules',
-	'.git',
-	'dist',
-	'build',
-	'out',
-	'.build',
-	'.gemini',
-	'.vscode',
-	'.idea'
-]);
-
 /**
  * Copy-based Shadow Workspace Daemon with containerized toolchain execution.
  *

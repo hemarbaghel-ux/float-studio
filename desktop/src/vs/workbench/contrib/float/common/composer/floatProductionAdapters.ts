@@ -8,29 +8,10 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { FloatDockerSandboxRunner } from './floatDockerSandboxRunner.js';
-import { copyComposerWorkspace } from './floatSandboxWorkspaceCopy.js';
+import { copyComposerWorkspace, isComposerSandboxExcludedDirectory, isComposerSandboxSensitivePath } from './floatSandboxWorkspaceCopy.js';
 import { IComposerFileSystem, IComposerCommandRunner } from './floatComposerTools.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
-
-const SENSITIVE_OR_IGNORED_DIRS = new Set([
-	'node_modules',
-	'.git',
-	'dist',
-	'build',
-	'out',
-	'.build',
-	'.gemini',
-	'.vscode',
-	'.idea'
-]);
-
-const SENSITIVE_FILE_PATTERNS = [
-	/(^|[\\/])\.env(\..+)?$/i,
-	/(^|[\\/]).*\.(pem|key|pfx|p12)$/i,
-	/(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)/i,
-	/(^|[\\/])(credentials|client_secret.*|service-account.*|serviceAccount.*|token|auth)\.json$/i
-];
 
 /**
  * Resolve a proposal-relative path beneath a workspace while rejecting
@@ -83,8 +64,7 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 	}
 
 	public isSensitiveFile(relPath: string): boolean {
-		const normalized = relPath.replace(/\\/g, '/');
-		return SENSITIVE_FILE_PATTERNS.some(pat => pat.test(normalized));
+		return isComposerSandboxSensitivePath(relPath);
 	}
 
 	public async readFile(relPath: string): Promise<string> {
@@ -128,6 +108,7 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 	}
 
 	public async listDirectory(relPath: string, recursive: boolean = false): Promise<string[]> {
+		if (isComposerSandboxSensitivePath(relPath)) return [];
 		const targetDir = this._resolve(relPath);
 		if (!fs.existsSync(targetDir)) {
 			return [];
@@ -137,7 +118,7 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 		const scan = async (dir: string, base: string) => {
 			const entries = await fsp.readdir(dir, { withFileTypes: true });
 			for (const entry of entries) {
-				if (SENSITIVE_OR_IGNORED_DIRS.has(entry.name)) {
+				if (isComposerSandboxExcludedDirectory(entry.name)) {
 					continue;
 				}
 				const rel = base ? `${base}/${entry.name}` : entry.name;
