@@ -3,18 +3,18 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IUtilityProcessWorkerWorkbenchService, IUtilityProcessWorker } from '../../../services/utilityProcess/electron-sandbox/utilityProcessWorkerWorkbenchService.js';
-import { FloatDaemonClient } from '../common/daemon/floatDaemonClient.js';
-import { FloatDaemonRuntimeState, IFloatDaemonRuntimeService, IFloatDaemonRuntimeStatus } from '../common/daemon/floatDaemonRuntimeService.js';
+import {
+  FloatDaemonRuntimeState,
+  IFloatDaemonRuntimeClient,
+  IFloatDaemonRuntimeService,
+  IFloatDaemonRuntimeStatus
+} from '../common/daemon/floatDaemonRuntimeService.js';
 
 interface IFloatDaemonRuntimeControlChannel {
   call<T>(command: string, arg?: unknown): Promise<T>;
@@ -22,7 +22,6 @@ interface IFloatDaemonRuntimeControlChannel {
 
 interface IFloatDaemonWorkerStartResult {
   status: 'running';
-  pipeName: string;
   pid: number;
 }
 
@@ -39,9 +38,8 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
   private _state: FloatDaemonRuntimeState = 'stopped';
   private _worker: IUtilityProcessWorker | undefined;
   private _controlChannel: IFloatDaemonRuntimeControlChannel | undefined;
-  private _client: FloatDaemonClient | undefined;
-  private _runtimeDirectory: string | undefined;
-  private _storageDirectory: string | undefined;
+  private _client: IFloatDaemonRuntimeClient | undefined;
+  private _workspaceIdentity: string | undefined;
   private _restartTimer: ReturnType<typeof setTimeout> | undefined;
   private _startPromise: Promise<void> | undefined;
   private _restartAttempt = 0;
@@ -62,7 +60,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
     return this._state;
   }
 
-  public getClient(): FloatDaemonClient | undefined {
+  public getClient(): IFloatDaemonRuntimeClient | undefined {
     return this._state === 'running' ? this._client : undefined;
   }
 
@@ -128,18 +126,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
   private async _startWorker(): Promise<void> {
     this._setState('starting');
 
-    const runtimeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'float-daemon-'));
-    this._runtimeDirectory = runtimeDirectory;
-    if (process.platform !== 'win32') {
-      fs.chmodSync(runtimeDirectory, 0o700);
-    }
-
-    const pipeName = process.platform === 'win32'
-      ? '\\\\.\\pipe\\float-daemon-' + generateUuid()
-      : path.join(runtimeDirectory, 'daemon.sock');
-
-    const storageDir = this._resolveStorageDirectory();
-    this._storageDirectory = storageDir;
+    const workspaceIdentity = this._resolveWorkspaceIdentity();
     const worker = await this._utilityProcessService.createWorker({
       moduleId: FLOAT_DAEMON_WORKER_MODULE,
       type: FLOAT_DAEMON_WORKER_TYPE
@@ -147,29 +134,25 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
 
     this._worker = worker;
     this._controlChannel = worker.client.getChannel('floatDaemonRuntime') as IFloatDaemonRuntimeControlChannel;
-
     void worker.onDidTerminate.then(({ reason }) => this._handleWorkerTermination(worker, reason));
 
     const startResult = await this._controlChannel.call<IFloatDaemonWorkerStartResult>('start', {
-      pipeName,
-      storageDir
+      workspaceId: workspaceIdentity,
+      instanceId: generateUuid()
     });
-    if (startResult.status !== 'running' || startResult.pipeName !== pipeName) {
-      throw new Error('FLOAT daemon worker did not confirm the requested pipe path.');
-    }
-
-    const client = new FloatDaemonClient({ pipeName });
-    this._client = client;
-    await client.connect(5_000);
-
-    const health = await client.ping();
-    if (!health || health.status !== 'ok') {
-      throw new Error('FLOAT daemon health check failed.');
+    if (startResult.status !== 'running') {
+      throw new Error('FLOAT daemon worker did not confirm startup.');
     }
 
     if (this._worker !== worker || this._stopping || this._disposed) {
-      client.dispose();
       throw new Error('FLOAT daemon worker terminated during startup.');
+    }
+
+    this._workspaceIdentity = workspaceIdentity;
+    this._client = this._createClientFacade(worker, this._controlChannel);
+    const health = await this._client.ping() as { status?: string };
+    if (!health || health.status !== 'ok') {
+      throw new Error('FLOAT daemon health check failed over the workbench control channel.');
     }
 
     this._restartAttempt = 0;
@@ -177,14 +160,39 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
     this._logService.info('[FLOAT] Daemon utility process ready; PID:', startResult.pid);
   }
 
+  private _createClientFacade(
+    worker: IUtilityProcessWorker,
+    channel: IFloatDaemonRuntimeControlChannel
+  ): IFloatDaemonRuntimeClient {
+    const call = <T>(method: string, params: unknown = {}, timeoutMs = 30_000): Promise<T> => {
+      if (this._worker !== worker || this._stopping || this._disposed) {
+        return Promise.reject(new Error('FLOAT daemon runtime is not available.'));
+      }
+      return channel.call<T>('callDaemon', { method, params, timeoutMs });
+    };
+
+    return {
+      call,
+      ping: () => call('ping'),
+      indexFileSemantics: (filePath, content) => call('semantic_index_file', { filePath, content }),
+      searchSemantics: (query, topK = 5) => call('semantic_search', { query, topK }),
+      getSymbols: (query) => call('semantic_get_symbols', { query })
+    };
+  }
+
+  private _resolveWorkspaceIdentity(): string {
+    const workspace = this._workspaceContextService.getWorkspace();
+    const firstFolder = workspace.folders[0];
+    return workspace.id || firstFolder?.uri.toString() || 'empty-workspace';
+  }
+
   private _handleWorkspaceChange(): void {
     if (this._disposed || this._stopping || (this._state !== 'running' && this._state !== 'starting')) {
       return;
     }
 
-    const activeStorageDirectory = this._resolveStorageDirectory();
-    const currentStorageDirectory = this._storageDirectory;
-    if (activeStorageDirectory === currentStorageDirectory) {
+    const activeWorkspaceIdentity = this._resolveWorkspaceIdentity();
+    if (activeWorkspaceIdentity === this._workspaceIdentity) {
       return;
     }
 
@@ -192,17 +200,6 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
     void this.stop()
       .then(() => this.start())
       .catch(error => this._logService.warn('[FLOAT] Daemon restart after workspace change failed:', error));
-  }
-
-  private _resolveStorageDirectory(): string {
-    const workspace = this._workspaceContextService.getWorkspace();
-    const firstFolder = workspace.folders[0];
-    const identity = workspace.id || firstFolder?.uri.toString() || 'empty-workspace';
-    const workspaceKey = crypto.createHash('sha256').update(identity, 'utf8').digest('hex');
-    // Keep private code-index snapshots outside the opened repository. A hostile
-    // workspace must not be able to redirect the daemon's persistence path with
-    // a committed .float symlink.
-    return path.join(os.homedir(), '.float-studio', 'daemon-index', workspaceKey);
   }
 
   private _handleWorkerTermination(worker: IUtilityProcessWorker, reason: { code?: number; signal?: string }): void {
@@ -245,25 +242,13 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
   }
 
   private _releaseWorkerResources(disposeWorker: boolean): void {
-    this._client?.dispose();
     this._client = undefined;
-
+    this._workspaceIdentity = undefined;
     const worker = this._worker;
     this._worker = undefined;
     this._controlChannel = undefined;
-    this._storageDirectory = undefined;
     if (disposeWorker) {
       worker?.dispose();
-    }
-
-    const runtimeDirectory = this._runtimeDirectory;
-    this._runtimeDirectory = undefined;
-    if (runtimeDirectory && fs.existsSync(runtimeDirectory)) {
-      try {
-        fs.rmSync(runtimeDirectory, { recursive: true, force: true });
-      } catch (error) {
-        this._logService.warn('[FLOAT] Failed to clean daemon runtime directory:', error);
-      }
     }
   }
 
