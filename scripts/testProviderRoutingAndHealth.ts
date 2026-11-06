@@ -69,8 +69,8 @@ async function runTests() {
   assert(solRoute.route.protocol === 'responses', 'GPT-6.1 Sol routes through the Responses API protocol');
   assert(
     JSON.stringify(Object.keys(MODEL_ROUTES).sort()) ===
-      JSON.stringify(['auto', 'gpt-6-astra', 'gpt-6.1-sol'].sort()),
-    'Runtime route authority exposes only the two selected model IDs and the explicit Auto alias'
+      JSON.stringify(['auto', 'gemini-3.8-flash', 'gpt-6-astra', 'gpt-6.1-sol'].sort()),
+    'Runtime route authority exposes the two GPT models, Gemini 3.8 Flash, and the explicit Auto alias'
   );
   assert(
     !('runAgentLoop' in router.getAdapterForModel('gpt-6-astra')),
@@ -87,7 +87,14 @@ async function runTests() {
   }
 
   const modelCatalog = router.getModelCatalog();
-  assert(modelCatalog.length === 2 && modelCatalog.some((model) => model.id === 'gpt-6-astra') && modelCatalog.some((model) => model.id === 'gpt-6.1-sol'), 'Server model catalog exposes only GPT-6 Astra and GPT-6.1 Sol');
+  assert(
+    modelCatalog.length === 3 &&
+      modelCatalog.some((model) => model.id === 'gpt-6-astra') &&
+      modelCatalog.some((model) => model.id === 'gpt-6.1-sol') &&
+      modelCatalog.some((model) => model.id === 'gemini-3.8-flash' && model.providerId === 'google'),
+    'Server model catalog exposes GPT-6 Astra, GPT-6.1 Sol, and Google Gemini 3.8 Flash'
+  );
+  assert(modelCatalog.find((model) => model.id === 'gemini-3.8-flash')?.requiredEnvironmentVariable === 'GEMINI_API_KEY', 'Gemini catalog points to the Google server credential');
   assert(modelCatalog.every((model) => model.modelAvailability === 'unverified'), 'Credential configuration is not reported as model access verification');
   assert(modelCatalog.every((model) => model.status === 'UNKNOWN' || model.status === 'CONFIG_REQUIRED'), 'Unverified models are not marked available');
   assert(modelCatalog.find((model) => model.id === 'gpt-6-astra')?.maxOutputTokens === 128000, 'GPT-6 Astra catalog exposes the verified output ceiling');
