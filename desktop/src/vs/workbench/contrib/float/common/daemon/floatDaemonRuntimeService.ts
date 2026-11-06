@@ -21,6 +21,7 @@ export interface IFloatDaemonRuntimeClient {
   call<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T>;
   ping(): Promise<unknown>;
   indexFileSemantics(filePath: string, content: string): Promise<unknown>;
+  removeFileSemantics(filePath: string): Promise<unknown>;
   searchSemantics(query: string, topK?: number): Promise<unknown>;
   getSymbols(query?: string): Promise<unknown>;
 }

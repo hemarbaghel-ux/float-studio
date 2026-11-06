@@ -9,6 +9,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
 import { FloatDaemonRuntimeService } from './floatDaemonRuntimeService.js';
+import './floatDaemonWorkspaceIndex.contribution.js';
 
 registerSingleton(IFloatDaemonRuntimeService, FloatDaemonRuntimeService, InstantiationType.Delayed);
 

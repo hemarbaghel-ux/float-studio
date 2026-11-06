@@ -66,6 +66,12 @@ async function main(): Promise<void> {
     assert.equal(status.status, 'running');
     assert.equal(status.pid, process.pid);
 
+    const removeResult = await channel.call<{ method: string }>('test-window', 'callDaemon', {
+      method: 'semantic_remove_file',
+      params: { filePath: 'src/old.ts' }
+    });
+    assert.equal(removeResult.method, 'semantic_remove_file');
+
     const callResult = await channel.call<{ method: string }>('test-window', 'callDaemon', {
       method: 'semantic_search',
       params: { query: 'workspace resolver', topK: 8 },

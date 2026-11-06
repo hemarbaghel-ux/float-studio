@@ -175,6 +175,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
       call,
       ping: () => call('ping'),
       indexFileSemantics: (filePath, content) => call('semantic_index_file', { filePath, content }),
+      removeFileSemantics: filePath => call('semantic_remove_file', { filePath }),
       searchSemantics: (query, topK = 5) => call('semantic_search', { query, topK }),
       getSymbols: (query) => call('semantic_get_symbols', { query })
     };

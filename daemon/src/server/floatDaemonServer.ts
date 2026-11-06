@@ -291,6 +291,22 @@ export class FloatDaemonServer {
 					break;
 				}
 
+				case 'semantic_remove_file': {
+					const filePath = String(params?.filePath || '');
+					if (!filePath || filePath.includes('\\0') || filePath.startsWith('/') || filePath.split(/[\\\\/]/).some((part: string) => part === '..')) {
+						throw new Error('semantic_remove_file requires a safe workspace-relative file path.');
+					}
+					this._indexer.removeFile(filePath);
+					this._vectorEngine.clearFileChunks(filePath);
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: { removed: true, filePath }
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
 				case 'semantic_search': {
 					const { query, topK } = params;
 					const results = this._vectorEngine.search(query, topK || 5);
