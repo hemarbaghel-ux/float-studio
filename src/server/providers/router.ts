@@ -6,6 +6,7 @@ import {
   ProviderHealthCheckResult
 } from './base';
 import { OpenAIAdapter } from './openai';
+import { GoogleGeminiAdapter } from './gemini';
 import {
   MODEL_ROUTES,
   ModelProtocol,
@@ -15,7 +16,7 @@ import {
 import { ServerPrivacyGuard } from '../privacyGuard';
 
 export interface ModelRouteDefinition {
-  provider: 'openai';
+  provider: 'openai' | 'google';
   apiModelId: string;
   protocol?: ModelProtocol;
   isInternalAlias?: boolean;
@@ -34,6 +35,9 @@ export class ModelRouter {
       if (!this.adapters.has('openai') && typeof OpenAIAdapter === 'function') {
         this.registerAdapter(new OpenAIAdapter());
       }
+      if (!this.adapters.has('google') && typeof GoogleGeminiAdapter === 'function') {
+        this.registerAdapter(new GoogleGeminiAdapter());
+      }
     } catch {}
   }
 
@@ -48,17 +52,17 @@ export class ModelRouter {
 
   getModelCatalog() {
     this.ensureAdaptersRegistered();
-    const openaiAdapter = this.adapters.get('openai');
-    return getPublicModelCatalog(Boolean(openaiAdapter?.isConfigured()));
+    const configured = Object.fromEntries(
+      Array.from(this.adapters.entries()).map(([id, adapter]) => [id, adapter.isConfigured()])
+    );
+    return getPublicModelCatalog(configured);
   }
 
   getConfiguredModelIds(): string[] {
     this.ensureAdaptersRegistered();
-    const openaiAdapter = this.adapters.get('openai');
-    if (openaiAdapter?.isConfigured()) {
-      return ['gpt-6-astra', 'gpt-6.1-sol'];
-    }
-    return [];
+    return MODEL_REGISTRY
+      .filter((model) => this.adapters.get(model.providerId)?.isConfigured())
+      .map((model) => model.id);
   }
 
   getProviderStatus(): Record<string, { name: string; configured: boolean; models?: string[] }> {
@@ -195,7 +199,7 @@ export class ModelRouter {
 
     if (!adapter.isConfigured() && !request.demoMode) {
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure OPENAI_API_KEY in the server environment.`,
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", ${route.provider === 'google' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'} in the server environment.`,
         'AUTH_ERROR',
         adapter.name,
         401

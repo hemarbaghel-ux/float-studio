@@ -110,26 +110,22 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       };
     }
 
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-      return {
-        provider: 'Google Gemini',
-        configured: true,
-        authenticated: true,
-        modelAvailable: true,
-        defaultModel: 'gemini-3.8-flash'
-      };
-    } catch (err: any) {
-      const normalized = normalizeGeminiError(err);
-      return {
-        provider: 'Google Gemini',
-        configured: true,
-        authenticated: false,
-        modelAvailable: false,
-        defaultModel: 'gemini-3.8-flash',
-        error: normalized.message
-      };
-    }
+    return {
+      provider: 'Google Gemini',
+      configured: true,
+      authenticated: false,
+      modelAvailable: false,
+      defaultModel: 'gemini-3.8-flash',
+      accessibleModelIds: [],
+      modelAccess: {
+        'gemini-3.8-flash': {
+          upstreamModelId: 'gemini-3.8-flash',
+          status: 'unverified',
+          detail: 'GEMINI_API_KEY is configured, but authentication and model generation have not been verified. A health check does not send a billable or quota-consuming prompt.'
+        }
+      },
+      error: 'Credential presence is not proof of authentication or model access. Send a real test prompt to verify this model.'
+    };
   }
 
   private resolveApiModel(model: string): string {
@@ -175,6 +171,15 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         const budgetMap = { low: 1024, medium: 4096, high: 8192 };
         config.thinkingConfig = { thinkingBudget: budgetMap[request.reasoningEffort] || 4096 };
       }
+      if (request.tools?.length) {
+        config.tools = [{
+          functionDeclarations: request.tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters
+          }))
+        }];
+      }
 
       const response = await ai.models.generateContent({
         model: apiModel,
@@ -186,8 +191,15 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
         inputTokens: response.usageMetadata.promptTokenCount || 0,
         outputTokens: response.usageMetadata.candidatesTokenCount || 0
       } : undefined;
+      const toolCalls = (response.functionCalls || [])
+        .filter((call: any) => typeof call?.name === 'string' && call.name.length > 0)
+        .map((call: any, index: number) => ({
+          id: String(call.id || `${call.name}-${index + 1}`),
+          name: call.name,
+          arguments: call.args && typeof call.args === 'object' ? call.args : {}
+        }));
 
-      return { text: response.text || '', usage };
+      return { text: response.text || '', usage, toolCalls: toolCalls.length ? toolCalls : undefined };
     } catch (err: any) {
       throw normalizeGeminiError(err);
     }
@@ -213,6 +225,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
 
     let fullText = '';
     let finalUsage: { inputTokens: number; outputTokens: number } | undefined = undefined;
+    const toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> = [];
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
@@ -223,9 +236,18 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       if (request.systemInstruction) {
         config.systemInstruction = request.systemInstruction;
       }
-      if (request.reasoningEffort && (apiModel.includes('2.0-flash') || apiModel.includes('3.8-flash'))) {
+      if (request.reasoningEffort && apiModel.includes('2.0-flash')) {
         const budgetMap = { low: 1024, medium: 4096, high: 8192 };
         config.thinkingConfig = { thinkingBudget: budgetMap[request.reasoningEffort] || 4096 };
+      }
+      if (request.tools?.length) {
+        config.tools = [{
+          functionDeclarations: request.tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters
+          }))
+        }];
       }
 
       const responseStream = await ai.models.generateContentStream({
@@ -249,9 +271,18 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
             outputTokens: chunk.usageMetadata.candidatesTokenCount || 0
           };
         }
+        for (const [index, call] of (chunk.functionCalls || []).entries()) {
+          if (typeof call?.name === 'string' && call.name.length > 0) {
+            toolCalls.push({
+              id: String(call.id || `${call.name}-${toolCalls.length + index + 1}`),
+              name: call.name,
+              arguments: call.args && typeof call.args === 'object' ? call.args : {}
+            });
+          }
+        }
       }
 
-      return { text: fullText, usage: finalUsage };
+      return { text: fullText, usage: finalUsage, toolCalls: toolCalls.length ? toolCalls : undefined };
     } catch (err: any) {
       if (signal?.aborted) {
         return { text: fullText, usage: finalUsage };

@@ -138,6 +138,39 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     availabilityStatus: 'UNKNOWN',
     availabilityDetails: 'Model-level access is unverified until a provider request succeeds.',
     deprecationStatus: 'active'
+  },
+  {
+    id: 'gemini-3.8-flash',
+    exactModelId: 'gemini-3.8-flash',
+    displayName: 'Gemini 3.8 Flash',
+    providerId: 'google',
+    family: 'gemini-3',
+    category: 'flagship_coding',
+    snapshotVersion: 'gemini-3.8-flash',
+    docUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash',
+    description: 'Google Gemini Flash model for agentic coding, long-horizon software engineering, and multi-step workflows.',
+    contextWindow: 1048576,
+    maxOutputTokens: 65536,
+    modalities: ['text', 'image', 'video', 'audio', 'pdf', 'code'],
+    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
+    supportedEfforts: ['low', 'medium', 'high'],
+    pricing: { inputCostPer1M: 0.75, outputCostPer1M: 3.75, cachedInputCostPer1M: 0.075, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2026-11-06', sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing' },
+    limitations: [
+      'The Gemini Developer API has a limited free tier; rate limits and eligibility apply.',
+      'Free-tier submitted content may be used by Google to improve its products.',
+      'A configured API key does not prove model-level access.'
+    ],
+    intendedUseCases: [
+      'Agentic coding and multi-file software engineering',
+      'Long-context codebase analysis',
+      'Streaming chat and function calling'
+    ],
+    speed: 'fast',
+    availabilityStatus: 'UNKNOWN',
+    availabilityDetails: 'Model access is unverified until a real generation request succeeds.',
+    configRequirement: 'GEMINI_API_KEY',
+    deprecationStatus: 'active',
+    requiredEnvironmentVariable: 'GEMINI_API_KEY'
   }
 ];
 
