@@ -37,5 +37,8 @@ jobs:
       - name: Production build (client + server bundles)
         run: npm run build
 
+      - name: Build native FLOAT utility-process entrypoint
+        run: npm run build:float-daemon-worker
+
       - name: Run full verification suite (Chat, Models, Persistence, Security)
         run: npm test

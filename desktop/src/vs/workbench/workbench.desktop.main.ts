@@ -177,6 +177,12 @@ import './contrib/emergencyAlert/electron-sandbox/emergencyAlert.contribution.js
 // MCP
 import './contrib/mcp/electron-sandbox/mcp.contribution.js';
 
+// FLOAT native daemon utility process
+import './contrib/float/electron-sandbox/floatDaemonRuntime.contribution.js';
+
+// FLOAT native daemon utility process
+import './contrib/float/electron-sandbox/floatDaemonRuntime.contribution.js';
+
 //#endregion
 
 

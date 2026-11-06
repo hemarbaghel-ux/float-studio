@@ -34,6 +34,7 @@ import { FloatDagTaskPlanner } from '../../../desktop/src/vs/workbench/contrib/f
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;
+	storageDir?: string;
 	maxConnections?: number;
 }
 
@@ -42,6 +43,7 @@ export class FloatDaemonServer {
 	private _pipePath: string;
 	private readonly _clients = new Set<net.Socket>();
 	private _isShuttingDown: boolean = false;
+	private readonly _allowSandboxExecution: boolean;
 	private readonly _shadowDaemon: FloatShadowDaemon;
 	private readonly _speculator: FloatNextActionSpeculator;
 	private readonly _indexer: FloatTreeSitterIndexer;
@@ -60,12 +62,13 @@ export class FloatDaemonServer {
 
 	constructor(options?: IFloatDaemonOptions) {
 		this._pipePath = options?.pipeName || this._resolveDefaultPipePath();
+		this._allowSandboxExecution = options?.allowSandboxExecution === true;
 		this._shadowDaemon = new FloatShadowDaemon();
 		this._speculator = new FloatNextActionSpeculator();
 		this._indexer = new FloatTreeSitterIndexer();
 		this._vectorEngine = new FloatVectorEngine();
 		this._semanticChunker = new FloatAstSemanticChunker(this._indexer);
-		this._diskStore = new FloatDiskIndexStore(path.join(os.tmpdir(), 'float-daemon-index'));
+		this._diskStore = new FloatDiskIndexStore(options?.storageDir || path.join(os.tmpdir(), 'float-daemon-index', String(process.pid)));
 		this._shadowManager = new FloatShadowWorkspaceManager();
 		this._sandboxRunner = new FloatSandboxedProcessRunner();
 		this._diagnosticCollector = new FloatShadowDiagnosticDiffCollector();
@@ -116,6 +119,12 @@ export class FloatDaemonServer {
 		});
 	}
 
+	private _assertSandboxExecutionEnabled(): void {
+		if (!this._allowSandboxExecution) {
+			throw new Error('FLOAT daemon shadow/toolchain operations are disabled until the isolated execution adapter is explicitly enabled.');
+		}
+	}
+
 	private _handleConnection(socket: net.Socket): void {
 		this._clients.add(socket);
 		let receiveBuffer = Buffer.alloc(0);
@@ -161,6 +170,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'create_shadow_sandbox': {
+					this._assertSandboxExecutionEnabled();
 					const t0 = Date.now();
 					const sandboxRoot = await this._shadowDaemon.createShadowSandbox(params.sessionId, params.sourceWorkspaceRoot);
 					const res: IFloatIpcResponse = {
@@ -177,6 +187,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'run_shadow_toolchain': {
+					this._assertSandboxExecutionEnabled();
 					const fullCommand = Array.isArray(params.args) && params.args.length > 0
 						? `${params.command} ${params.args.join(' ')}`
 						: params.command;
@@ -387,6 +398,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'shadow_create_cow_workspace': {
+					this._assertSandboxExecutionEnabled();
 					const { sourceRoot, sessionId } = params;
 					const session = await this._shadowManager.createShadowWorkspace(sourceRoot, sessionId);
 					const res: IFloatIpcResponse = {
@@ -404,6 +416,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'shadow_apply_cow_edits': {
+					this._assertSandboxExecutionEnabled();
 					const { sessionId, relativePath, newContent } = params;
 					await this._shadowManager.applyShadowEdit(sessionId, relativePath, newContent);
 					const res: IFloatIpcResponse = {
@@ -432,6 +445,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'shadow_run_sandboxed_toolchain': {
+					this._assertSandboxExecutionEnabled();
 					const { sessionId, command, args, timeoutMs } = params;
 					const session = this._shadowManager.getSession(sessionId);
 					if (!session) {
