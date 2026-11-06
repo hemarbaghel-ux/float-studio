@@ -118,6 +118,9 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 		const scan = async (dir: string, base: string) => {
 			const entries = await fsp.readdir(dir, { withFileTypes: true });
 			for (const entry of entries) {
+				if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+					continue;
+				}
 				if (isComposerSandboxExcludedDirectory(entry.name)) {
 					continue;
 				}

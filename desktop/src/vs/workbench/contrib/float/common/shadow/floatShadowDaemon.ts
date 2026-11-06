@@ -45,8 +45,7 @@ export class FloatShadowDaemon {
 	}
 
 	/**
-	 * Creates a zero-mutation physical shadow sandbox mirroring the workspace.
-	 * Uses filesystem hard links for unchanged files to achieve sub-50ms instantiation with 0-byte duplicate disk storage.
+	 * Creates an independent, copy-based shadow workspace. Hard links are never used.
 	 */
 	public async createShadowSandbox(
 		sessionId: string,
@@ -63,7 +62,7 @@ export class FloatShadowDaemon {
 		}
 		fs.mkdirSync(sandboxDir, { recursive: true });
 
-		// 1. Mirror unchanged workspace files using hardlinks or fast copies
+		// 1. Copy permitted workspace files; symlinks and credential paths are excluded.
 		if (fs.existsSync(workspaceRoot)) {
 			copyComposerWorkspace(workspaceRoot, sandboxDir, deletedFiles);
 		}
@@ -78,27 +77,19 @@ export class FloatShadowDaemon {
 			}
 		}
 
-		// 3. Write speculative overlays directly into the sandbox (copy-on-write isolation)
+		// 2. Apply speculative overlays to the disposable copy.
 		for (const [relPath, content] of speculativeOverlays.entries()) {
 			const norm = sanitizeProposalPath(relPath);
 			if (deletedFiles.has(norm)) continue;
 
 			const destFile = path.join(sandboxDir, norm);
 			fs.mkdirSync(path.dirname(destFile), { recursive: true });
-			// Break hardlink before writing to ensure complete isolation
-			if (fs.existsSync(destFile)) {
-				try { fs.unlinkSync(destFile); } catch {}
-			}
 			fs.writeFileSync(destFile, content, 'utf8');
 		}
 
 		this._activeSandboxes.set(sessionId, sandboxDir);
 		return sandboxDir;
 	}
-
-	/**
-	 * Recursively copies regular files and directories; symlinks are not followed.
-	 */
 
 	/**
 	 * Executes a permitted toolchain command inside the isolated shadow sandbox
