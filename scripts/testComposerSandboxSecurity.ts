@@ -111,7 +111,7 @@ async function main(): Promise<void> {
     if (runnerSymlinkSupported) {
       assert.throws(
         () => isolatedRunner.updateOverlay('escape/host-write.txt', 'must-not-escape'),
-        /\\[SECURITY\\]/
+        /\[SECURITY\]/
       );
       assert.equal(fs.existsSync(path.join(sibling, 'host-write.txt')), false);
     }
