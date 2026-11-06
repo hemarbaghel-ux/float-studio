@@ -85,6 +85,17 @@ export class FloatTreeSitterIndexer {
 		return Array.from(this._fileNodes.keys());
 	}
 
+	/** Restore file nodes from a checksum-validated persisted snapshot. */
+	public restoreNodes(nodes: IFloatFileMerkleNode[]): void {
+		this._fileNodes.clear();
+		for (const node of nodes) {
+			if (!node || typeof node.filePath !== 'string' || typeof node.fileHash !== 'string' || !Array.isArray(node.symbols)) {
+				throw new Error('Invalid persisted semantic index node');
+			}
+			this._fileNodes.set(node.filePath, node);
+		}
+	}
+
 	public getFileNode(filePath: string): IFloatFileMerkleNode | undefined {
 		return this._fileNodes.get(filePath);
 	}

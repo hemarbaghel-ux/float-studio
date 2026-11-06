@@ -147,4 +147,20 @@ export class FloatVectorEngine {
 	public get totalChunks(): number {
 		return this._chunks.length;
 	}
+
+	/** Returns a detached snapshot of every searchable code chunk. */
+	public getAllChunks(): IFloatCodeChunk[] {
+		return this._chunks.map(chunk => ({ ...chunk, symbols: [...chunk.symbols], vector: chunk.vector ? [...chunk.vector] : undefined }));
+	}
+
+	/** Restores persisted chunks and their precomputed feature vectors. */
+	public restoreChunks(chunks: IFloatCodeChunk[]): void {
+		this._chunks.length = 0;
+		for (const chunk of chunks) {
+			if (!chunk || typeof chunk.id !== 'string' || typeof chunk.filePath !== 'string' || typeof chunk.content !== 'string') {
+				throw new Error('Invalid persisted semantic chunk');
+			}
+			this._chunks.push({ ...chunk, symbols: Array.isArray(chunk.symbols) ? [...chunk.symbols] : [], vector: Array.isArray(chunk.vector) ? [...chunk.vector] : undefined });
+		}
+	}
 }

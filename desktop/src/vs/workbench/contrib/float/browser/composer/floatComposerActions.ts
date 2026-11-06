@@ -10,6 +10,7 @@ import { IQuickInputService } from '../../../../../platform/quickinput/common/qu
 import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { IFloatService } from '../../common/floatService.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { FloatComposer } from './floatComposer.js';
 import { FloatFloatingComposerWidget } from './floatFloatingComposerWidget.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
@@ -36,8 +37,10 @@ export class OpenFloatComposerAction extends Action2 {
 		const floatService = accessor.get(IFloatService);
 		const textFileService = accessor.get(ITextFileService);
 		const codeEditorService = accessor.get(ICodeEditorService);
+		const workspaceContextService = accessor.get(IWorkspaceContextService);
+		const workspaceRoot = workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
 
-		const composer = new FloatComposer(floatService, notificationService, textFileService);
+		const composer = new FloatComposer(floatService, notificationService, textFileService, undefined, undefined, workspaceRoot);
 		const activeEditor = codeEditorService.getFocusedCodeEditor() || codeEditorService.getActiveCodeEditor();
 
 		// If an active code editor exists, present the sleek floating Composer widget overlay (Cursor style)
