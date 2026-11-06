@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { ProductionComposerFileSystem, IsolatedShadowWorkspaceCommandRunner, resolveComposerWorkspacePath } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
+import { ProductionComposerFileSystem, IsolatedShadowWorkspaceCommandRunner, resolveComposerWorkspacePath, resolveComposerWorkspaceRelativePath } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
 import { copyComposerWorkspace } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatSandboxWorkspaceCopy.js';
 import {
   buildFloatDockerSandboxArgs,
@@ -43,6 +43,9 @@ async function main(): Promise<void> {
     }
     assert.equal(fs.existsSync(path.join(copyDestination, 'node_modules')), false, 'dependency directory must not be copied');
 
+    assert.equal(resolveComposerWorkspaceRelativePath(workspace, path.join(workspace, 'src', 'app.ts')), 'src/app.ts');
+    assert.equal(resolveComposerWorkspaceRelativePath(workspace, 'src/app.ts'), 'src/app.ts');
+    assert.throws(() => resolveComposerWorkspaceRelativePath(workspace, path.join(sibling, 'outside.txt')), /outside the active workspace/);
     assert.throws(() => resolveComposerWorkspacePath(workspace, '.aws/credentials'), /excluded workspace path/);
     assert.throws(() => resolveComposerWorkspacePath(workspace, '.ssh/id_ed25519'), /excluded workspace path/);
     assert.throws(() => resolveComposerWorkspacePath(workspace, '../workspace-root-evil/outside.txt'), /Path traversal/);

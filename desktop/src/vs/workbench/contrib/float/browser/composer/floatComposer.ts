@@ -14,7 +14,7 @@ import { FloatMultiFileDiffOrchestrator, IFloatMultiFileProposal } from '../../c
 import { FloatComposerToolRegistry, IComposerFileSystem, IComposerCommandRunner } from '../../common/composer/floatComposerTools.js';
 import { FloatComposerAgent, IComposerAgentGoal, IComposerAgentExecution, IComposerAgentStep } from '../../common/composer/floatComposerAgent.js';
 import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
-import { ProductionComposerFileSystem, ProductionComposerCommandRunner, resolveComposerWorkspacePath } from '../../common/composer/floatProductionAdapters.js';
+import { ProductionComposerFileSystem, ProductionComposerCommandRunner, resolveComposerWorkspacePath, resolveComposerWorkspaceRelativePath } from '../../common/composer/floatProductionAdapters.js';
 
 export class FloatComposer extends Disposable {
 	private _activeProposal: IFloatProposal | null = null;
@@ -80,11 +80,16 @@ export class FloatComposer extends Disposable {
 		return this._shadowWorkspace;
 	}
 
+	private _workspaceRelativePath(candidatePath?: string): string | undefined {
+		return candidatePath ? resolveComposerWorkspaceRelativePath(this._workspaceRoot, candidatePath) : undefined;
+	}
+
 	private _workspaceUri(relativePath: string): URI {
 		return URI.file(resolveComposerWorkspacePath(this._workspaceRoot, relativePath));
 	}
 
 	public async generateComposerProposal(prompt: string, activeFilePath?: string): Promise<IFloatProposal | null> {
+		const workspaceRelativeActiveFilePath = this._workspaceRelativePath(activeFilePath);
 		this._notificationService.info(`FLOAT Composer generating multi-file proposal for: "${prompt}"...`);
 
 		const messages = [
@@ -93,7 +98,7 @@ export class FloatComposer extends Disposable {
 				role: 'user' as const,
 				content: prompt,
 				timestamp: Date.now(),
-				activeFileContext: activeFilePath
+				activeFileContext: workspaceRelativeActiveFilePath
 			}
 		];
 
@@ -104,7 +109,7 @@ export class FloatComposer extends Disposable {
 			onComplete: () => {}
 		});
 
-		const proposals = parseModelProposals(fullResponse, activeFilePath);
+		const proposals = parseModelProposals(fullResponse, workspaceRelativeActiveFilePath);
 		if (proposals.length > 0) {
 			this._activeProposal = proposals[0];
 			this._floatService.getProposalSession().addProposal(this._activeProposal);
@@ -150,6 +155,7 @@ export class FloatComposer extends Disposable {
 		this._notificationService.info(`FLOAT Autonomous Composer starting goal: "${goal.prompt}"...`);
 		const isolatedGoal: IComposerAgentGoal = {
 			...goal,
+			activeFilePath: this._workspaceRelativePath(goal.activeFilePath),
 			isolateWorkspaceMutations: true
 		};
 		const execution = await this._agent.executeGoal(isolatedGoal, onStep, signal);

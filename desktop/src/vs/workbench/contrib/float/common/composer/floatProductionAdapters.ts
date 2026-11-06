@@ -18,6 +18,27 @@ import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurit
  * existing symlink/junction components and hard-linked target files.
  * This is path hardening, not a substitute for OS-level isolation.
  */
+/**
+ * Convert an absolute editor path or a workspace-relative proposal path into
+ * a normalized workspace-relative path. Reject paths outside the workspace.
+ */
+export function resolveComposerWorkspaceRelativePath(workspaceRoot: string, candidatePath: string): string {
+	if (!candidatePath || typeof candidatePath !== 'string' || candidatePath.includes('\0')) {
+		throw new Error('[SECURITY] Invalid empty or null-byte workspace path.');
+	}
+	const rootResolved = fs.realpathSync(workspaceRoot);
+	const normalizedCandidate = candidatePath.replace(/\\/g, path.sep);
+	const candidateResolved = path.isAbsolute(normalizedCandidate)
+		? path.resolve(normalizedCandidate)
+		: path.resolve(rootResolved, normalizedCandidate);
+	const relative = path.relative(rootResolved, candidateResolved);
+	if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+		throw new Error('[SECURITY] Path is outside the active workspace: ' + candidatePath);
+	}
+	const portable = relative.split(path.sep).join('/');
+	return sanitizeProposalPath(portable);
+}
+
 export function resolveComposerWorkspacePath(workspaceRoot: string, relPath: string): string {
 	if (isComposerSandboxSensitivePath(relPath)) {
 		throw new Error('[SECURITY] Access to excluded workspace path denied: ' + relPath);

@@ -55,7 +55,7 @@ export class OpenFloatComposerAction extends Action2 {
 						widget!.setStatus('Agent executing tools and verifying with shadow daemon...');
 						const execution = await composer.executeAutonomousGoal({
 							prompt: e.prompt,
-							activeFilePath: activeEditor.getModel()?.uri.path
+							activeFilePath: activeEditor.getModel()?.uri.fsPath
 						}, step => {
 							if (step.toolCall) {
 								widget!.setStatus(`Tool: ${step.toolCall.name}...`);
@@ -81,7 +81,7 @@ export class OpenFloatComposerAction extends Action2 {
 						}
 					} else {
 						widget!.setStatus('Generating multi-file proposal...');
-						const proposal = await composer.generateComposerProposal(e.prompt, activeEditor.getModel()?.uri.path);
+						const proposal = await composer.generateComposerProposal(e.prompt, activeEditor.getModel()?.uri.fsPath);
 						if (proposal && proposal.files.length > 0) {
 							const additions = proposal.files.reduce((sum, f) => sum + (f.diff.match(/^\+[^+]/gm) || []).length, 0);
 							const deletions = proposal.files.reduce((sum, f) => sum + (f.diff.match(/^-[^-]/gm) || []).length, 0);
