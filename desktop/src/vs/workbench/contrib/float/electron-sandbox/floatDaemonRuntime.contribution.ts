@@ -7,7 +7,7 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
-import { IFloatDaemonRuntimeService, FloatDaemonRuntimeState } from '../common/daemon/floatDaemonRuntimeService.js';
+import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
 import { FloatDaemonRuntimeService } from './floatDaemonRuntimeService.js';
 
 registerSingleton(IFloatDaemonRuntimeService, FloatDaemonRuntimeService, InstantiationType.Delayed);

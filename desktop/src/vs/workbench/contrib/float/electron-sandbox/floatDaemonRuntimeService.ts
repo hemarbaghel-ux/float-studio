@@ -40,6 +40,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
   private _controlChannel: IFloatDaemonRuntimeControlChannel | undefined;
   private _client: FloatDaemonClient | undefined;
   private _runtimeDirectory: string | undefined;
+  private _storageDirectory: string | undefined;
   private _restartTimer: ReturnType<typeof setTimeout> | undefined;
   private _startPromise: Promise<void> | undefined;
   private _restartAttempt = 0;
@@ -52,6 +53,8 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
     @ILogService private readonly _logService: ILogService
   ) {
     super();
+    this._register(this._workspaceContextService.onDidChangeWorkspaceFolders(() => this._handleWorkspaceChange()));
+    this._register(this._workspaceContextService.onDidChangeWorkbenchState(() => this._handleWorkspaceChange()));
   }
 
   public get state(): FloatDaemonRuntimeState {
@@ -77,6 +80,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
     this._cancelRestart();
     this._startPromise = this._startWorker()
       .catch(error => {
+        this._releaseWorkerResources(true);
         this._setState('failed', error instanceof Error ? error.message : String(error));
         this._logService.error('[FLOAT] Daemon startup failed:', error);
         if (!this._stopping && !this._disposed) {
@@ -134,6 +138,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
       : path.join(runtimeDirectory, 'daemon.sock');
 
     const storageDir = this._resolveStorageDirectory(runtimeDirectory);
+    this._storageDirectory = storageDir;
     const worker = await this._utilityProcessService.createWorker({
       moduleId: FLOAT_DAEMON_WORKER_MODULE,
       type: FLOAT_DAEMON_WORKER_TYPE
@@ -169,6 +174,23 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
     this._restartAttempt = 0;
     this._setState('running');
     this._logService.info('[FLOAT] Daemon utility process ready; PID:', startResult.pid);
+  }
+
+  private _handleWorkspaceChange(): void {
+    if (this._disposed || this._stopping || (this._state !== 'running' && this._state !== 'starting')) {
+      return;
+    }
+
+    const activeStorageDirectory = this._resolveStorageDirectory(this._runtimeDirectory || os.tmpdir());
+    const currentStorageDirectory = this._storageDirectory;
+    if (activeStorageDirectory === currentStorageDirectory) {
+      return;
+    }
+
+    this._logService.info('[FLOAT] Active workspace changed; restarting the daemon against the new workspace index.');
+    void this.stop()
+      .then(() => this.start())
+      .catch(error => this._logService.warn('[FLOAT] Daemon restart after workspace change failed:', error));
   }
 
   private _resolveStorageDirectory(runtimeDirectory: string): string {
@@ -225,6 +247,7 @@ export class FloatDaemonRuntimeService extends Disposable implements IFloatDaemo
     const worker = this._worker;
     this._worker = undefined;
     this._controlChannel = undefined;
+    this._storageDirectory = undefined;
     if (disposeWorker) {
       worker?.dispose();
     }

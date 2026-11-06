@@ -53,6 +53,7 @@ async function main(): Promise<void> {
   await channel.call('test-window', 'stop');
   await assert.rejects(() => channel.call('test-window', 'unsupported-command'), /Unknown FLOAT daemon worker command/);
   await assert.rejects(() => channel.call('test-window', 'start', { pipeName: '' }), /pipeName/);
+  await assert.rejects(() => channel.call('test-window', 'start', { pipeName: '/tmp/valid.sock', storageDir: '../bad\\0path' }), /storageDir/);
 
   console.log('FLOAT daemon worker channel: start, idempotency, status, restart, stop and validation passed.');
 }
