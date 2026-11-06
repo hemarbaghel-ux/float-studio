@@ -300,9 +300,9 @@ export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 
 /**
  * Speculative Shadow Workspace Command Runner.
- * Commands run as the current OS user in a temporary workspace copy.
- * This copy is NOT an OS-level sandbox: it does not isolate processes, filesystem access, network access,
- * or host privileges. Interactive user approval is required before every command.
+ * Commands run as the current OS user in a temporary workspace copy with credential files and dependency
+ * directories omitted. The copy is NOT an OS-level sandbox: processes can still access the host filesystem,
+ * network, and user privileges. Interactive user approval is required before every command.
  */
 export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRunner {
 	private readonly _shadowDir: string;
@@ -344,12 +344,6 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 				const entries = fs.readdirSync(src, { withFileTypes: true });
 				for (const entry of entries) {
 					if (SENSITIVE_OR_IGNORED_DIRS.has(entry.name)) {
-						if (entry.name === 'node_modules' && process.platform === 'win32') {
-							// Link node_modules via junction on Windows for instant dependency access
-							try {
-								fs.symlinkSync(path.join(src, entry.name), path.join(dest, entry.name), 'junction');
-							} catch {}
-						}
 						continue;
 					}
 					const srcPath = path.join(src, entry.name);
@@ -359,6 +353,8 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 						fs.mkdirSync(destPath, { recursive: true });
 						mirrorDir(srcPath, destPath);
 					} else if (entry.isFile()) {
+						const relativePath = path.relative(this._originalWorkspaceRoot, srcPath).replace(/\\/g, '/');
+						if (SENSITIVE_FILE_PATTERNS.some(pattern => pattern.test(relativePath))) continue;
 						fs.copyFileSync(srcPath, destPath);
 					}
 				}

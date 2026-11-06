@@ -34,10 +34,18 @@ const SENSITIVE_OR_HEAVY_DIRS = new Set([
 	'.idea'
 ]);
 
+const SENSITIVE_FILE_PATTERNS = [
+	/(^|[\\/])\\.env(\\..+)?$/i,
+	/(^|[\\/]).*\\.(pem|key|pfx|p12)$/i,
+	/(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)/i,
+	/(^|[\\/])(credentials|client_secret.*|service-account.*|serviceAccount.*|token|auth)\\.json$/i
+];
+
 /**
  * Speculative workspace-copy daemon.
- * It does NOT provide OS-level process isolation: commands retain the current user's
- * OS privileges. This runner fails closed unless the workbench supplies UI approval.
+ * Files are copied, never hard-linked, and credential/dependency directories are omitted.
+ * This is NOT an OS-level sandbox: commands retain the current user's OS privileges.
+ * The runner fails closed unless the workbench supplies explicit UI approval.
  */
 export class FloatShadowDaemon {
 	private readonly _shadowRootDir: string;
@@ -59,8 +67,7 @@ export class FloatShadowDaemon {
 	}
 
 	/**
-	 * Creates a zero-mutation physical shadow sandbox mirroring the workspace.
-	 * Uses filesystem hard links for unchanged files to achieve sub-50ms instantiation with 0-byte duplicate disk storage.
+	 * Creates a disposable workspace copy with speculative overlays. Files are copied, never hard-linked.
 	 */
 	public async createShadowSandbox(
 		sessionId: string,
@@ -74,24 +81,15 @@ export class FloatShadowDaemon {
 		}
 		fs.mkdirSync(sandboxDir, { recursive: true });
 
-		// 1. Mirror unchanged workspace files using hardlinks or fast copies
+		// 1. Copy workspace files without sharing file inodes with the source workspace
 		if (fs.existsSync(workspaceRoot)) {
 			await this._mirrorDirectory(workspaceRoot, sandboxDir, deletedFiles);
 		}
 
-		// 2. Link node_modules and dependencies directly so toolchains resolve cleanly
-		const nodeModulesSrc = path.join(workspaceRoot, 'node_modules');
-		const nodeModulesDest = path.join(sandboxDir, 'node_modules');
-		if (fs.existsSync(nodeModulesSrc) && !fs.existsSync(nodeModulesDest)) {
-			try {
-				// Create junction on Windows or symlink on POSIX
-				fs.symlinkSync(nodeModulesSrc, nodeModulesDest, 'junction');
-			} catch {
-				// If symlink permission denied, continue
-			}
-		}
+		// 2. Dependency directories are deliberately not linked back to the source workspace.
+		// Commands that require dependencies must install them into this disposable copy.
 
-		// 3. Write speculative overlays directly into the sandbox (copy-on-write isolation)
+		// 3. Write speculative overlays directly into the disposable workspace copy
 		for (const [relPath, content] of speculativeOverlays.entries()) {
 			const norm = sanitizeProposalPath(relPath);
 			if (deletedFiles.has(norm)) continue;
@@ -111,7 +109,7 @@ export class FloatShadowDaemon {
 	}
 
 	/**
-	 * Recursively mirrors directory structure and hardlinks unchanged project files
+	 * Recursively copies files into a workspace copy without sharing source file inodes
 	 */
 	private async _mirrorDirectory(srcDir: string, destDir: string, deletedFiles: Set<string>, relPrefix: string = ''): Promise<void> {
 		const entries = fs.readdirSync(srcDir, { withFileTypes: true });
@@ -131,15 +129,8 @@ export class FloatShadowDaemon {
 				fs.mkdirSync(destPath, { recursive: true });
 				await this._mirrorDirectory(srcPath, destPath, deletedFiles, normRel);
 			} else if (entry.isFile()) {
-				try {
-					// Use hardlink for instant zero-copy mirroring
-					fs.linkSync(srcPath, destPath);
-				} catch {
-					// Fallback to copy if cross-device or permission restricted
-					try {
-						fs.copyFileSync(srcPath, destPath);
-					} catch {}
-				}
+				if (SENSITIVE_FILE_PATTERNS.some(pattern => pattern.test(normRel))) continue;
+				fs.copyFileSync(srcPath, destPath);
 			}
 		}
 	}

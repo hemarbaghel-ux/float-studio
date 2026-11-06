@@ -69,6 +69,12 @@ async function runPhase2Tests() {
 		assert.strictEqual(execResult.exitCode, 0);
 		assert(execResult.stdout.includes('test-pkg'));
 		console.log(`  ✓ Toolchain executed after explicit approval in a workspace copy (${execResult.durationMs}ms).`);
+		const shadowWrite = await daemon.executeToolchain(
+			sessionId,
+			`node -e "require('fs').writeFileSync('math.ts','changed only in shadow copy')"`
+		);
+		assert.strictEqual(shadowWrite.exitCode, 0, 'Approved command writes to its temporary workspace');
+		assert(fs.readFileSync(mathTs, 'utf8').includes('return a + b'), 'Approved command must not mutate the original file through a hard link');
 
 		// Test 3: Security Policy Enforcement
 		console.log('\nTest 3: Security Policy Enforcement in Shadow Sandbox...');
