@@ -11,7 +11,7 @@ async function main(): Promise<void> {
     assert.equal(source.includes(`from ${specifier}`), false, `renderer runtime must not import Node module ${specifier}`);
   }
   assert.equal(source.includes("from '../common/daemon/floatDaemonClient.js'"), false, 'renderer must not import the Node socket client');
-  assert.ok(source.includes("call<T>(method: string"), 'renderer-facing daemon API should be a MessagePort RPC facade');
+  assert.ok(source.includes('const call = <T>(method: string'), 'renderer-facing daemon API should be a MessagePort RPC facade');
 
   console.log('FLOAT daemon renderer boundary: no Node-only builtins or socket client imports.');
 }
