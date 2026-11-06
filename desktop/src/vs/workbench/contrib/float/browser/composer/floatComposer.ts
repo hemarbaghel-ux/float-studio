@@ -15,6 +15,8 @@ import { FloatComposerToolRegistry, IComposerFileSystem, IComposerCommandRunner 
 import { FloatComposerAgent, IComposerAgentGoal, IComposerAgentExecution, IComposerAgentStep } from '../../common/composer/floatComposerAgent.js';
 import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
 import { ProductionComposerFileSystem, ProductionComposerCommandRunner } from '../../common/composer/floatProductionAdapters.js';
+import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
+import { FloatDaemonContextResolver } from '../context/floatDaemonContextResolver.js';
 
 export class FloatComposer extends Disposable {
 	private _activeProposal: IFloatProposal | null = null;
@@ -23,6 +25,7 @@ export class FloatComposer extends Disposable {
 	private readonly _toolRegistry: FloatComposerToolRegistry;
 	private readonly _agent: FloatComposerAgent;
 	private readonly _shadowWorkspace: FloatShadowWorkspaceService = FloatShadowWorkspaceService.getInstance();
+	private readonly _contextResolver: FloatDaemonContextResolver;
 
 	constructor(
 		@IFloatService private readonly _floatService: IFloatService,
@@ -30,10 +33,12 @@ export class FloatComposer extends Disposable {
 		@ITextFileService private readonly _textFileService: ITextFileService,
 		customFs?: IComposerFileSystem,
 		customRunner?: IComposerCommandRunner,
-		workspaceRoot?: string
+		workspaceRoot?: string,
+		private readonly _daemonRuntimeService?: IFloatDaemonRuntimeService
 	) {
 		super();
 		this._orchestrator = new FloatMultiFileDiffOrchestrator();
+		this._contextResolver = new FloatDaemonContextResolver(this._floatService, this._daemonRuntimeService);
 
 		const rootDir = workspaceRoot || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '.');
 
@@ -45,6 +50,23 @@ export class FloatComposer extends Disposable {
 
 		// Semantic code searcher bridging workspace indexer to composer tools
 		const codeSearcher = async (query: string): Promise<string> => {
+			const daemonClient = this._daemonRuntimeService?.getClient();
+			if (daemonClient) {
+				try {
+					const result = await daemonClient.searchSemantics(query, 5) as {
+						matches?: Array<{ filePath?: string; startLine?: number; endLine?: number; snippet?: string }>;
+					};
+					const matches = result.matches?.filter(match => typeof match.filePath === 'string' && typeof match.snippet === 'string') ?? [];
+					if (matches.length > 0) {
+						return matches.map(match =>
+							`File: ${match.filePath} (lines ${match.startLine ?? 1}-${match.endLine ?? match.startLine ?? 1})\n${match.snippet}`
+						).join('\n\n---\n\n');
+					}
+				} catch {
+					// Fall back to local search if the daemon is restarting or unavailable.
+				}
+			}
+
 			const indexer = this._floatService.getWorkspaceIndexer();
 			const ranked = indexer.searchCodebase(query, 5);
 			if (ranked.length > 0) {
@@ -91,12 +113,15 @@ export class FloatComposer extends Disposable {
 			}
 		];
 
+		const resolvedContext = await this._contextResolver.resolveContext(prompt, activeFilePath);
+		const contextItems = resolvedContext.files.map(file => ({ path: file.path, content: file.excerpt }));
+
 		let fullResponse = '';
 		await this._floatService.streamChat(messages, {
 			onChunk: chunk => { fullResponse += chunk; },
 			onError: err => { this._notificationService.error(`Composer generation error: ${err.message}`); },
 			onComplete: () => {}
-		});
+		}, undefined, undefined, contextItems);
 
 		const proposals = parseModelProposals(fullResponse, activeFilePath);
 		if (proposals.length > 0) {
