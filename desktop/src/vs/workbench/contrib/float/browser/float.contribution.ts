@@ -18,6 +18,7 @@ import { FloatTerminalListener } from './terminal/floatTerminalListener.js';
 import { FixWithFloatTerminalAction } from './terminal/floatTerminalActions.js';
 import { ToggleFloatAutocompleteAction } from './autocomplete/floatAutocompleteActions.js';
 import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutocomplete.js';
+import { FloatWorkspaceIndexLifecycleContribution } from './workspace/floatWorkspaceIndexLifecycleContribution.js';
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
 registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
@@ -65,4 +66,11 @@ registerWorkbenchContribution2(
 	FloatPredictiveAutocompleteContribution.ID,
 	FloatPredictiveAutocompleteContribution,
 	WorkbenchPhase.AfterRestored
+);
+
+// 6. Keep the active codebase index synchronized with workspace and file events
+registerWorkbenchContribution2(
+  FloatWorkspaceIndexLifecycleContribution.ID,
+  FloatWorkspaceIndexLifecycleContribution,
+  WorkbenchPhase.AfterRestored
 );
