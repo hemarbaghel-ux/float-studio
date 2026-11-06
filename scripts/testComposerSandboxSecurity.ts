@@ -45,6 +45,29 @@ async function main(): Promise<void> {
 
     assert.equal(resolveComposerWorkspaceRelativePath(workspace, path.join(workspace, 'src', 'app.ts')), 'src/app.ts');
     assert.equal(resolveComposerWorkspaceRelativePath(workspace, 'src/app.ts'), 'src/app.ts');
+    const symlinkWorkspace = path.join(tempRoot, 'workspace-alias');
+    let workspaceAliasSupported = true;
+    try {
+      fs.symlinkSync(workspace, symlinkWorkspace, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN') {
+        workspaceAliasSupported = false;
+      } else {
+        throw error;
+      }
+    }
+    if (workspaceAliasSupported) {
+      assert.equal(
+        resolveComposerWorkspaceRelativePath(symlinkWorkspace, path.join(symlinkWorkspace, 'src', 'app.ts')),
+        'src/app.ts',
+        'opening a workspace through a symlinked root must preserve its valid relative editor paths'
+      );
+      assert.equal(
+        fs.realpathSync(resolveComposerWorkspacePath(symlinkWorkspace, 'src/app.ts')),
+        fs.realpathSync(path.join(workspace, 'src', 'app.ts'))
+      );
+    }
     assert.throws(() => resolveComposerWorkspaceRelativePath(workspace, path.join(sibling, 'outside.txt')), /outside the active workspace/);
     assert.throws(() => resolveComposerWorkspacePath(workspace, '.aws/credentials'), /excluded workspace path/);
     assert.throws(() => resolveComposerWorkspacePath(workspace, '.ssh/id_ed25519'), /excluded workspace path/);
