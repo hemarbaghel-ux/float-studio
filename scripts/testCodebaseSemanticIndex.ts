@@ -108,6 +108,39 @@ def load_dataset(path):
 		const pyChunks = FloatSemanticChunker.chunkFile('scripts/pipeline.py', pyCode);
 		assert(pyChunks.some(c => c.symbolName === 'DataPipeline'));
 		assert(pyChunks.some(c => c.symbolName === 'load_dataset'));
+
+		// Additional TSX/TypeScript AST precision: exported arrows, multi-declarators,
+		// default exports, class accessors, class arrow properties and namespace members.
+		const advancedTsx = `
+export const NebulaButton = (label: string) => <button>{label}</button>;
+export const calculateOrbitTax = (amount: number) => amount * 0.1,
+    calculateOrbitNet = (amount: number) => amount * 0.9;
+export default function () { return 'default'; }
+export class SessionVault {
+    constructor(private readonly key: string) {}
+    get activeToken(): string { return this.key; }
+    set activeToken(value: string) { void value; }
+    refreshSession() { return true; }
+    handleEvent = (event: string) => event.length > 0;
+}
+namespace InternalJobs {
+    export function resolveQueueJob(id: string) { return id; }
+}
+`;
+		const advancedChunks = FloatSemanticChunker.chunkFile('src/components/NebulaButton.tsx', advancedTsx);
+		const advancedSymbol = (name: string) => advancedChunks.find(chunk => chunk.symbolName === name);
+		assert.strictEqual(advancedSymbol('NebulaButton')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('calculateOrbitTax')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('calculateOrbitNet')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('default')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('SessionVault')?.symbolKind, 'class');
+		assert.strictEqual(advancedSymbol('constructor')?.containerName, 'SessionVault');
+		assert.strictEqual(advancedSymbol('activeToken')?.symbolKind, 'method');
+		assert.strictEqual(advancedSymbol('refreshSession')?.containerName, 'SessionVault');
+		assert.strictEqual(advancedSymbol('handleEvent')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('InternalJobs')?.symbolKind, 'module');
+		assert.strictEqual(advancedSymbol('resolveQueueJob')?.containerName, 'InternalJobs');
+
 		console.log('  -> PASS: TypeScript and Python AST symbols accurately chunked with line boundaries');
 	}
 
