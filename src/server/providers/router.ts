@@ -120,6 +120,11 @@ export class ModelRouter {
   }
 
   validateModelAvailability(modelId: string): void {
+    // An explicit route is authoritative. Provider-prefix rejection only applies to
+    // model IDs that are not present in the verified runtime route registry.
+    if (MODEL_ROUTES[modelId]) {
+      return;
+    }
     const lower = (modelId || '').toLowerCase();
     if (
       lower.startsWith('gemini') ||

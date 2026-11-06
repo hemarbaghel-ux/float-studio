@@ -116,6 +116,9 @@ async function runMasterAuditRegressionTests() {
   let removedModelError: any;
   try { router.resolveRoute('float-basic'); } catch (error) { removedModelError = error; }
   check(removedModelError?.code === 'MODEL_NOT_FOUND', 'Removed FLOAT Basic model is explicitly unavailable');
+  let unsupportedGeminiError: any;
+  try { router.resolveRoute('gemini-2.5-pro'); } catch (error) { unsupportedGeminiError = error; }
+  check(unsupportedGeminiError?.code === 'UNSUPPORTED_PROVIDER', 'Unknown Gemini model IDs remain rejected unless explicitly registered');
 
   // 3. OpenAIAdapter Exact Model Preservation & Explicit Alias Mapping
   console.log('\n--- 3. OpenAIAdapter Upstream Model ID Preservation ---');
