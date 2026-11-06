@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { ProductionComposerFileSystem } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
+import { ProductionComposerFileSystem, IsolatedShadowWorkspaceCommandRunner } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
 import {
   buildFloatDockerSandboxArgs,
   DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE
@@ -63,6 +63,31 @@ async function main(): Promise<void> {
       await assert.rejects(() => fileSystem.writeFile('hardlink.txt', 'mutated'), /\[SECURITY\]/);
       assert.equal(fs.readFileSync(outsideFile, 'utf8'), 'outside-original');
     }
+
+
+    // The Docker-backed runner's host-side overlay writer must also reject a
+    // symlink created by a command inside the disposable container workspace.
+    const isolatedRunner = new IsolatedShadowWorkspaceCommandRunner(workspace);
+    const runnerEscape = path.join(isolatedRunner.shadowDir, 'escape');
+    let runnerSymlinkSupported = true;
+    try {
+      fs.symlinkSync(sibling, runnerEscape, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN') {
+        runnerSymlinkSupported = false;
+      } else {
+        throw error;
+      }
+    }
+    if (runnerSymlinkSupported) {
+      assert.throws(
+        () => isolatedRunner.updateOverlay('escape/host-write.txt', 'must-not-escape'),
+        /\\[SECURITY\\]/
+      );
+      assert.equal(fs.existsSync(path.join(sibling, 'host-write.txt')), false);
+    }
+    isolatedRunner.dispose();
 
     const command = 'node -e "console.log(1 + 1)"';
     const args = buildFloatDockerSandboxArgs({

@@ -31,6 +31,45 @@ const SENSITIVE_FILE_PATTERNS = [
 	/(^|[\\/])(credentials|client_secret.*|service-account.*|serviceAccount.*|token|auth)\.json$/i
 ];
 
+/**
+ * Resolve a proposal-relative path beneath a workspace while rejecting
+ * existing symlink/junction components and hard-linked target files.
+ * This is path hardening, not a substitute for OS-level isolation.
+ */
+export function resolveComposerWorkspacePath(workspaceRoot: string, relPath: string): string {
+	const clean = relPath === '.' || relPath === '' ? '.' : sanitizeProposalPath(relPath);
+	const rootResolved = fs.realpathSync(workspaceRoot);
+	const resolved = path.resolve(rootResolved, clean);
+	const relative = path.relative(rootResolved, resolved);
+	if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+		throw new Error('[SECURITY] Path traversal escape attempt blocked: ' + relPath);
+	}
+
+	let current = rootResolved;
+	const segments = relative ? relative.split(path.sep).filter(Boolean) : [];
+	for (let index = 0; index < segments.length; index++) {
+		current = path.join(current, segments[index]);
+		try {
+			const stat = fs.lstatSync(current);
+			if (stat.isSymbolicLink()) {
+				throw new Error('[SECURITY] Symlink traversal blocked: ' + relPath);
+			}
+			if (index < segments.length - 1 && !stat.isDirectory()) {
+				throw new Error('[SECURITY] Non-directory path component blocked: ' + relPath);
+			}
+			if (index === segments.length - 1 && stat.isFile() && stat.nlink > 1) {
+				throw new Error('[SECURITY] Hard-linked workspace file blocked: ' + relPath);
+			}
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				break;
+			}
+			throw error;
+		}
+	}
+	return resolved;
+}
+
 export class ProductionComposerFileSystem implements IComposerFileSystem {
 	constructor(private readonly _workspaceRoot: string) {}
 
@@ -39,42 +78,7 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 	}
 
 	private _resolve(relPath: string): string {
-		const clean = relPath === '.' || relPath === '' ? '.' : sanitizeProposalPath(relPath);
-		const rootResolved = fs.realpathSync(this._workspaceRoot);
-		const resolved = path.resolve(rootResolved, clean);
-		const relative = path.relative(rootResolved, resolved);
-
-		// Do not use startsWith(): a sibling such as /workspace-evil shares that prefix.
-		if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
-			throw new Error('[SECURITY] Path traversal escape attempt blocked: ' + relPath);
-		}
-
-		// Reject symlinks/junctions in every existing component. A target-only
-		// realpath check misses not-yet-created files beneath an escaping symlink.
-		let current = rootResolved;
-		const segments = relative ? relative.split(path.sep).filter(Boolean) : [];
-		for (let index = 0; index < segments.length; index++) {
-			current = path.join(current, segments[index]);
-			try {
-				const stat = fs.lstatSync(current);
-				if (stat.isSymbolicLink()) {
-					throw new Error('[SECURITY] Symlink traversal blocked: ' + relPath);
-				}
-				if (index < segments.length - 1 && !stat.isDirectory()) {
-					throw new Error('[SECURITY] Non-directory path component blocked: ' + relPath);
-				}
-				if (index === segments.length - 1 && stat.isFile() && stat.nlink > 1) {
-					throw new Error('[SECURITY] Hard-linked workspace file blocked: ' + relPath);
-				}
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-					break;
-				}
-				throw error;
-			}
-		}
-
-		return resolved;
+		return resolveComposerWorkspacePath(this._workspaceRoot, relPath);
 	}
 
 	public isSensitiveFile(relPath: string): boolean {
@@ -92,11 +96,22 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 
 	public async writeFile(relPath: string, content: string): Promise<void> {
 		if (this.isSensitiveFile(relPath)) {
-			throw new Error(`[SECURITY] Writing to sensitive file prohibited: ${relPath}`);
+			throw new Error('[SECURITY] Writing to sensitive file prohibited: ' + relPath);
 		}
 		const full = this._resolve(relPath);
 		await fsp.mkdir(path.dirname(full), { recursive: true });
-		await fsp.writeFile(full, content, 'utf8');
+		const safeFull = this._resolve(relPath);
+		const noFollow = (fs.constants as any).O_NOFOLLOW || 0;
+		const handle = await fsp.open(
+			safeFull,
+			fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+			0o666
+		);
+		try {
+			await handle.writeFile(content, 'utf8');
+		} finally {
+			await handle.close();
+		}
 	}
 
 	public async fileExists(relPath: string): Promise<boolean> {
@@ -335,7 +350,7 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 
 		if (overlays) {
 			for (const [relPath, content] of overlays.entries()) {
-				const target = path.join(this._shadowDir, sanitizeProposalPath(relPath));
+				const target = resolveComposerWorkspacePath(this._shadowDir, relPath);
 				fs.mkdirSync(path.dirname(target), { recursive: true });
 				fs.writeFileSync(target, content, 'utf8');
 			}
@@ -344,9 +359,21 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 
 	public updateOverlay(relPath: string, content: string): void {
 		if (this._disposed) return;
-		const target = path.join(this._shadowDir, sanitizeProposalPath(relPath));
+		const target = resolveComposerWorkspacePath(this._shadowDir, relPath);
 		fs.mkdirSync(path.dirname(target), { recursive: true });
-		fs.writeFileSync(target, content, 'utf8');
+		// Re-resolve after creating parent directories and refuse a final symlink.
+		const safeTarget = resolveComposerWorkspacePath(this._shadowDir, relPath);
+		const noFollow = (fs.constants as any).O_NOFOLLOW || 0;
+		const descriptor = fs.openSync(
+			safeTarget,
+			fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+			0o666
+		);
+		try {
+			fs.writeFileSync(descriptor, content, 'utf8');
+		} finally {
+			fs.closeSync(descriptor);
+		}
 	}
 
 	public async runCommand(command: string, cwd?: string): Promise<{

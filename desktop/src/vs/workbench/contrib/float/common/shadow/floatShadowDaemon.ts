@@ -35,11 +35,10 @@ const SENSITIVE_OR_HEAVY_DIRS = new Set([
 ]);
 
 /**
- * OS-Level Copy-on-Write (CoW) Shadow Workspace Daemon.
+ * Copy-based Shadow Workspace Daemon with containerized toolchain execution.
  *
- * Provides physical process-isolated speculative execution of real toolchains
- * (e.g. `tsc --noEmit`, `cargo check`, `pytest`, `npm run build`) against speculative
- * changesets without touching a single byte of the original user workspace.
+ * It creates disposable copies of the source workspace, then asks Docker to run
+ * toolchain commands with networking disabled and dependencies mounted read-only.
  */
 export class FloatShadowDaemon {
 	private readonly _shadowRootDir: string;
@@ -67,6 +66,9 @@ export class FloatShadowDaemon {
 		deletedFiles: Set<string> = new Set()
 	): Promise<string> {
 		const sandboxDir = path.join(this._shadowRootDir, `sandbox-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+		this._activeRunners.get(sessionId)?.abort();
+		this._activeRunners.delete(sessionId);
+		this._dependenciesBySession.delete(sessionId);
 		if (fs.existsSync(sandboxDir)) {
 			await fsp.rm(sandboxDir, { recursive: true, force: true });
 		}
@@ -106,7 +108,7 @@ export class FloatShadowDaemon {
 	}
 
 	/**
-	 * Recursively mirrors directory structure and hardlinks unchanged project files
+	 * Recursively copies regular files and directories; symlinks are not followed.
 	 */
 	private async _mirrorDirectory(srcDir: string, destDir: string, deletedFiles: Set<string>, relPrefix: string = ''): Promise<void> {
 		const entries = fs.readdirSync(srcDir, { withFileTypes: true });
