@@ -59,6 +59,8 @@ async function main(): Promise<void> {
   const secondRoot = URI.file('/tmp/float-daemon-index-test-2');
   const secondSrc = URI.file('/tmp/float-daemon-index-test-2/src');
   const secondApp = URI.file('/tmp/float-daemon-index-test-2/src/app.ts');
+  const nestedRoot = URI.file('/tmp/float-daemon-index-test/src/nested');
+  const nestedApp = URI.file('/tmp/float-daemon-index-test/src/nested/app.ts');
   const src = URI.file('/tmp/float-daemon-index-test/src');
   const app = URI.file('/tmp/float-daemon-index-test/src/app.ts');
   const env = URI.file('/tmp/float-daemon-index-test/.env');
@@ -74,7 +76,10 @@ async function main(): Promise<void> {
   };
   srcEntry.children!.push(
     { resource: app, isFile: true, isDirectory: false, isSymbolicLink: false, size: 42, content: 'export function resolveFloatDaemonIndex() { return true; }' },
-    { resource: binary, isFile: true, isDirectory: false, isSymbolicLink: false, size: 3, content: '\u0000\u0001\u0002' }
+    { resource: binary, isFile: true, isDirectory: false, isSymbolicLink: false, size: 3, content: '\u0000\u0001\u0002' },
+    { resource: nestedRoot, isFile: false, isDirectory: true, isSymbolicLink: false, size: 0, children: [
+      { resource: nestedApp, isFile: true, isDirectory: false, isSymbolicLink: false, size: 42, content: 'export function nestedWorkspaceResolver() { return true; }' }
+    ] }
   );
   const secondSrcEntry: FakeEntry = {
     resource: secondSrc, isFile: false, isDirectory: true, isSymbolicLink: false, size: 0,
@@ -87,6 +92,10 @@ async function main(): Promise<void> {
     children: [secondSrcEntry]
   };
   fakeFs.add(secondRootEntry);
+  fakeFs.add({ resource: nestedRoot, isFile: false, isDirectory: true, isSymbolicLink: false, size: 0, children: [
+    { resource: nestedApp, isFile: true, isDirectory: false, isSymbolicLink: false, size: 42, content: 'export function nestedWorkspaceResolver() { return true; }' }
+  ] });
+  fakeFs.add({ resource: nestedApp, isFile: true, isDirectory: false, isSymbolicLink: false, size: 42, content: 'export function nestedWorkspaceResolver() { return true; }' });
   fakeFs.add(secondSrcEntry);
   fakeFs.add(secondSrcEntry.children![0]);
   fakeFs.add(rootEntry);
@@ -142,12 +151,14 @@ async function main(): Promise<void> {
   assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/new.ts'));
 
   // Multi-root workspaces namespace same-relative-path files to prevent collisions.
-  await synchronizer.setWorkspaceRoots([root, secondRoot]);
+  await synchronizer.setWorkspaceRoots([root, secondRoot, nestedRoot]);
   await synchronizer.scanWorkspace();
-  assert.equal(synchronizer.workspaceRoots.length, 2);
-  assert.equal(synchronizer.indexedFileCount, 2);
+  assert.equal(synchronizer.workspaceRoots.length, 3);
+  assert.equal(synchronizer.indexedFileCount, 3);
   assert.ok(calls.some(call => call.kind === 'index' && call.path === 'workspace-1/src/app.ts'));
   assert.ok(calls.some(call => call.kind === 'index' && call.path === 'workspace-2/src/app.ts'));
+  assert.ok(calls.some(call => call.kind === 'index' && call.path === 'workspace-3/app.ts'));
+  assert.equal(calls.some(call => call.kind === 'index' && call.path === 'workspace-1/src/nested/app.ts'), false, 'nested workspace root must not be indexed through its parent root');
 
   // Switching back to one root removes namespaced records and restores legacy unprefixed paths.
   await synchronizer.setWorkspaceRoots([secondRoot]);
