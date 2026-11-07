@@ -79,13 +79,20 @@ async function main(): Promise<void> {
   for (const child of srcEntry.children!) fakeFs.add(child);
 
   const calls: Array<{ kind: 'index' | 'remove'; path: string; content?: string }> = [];
+  const daemonIndexedPaths = new Set(['src/deleted-before-restart.ts']);
   let clientAvailable = true;
   const client = {
+    call: async (method: string) => {
+      assert.equal(method, 'semantic_list_indexed_files');
+      return { files: Array.from(daemonIndexedPaths) };
+    },
     indexFileSemantics: async (filePath: string, content: string) => {
       calls.push({ kind: 'index', path: filePath, content });
+      daemonIndexedPaths.add(filePath);
     },
     removeFileSemantics: async (filePath: string) => {
       calls.push({ kind: 'remove', path: filePath });
+      daemonIndexedPaths.delete(filePath);
     }
   };
   const synchronizer = new FloatDaemonWorkspaceIndexSynchronizer(
@@ -96,6 +103,8 @@ async function main(): Promise<void> {
   await synchronizer.setWorkspaceRoot(root);
   await synchronizer.scanWorkspace();
   assert.equal(synchronizer.indexedFileCount, 1);
+  assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/deleted-before-restart.ts'), 'startup scan must prune files deleted while FLOAT was stopped');
+  assert.equal(daemonIndexedPaths.has('src/deleted-before-restart.ts'), false);
   assert.deepEqual(calls.filter(call => call.kind === 'index').map(call => call.path), ['src/app.ts']);
   assert.equal(calls.some(call => call.path === '.env' || call.path.includes('node_modules')), false);
 
