@@ -45,8 +45,11 @@ index. File additions, updates and deletions schedule a debounced snapshot
 write; graceful daemon shutdown flushes pending writes.
 
 The current 384-dimensional vectors are deterministic token-hash projections,
-not learned embeddings. The daemon symbol extractor uses grammar-profile
-regular expressions, not genuine Tree-sitter parsing. These are explicit
+not learned embeddings. TypeScript and JavaScript symbol extraction uses the
+TypeScript compiler AST, including source ranges for declarations; it is not
+a Tree-sitter parser. Other configured language profiles (Python, Rust, Go,
+C/C++, Java, Ruby and PHP) still use best-effort grammar-profile regular
+expressions and must not be described as full AST parsing. These are explicit
 technical limitations, not completed semantic-model features.
 
 ## Chat, Composer and Cursor Tab integrations
