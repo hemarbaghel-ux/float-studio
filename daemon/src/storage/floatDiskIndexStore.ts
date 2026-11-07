@@ -8,6 +8,9 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { IFloatFileMerkleNode } from '../indexer/floatTreeSitterIndexer.js';
 import { IFloatCodeChunk } from '../vector/floatVectorEngine.js';
+import { IFloatSemanticChunk } from '../chunker/floatAstSemanticChunker.js';
+
+export type IFloatStoredChunk = IFloatCodeChunk | IFloatSemanticChunk;
 
 export interface IFloatIndexManifest {
 	version: number;
@@ -21,7 +24,7 @@ export interface IFloatIndexManifest {
 export interface IFloatStoredIndexPayload {
 	manifest: IFloatIndexManifest;
 	nodes: IFloatFileMerkleNode[];
-	chunks: IFloatCodeChunk[];
+	chunks: IFloatStoredChunk[];
 }
 
 export class FloatDiskIndexStore {
@@ -70,6 +73,22 @@ export class FloatDiskIndexStore {
 			(chunk.vector === undefined || (Array.isArray(chunk.vector) && chunk.vector.length === 384 && chunk.vector.every(Number.isFinite)));
 	}
 
+	private _isValidSemanticChunk(value: unknown): value is IFloatSemanticChunk {
+		if (!value || typeof value !== 'object') {
+			return false;
+		}
+		const chunk = value as IFloatSemanticChunk;
+		return typeof chunk.id === 'string' &&
+			typeof chunk.filePath === 'string' &&
+			typeof chunk.language === 'string' &&
+			Number.isInteger(chunk.startLine) && chunk.startLine > 0 &&
+			Number.isInteger(chunk.endLine) && chunk.endLine >= chunk.startLine &&
+			typeof chunk.content === 'string' &&
+			typeof chunk.hash === 'string' &&
+			(chunk.symbolName === undefined || typeof chunk.symbolName === 'string') &&
+			(chunk.symbolKind === undefined || typeof chunk.symbolKind === 'string');
+	}
+
 	public async ensureDirectory(): Promise<void> {
 		await fs.promises.mkdir(this._storageDir, { recursive: true, mode: 0o700 });
 		if (process.platform !== 'win32') {
@@ -77,7 +96,7 @@ export class FloatDiskIndexStore {
 		}
 	}
 
-	public async saveIndex(nodes: IFloatFileMerkleNode[], chunks: IFloatCodeChunk[]): Promise<{ bytesWritten: number; manifestPath: string }> {
+	public async saveIndex(nodes: IFloatFileMerkleNode[], chunks: IFloatStoredChunk[]): Promise<{ bytesWritten: number; manifestPath: string }> {
 		await this.ensureDirectory();
 
 		const totalSymbols = nodes.reduce((sum, n) => sum + (n.symbols ? n.symbols.length : 0), 0);
@@ -152,7 +171,7 @@ export class FloatDiskIndexStore {
 				manifest.totalSymbols !== totalSymbols ||
 				manifest.totalChunks !== chunks.length ||
 				!nodes.every(node => this._isValidNode(node)) ||
-				!chunks.every(chunk => this._isValidChunk(chunk))
+				!chunks.every(chunk => this._isValidChunk(chunk) || this._isValidSemanticChunk(chunk))
 			) {
 				console.warn('[FloatDiskIndexStore] Invalid index manifest or records. Index requires rebuild.');
 				return null;
