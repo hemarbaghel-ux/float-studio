@@ -266,7 +266,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			const speculativeContext = this._speculator.buildPromptContext(ctx);
 			const promptParts = [relatedContext, speculativeContext].filter(Boolean);
 			const fullPrefix = promptParts.length > 0
-				? `${promptParts.join('\\n')}\\n${ctx.prefix}`
+				? `${promptParts.join('\n')}\n${ctx.prefix}`
 				: ctx.prefix;
 
 			const result = await this._floatService.completeCode(
