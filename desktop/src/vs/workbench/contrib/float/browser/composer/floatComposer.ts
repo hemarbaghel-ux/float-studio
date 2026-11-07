@@ -16,6 +16,7 @@ import { FloatComposerAgent, IComposerAgentGoal, IComposerAgentExecution, ICompo
 import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
 import { ProductionComposerFileSystem, ProductionComposerCommandRunner } from '../../common/composer/floatProductionAdapters.js';
 import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { FloatDaemonContextResolver } from '../context/floatDaemonContextResolver.js';
 
 export class FloatComposer extends Disposable {
@@ -34,11 +35,12 @@ export class FloatComposer extends Disposable {
 		customFs?: IComposerFileSystem,
 		customRunner?: IComposerCommandRunner,
 		workspaceRoot?: string,
-		private readonly _daemonRuntimeService?: IFloatDaemonRuntimeService
+		private readonly _daemonRuntimeService?: IFloatDaemonRuntimeService,
+		workspaceContextService?: IWorkspaceContextService
 	) {
 		super();
 		this._orchestrator = new FloatMultiFileDiffOrchestrator();
-		this._contextResolver = new FloatDaemonContextResolver(this._floatService, this._daemonRuntimeService);
+		this._contextResolver = new FloatDaemonContextResolver(this._floatService, this._daemonRuntimeService, workspaceContextService);
 
 		const rootDir = workspaceRoot || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '.');
 
