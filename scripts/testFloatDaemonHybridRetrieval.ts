@@ -39,15 +39,15 @@ async function main(): Promise<void> {
 			engine,
 			'auth-refresh-2',
 			'src/auth/session.ts',
-			'export function refreshWorkspaceToken() { return tokenCache.refresh(); } // cache manager rotates the access token with retry policy',
-			['refreshWorkspaceToken']
+			'export function retryTokenCache() { return tokenCache.refresh(); } // cache manager rotates an access token with retry policy',
+			['retryTokenCache']
 		),
 		makeChunk(
 			engine,
 			'workspace-refresh',
 			'src/workspace/sessionManager.ts',
-			'export function refreshWorkspaceToken() { return sessionStore.rotateToken(); } // update session token when credentials rotate',
-			['refreshWorkspaceToken']
+			'export function loadWorkspaceSession() { return sessionStore.getToken(); } // restore the workspace session token after refresh',
+			['loadWorkspaceSession']
 		)
 	]);
 
