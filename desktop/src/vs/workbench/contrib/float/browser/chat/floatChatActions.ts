@@ -9,6 +9,8 @@ import { INotificationService, Severity } from '../../../../../platform/notifica
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IFloatService } from '../../common/floatService.js';
 import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
+import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { FloatDaemonContextResolver } from '../context/floatDaemonContextResolver.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
@@ -33,6 +35,8 @@ export class OpenFloatChatAction extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const floatService = accessor.get(IFloatService);
 		const daemonRuntimeService = accessor.get(IFloatDaemonRuntimeService);
+		const codeEditorService = accessor.get(ICodeEditorService);
+		const workspaceContextService = accessor.get(IWorkspaceContextService);
 
 		const prompt = await quickInputService.input({
 			prompt: `FLOAT Chat (${floatService.getActiveModel().name}): Ask about your codebase`,
@@ -43,7 +47,13 @@ export class OpenFloatChatAction extends Action2 {
 			return;
 		}
 
-		const resolvedContext = await new FloatDaemonContextResolver(floatService, daemonRuntimeService).resolveContext(prompt.trim());
+		const activeEditor = codeEditorService.getFocusedCodeEditor() || codeEditorService.getActiveCodeEditor();
+		const activeFilePath = activeEditor?.getModel()?.uri.path;
+		const resolvedContext = await new FloatDaemonContextResolver(
+			floatService,
+			daemonRuntimeService,
+			workspaceContextService
+		).resolveContext(prompt.trim(), activeFilePath);
 		const contextItems = resolvedContext.files.map(file => ({ path: file.path, content: file.excerpt }));
 
 		notificationService.info(`[FLOAT Chat] Requesting answer using ${floatService.getActiveModel().name}...`);
