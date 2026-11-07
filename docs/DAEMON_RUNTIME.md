@@ -16,8 +16,9 @@ FLOAT starts its sidecar daemon as a Code-OSS Electron Utility Process Worker.
 
 ## Workspace indexing
 
-- The synchronizer indexes every local `file:` workspace folder. Multi-root paths are namespaced as `workspace-1/`, `workspace-2/`, and so on, preventing same-relative-path collisions; single-root workspaces keep unprefixed paths for compatibility.
-- Remote and virtual workspace folders are skipped until their filesystem providers are explicitly supported.
+- The synchronizer indexes workspace folders backed by a registered Code-OSS `IFileService` provider, including local `file:`, remote `vscode-remote:`, and supported virtual filesystem schemes. Unsupported providers or inaccessible roots fail open and do not trigger stale-path pruning.
+- Multi-root paths are namespaced as `workspace-1/`, `workspace-2/`, and so on, preventing same-relative-path collisions across local, remote and virtual providers; single-root workspaces keep unprefixed paths for compatibility.
+- File-change events are accepted from all providers, then scoped by exact URI scheme, authority and root path before any relative path is sent to the daemon. Absolute URIs and remote authorities are never sent.
 - Initial scans are capped at 10,000 files. Individual files over 2 MB are skipped.
 - Only approved source, configuration and documentation extensions are included.
 - Dependency/build/cache directories, dotenv files, credential stores, private keys, binary files and symlinks are excluded.
@@ -105,7 +106,7 @@ quality, ANN scalability, or end-to-end model completion latency.
 
 ## Remaining work
 
-- Add remote and virtual workspace filesystem indexing; current indexing is limited to local `file:` roots.
+- Add end-to-end coverage for additional third-party remote/virtual filesystem providers and large remote workspaces; current tests cover local, `vscode-remote:` and a virtual provider fixture.
 - Replace the non-TypeScript regex grammar profiles with maintained parser runtimes and versioned language grammars.
 - Add a pluggable learned-embedding provider and a scalable retrieval index; current hash vectors are not semantic embeddings or an ANN database.
 - Expand retrieval relevance/latency benchmarks from deterministic fixtures to representative repositories and evaluate Chat, Composer and Cursor Tab context quality end to end.
