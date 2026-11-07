@@ -66,6 +66,25 @@ async function main(): Promise<void> {
 	const camelCase = engine.search('session manager token', 5);
 	assert.ok(camelCase.some(match => match.chunk.filePath === 'src/workspace/sessionManager.ts'));
 
+	// CamelCase path components must be split before lowercasing. This fixture
+	// deliberately keeps the query terms out of the chunk body and symbols.
+	const pathRankingEngine = new FloatVectorEngine();
+	pathRankingEngine.addChunks([
+		makeChunk(
+			pathRankingEngine,
+			'path-only-session-manager',
+			'src/workspace/sessionManager.ts',
+			'export const adapter = createAdapter();',
+			['createAdapter']
+		)
+	]);
+	const pathOnlyResults = pathRankingEngine.search('session manager', 3);
+	assert.equal(
+		pathOnlyResults[0]?.chunk.filePath,
+		'src/workspace/sessionManager.ts',
+		'camelCase filename segments should contribute path relevance even when the body has no query terms'
+	);
+
 	// Exact identifier detection must survive natural-language query framing.
 	// The distractor intentionally shares the surrounding vocabulary and
 	// repeats it, but it does not define the requested symbol.
