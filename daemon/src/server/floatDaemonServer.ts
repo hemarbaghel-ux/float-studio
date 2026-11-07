@@ -472,7 +472,7 @@ export class FloatDaemonServer {
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const loaded = await store.loadIndex();
 					if (loaded) {
-						this._vectorEngine.restoreChunks(loaded.chunks);
+						this._vectorEngine.restoreChunks(loaded.chunks.filter((chunk): chunk is import('../vector/floatVectorEngine.js').IFloatCodeChunk => 'symbols' in chunk));
 						this._indexer.restoreNodes(loaded.nodes);
 					}
 					const res: IFloatIpcResponse = {
