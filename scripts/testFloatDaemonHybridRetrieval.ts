@@ -86,6 +86,35 @@ async function main(): Promise<void> {
 		'camelCase filename segments should contribute path relevance even when the body has no query terms'
 	);
 
+	// Sparse queries must score only inverted-index candidates. The corpus
+	// contains many unrelated files; only the camelCase path below contains the
+	// query terms and its source body intentionally does not.
+	const sparseSearchEngine = new FloatVectorEngine();
+	const sparseChunks: IFloatCodeChunk[] = [];
+	for (let index = 0; index < 500; index++) {
+		sparseChunks.push(makeChunk(
+			sparseSearchEngine,
+			`unrelated-module-${index}`,
+				`src/generated/module${index}.ts`,
+				`export const generatedValue${index} = ${index};`,
+				[`generatedValue${index}`]
+		));
+	}
+	sparseChunks.push(makeChunk(
+		sparseSearchEngine,
+		'one-path-candidate',
+		'src/workspace/sessionManager.ts',
+		'export const adapter = createAdapter();',
+		['createAdapter']
+	));
+	sparseSearchEngine.addChunks(sparseChunks);
+	const sparseResults = sparseSearchEngine.search('session manager', 5);
+	assert.equal(sparseResults[0]?.chunk.id, 'one-path-candidate');
+	const sparseDiagnostics = sparseSearchEngine.getLastSearchDiagnostics();
+	assert.equal(sparseDiagnostics.indexedChunks, 501);
+	assert.equal(sparseDiagnostics.candidateChunks, 1, 'inverted index should restrict the candidate set to the matching path');
+	assert.equal(sparseDiagnostics.scoredChunks, 1, 'unrelated chunks should not receive vector and ranking work');
+
 	// Exact identifier detection must survive natural-language query framing.
 	// The distractor intentionally shares the surrounding vocabulary and
 	// repeats it, but it does not define the requested symbol.
