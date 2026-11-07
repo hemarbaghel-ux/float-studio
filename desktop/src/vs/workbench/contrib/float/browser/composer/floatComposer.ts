@@ -123,7 +123,7 @@ export class FloatComposer extends Disposable {
 			onChunk: chunk => { fullResponse += chunk; },
 			onError: err => { this._notificationService.error(`Composer generation error: ${err.message}`); },
 			onComplete: () => {}
-		}, undefined, undefined, contextItems);
+		}, undefined, undefined, contextItems, `composer-proposal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
 
 		const proposals = parseModelProposals(fullResponse, activeFilePath);
 		if (proposals.length > 0) {
