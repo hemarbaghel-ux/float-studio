@@ -405,7 +405,7 @@ async function runTests() {
         notifyDisconnect();
       });
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
-      res.write('data: {"type":"delta","text":"initial"}\\n\\n');
+      res.write('data: {"type":"delta","text":"initial"}\n\n');
       // Keep the response open until the caller aborts its stream.
     });
 
