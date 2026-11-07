@@ -183,6 +183,9 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
         }
 
         if (rootStat.isSymbolicLink) {
+          // We deliberately do not follow workspace-root symlinks. The scan is
+          // incomplete, so never reconcile/prune previously indexed paths.
+          scanState.complete = false;
           continue;
         }
         if (!rootStat.isDirectory) {
