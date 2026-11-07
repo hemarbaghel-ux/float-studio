@@ -65,7 +65,7 @@ export class FloatAutocompleteContextResolver {
 				continue;
 			}
 
-			const relativePath = normalizedActivePath.slice(prefix.length).replace(/^\\/+/, '');
+			const relativePath = normalizedActivePath.slice(prefix.length).replace(/^\/+/, '');
 			if (!relativePath) {
 				continue;
 			}
