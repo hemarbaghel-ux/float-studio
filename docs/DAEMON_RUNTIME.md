@@ -52,6 +52,29 @@ C/C++, Java, Ruby and PHP) still use best-effort grammar-profile regular
 expressions and must not be described as full AST parsing. These are explicit
 technical limitations, not completed semantic-model features.
 
+## Composer command isolation
+
+Composer's production command runner uses Docker; it never executes model-
+supplied command strings through the host shell. Each command runs in a
+network-disabled container with all capabilities dropped, no-new-privileges,
+a read-only container root, CPU/memory/PID/time limits, and a bounded tmpfs.
+The only writable bind mount is a disposable copy of the workspace; the
+existing `node_modules` directory, when present, is mounted read-only.
+Common credential stores, dotenv files, VCS metadata, dependency/cache
+directories, symlinks and special files are excluded from the copy.
+
+Docker Desktop (Windows/macOS) or Docker Engine (Linux) is required. If the
+Docker CLI or daemon is unavailable, image startup fails, or the workspace
+cannot be prepared, Composer command execution fails closed. There is no host
+shell fallback. File proposals and review do not require Docker.
+
+This is a container-isolation layer, not a formally verified sandbox. The
+Docker daemon and host kernel remain trusted components. Rootless Docker is
+recommended where supported. The command deny-list is defense in depth only.
+
+See [Composer sandbox security](security/COMPOSER_SANDBOX.md) for the runtime
+requirements, policy and limitations.
+
 ## Chat, Composer and Cursor Tab integrations
 
 - Chat and Composer route explicit `@codebase` and `@symbol` mentions through daemon search and include bounded snippets in model context.
