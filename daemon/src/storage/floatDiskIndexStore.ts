@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { IFloatFileMerkleNode } from '../indexer/floatTreeSitterIndexer.js';
-import { IFloatSemanticChunk } from '../chunker/floatAstSemanticChunker.js';
+import { IFloatCodeChunk } from '../vector/floatVectorEngine.js';
 
 export interface IFloatIndexManifest {
 	version: number;
@@ -21,7 +21,7 @@ export interface IFloatIndexManifest {
 export interface IFloatStoredIndexPayload {
 	manifest: IFloatIndexManifest;
 	nodes: IFloatFileMerkleNode[];
-	chunks: IFloatSemanticChunk[];
+	chunks: IFloatCodeChunk[];
 }
 
 export class FloatDiskIndexStore {
@@ -35,6 +35,41 @@ export class FloatDiskIndexStore {
 		this._dataPath = path.join(this._storageDir, 'index.data.json');
 	}
 
+	private _isValidNode(value: unknown): value is IFloatFileMerkleNode {
+		if (!value || typeof value !== 'object') {
+			return false;
+		}
+		const node = value as IFloatFileMerkleNode;
+		return typeof node.filePath === 'string' &&
+			node.filePath.length > 0 &&
+			typeof node.fileHash === 'string' &&
+			typeof node.language === 'string' &&
+			Number.isFinite(node.lastModified) &&
+			Array.isArray(node.symbols) &&
+			node.symbols.every(symbol => !!symbol &&
+				typeof symbol.id === 'string' &&
+				typeof symbol.name === 'string' &&
+				typeof symbol.kind === 'string' &&
+				typeof symbol.language === 'string' &&
+				Number.isInteger(symbol.startLine) &&
+				Number.isInteger(symbol.endLine) &&
+				typeof symbol.hash === 'string');
+	}
+
+	private _isValidChunk(value: unknown): value is IFloatCodeChunk {
+		if (!value || typeof value !== 'object') {
+			return false;
+		}
+		const chunk = value as IFloatCodeChunk;
+		return typeof chunk.id === 'string' &&
+			typeof chunk.filePath === 'string' &&
+			Number.isInteger(chunk.startLine) && chunk.startLine > 0 &&
+			Number.isInteger(chunk.endLine) && chunk.endLine >= chunk.startLine &&
+			typeof chunk.content === 'string' &&
+			Array.isArray(chunk.symbols) && chunk.symbols.every(symbol => typeof symbol === 'string') &&
+			(chunk.vector === undefined || (Array.isArray(chunk.vector) && chunk.vector.length === 384 && chunk.vector.every(Number.isFinite)));
+	}
+
 	public async ensureDirectory(): Promise<void> {
 		await fs.promises.mkdir(this._storageDir, { recursive: true, mode: 0o700 });
 		if (process.platform !== 'win32') {
@@ -42,7 +77,7 @@ export class FloatDiskIndexStore {
 		}
 	}
 
-	public async saveIndex(nodes: IFloatFileMerkleNode[], chunks: IFloatSemanticChunk[]): Promise<{ bytesWritten: number; manifestPath: string }> {
+	public async saveIndex(nodes: IFloatFileMerkleNode[], chunks: IFloatCodeChunk[]): Promise<{ bytesWritten: number; manifestPath: string }> {
 		await this.ensureDirectory();
 
 		const totalSymbols = nodes.reduce((sum, n) => sum + (n.symbols ? n.symbols.length : 0), 0);
@@ -99,12 +134,31 @@ export class FloatDiskIndexStore {
 				return null;
 			}
 
-			const parsed = JSON.parse(dataRaw);
-			return {
-				manifest,
-				nodes: parsed.nodes || [],
-				chunks: parsed.chunks || []
-			};
+			const parsed = JSON.parse(dataRaw) as { nodes?: unknown; chunks?: unknown };
+			if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.chunks)) {
+				console.warn('[FloatDiskIndexStore] Invalid index payload shape. Index requires rebuild.');
+				return null;
+			}
+
+			const nodes = parsed.nodes as IFloatFileMerkleNode[];
+			const chunks = parsed.chunks as IFloatCodeChunk[];
+			const totalSymbols = nodes.reduce((sum, node) => sum + (Array.isArray(node?.symbols) ? node.symbols.length : 0), 0);
+			if (
+				manifest.version !== 1 ||
+				!Number.isSafeInteger(manifest.totalFiles) ||
+				!Number.isSafeInteger(manifest.totalSymbols) ||
+				!Number.isSafeInteger(manifest.totalChunks) ||
+				manifest.totalFiles !== nodes.length ||
+				manifest.totalSymbols !== totalSymbols ||
+				manifest.totalChunks !== chunks.length ||
+				!nodes.every(node => this._isValidNode(node)) ||
+				!chunks.every(chunk => this._isValidChunk(chunk))
+			) {
+				console.warn('[FloatDiskIndexStore] Invalid index manifest or records. Index requires rebuild.');
+				return null;
+			}
+
+			return { manifest, nodes, chunks };
 		} catch (err) {
 			console.error('[FloatDiskIndexStore] Failed to load cached index:', err);
 			return null;
