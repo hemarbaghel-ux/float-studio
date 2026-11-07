@@ -42,6 +42,7 @@ const ALLOWED_DAEMON_METHODS = new Set([
   'ping',
   'semantic_index_file',
   'semantic_remove_file',
+  'semantic_list_indexed_files',
   'semantic_search',
   'semantic_get_symbols',
   'semantic_chunk_file',
