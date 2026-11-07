@@ -66,6 +66,45 @@ async function main(): Promise<void> {
 	const camelCase = engine.search('session manager token', 5);
 	assert.ok(camelCase.some(match => match.chunk.filePath === 'src/workspace/sessionManager.ts'));
 
+	// Exact identifier detection must survive natural-language query framing.
+	// The distractor intentionally shares the surrounding vocabulary and
+	// repeats it, but it does not define the requested symbol.
+	const symbolRankingEngine = new FloatVectorEngine();
+	symbolRankingEngine.addChunks([
+		makeChunk(
+			symbolRankingEngine,
+			'exact-workspace-credential-resolver',
+			'src/identity/credentialResolver.ts',
+			'export function resolveCredentialForWorkspace() { return identityProvider.load(); }',
+			['resolveCredentialForWorkspace']
+		),
+		makeChunk(
+			symbolRankingEngine,
+			'lexical-workspace-credential-cache',
+			'src/cache/workspaceCredentialStore.ts',
+			'export function loadWorkspaceCredentials() { // workspace credential cache stores access credential, workspace token, credential lookup, access token, workspace credential cache }',
+			['loadWorkspaceCredentials']
+		),
+		makeChunk(
+			symbolRankingEngine,
+			'other-identity-provider',
+			'src/identity/provider.ts',
+			'export function loadIdentityProvider() { return provider.current(); }',
+			['loadIdentityProvider']
+		)
+	]);
+	const proseSymbolResults = symbolRankingEngine.search(
+		'Find resolveCredentialForWorkspace in the workspace credential provider and load the access token',
+		3
+	);
+	assert.equal(
+		proseSymbolResults[0]?.chunk.id,
+		'exact-workspace-credential-resolver',
+		'exact symbol should outrank a lexically similar file when embedded in natural-language instructions'
+	);
+
+
+
 	// Stable-ID upsert must remove stale BM25 terms and document-length weight.
 	const upsertEngine = new FloatVectorEngine();
 	upsertEngine.addChunks([
