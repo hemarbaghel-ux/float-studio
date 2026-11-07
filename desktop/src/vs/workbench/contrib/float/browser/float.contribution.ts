@@ -8,6 +8,7 @@ import { EditorContributionInstantiation, registerEditorContribution } from '../
 import { registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 
 import { IFloatService, FloatService } from '../common/floatService.js';
 import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
@@ -57,9 +58,10 @@ export class FloatPredictiveAutocompleteContribution implements IWorkbenchContri
 	constructor(
 		@IFloatService floatService: IFloatService,
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
-		@IFloatDaemonRuntimeService daemonRuntimeService: IFloatDaemonRuntimeService
+		@IFloatDaemonRuntimeService daemonRuntimeService: IFloatDaemonRuntimeService,
+		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService
 	) {
-		this._provider = new FloatPredictiveAutocomplete(floatService, languageFeaturesService, daemonRuntimeService);
+		this._provider = new FloatPredictiveAutocomplete(floatService, languageFeaturesService, daemonRuntimeService, workspaceContextService);
 	}
 
 	public get provider(): FloatPredictiveAutocomplete {
