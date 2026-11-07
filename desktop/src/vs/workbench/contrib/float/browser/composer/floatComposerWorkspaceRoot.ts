@@ -28,7 +28,8 @@ export function getFloatComposerWorkspaceRoot(
 		return undefined;
 	}
 
-	const resourcePath = activeResource.path.replace(/\\/g, '/');
+	const normalizePath = (value: string): string => value.split(String.fromCharCode(92)).join('/');
+	const resourcePath = normalizePath(activeResource.path);
 	let bestMatch: { folder: URI; pathLength: number } | undefined;
 
 	for (const folder of localFolders) {
@@ -36,7 +37,10 @@ export function getFloatComposerWorkspaceRoot(
 			continue;
 		}
 
-		const folderPath = folder.path.replace(/\\/g, '/').replace(/\\/+$/, '') || '/';
+		let folderPath = normalizePath(folder.path) || '/';
+		while (folderPath.length > 1 && folderPath.endsWith('/')) {
+			folderPath = folderPath.slice(0, -1);
+		}
 		const isRoot = folderPath === '/';
 		const isInside = isRoot
 			? resourcePath.startsWith('/')
