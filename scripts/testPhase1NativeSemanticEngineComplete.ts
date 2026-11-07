@@ -156,6 +156,31 @@ def scaled_dot_product(q, k, v):
 	const diskStore = new FloatDiskIndexStore(testStoreDir);
 
 	const indexer = new FloatTreeSitterIndexer();
+	const astFixture = [
+		`const stringTrap = "export function fakeFromString() {}";`,
+		'// export class FakeFromComment {}',
+		'export class AccountStore {',
+		'  async readAccount(id: string) {',
+		'    return id;',
+		'  }',
+		'  normalize = (value: string) => value.trim();',
+		'}',
+		'export const verifySession = (token: string) => token.length > 0;',
+		'export function createSession() { return true; }'
+	].join('\\n');
+	const astFixtureNode = indexer.parseFileSymbols('src/auth/astFixture.ts', astFixture);
+	const astSymbols = astFixtureNode.symbols;
+	const findAstSymbol = (name: string) => astSymbols.find(symbol => symbol.name === name);
+	assert.equal(findAstSymbol('AccountStore')?.kind, 'class');
+	assert.equal(findAstSymbol('readAccount')?.kind, 'method');
+	assert.equal(findAstSymbol('normalize')?.kind, 'method');
+	assert.equal(findAstSymbol('verifySession')?.kind, 'function');
+	assert.equal(findAstSymbol('createSession')?.kind, 'function');
+	assert.ok((findAstSymbol('AccountStore')?.endLine ?? 0) > (findAstSymbol('AccountStore')?.startLine ?? 0));
+	assert.ok(!findAstSymbol('fakeFromString'), 'comment/string text must not create false symbols');
+	assert.ok(!findAstSymbol('FakeFromComment'), 'comment text must not create false symbols');
+	console.log('[TypeScript AST] Accurate class, method and function symbols; comments and strings ignored.');
+
 	const node1 = indexer.parseFileSymbols('src/math/matrix.ts', tsSource);
 	const node2 = indexer.parseFileSymbols('ai/attention.py', pySource);
 
