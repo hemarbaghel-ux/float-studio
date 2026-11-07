@@ -458,11 +458,15 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     if (!resource.path.startsWith(rootPath)) {
       return undefined;
     }
-    const relativePath = resource.path.slice(rootPath.length).replace(/^\\/+/, '').replace(/\\\\/g, '/');
+    let relativePath = resource.path.slice(rootPath.length);
+    while (relativePath.startsWith('/')) {
+      relativePath = relativePath.slice(1);
+    }
+    relativePath = relativePath.split(String.fromCharCode(92)).join('/');
     const segments = relativePath.split('/');
     if (
       !relativePath ||
-      relativePath.includes('\\0') ||
+      relativePath.includes(String.fromCharCode(0)) ||
       relativePath.startsWith('/') ||
       segments.some(segment => segment.length === 0 || segment === '.' || segment === '..')
     ) {
