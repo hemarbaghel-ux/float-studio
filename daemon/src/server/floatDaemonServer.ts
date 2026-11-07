@@ -357,7 +357,16 @@ export class FloatDaemonServer {
 				case 'semantic_index_file': {
 					const { filePath, content } = params;
 					const indexRes = this._indexer.indexFile(filePath, content);
-					const chunks = this._vectorEngine.chunkFile(filePath, content);
+					const semanticChunks = this._semanticChunker.chunkFile(filePath, content);
+					const chunks = semanticChunks.map(chunk => ({
+						id: chunk.id,
+						filePath: chunk.filePath,
+						startLine: chunk.startLine,
+						endLine: chunk.endLine,
+						content: chunk.content,
+						symbols: chunk.symbolName ? [chunk.symbolName] : [],
+						vector: this._vectorEngine.embedText(`${chunk.symbolName || ''} ${chunk.content}`)
+					}));
 					this._vectorEngine.clearFileChunks(filePath);
 					this._vectorEngine.addChunks(chunks);
 					this._scheduleIndexPersistence();
