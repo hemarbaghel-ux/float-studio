@@ -21,6 +21,13 @@ export interface IFloatSearchResult {
 	matchType: 'vector' | 'lexical' | 'hybrid';
 }
 
+export interface IFloatSearchDiagnostics {
+	indexedChunks: number;
+	candidateChunks: number;
+	scoredChunks: number;
+	queryTokenCount: number;
+}
+
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 
@@ -33,6 +40,12 @@ export class FloatVectorEngine {
 	private readonly _invertedIndex = new Map<string, Map<string, number>>();
 	private readonly _vectorDim = 384;
 	private _totalTokens = 0;
+	private _lastSearchDiagnostics: IFloatSearchDiagnostics = {
+		indexedChunks: 0,
+		candidateChunks: 0,
+		scoredChunks: 0,
+		queryTokenCount: 0
+	};
 
 	public chunkFile(filePath: string, content: string, chunkSize: number = 30): IFloatCodeChunk[] {
 		const lines = content.split('\n');
@@ -75,7 +88,10 @@ export class FloatVectorEngine {
 				symbols: [...chunk.symbols],
 				vector: chunk.vector ? [...chunk.vector] : this.embedText(`${chunk.content} ${chunk.symbols.join(' ')}`)
 			};
-			const tokens = this._tokenize(`${stored.content} ${stored.symbols.join(' ')}`);
+			// Index normalized path segments alongside source and symbols so
+			// path-only matches are candidates without scanning every chunk.
+			const indexedPath = stored.filePath.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+			const tokens = this._tokenize(`${indexedPath} ${stored.content} ${stored.symbols.join(' ')}`);
 			const termFrequencies = new Map<string, number>();
 			for (const token of tokens) {
 				termFrequencies.set(token, (termFrequencies.get(token) || 0) + 1);
@@ -236,11 +252,23 @@ export class FloatVectorEngine {
 	public search(query: string, topK: number = 5): IFloatSearchResult[] {
 		const normalizedQuery = query.trim().toLowerCase();
 		if (!normalizedQuery || this._chunks.length === 0) {
+			this._lastSearchDiagnostics = {
+				indexedChunks: this._chunks.length,
+				candidateChunks: 0,
+				scoredChunks: 0,
+				queryTokenCount: 0
+			};
 			return [];
 		}
 		const limit = Number.isFinite(topK) ? Math.max(1, Math.min(50, Math.trunc(topK))) : 5;
 		const queryTokens = this._tokenize(query);
 		if (queryTokens.length === 0) {
+			this._lastSearchDiagnostics = {
+				indexedChunks: this._chunks.length,
+				candidateChunks: 0,
+				scoredChunks: 0,
+				queryTokenCount: 0
+			};
 			return [];
 		}
 		// Keep complete identifiers separate from prose tokens. A natural-language
@@ -253,10 +281,28 @@ export class FloatVectorEngine {
 		);
 		const queryVector = this.embedText(query);
 		const bm25Scores = this._computeBM25Scores(queryTokens);
+		const candidateIds = Array.from(bm25Scores.keys());
+		this._lastSearchDiagnostics = {
+			indexedChunks: this._chunks.length,
+			candidateChunks: candidateIds.length,
+			scoredChunks: 0,
+			queryTokenCount: new Set(queryTokens).size
+		};
+		if (candidateIds.length === 0) {
+			return [];
+		}
 		const queryIdentifier = normalizedQuery.replace(/[^a-z0-9_$]/g, '');
 		const ranked: IFloatSearchResult[] = [];
 
-		for (const chunk of this._chunks) {
+		// Candidate generation uses the inverted BM25 index. The expensive vector,
+		// symbol and MMR scoring stages now evaluate only documents with a lexical,
+		// symbol or path token hit, rather than scanning the complete workspace.
+		for (const chunkId of candidateIds) {
+			const chunk = this._chunkById.get(chunkId);
+			if (!chunk) {
+				continue;
+			}
+			this._lastSearchDiagnostics.scoredChunks++;
 			const vectorScore = chunk.vector ? this.cosineSimilarity(queryVector, chunk.vector) : 0;
 			const bm25Score = bm25Scores.get(chunk.id) ?? 0;
 			const normalizedBM25 = bm25Score / (bm25Score + 1.5);
@@ -278,12 +324,12 @@ export class FloatVectorEngine {
 				}
 			}
 
-			const normalizedPath = chunk.filePath.toLowerCase().replace(/\\/g, '/');
-			// Split camelCase path segments before _tokenize lowercases identifiers.
+			// Split camelCase path components before _tokenize lowercases identifiers.
 			const pathTokens = this._tokenize(chunk.filePath.replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
+			const uniqueQueryTokens = new Set(queryTokens);
 			const pathMatches = queryTokens.filter(token => pathTokens.includes(token)).length;
-			const pathBoost = queryTokens.length > 0
-				? (pathMatches / new Set(queryTokens).size) * 0.10
+			const pathBoost = uniqueQueryTokens.size > 0
+				? (pathMatches / uniqueQueryTokens.size) * 0.10
 				: 0;
 
 			// BM25 is the main lexical signal; hash projection is a secondary signal.
@@ -305,6 +351,10 @@ export class FloatVectorEngine {
 
 		ranked.sort((a, b) => b.score - a.score);
 		return this._applyMMR(ranked, limit);
+	}
+
+	public getLastSearchDiagnostics(): IFloatSearchDiagnostics {
+		return { ...this._lastSearchDiagnostics };
 	}
 
 	private _applyMMR(
