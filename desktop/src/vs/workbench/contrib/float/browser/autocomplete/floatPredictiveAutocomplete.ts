@@ -257,14 +257,17 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			requestController.abort();
 		});
 		this._telemetry.requestsCount++;
-		const netStart = Date.now();
+		let contextRetrievalLatency = 0;
+		let modelNetLatency = 0;
 
 		try {
+			const contextStart = Date.now();
 			const relatedContext = await this._daemonContextResolver.resolveRelatedContext(
 				ctx.prefix,
 				ctx.suffix,
 				model.uri
 			);
+			contextRetrievalLatency = Date.now() - contextStart;
 			if (token.isCancellationRequested || signal.aborted) {
 				return undefined;
 			}
@@ -275,6 +278,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 				? `${promptParts.join('\n')}\n${ctx.prefix}`
 				: ctx.prefix;
 
+			const modelRequestStart = Date.now();
 			const result = await this._floatService.completeCode(
 				{
 					prefix: fullPrefix,
@@ -288,13 +292,14 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 				signal
 			);
 
-			const modelNetLatency = Date.now() - netStart;
-			const totalLatency = debounceDuration + modelNetLatency;
+			modelNetLatency = Date.now() - modelRequestStart;
+			const totalLatency = debounceDuration + contextRetrievalLatency + modelNetLatency;
 
 			this._updateModelLatency(modelNetLatency, totalLatency);
 			this._telemetry.lastMeasurement = {
 				type: 'model_network',
 				debounceLatencyMs: debounceDuration,
+				contextRetrievalLatencyMs: contextRetrievalLatency,
 				modelNetworkLatencyMs: modelNetLatency,
 				totalLatencyMs: totalLatency
 			};
