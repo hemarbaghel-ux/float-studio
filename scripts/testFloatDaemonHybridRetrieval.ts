@@ -102,7 +102,7 @@ async function main(): Promise<void> {
 			symbolRankingEngine,
 			'lexical-workspace-credential-cache',
 			'src/cache/workspaceCredentialStore.ts',
-			'export function loadWorkspaceCredentials() { // workspace credential cache stores access credential, workspace token, credential lookup, access token, workspace credential cache }',
+			'export function loadWorkspaceCredentials() {\n // resolveCredentialForWorkspace is called by the workspace credential provider\n // resolveCredentialForWorkspace loads the access token from the workspace credential cache\n // resolveCredentialForWorkspace resolves workspace credentials and access token lookup\n return credentialCache.load();\n}',
 			['loadWorkspaceCredentials']
 		),
 		makeChunk(
