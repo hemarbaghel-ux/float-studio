@@ -243,6 +243,14 @@ export class FloatVectorEngine {
 		if (queryTokens.length === 0) {
 			return [];
 		}
+		// Keep complete identifiers separate from prose tokens. A natural-language
+		// request can contain an exact symbol plus several descriptive words;
+		// comparing the symbol against the entire normalized sentence loses that
+		// high-confidence signal.
+		const queryIdentifiers = new Set(
+			(query.match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? [])
+				.map(identifier => identifier.toLowerCase().replace(/[^a-z0-9_$]/g, ''))
+		);
 		const queryVector = this.embedText(query);
 		const bm25Scores = this._computeBM25Scores(queryTokens);
 		const queryIdentifier = normalizedQuery.replace(/[^a-z0-9_$]/g, '');
@@ -256,11 +264,13 @@ export class FloatVectorEngine {
 			let symbolBoost = 0;
 			for (const symbol of chunk.symbols) {
 				const normalizedSymbol = symbol.toLowerCase().replace(/[^a-z0-9_$]/g, '');
-				if (normalizedSymbol && normalizedSymbol === queryIdentifier) {
-					symbolBoost = Math.max(symbolBoost, 0.28);
+				if (normalizedSymbol && queryIdentifiers.has(normalizedSymbol)) {
+					// Exact identifier match remains strong even inside a prose query.
+					symbolBoost = Math.max(symbolBoost, 0.36);
 				} else if (
 					normalizedSymbol &&
-					(queryTokens.some(token => normalizedSymbol === token) ||
+					(normalizedSymbol === queryIdentifier ||
+						queryTokens.some(token => normalizedSymbol === token) ||
 						normalizedSymbol.includes(queryIdentifier) ||
 						queryIdentifier.includes(normalizedSymbol))
 				) {
