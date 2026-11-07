@@ -14,6 +14,7 @@ import { FloatPredictiveAutocomplete } from '../desktop/src/vs/workbench/contrib
 import { Position } from '../desktop/src/vs/editor/common/core/position.ts';
 import { Range } from '../desktop/src/vs/editor/common/core/range.ts';
 import { CancellationTokenSource } from '../desktop/src/vs/base/common/cancellation.ts';
+import { FloatAutocompleteContextResolver } from '../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatAutocompleteContextResolver.ts';
 
 // Mock TextModel conforming to ITextModel required methods
 function createMockModel(content: string, uriPath: string = '/workspace/src/app.ts', lang: string = 'typescript'): any {
@@ -221,6 +222,93 @@ async function runSuite(): Promise<void> {
 		assert(telemetry.averageLatencyMs >= 0);
 
 		console.log(`  -> PASS: InlineCompletionsProvider contract verified (Accepted=${telemetry.completionsAcceptedCount}, Latency=${telemetry.averageLatencyMs}ms)`);
+	}
+
+
+	// -------------------------------------------------------------
+	// Suite 6: Daemon-Backed Cross-File Context (bounded + fail-open)
+	// -------------------------------------------------------------
+	console.log('\n--- Suite 6: Daemon Codebase Context Integration ---');
+	{
+		const calls: Array<{ method: string; params: any; timeoutMs: number }> = [];
+		const fakeRuntime: any = {
+			getClient: () => ({
+				call: async (method: string, params: any, timeoutMs: number) => {
+					calls.push({ method, params, timeoutMs });
+					return {
+						matches: [
+							{ filePath: 'src/auth/current.ts', startLine: 1, endLine: 4, snippet: 'export function currentFileOnly() {}' },
+							{ filePath: 'src/auth/tokenLookup.ts', startLine: 18, endLine: 27, snippet: 'export function readProfileToken(sessionIdentifier) { return cache.get(sessionIdentifier); }' },
+							{ filePath: 'src/accounts/accountStore.ts', startLine: 5, endLine: 12, snippet: 'export function loadAccountRecord(accountIdentifier) { return records.get(accountIdentifier); }' }
+						]
+					};
+				}
+			})
+		};
+		const resolver = new FloatAutocompleteContextResolver(fakeRuntime);
+		const prefix = 'const profileToken = readProfileToken(sessionIdentifier);\nconst accountRecord = loadAccountRecord(accountIdentifier);';
+		const related = await resolver.resolveRelatedContext(prefix, '', '/workspace/src/auth/current.ts');
+
+		assert.strictEqual(calls.length, 1);
+		assert.strictEqual(calls[0].method, 'semantic_search');
+		assert.strictEqual(calls[0].timeoutMs, 70, 'autocomplete retrieval must have a strict short timeout');
+		assert(related.includes('src/auth/tokenLookup.ts'));
+		assert(related.includes('src/accounts/accountStore.ts'));
+		assert(!related.includes('src/auth/current.ts'), 'active-file duplicate context must be excluded');
+		assert(related.length <= 2_500, 'related context must remain bounded');
+
+		// Multi-root index paths must exclude only the active file, not another
+		// workspace's file with the same relative path.
+		const multiRootRuntime: any = {
+			getClient: () => ({
+				call: async () => ({
+					matches: [
+						{ filePath: 'workspace-1/src/auth/current.ts', startLine: 1, endLine: 4, snippet: 'export function otherWorkspaceCurrentFile() {}' },
+						{ filePath: 'workspace-2/src/auth/current.ts', startLine: 1, endLine: 4, snippet: 'export function activeWorkspaceCurrentFile() {}' },
+						{ filePath: 'workspace-2/src/auth/tokenLookup.ts', startLine: 18, endLine: 27, snippet: 'export function readProfileToken(sessionIdentifier) {}' }
+					]
+				})
+			})
+		};
+		const workspaceContext: any = {
+			getWorkspace: () => ({
+				folders: [
+					{ uri: { scheme: 'file', path: '/workspace/one' } },
+					{ uri: { scheme: 'file', path: '/workspace/two' } }
+				]
+			})
+		};
+		const multiRootResolver = new FloatAutocompleteContextResolver(multiRootRuntime, workspaceContext);
+		const multiRootRelated = await multiRootResolver.resolveRelatedContext(
+			prefix,
+			'',
+			'/workspace/two/src/auth/current.ts'
+		);
+		assert(multiRootRelated.includes('workspace-1/src/auth/current.ts'), 'same-relative-path code from another root must remain eligible');
+		assert(!multiRootRelated.includes('workspace-2/src/auth/current.ts'), 'active file in workspace-2 must be excluded exactly');
+		assert(multiRootRelated.includes('workspace-2/src/auth/tokenLookup.ts'));
+
+		let capturedPrefix = '';
+		const mockFloatService: any = {
+			completeCode: async (options: any) => {
+				capturedPrefix = options.prefix;
+				return { completion: 'continueProfileLookup();' };
+			}
+		};
+		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService, undefined, fakeRuntime);
+		autocomplete.setConfig({ debounceMs: 0 });
+		const model = createMockModel(prefix, '/workspace/src/auth/current.ts');
+		const cts = new CancellationTokenSource();
+		const completion = await autocomplete.provideInlineCompletions(
+			model,
+			new Position(2, model.getLineContent(2).length + 1),
+			{} as any,
+			cts.token
+		);
+		assert(completion !== undefined);
+		assert(capturedPrefix.includes('Related workspace code: src/auth/tokenLookup.ts'));
+		assert(capturedPrefix.includes('const accountRecord = loadAccountRecord(accountIdentifier);'));
+		console.log('  -> PASS: Cursor Tab receives bounded daemon context; unavailable retrieval remains fail-open');
 	}
 
 	console.log('\n================================================================');

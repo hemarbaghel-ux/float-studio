@@ -22,7 +22,9 @@ async function runTests() {
 	fs.mkdirSync(testWorkspace, { recursive: true });
 	fs.writeFileSync(path.join(testWorkspace, 'package.json'), JSON.stringify({ name: 'daemon-test' }), 'utf8');
 
-	const server = new FloatDaemonServer({ pipeName: testPipeName });
+	// This legacy integration fixture explicitly opts in to the old shadow execution
+	// handlers. The production workbench runtime always passes allowSandboxExecution:false.
+	const server = new FloatDaemonServer({ pipeName: testPipeName, allowSandboxExecution: true });
 	const client = new FloatDaemonClient({ pipeName: testPipeName });
 
 	try {

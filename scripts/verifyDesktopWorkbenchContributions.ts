@@ -65,6 +65,9 @@ async function runDesktopWorkbenchVerification() {
 
   // --- Step 2: Keybinding & Action Descriptors ---
   console.log('--- Step 2: Workbench Keybinding & Action Descriptors ---');
+  const desktopMainSrc = fs.readFileSync(path.join(desktopSrc, '../../workbench.desktop.main.ts'), 'utf8');
+  const daemonContributionImports = desktopMainSrc.match(/import ['"]\.\/contrib\/float\/electron-sandbox\/floatDaemonRuntime\.contribution\.js['"]/g) || [];
+  assert.strictEqual(daemonContributionImports.length, 1, 'Desktop workbench must import the daemon runtime contribution exactly once.');
   const actionFile = fs.readFileSync(path.join(desktopSrc, 'browser/float.contribution.ts'), 'utf8');
   assert(actionFile.includes('OpenFloatComposerAction'), 'Composer action must be registered');
   assert(actionFile.includes('FloatInlineDiffAction'), 'Inline diff action must be registered');

@@ -114,7 +114,8 @@ export class OrderProcessor {
 	console.log(`[ContextSlicer] Sliced lines ${slice.startLine}-${slice.endLine} (Enclosing: ${slice.enclosingScopeName}, Class: ${slice.enclosingClassName})`);
 
 	assert.strictEqual(slice.enclosingClassName, 'OrderProcessor', 'Must extract parent class name');
-	assert.ok(slice.enclosingScopeName === 'processOrder' || slice.enclosingScopeName === 'OrderProcessor');
+	assert.strictEqual(slice.enclosingScopeName, 'processOrder', 'Must select the enclosing method, not a local variable declaration');
+	assert.strictEqual(slice.enclosingScopeKind, 'method');
 	assert.strictEqual(slice.imports.length, 2, 'Must extract top-level imports');
 	assert.ok(slice.imports[0].includes('DatabaseConnection'));
 	assert.ok(slice.slicedCode.includes('processOrder'), 'Must contain the active method in code slice');
