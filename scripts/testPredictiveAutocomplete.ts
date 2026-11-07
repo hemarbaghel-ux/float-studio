@@ -311,6 +311,68 @@ async function runSuite(): Promise<void> {
 		console.log('  -> PASS: Cursor Tab receives bounded daemon context; unavailable retrieval remains fail-open');
 	}
 
+	// -------------------------------------------------------------
+	// Suite 7: Overlapping request ownership and stale response suppression
+	// -------------------------------------------------------------
+	console.log('\\n--- Suite 7: Overlapping Request Cancellation Ownership ---');
+	{
+		const pending: Array<(value: any) => void> = [];
+		const signals: AbortSignal[] = [];
+		const mockFloatService: any = {
+			completeCode: async (_options: any, _token?: string, _project?: string, signal?: AbortSignal) =>
+				new Promise(resolve => {
+					pending.push(resolve);
+					if (signal) signals.push(signal);
+				})
+		};
+		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService);
+		autocomplete.setConfig({ debounceMs: 0 });
+		const waitForRequests = async (count: number) => {
+			for (let i = 0; i < 20 && pending.length < count; i++) {
+				await Promise.resolve();
+			}
+			assert.strictEqual(pending.length, count, 'completion request should reach the model client');
+		};
+
+		const firstText = 'const firstValue = calculateFirstValue(';
+		const firstToken = new CancellationTokenSource();
+		const firstRequest = autocomplete.provideInlineCompletions(
+			createMockModel(firstText), new Position(1, firstText.length + 1), {} as any, firstToken.token
+		);
+		await waitForRequests(1);
+
+		const secondText = 'const secondValue = calculateSecondValue(';
+		const secondToken = new CancellationTokenSource();
+		const secondRequest = autocomplete.provideInlineCompletions(
+			createMockModel(secondText), new Position(1, secondText.length + 1), {} as any, secondToken.token
+		);
+		await waitForRequests(2);
+		assert.strictEqual(signals[0].aborted, true, 'new typing must abort the previous request');
+
+		// Simulate a provider that ignores AbortSignal and resolves late.
+		pending[0]({ completion: 'staleFirstValue();' });
+		assert.strictEqual(await firstRequest, undefined, 'an aborted late response must never be shown');
+
+		const thirdText = 'const thirdValue = calculateThirdValue(';
+		const thirdToken = new CancellationTokenSource();
+		const thirdRequest = autocomplete.provideInlineCompletions(
+			createMockModel(thirdText), new Position(1, thirdText.length + 1), {} as any, thirdToken.token
+		);
+		await waitForRequests(3);
+		assert.strictEqual(
+			signals[1].aborted,
+			true,
+			'a late cleanup from request one must not detach request two from cancellation'
+		);
+
+		pending[1]({ completion: 'staleSecondValue();' });
+		pending[2]({ completion: 'currentThirdValue();' });
+		assert.strictEqual(await secondRequest, undefined, 'the superseded second response must be discarded');
+		const thirdResult = await thirdRequest;
+		assert.strictEqual(thirdResult?.items[0].insertText, 'currentThirdValue();');
+		console.log('  -> PASS: stale responses are discarded and each request retains its own cancellation handle');
+	}
+
 	console.log('\n================================================================');
 	console.log('  ALL STEP 2 PREDICTIVE AUTOCOMPLETE SUITES PASSED (100%)       ');
 	console.log('================================================================');
