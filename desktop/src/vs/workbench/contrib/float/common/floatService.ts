@@ -51,7 +51,7 @@ export interface IFloatService {
 		projectId?: string,
 		signal?: AbortSignal
 	): Promise<IFloatCompletionResult>;
-	cancelActiveStream(): void;
+	cancelActiveStream(conversationId?: string): void;
 }
 
 export class FloatService extends Disposable implements IFloatService {
