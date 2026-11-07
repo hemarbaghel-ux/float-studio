@@ -59,6 +59,9 @@ export class FloatDaemonServer {
 	private readonly _multiDiffEditor: FloatMultiFileSyncDiffEditor;
 	private readonly _terminalAgent: FloatTerminalPtyAgent;
 	private readonly _dagPlanner: FloatDagTaskPlanner;
+	private _indexPersistenceTimer: ReturnType<typeof setTimeout> | undefined;
+	private _indexPersistenceQueue: Promise<void> = Promise.resolve();
+	private _indexDirty = false;
 
 	constructor(options?: IFloatDaemonOptions) {
 		this._pipePath = options?.pipeName || this._resolveDefaultPipePath();
@@ -93,7 +96,7 @@ export class FloatDaemonServer {
 	}
 
 	public async start(): Promise<void> {
-		return new Promise<void>((resolve, reject) => {
+		await new Promise<void>((resolve, reject) => {
 			if (process.platform !== 'win32' && fs.existsSync(this._pipePath)) {
 				try {
 					fs.unlinkSync(this._pipePath);
@@ -117,6 +120,73 @@ export class FloatDaemonServer {
 				resolve();
 			});
 		});
+
+		await this._restoreSemanticIndex();
+	}
+
+	private async _restoreSemanticIndex(): Promise<void> {
+		try {
+			const stored = await this._diskStore.loadIndex();
+			if (!stored) {
+				return;
+			}
+			this._vectorEngine.restoreChunks(stored.chunks);
+			this._indexer.restoreNodes(stored.nodes);
+			console.info('[FloatDaemonServer] Restored semantic index:', {
+				totalFiles: stored.manifest.totalFiles,
+				totalSymbols: stored.manifest.totalSymbols,
+				totalChunks: stored.manifest.totalChunks
+			});
+		} catch (error) {
+			console.warn('[FloatDaemonServer] Cached semantic index could not be restored; workspace scan will rebuild it:', error);
+		}
+	}
+
+	private _scheduleIndexPersistence(): void {
+		this._indexDirty = true;
+		if (this._indexPersistenceTimer) {
+			clearTimeout(this._indexPersistenceTimer);
+		}
+		this._indexPersistenceTimer = setTimeout(() => {
+			this._indexPersistenceTimer = undefined;
+			this._enqueueIndexPersistence();
+		}, 750);
+	}
+
+	private _enqueueIndexPersistence(): void {
+		this._indexPersistenceQueue = this._indexPersistenceQueue
+			.catch(error => {
+				console.warn('[FloatDaemonServer] Previous semantic index save failed:', error);
+			})
+			.then(async () => {
+				if (!this._indexDirty) {
+					return;
+				}
+				this._indexDirty = false;
+				const indexedFiles = this._indexer.getIndexedFiles();
+				const nodes = indexedFiles
+					.map(filePath => this._indexer.getFileNode(filePath))
+					.filter((node): node is IFloatFileMerkleNode => !!node);
+				await this._diskStore.saveIndex(nodes, this._vectorEngine.getChunks());
+			})
+			.catch(error => {
+				this._indexDirty = true;
+				console.error('[FloatDaemonServer] Failed to persist semantic index:', error);
+			});
+	}
+
+	private async _flushIndexPersistence(force: boolean = false): Promise<void> {
+		if (force) {
+			this._indexDirty = true;
+		}
+		if (this._indexPersistenceTimer) {
+			clearTimeout(this._indexPersistenceTimer);
+			this._indexPersistenceTimer = undefined;
+		}
+		if (this._indexDirty) {
+			this._enqueueIndexPersistence();
+		}
+		await this._indexPersistenceQueue;
 	}
 
 	private _assertSandboxExecutionEnabled(): void {
@@ -277,6 +347,7 @@ export class FloatDaemonServer {
 					const chunks = this._vectorEngine.chunkFile(filePath, content);
 					this._vectorEngine.clearFileChunks(filePath);
 					this._vectorEngine.addChunks(chunks);
+					this._scheduleIndexPersistence();
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -298,6 +369,7 @@ export class FloatDaemonServer {
 					}
 					this._indexer.removeFile(filePath);
 					this._vectorEngine.clearFileChunks(filePath);
+					this._scheduleIndexPersistence();
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -380,7 +452,7 @@ export class FloatDaemonServer {
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const indexedFiles = this._indexer.getIndexedFiles();
 					const nodes = indexedFiles.map(f => this._indexer.getFileNode(f)!).filter(Boolean);
-					const writeRes = await store.saveIndex(nodes, []);
+					const writeRes = await store.saveIndex(nodes, this._vectorEngine.getChunks());
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -399,6 +471,10 @@ export class FloatDaemonServer {
 					const storageDir = params?.storageDir;
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const loaded = await store.loadIndex();
+					if (loaded) {
+						this._vectorEngine.restoreChunks(loaded.chunks);
+						this._indexer.restoreNodes(loaded.nodes);
+					}
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -633,6 +709,7 @@ export class FloatDaemonServer {
 
 	public async stop(): Promise<void> {
 		this._isShuttingDown = true;
+		await this._flushIndexPersistence();
 
 		for (const client of this._clients) {
 			try {
