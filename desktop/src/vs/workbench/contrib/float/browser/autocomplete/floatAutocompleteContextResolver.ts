@@ -5,6 +5,7 @@
 
 import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { getFloatIndexedWorkspacePath } from '../../common/daemon/floatWorkspaceIndexPath.js';
 
 interface IFloatAutocompleteSearchMatch {
 	filePath?: unknown;
@@ -40,48 +41,6 @@ export class FloatAutocompleteContextResolver {
 		private readonly _workspaceContextService?: IWorkspaceContextService
 	) {}
 
-	/**
-	 * Converts the editor's absolute file path to the exact path used by the
-	 * daemon index. Multi-root workspaces add workspace-N/ prefixes, so a
-	 * basename/suffix-only comparison can accidentally hide another root's
-	 * same-relative-path file instead of the active file.
-	 */
-	private _resolveIndexedActiveFilePath(activeFilePath: string): string | undefined {
-		const roots = this._workspaceContextService?.getWorkspace().folders
-			.filter(folder => folder.uri.scheme === 'file')
-			.map(folder => folder.uri);
-
-		if (!roots || roots.length === 0) {
-			return undefined;
-		}
-
-		const normalizedActivePath = activeFilePath.replace(/\\/g, '/');
-		let bestMatch: { relativePath: string; index: number; rootLength: number } | undefined;
-
-		for (let index = 0; index < roots.length; index++) {
-			const rootPath = roots[index].path.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
-			const prefix = rootPath === '/' ? '/' : rootPath + '/';
-			if (!normalizedActivePath.startsWith(prefix)) {
-				continue;
-			}
-
-			const relativePath = normalizedActivePath.slice(prefix.length).replace(/^\/+/, '');
-			if (!relativePath) {
-				continue;
-			}
-			if (!bestMatch || rootPath.length > bestMatch.rootLength) {
-				bestMatch = { relativePath, index, rootLength: rootPath.length };
-			}
-		}
-
-		if (!bestMatch) {
-			return undefined;
-		}
-
-		return roots.length > 1
-			? `workspace-${bestMatch.index + 1}/${bestMatch.relativePath}`
-			: bestMatch.relativePath;
-	}
 
 	public async resolveRelatedContext(prefix: string, suffix: string, activeFilePath: string): Promise<string> {
 		const client = this._runtimeService?.getClient();
@@ -109,7 +68,8 @@ export class FloatAutocompleteContextResolver {
 			}
 
 			const normalizedActivePath = activeFilePath.replace(/\\/g, '/').toLowerCase();
-			const indexedActivePath = this._resolveIndexedActiveFilePath(activeFilePath)?.toLowerCase();
+			const workspaceFolders = this._workspaceContextService?.getWorkspace().folders.map(folder => folder.uri) ?? [];
+			const indexedActivePath = getFloatIndexedWorkspacePath(activeFilePath, workspaceFolders)?.toLowerCase();
 			const parts: string[] = [];
 			let totalChars = 0;
 			for (const rawMatch of result.matches) {
