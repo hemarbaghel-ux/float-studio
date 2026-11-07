@@ -122,6 +122,14 @@ export function computeDeterminant(m: DistributedMatrix): number {
 	assert.ok(hasClassChunk, 'Should identify class chunk');
 	assert.ok(hasFunctionChunk, 'Should identify function chunk');
 
+	const classChunk = tsChunks.find(chunk => chunk.symbolName === 'DistributedMatrix');
+	const methodChunk = tsChunks.find(chunk => chunk.symbolName === 'multiply');
+	const functionChunk = tsChunks.find(chunk => chunk.symbolName === 'computeDeterminant');
+	assert.ok(classChunk?.content.includes('public multiply'), 'class chunk must retain its full class body');
+	assert.ok(methodChunk?.content.includes('// Computation logic'), 'method chunk must retain its implementation body');
+	assert.ok(methodChunk.endLine > methodChunk.startLine, 'AST method chunk must retain its source range');
+	assert.ok(functionChunk?.content.includes('return 1.0'), 'function chunk must retain its return statement');
+
 	// Python test
 	const pySource = `
 """
@@ -276,6 +284,11 @@ def scaled_dot_product(q, k, v):
 	// 6. Test semantic search over IPC
 	const searchIpcRes = await daemonClient.searchSemantics('DistributedMatrix', 3);
 	assert.ok(searchIpcRes.matches.length > 0, 'Semantic search must return matches');
+	const methodSearchRes = await daemonClient.searchSemantics('multiply scalar', 5);
+	assert.ok(
+		methodSearchRes.matches.some((match: { snippet?: string }) => match.snippet?.includes('// Computation logic')),
+		'daemon retrieval must return complete AST-aware method content'
+	);
 
 	// Clean up IPC
 	try { fs.rmSync(daemonStorageDir, { recursive: true, force: true }); } catch {}
