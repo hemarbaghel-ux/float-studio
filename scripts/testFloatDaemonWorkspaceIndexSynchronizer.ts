@@ -144,6 +144,12 @@ async function main(): Promise<void> {
   assert.equal(synchronizer.indexedFileCount, 3);
   assert.ok(calls.some(call => call.kind === 'index' && call.path === 'src/new.ts'));
 
+  // A file that becomes a symlink must be evicted rather than left searchable.
+  fakeFs.add({ resource: newFile, isFile: false, isDirectory: false, isSymbolicLink: true, size: 0 });
+  await synchronizer.handleFileChanges({ updated: [newFile] });
+  assert.equal(synchronizer.indexedFileCount, 2);
+  assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/new.ts'));
+
   const deletedDirectory = URI.file('/tmp/float-daemon-index-test/src');
   await synchronizer.handleFileChanges({ deleted: [deletedDirectory] });
   assert.equal(synchronizer.indexedFileCount, 0);
@@ -172,7 +178,43 @@ async function main(): Promise<void> {
   await synchronizer.scanWorkspace(); // An unavailable daemon leaves the last known local path set unchanged.
   assert.equal(synchronizer.indexedFileCount, 1);
 
-  console.log('FLOAT daemon workspace indexing: source allowlist, secret/binary exclusion, incremental add/update/delete and workspace switching passed.');
+  // Hitting the scan cap is an incomplete scan: cached paths beyond the cap
+  // must not be pruned merely because they were not visited in this pass.
+  const cappedRoot = URI.file('/tmp/float-daemon-index-cap');
+  const cappedFirst = URI.file('/tmp/float-daemon-index-cap/src/first.ts');
+  const cappedSecond = URI.file('/tmp/float-daemon-index-cap/src/second.ts');
+  fakeFs.add({
+    resource: cappedRoot,
+    isFile: false,
+    isDirectory: true,
+    isSymbolicLink: false,
+    size: 0,
+    children: [
+      { resource: cappedFirst, isFile: true, isDirectory: false, isSymbolicLink: false, size: 12, content: 'export const first = 1;' },
+      { resource: cappedSecond, isFile: true, isDirectory: false, isSymbolicLink: false, size: 12, content: 'export const second = 2;' }
+    ]
+  });
+  fakeFs.add({ resource: cappedFirst, isFile: true, isDirectory: false, isSymbolicLink: false, size: 12, content: 'export const first = 1;' });
+  fakeFs.add({ resource: cappedSecond, isFile: true, isDirectory: false, isSymbolicLink: false, size: 12, content: 'export const second = 2;' });
+  const cachedPaths = new Set(['src/cached-before-scan.ts']);
+  const cappedClient = {
+    call: async () => ({ files: Array.from(cachedPaths) }),
+    indexFileSemantics: async (filePath: string) => { cachedPaths.add(filePath); },
+    removeFileSemantics: async (filePath: string) => { cachedPaths.delete(filePath); }
+  };
+  const cappedSynchronizer = new FloatDaemonWorkspaceIndexSynchronizer(
+    fakeFs as unknown as IFileService,
+    () => cappedClient as any,
+    () => undefined,
+    { maxIndexedFiles: 1 }
+  );
+  await cappedSynchronizer.setWorkspaceRoot(cappedRoot);
+  await cappedSynchronizer.scanWorkspace();
+  assert.ok(cachedPaths.has('src/cached-before-scan.ts'), 'incomplete scan must preserve unvisited cached records');
+  assert.ok(cachedPaths.has('src/first.ts'), 'first file within scan cap must be indexed');
+  assert.equal(cachedPaths.has('src/second.ts'), false, 'files beyond the cap must not be indexed');
+
+  console.log('FLOAT daemon workspace indexing: exclusions, incremental updates, symlink eviction, scan-cap reconciliation and multi-root behavior passed.');
 }
 
 main().catch(error => {
