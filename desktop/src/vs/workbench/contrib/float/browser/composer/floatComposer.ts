@@ -170,8 +170,8 @@ export class FloatComposer extends Disposable {
 	): Promise<IComposerAgentExecution> {
 		this._notificationService.info(`FLOAT Autonomous Composer starting goal: "${goal.prompt}"...`);
 		const isolatedGoal: IComposerAgentGoal = {
-			isolateWorkspaceMutations: true,
-			...goal
+			...goal,
+			isolateWorkspaceMutations: true
 		};
 		const execution = await this._agent.executeGoal(isolatedGoal, onStep, signal);
 		if (execution.proposal) {
