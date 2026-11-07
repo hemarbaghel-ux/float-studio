@@ -27,6 +27,8 @@ import {
 } from './floatAutocompleteTypes.js';
 import { isFloatAutocompleteGloballyEnabled } from './floatAutocompleteActions.js';
 import { FloatNextActionSpeculator } from './floatNextActionSpeculator.js';
+import { FloatAutocompleteContextResolver } from './floatAutocompleteContextResolver.js';
+import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
 
 export class FloatPredictiveAutocomplete extends Disposable implements InlineCompletionsProvider {
 	private _config: IFloatAutocompleteConfig = {
@@ -54,6 +56,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 	private _debounceResolver: ((proceed: boolean) => void) | null = null;
 	private _debounceTimer: any = null;
 	private readonly _speculator = new FloatNextActionSpeculator();
+	private readonly _daemonContextResolver: FloatAutocompleteContextResolver;
 
 	private readonly _onDidShowCursorJump = this._register(new Emitter<{ position: Position; recommendation: ICursorJumpRecommendation }>());
 	public readonly onDidShowCursorJump: Event<{ position: Position; recommendation: ICursorJumpRecommendation }> = this._onDidShowCursorJump.event;
@@ -63,9 +66,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 
 	constructor(
 		private readonly _floatService: IFloatService,
-		languageFeaturesService?: ILanguageFeaturesService
+		languageFeaturesService?: ILanguageFeaturesService,
+		daemonRuntimeService?: IFloatDaemonRuntimeService
 	) {
 		super();
+		this._daemonContextResolver = new FloatAutocompleteContextResolver(daemonRuntimeService);
 		if (languageFeaturesService) {
 			this._register(languageFeaturesService.inlineCompletionsProvider.register('*', this));
 		}
@@ -249,8 +254,20 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		const netStart = Date.now();
 
 		try {
-			const promptContext = this._speculator.buildPromptContext(ctx);
-			const fullPrefix = promptContext ? `${promptContext}\n${ctx.prefix}` : ctx.prefix;
+			const relatedContext = await this._daemonContextResolver.resolveRelatedContext(
+				ctx.prefix,
+				ctx.suffix,
+				filePath
+			);
+			if (token.isCancellationRequested || signal.aborted) {
+				return undefined;
+			}
+
+			const speculativeContext = this._speculator.buildPromptContext(ctx);
+			const promptParts = [relatedContext, speculativeContext].filter(Boolean);
+			const fullPrefix = promptParts.length > 0
+				? `${promptParts.join('\\n')}\\n${ctx.prefix}`
+				: ctx.prefix;
 
 			const result = await this._floatService.completeCode(
 				{
