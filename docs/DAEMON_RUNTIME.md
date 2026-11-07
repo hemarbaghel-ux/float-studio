@@ -25,3 +25,22 @@ Run `npm run build:float-daemon-worker` from the repository root to build it. Th
 ## Current scope
 
 This change starts, monitors and exposes a restricted daemon RPC facade through `IFloatDaemonRuntimeService.getClient()`. Chat, Composer, autocomplete and the workspace indexer are not all routed through the sidecar yet; those integrations are separate follow-up slices. The utility process is managed by Code-OSS and is not a replacement for Composer's Docker execution isolation.
+
+## Semantic index persistence
+
+The daemon stores a versioned snapshot per workspace under the user profile's
+`.float-studio/daemon-index` directory. Snapshots include both symbol metadata
+and the searchable code chunks (including their deterministic feature vectors).
+The daemon validates the checksum, manifest counts, record shape and vector
+dimensions before restoring a snapshot. Invalid snapshots are ignored and the
+workspace indexer rebuilds from the current files.
+
+File additions, updates and deletions schedule a debounced snapshot write. A
+graceful daemon shutdown flushes any pending write. This is a local cache, not a
+source of truth: the workspace scan must still reconcile restored records with
+the current filesystem.
+
+The current 384-dimensional vectors are deterministic hash-projection features,
+not learned embeddings. Symbol extraction is currently grammar-profile/regex
+based; genuine Tree-sitter parsing and learned embedding providers remain
+separate implementation work.
