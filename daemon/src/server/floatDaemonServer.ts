@@ -202,6 +202,22 @@ export class FloatDaemonServer {
 		}
 	}
 
+	private _resolveWorkspaceRelativePath(value: unknown, operation: string): string {
+		if (typeof value !== 'string' || value.trim().length === 0 || value.length > 2048) {
+			throw new Error(`${operation} requires a non-empty workspace-relative file path.`);
+		}
+		const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '');
+		if (
+			normalized.includes('\\0') ||
+			normalized.startsWith('/') ||
+			/^[a-zA-Z]:\\//.test(normalized) ||
+			normalized.split('/').some(segment => segment === '..' || segment === '.')
+		) {
+			throw new Error(`${operation} requires a safe workspace-relative file path.`);
+		}
+		return normalized;
+	}
+
 	private _assertSandboxExecutionEnabled(): void {
 		if (!this._allowSandboxExecution) {
 			throw new Error('FLOAT daemon shadow/toolchain operations are disabled until the isolated execution adapter is explicitly enabled.');
@@ -355,7 +371,17 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_index_file': {
-					const { filePath, content } = params;
+					if (!params || typeof params !== 'object') {
+						throw new Error('semantic_index_file requires a filePath and text content.');
+					}
+					const filePath = this._resolveWorkspaceRelativePath(params.filePath, 'semantic_index_file');
+					const content = params.content;
+					if (typeof content !== 'string') {
+						throw new Error('semantic_index_file content must be text.');
+					}
+					if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) {
+						throw new Error('semantic_index_file content exceeds the 2 MiB indexing limit.');
+					}
 					const indexRes = this._indexer.indexFile(filePath, content);
 					const semanticChunks = this._semanticChunker.chunkFile(filePath, content);
 					const chunks = semanticChunks.map(chunk => ({
@@ -385,10 +411,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_remove_file': {
-					const filePath = String(params?.filePath || '');
-					if (!filePath || filePath.includes('\\0') || filePath.startsWith('/') || filePath.split(/[\\\\/]/).some((part: string) => part === '..')) {
-						throw new Error('semantic_remove_file requires a safe workspace-relative file path.');
-					}
+					const filePath = this._resolveWorkspaceRelativePath(params?.filePath, 'semantic_remove_file');
 					this._indexer.removeFile(filePath);
 					this._vectorEngine.clearFileChunks(filePath);
 					this._scheduleIndexPersistence();
