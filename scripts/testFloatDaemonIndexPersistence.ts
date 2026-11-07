@@ -4,10 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { FloatDaemonServer } from '../daemon/src/server/floatDaemonServer.ts';
+import { FloatDiskIndexStore } from '../daemon/src/storage/floatDiskIndexStore.ts';
 import { FloatDaemonClient } from '../desktop/src/vs/workbench/contrib/float/common/daemon/floatDaemonClient.ts';
 
 async function main(): Promise<void> {
@@ -33,7 +35,7 @@ async function main(): Promise<void> {
 			'export function persistedWorkspaceResolver() {',
 			'  return "persistent semantic index restored";',
 			'}'
-		].join('\\n');
+		].join('\n');
 		const indexed = await firstClient.call<{ chunksCount: number }>('semantic_index_file', { filePath, content: source });
 		assert.ok(indexed.chunksCount > 0);
 		const indexedPaths = await firstClient.call<{ files: string[] }>('semantic_list_indexed_files', {});
@@ -59,7 +61,48 @@ async function main(): Promise<void> {
 		const symbols = await secondClient.call<{ symbols: Array<{ name: string }> }>('semantic_get_symbols', { query: 'persistedWorkspaceResolver' });
 		assert.ok(symbols.symbols.some(symbol => symbol.name === 'persistedWorkspaceResolver'), 'restarted daemon must restore symbol metadata');
 
-		console.log('FLOAT daemon index persistence: searchable chunks and symbol metadata survive a daemon restart.');
+		// Version-1 cache compatibility: the legacy store used index.data.json
+		// and AST-semantic chunks rather than version-2 immutable generations.
+		const legacyDirectory = path.join(tempRoot, 'legacy-v1');
+		await mkdir(legacyDirectory, { recursive: true });
+		const legacyPayload = {
+			nodes: [{
+				filePath: 'src/legacy.ts',
+				fileHash: 'legacy-file-hash',
+				language: 'typescript',
+				symbols: [],
+				lastModified: Date.now()
+			}],
+			chunks: [{
+				id: 'src/legacy.ts#L1-L1:legacy',
+				filePath: 'src/legacy.ts',
+				language: 'typescript',
+				startLine: 1,
+				endLine: 1,
+				content: 'export const legacyValue = 1;',
+				hash: 'legacy-chunk-hash'
+			}]
+		};
+		const legacyData = JSON.stringify(legacyPayload);
+		const legacyChecksum = createHash('sha256').update(legacyData, 'utf8').digest('hex');
+		await writeFile(path.join(legacyDirectory, 'index.data.json'), legacyData, { encoding: 'utf8', mode: 0o600 });
+		await writeFile(path.join(legacyDirectory, 'manifest.json'), JSON.stringify({
+			version: 1,
+			createdAt: Date.now(),
+			totalFiles: 1,
+			totalSymbols: 0,
+			totalChunks: 1,
+			checksum: legacyChecksum
+		}, null, 2), { encoding: 'utf8', mode: 0o600 });
+		const legacyStore = new FloatDiskIndexStore(legacyDirectory);
+		const legacyIndex = await legacyStore.loadIndex();
+		assert.ok(legacyIndex, 'version-1 cache must remain readable');
+		assert.equal(legacyIndex.manifest.version, 1);
+		assert.equal(legacyIndex.chunks.length, 1);
+		assert.ok('hash' in legacyIndex.chunks[0] && !('symbols' in legacyIndex.chunks[0]), 'legacy AST chunk shape must be preserved');
+		await legacyStore.clear();
+
+		console.log('FLOAT daemon index persistence: v2 restart restore and v1 cache compatibility passed.');
 	} finally {
 		firstClient?.dispose();
 		secondClient?.dispose();
