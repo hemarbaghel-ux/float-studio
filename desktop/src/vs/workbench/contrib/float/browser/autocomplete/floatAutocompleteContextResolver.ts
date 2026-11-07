@@ -5,6 +5,7 @@
 
 import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { getFloatIndexedWorkspacePath } from '../../common/daemon/floatWorkspaceIndexPath.js';
 
 interface IFloatAutocompleteSearchMatch {
@@ -42,7 +43,7 @@ export class FloatAutocompleteContextResolver {
 	) {}
 
 
-	public async resolveRelatedContext(prefix: string, suffix: string, activeFilePath: string): Promise<string> {
+	public async resolveRelatedContext(prefix: string, suffix: string, activeFile: string | URI): Promise<string> {
 		const client = this._runtimeService?.getClient();
 		if (!client || prefix.trim().length < 24) {
 			return '';
@@ -67,9 +68,10 @@ export class FloatAutocompleteContextResolver {
 				return '';
 			}
 
+			const activeFilePath = typeof activeFile === 'string' ? activeFile : activeFile.path;
 			const normalizedActivePath = activeFilePath.replace(/\\/g, '/').toLowerCase();
 			const workspaceFolders = this._workspaceContextService?.getWorkspace().folders.map(folder => folder.uri) ?? [];
-			const indexedActivePath = getFloatIndexedWorkspacePath(activeFilePath, workspaceFolders)?.toLowerCase();
+			const indexedActivePath = getFloatIndexedWorkspacePath(activeFile, workspaceFolders)?.toLowerCase();
 			const parts: string[] = [];
 			let totalChars = 0;
 			for (const rawMatch of result.matches) {
