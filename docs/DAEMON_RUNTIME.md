@@ -29,7 +29,11 @@ This change starts, monitors and exposes a restricted daemon RPC facade through 
 ## Semantic index persistence
 
 The daemon stores a versioned snapshot per workspace under the user profile's
-`.float-studio/daemon-index` directory. Snapshots include both symbol metadata
+`.float-studio/daemon-index` directory. Version-2 snapshots use unique immutable
+data-generation files and atomically replace the manifest pointer only after the
+new data file is written. A crash before the pointer update leaves the previous
+snapshot readable. Version-1 `index.data.json` snapshots remain readable and are
+upgraded on the next save. Snapshot files are created with user-only permissions.
 and the searchable code chunks (including their deterministic feature vectors).
 The daemon validates the checksum, manifest counts, record shape and vector
 dimensions before restoring a snapshot. Invalid snapshots are ignored and the
