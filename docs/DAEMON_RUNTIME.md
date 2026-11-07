@@ -11,6 +11,9 @@ FLOAT starts its sidecar daemon as a Code-OSS Electron Utility Process Worker.
 - The renderer receives a narrow RPC facade. It does not import Node.js `fs`, `net`, `os`, `path`, `crypto` or the socket client.
 - Daemon forwarding is allowlisted to health, semantic indexing/search, symbol lookup, file removal and indexed-file listing.
 - The daemon starts with `allowSandboxExecution: false`; legacy shadow/toolchain handlers fail closed. Direct persistence RPCs are not exposed; snapshot writes are performed internally by the daemon.
+- The daemon independently validates workspace-relative paths for semantic indexing, chunk inspection and file removal. Absolute paths, drive paths, null bytes and `.`/`..` segments are rejected.
+- Index/chunk content is capped at 2 MiB; search queries at 2,048 characters; symbol queries at 256 characters; search result limits at 50.
+- IPC frames are capped at 8 MiB. Zero-length or oversized length prefixes close the offending socket on both client and server.
 - Browser workbenches register a no-op runtime so shared Chat/Composer/Autocomplete code can keep using its local fallback without requiring Electron.
 - Unexpected worker exits trigger bounded exponential restart attempts. Workbench shutdown stops the daemon and removes its temporary socket directory.
 
