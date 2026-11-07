@@ -46,7 +46,7 @@ export interface IFloatConversation {
 }
 
 export class FloatModelClient {
-	private _activeAbortController: AbortController | null = null;
+	private readonly _activeAbortControllers = new Map<string, AbortController>();
 	private _endpoint: string = 'http://localhost:3000/api/ai/chat';
 	private readonly _conversations = new Map<string, IFloatConversation>();
 
@@ -85,11 +85,23 @@ export class FloatModelClient {
 		this._conversations.delete(id);
 	}
 
-	public cancelActiveStream(): void {
-		if (this._activeAbortController) {
-			this._activeAbortController.abort();
-			this._activeAbortController = null;
+	public cancelActiveStream(conversationId?: string): void {
+		if (conversationId !== undefined) {
+			const key = conversationId || 'default';
+			const controller = this._activeAbortControllers.get(key);
+			if (controller) {
+				controller.abort();
+				if (this._activeAbortControllers.get(key) === controller) {
+					this._activeAbortControllers.delete(key);
+				}
+			}
+			return;
 		}
+
+		for (const controller of this._activeAbortControllers.values()) {
+			controller.abort();
+		}
+		this._activeAbortControllers.clear();
 	}
 
 	public async streamChat(
@@ -99,11 +111,22 @@ export class FloatModelClient {
 		authToken?: string,
 		projectId: string = 'default-project',
 		contextItems?: Array<{ path: string; content: string }>,
-		conversationId?: string
+		conversationId?: string,
+		callerSignal?: AbortSignal
 	): Promise<void> {
-		this.cancelActiveStream();
-		this._activeAbortController = new AbortController();
-		const signal = this._activeAbortController.signal;
+		const requestKey = conversationId || 'default';
+		// Replace only the previous stream for this conversation. Independent
+		// conversations must not cancel each other's model requests.
+		this.cancelActiveStream(requestKey);
+		const requestController = new AbortController();
+		const abortFromCaller = () => requestController.abort();
+		if (callerSignal?.aborted) {
+			requestController.abort();
+		} else {
+			callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+		}
+		this._activeAbortControllers.set(requestKey, requestController);
+		const signal = requestController.signal;
 
 		// 1. Model resolution and capability validation
 		const registeredModel = getFloatModel(modelId);
@@ -281,7 +304,11 @@ export class FloatModelClient {
 				callbacks.onError(err instanceof Error ? err : new Error(String(err)));
 			}
 		} finally {
-			this._activeAbortController = null;
+			callerSignal?.removeEventListener('abort', abortFromCaller);
+			// A late request must not clear a newer request's cancellation handle.
+			if (this._activeAbortControllers.get(requestKey) === requestController) {
+				this._activeAbortControllers.delete(requestKey);
+			}
 		}
 	}
 
