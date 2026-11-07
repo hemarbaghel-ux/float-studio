@@ -56,6 +56,9 @@ class FakeFileService {
 
 async function main(): Promise<void> {
   const root = URI.file('/tmp/float-daemon-index-test');
+  const secondRoot = URI.file('/tmp/float-daemon-index-test-2');
+  const secondSrc = URI.file('/tmp/float-daemon-index-test-2/src');
+  const secondApp = URI.file('/tmp/float-daemon-index-test-2/src/app.ts');
   const src = URI.file('/tmp/float-daemon-index-test/src');
   const app = URI.file('/tmp/float-daemon-index-test/src/app.ts');
   const env = URI.file('/tmp/float-daemon-index-test/.env');
@@ -73,6 +76,19 @@ async function main(): Promise<void> {
     { resource: app, isFile: true, isDirectory: false, isSymbolicLink: false, size: 42, content: 'export function resolveFloatDaemonIndex() { return true; }' },
     { resource: binary, isFile: true, isDirectory: false, isSymbolicLink: false, size: 3, content: '\u0000\u0001\u0002' }
   );
+  const secondSrcEntry: FakeEntry = {
+    resource: secondSrc, isFile: false, isDirectory: true, isSymbolicLink: false, size: 0,
+    children: [
+      { resource: secondApp, isFile: true, isDirectory: false, isSymbolicLink: false, size: 40, content: 'export function resolveOtherWorkspaceApp() { return true; }' }
+    ]
+  };
+  const secondRootEntry: FakeEntry = {
+    resource: secondRoot, isFile: false, isDirectory: true, isSymbolicLink: false, size: 0,
+    children: [secondSrcEntry]
+  };
+  fakeFs.add(secondRootEntry);
+  fakeFs.add(secondSrcEntry);
+  fakeFs.add(secondSrcEntry.children![0]);
   fakeFs.add(rootEntry);
   fakeFs.add(srcEntry);
   for (const child of rootEntry.children!) fakeFs.add(child);
@@ -125,13 +141,24 @@ async function main(): Promise<void> {
   assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/app.ts'));
   assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/new.ts'));
 
-  // Switching workspace roots removes the old tracked relative paths before re-indexing.
-  const secondRoot = URI.file('/tmp/float-daemon-index-test-2');
-  await synchronizer.setWorkspaceRoot(secondRoot);
+  // Multi-root workspaces namespace same-relative-path files to prevent collisions.
+  await synchronizer.setWorkspaceRoots([root, secondRoot]);
+  await synchronizer.scanWorkspace();
+  assert.equal(synchronizer.workspaceRoots.length, 2);
+  assert.equal(synchronizer.indexedFileCount, 2);
+  assert.ok(calls.some(call => call.kind === 'index' && call.path === 'workspace-1/src/app.ts'));
+  assert.ok(calls.some(call => call.kind === 'index' && call.path === 'workspace-2/src/app.ts'));
+
+  // Switching back to one root removes namespaced records and restores legacy unprefixed paths.
+  await synchronizer.setWorkspaceRoots([secondRoot]);
   assert.equal(synchronizer.workspaceRoot?.toString(), secondRoot.toString());
+  await synchronizer.scanWorkspace();
+  assert.equal(synchronizer.indexedFileCount, 1);
+  assert.ok(calls.some(call => call.kind === 'index' && call.path === 'src/app.ts'));
+
   clientAvailable = false;
-  await synchronizer.scanWorkspace(); // An unavailable daemon does not cause a renderer-side fallback.
-  assert.equal(synchronizer.indexedFileCount, 0);
+  await synchronizer.scanWorkspace(); // An unavailable daemon leaves the last known local path set unchanged.
+  assert.equal(synchronizer.indexedFileCount, 1);
 
   console.log('FLOAT daemon workspace indexing: source allowlist, secret/binary exclusion, incremental add/update/delete and workspace switching passed.');
 }
