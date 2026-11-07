@@ -72,6 +72,12 @@ async function main(): Promise<void> {
     });
     assert.equal(removeResult.method, 'semantic_remove_file');
 
+    const listResult = await channel.call<{ method: string }>('test-window', 'callDaemon', {
+      method: 'semantic_list_indexed_files',
+      params: {}
+    });
+    assert.equal(listResult.method, 'semantic_list_indexed_files');
+
     const callResult = await channel.call<{ method: string }>('test-window', 'callDaemon', {
       method: 'semantic_search',
       params: { query: 'workspace resolver', topK: 8 },
