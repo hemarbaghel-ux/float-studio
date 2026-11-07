@@ -279,7 +279,8 @@ export class FloatVectorEngine {
 			}
 
 			const normalizedPath = chunk.filePath.toLowerCase().replace(/\\/g, '/');
-			const pathTokens = this._tokenize(chunk.filePath.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase());
+			// Split camelCase path segments before _tokenize lowercases identifiers.
+			const pathTokens = this._tokenize(chunk.filePath.replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
 			const pathMatches = queryTokens.filter(token => pathTokens.includes(token)).length;
 			const pathBoost = queryTokens.length > 0
 				? (pathMatches / new Set(queryTokens).size) * 0.10
