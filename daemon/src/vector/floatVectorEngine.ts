@@ -187,7 +187,10 @@ export class FloatVectorEngine {
 			});
 		}
 
-		this._chunks.splice(0, this._chunks.length, ...restored);
+		this._chunks.length = 0;
+		for (const chunk of restored) {
+			this._chunks.push(chunk);
+		}
 	}
 
 	public get totalChunks(): number {
