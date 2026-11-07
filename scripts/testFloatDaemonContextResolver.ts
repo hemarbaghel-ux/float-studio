@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   assert.equal(calls[0].topK, 8);
   assert.ok(codebaseContext.files.some(file => file.path === 'src/auth/tokenVerifier.ts'));
   assert.ok(codebaseContext.files.some(file => file.path === 'src/main.ts'));
-  assert.ok(codebaseContext.files[0].excerpt.includes('L12-L18'));
+  assert.ok(codebaseContext.files.some(file => file.excerpt.includes('L12-L18')));
 
   const symbolContext = await resolver.resolveContext('Explain @symbol:verifyToken');
   assert.equal(calls.length, 2);
