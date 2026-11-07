@@ -269,7 +269,7 @@ export class FloatVectorEngine {
 			}
 
 			const normalizedPath = chunk.filePath.toLowerCase().replace(/\\/g, '/');
-			const pathTokens = this._tokenize(normalizedPath);
+			const pathTokens = this._tokenize(chunk.filePath.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase());
 			const pathMatches = queryTokens.filter(token => pathTokens.includes(token)).length;
 			const pathBoost = queryTokens.length > 0
 				? (pathMatches / new Set(queryTokens).size) * 0.10
@@ -315,7 +315,7 @@ export class FloatVectorEngine {
 				let redundancy = 0;
 				for (const chosen of selected) {
 					if (candidate.chunk.filePath === chosen.chunk.filePath) {
-						redundancy = Math.max(redundancy, 0.85);
+						redundancy = 1;
 						continue;
 					}
 					if (candidate.chunk.vector && chosen.chunk.vector) {
