@@ -150,11 +150,25 @@ export class FloatComposerAgent {
 						onChunk: chunk => { assistantResponse += chunk; },
 						onError: err => { throw err; },
 						onComplete: () => {}
-					}
+					},
+					undefined,
+					undefined,
+					undefined,
+					id,
+					signal
 				);
 			} catch (err: any) {
+				if (signal?.aborted) {
+					execution.status = 'cancelled';
+					return execution;
+				}
 				execution.status = 'failed';
 				execution.error = err.message || String(err);
+				return execution;
+			}
+
+			if (signal?.aborted) {
+				execution.status = 'cancelled';
 				return execution;
 			}
 
