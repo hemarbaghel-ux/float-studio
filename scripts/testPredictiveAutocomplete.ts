@@ -228,7 +228,7 @@ async function runSuite(): Promise<void> {
 	// -------------------------------------------------------------
 	// Suite 6: Daemon-Backed Cross-File Context (bounded + fail-open)
 	// -------------------------------------------------------------
-	console.log('\\n--- Suite 6: Daemon Codebase Context Integration ---');
+	console.log('\n--- Suite 6: Daemon Codebase Context Integration ---');
 	{
 		const calls: Array<{ method: string; params: any; timeoutMs: number }> = [];
 		const fakeRuntime: any = {
@@ -246,7 +246,7 @@ async function runSuite(): Promise<void> {
 			})
 		};
 		const resolver = new FloatAutocompleteContextResolver(fakeRuntime);
-		const prefix = 'const profileToken = readProfileToken(sessionIdentifier);\\nconst accountRecord = loadAccountRecord(accountIdentifier);';
+		const prefix = 'const profileToken = readProfileToken(sessionIdentifier);\nconst accountRecord = loadAccountRecord(accountIdentifier);';
 		const related = await resolver.resolveRelatedContext(prefix, '', '/workspace/src/auth/current.ts');
 
 		assert.strictEqual(calls.length, 1);
