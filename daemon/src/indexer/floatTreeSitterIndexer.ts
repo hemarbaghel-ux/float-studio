@@ -81,6 +81,28 @@ export class FloatTreeSitterIndexer {
 		return this._fileNodes.delete(filePath);
 	}
 
+	public restoreNodes(nodes: IFloatFileMerkleNode[]): void {
+		const restored = new Map<string, IFloatFileMerkleNode>();
+		for (const node of nodes) {
+			if (
+				!node ||
+				typeof node.filePath !== 'string' ||
+				!node.filePath ||
+				typeof node.fileHash !== 'string' ||
+				typeof node.language !== 'string' ||
+				!Number.isFinite(node.lastModified) ||
+				!Array.isArray(node.symbols)
+			) {
+				throw new Error('FLOAT semantic index contains an invalid stored file node.');
+			}
+			restored.set(node.filePath, node);
+		}
+		this._fileNodes.clear();
+		for (const [filePath, node] of restored) {
+			this._fileNodes.set(filePath, node);
+		}
+	}
+
 	public getIndexedFiles(): string[] {
 		return Array.from(this._fileNodes.keys());
 	}
