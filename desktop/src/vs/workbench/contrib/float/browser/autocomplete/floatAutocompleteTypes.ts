@@ -36,6 +36,7 @@ export interface IFloatAutocompleteLatencyMeasurement {
 	type: 'cache_hit' | 'model_network';
 	cacheHitLatencyMs?: number;
 	debounceLatencyMs?: number;
+	contextRetrievalLatencyMs?: number;
 	modelNetworkLatencyMs?: number;
 	totalLatencyMs: number;
 }
