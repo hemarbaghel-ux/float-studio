@@ -20,6 +20,7 @@ import { FloatTerminalListener } from './terminal/floatTerminalListener.js';
 import { FixWithFloatTerminalAction } from './terminal/floatTerminalActions.js';
 import { ToggleFloatAutocompleteAction } from './autocomplete/floatAutocompleteActions.js';
 import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutocomplete.js';
+import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
 registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
@@ -56,9 +57,10 @@ export class FloatPredictiveAutocompleteContribution implements IWorkbenchContri
 
 	constructor(
 		@IFloatService floatService: IFloatService,
-		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService
+		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
+		@IFloatDaemonRuntimeService daemonRuntimeService: IFloatDaemonRuntimeService
 	) {
-		this._provider = new FloatPredictiveAutocomplete(floatService, languageFeaturesService);
+		this._provider = new FloatPredictiveAutocomplete(floatService, languageFeaturesService, daemonRuntimeService);
 	}
 
 	public get provider(): FloatPredictiveAutocomplete {
