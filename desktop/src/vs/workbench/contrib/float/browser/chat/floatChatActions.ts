@@ -85,7 +85,8 @@ export class OpenFloatChatAction extends Action2 {
 			},
 			undefined,
 			undefined,
-			contextItems
+			contextItems,
+			`float-quick-chat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 		);
 	}
 }
