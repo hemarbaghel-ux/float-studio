@@ -98,6 +98,7 @@ export class FloatChatViewPane extends Disposable {
 	}
 
 	public deleteSession(sessionId: string): boolean {
+		this._floatService?.cancelActiveStream(sessionId);
 		const deleted = this._sessions.delete(sessionId);
 		if (this._activeSessionId === sessionId) {
 			const remaining = this.getSessions();
@@ -115,6 +116,7 @@ export class FloatChatViewPane extends Disposable {
 		if (!session) {
 			return;
 		}
+		this._floatService?.cancelActiveStream(session.id);
 		session.messages = [];
 		session.updatedAt = Date.now();
 		this._onDidChangeMessages.fire([]);
@@ -185,8 +187,12 @@ export class FloatChatViewPane extends Disposable {
 						assistantMsg.streaming = false;
 						session.updatedAt = Date.now();
 						this._onDidChangeMessages.fire(session.messages);
-					}
-				});
+					},
+					undefined,
+					undefined,
+					undefined,
+					session.id
+				);
 			} else {
 				// Local fallback when no service injected
 				assistantMsg.content = `FLOAT Chat ready. Received query: "${text.trim()}".`;
