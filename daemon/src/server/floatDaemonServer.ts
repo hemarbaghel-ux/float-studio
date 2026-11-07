@@ -208,9 +208,9 @@ export class FloatDaemonServer {
 		}
 		const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '');
 		if (
-			normalized.includes('\\0') ||
+			normalized.includes('\0') ||
 			normalized.startsWith('/') ||
-			/^[a-zA-Z]:\\//.test(normalized) ||
+			/^[a-zA-Z]:\//.test(normalized) ||
 			normalized.split('/').some(segment => segment === '..' || segment === '.')
 		) {
 			throw new Error(`${operation} requires a safe workspace-relative file path.`);
