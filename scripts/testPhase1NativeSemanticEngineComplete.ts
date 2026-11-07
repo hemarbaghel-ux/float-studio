@@ -270,7 +270,7 @@ def scaled_dot_product(q, k, v):
 		/safe workspace-relative/
 	);
 	await assert.rejects(
-		() => daemonClient.indexFileSemantics('src/null\\0path.ts', 'export const invalid = true;'),
+		() => daemonClient.indexFileSemantics('src/null\0path.ts', 'export const invalid = true;'),
 		/safe workspace-relative/
 	);
 	await assert.rejects(
