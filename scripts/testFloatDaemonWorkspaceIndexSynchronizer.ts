@@ -127,10 +127,10 @@ async function main(): Promise<void> {
 
   await synchronizer.setWorkspaceRoot(root);
   await synchronizer.scanWorkspace();
-  assert.equal(synchronizer.indexedFileCount, 1);
+  assert.equal(synchronizer.indexedFileCount, 2);
   assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/deleted-before-restart.ts'), 'startup scan must prune files deleted while FLOAT was stopped');
   assert.equal(daemonIndexedPaths.has('src/deleted-before-restart.ts'), false);
-  assert.deepEqual(calls.filter(call => call.kind === 'index').map(call => call.path), ['src/app.ts']);
+  assert.deepEqual(calls.filter(call => call.kind === 'index').map(call => call.path), ['src/app.ts', 'src/nested/app.ts']);
   assert.equal(calls.some(call => call.path === '.env' || call.path.includes('node_modules')), false);
 
   // File changes update existing daemon chunks and remove content that becomes non-indexable.
@@ -141,7 +141,7 @@ async function main(): Promise<void> {
   const newFile = URI.file('/tmp/float-daemon-index-test/src/new.ts');
   fakeFs.add({ resource: newFile, isFile: true, isDirectory: false, isSymbolicLink: false, size: 30, content: 'export const newFeature = 1;' });
   await synchronizer.handleFileChanges({ added: [newFile] });
-  assert.equal(synchronizer.indexedFileCount, 2);
+  assert.equal(synchronizer.indexedFileCount, 3);
   assert.ok(calls.some(call => call.kind === 'index' && call.path === 'src/new.ts'));
 
   const deletedDirectory = URI.file('/tmp/float-daemon-index-test/src');
@@ -149,6 +149,7 @@ async function main(): Promise<void> {
   assert.equal(synchronizer.indexedFileCount, 0);
   assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/app.ts'));
   assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/new.ts'));
+  assert.ok(calls.some(call => call.kind === 'remove' && call.path === 'src/nested/app.ts'));
 
   // Multi-root workspaces namespace same-relative-path files to prevent collisions.
   await synchronizer.setWorkspaceRoots([root, secondRoot, nestedRoot]);
