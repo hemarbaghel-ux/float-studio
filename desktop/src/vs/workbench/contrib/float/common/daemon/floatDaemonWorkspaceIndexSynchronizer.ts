@@ -46,7 +46,7 @@ export interface IFloatDaemonWorkspaceFileChanges {
  * files, or sends absolute workspace paths to the daemon.
  */
 export class FloatDaemonWorkspaceIndexSynchronizer {
-  private _root: URI | undefined;
+  private _roots: readonly URI[] = [];
   private readonly _indexedPaths = new Set<string>();
   private _generation = 0;
   private _queue: Promise<void> = Promise.resolve();
@@ -62,12 +62,22 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
   }
 
   public get workspaceRoot(): URI | undefined {
-    return this._root;
+    return this._roots[0];
+  }
+
+  public get workspaceRoots(): readonly URI[] {
+    return this._roots;
   }
 
   public setWorkspaceRoot(root: URI | undefined): Promise<void> {
-    const previous = this._root;
-    if (previous?.toString() === root?.toString()) {
+    return this.setWorkspaceRoots(root ? [root] : []);
+  }
+
+  public setWorkspaceRoots(roots: readonly URI[]): Promise<void> {
+    const uniqueRoots = Array.from(new Map(roots.map(root => [root.toString(), root])).values());
+    const previousKey = this._roots.map(root => root.toString()).join('\\n');
+    const nextKey = uniqueRoots.map(root => root.toString()).join('\\n');
+    if (previousKey === nextKey) {
       return this._queue;
     }
 
@@ -84,8 +94,8 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
         }
       }
       this._indexedPaths.clear();
-      this._root = root;
-      if (generation !== this._generation || !root) {
+      this._roots = uniqueRoots;
+      if (generation !== this._generation) {
         return;
       }
     });
@@ -94,20 +104,9 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
   public scanWorkspace(): Promise<void> {
     const generation = this._generation;
     return this._enqueue(async () => {
-      const root = this._root;
+      const roots = this._roots;
       const client = this._getClient();
-      if (!root || !client || generation !== this._generation) {
-        return;
-      }
-
-      let rootStat: IFileStat;
-      try {
-        rootStat = await this._fileService.resolve(root, { resolveMetadata: true });
-      } catch (error) {
-        this._report(error);
-        return;
-      }
-      if (!rootStat.isDirectory || rootStat.isSymbolicLink) {
+      if (!client || generation !== this._generation) {
         return;
       }
 
@@ -130,9 +129,43 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
 
       let visited = 0;
       const discoveredPaths = new Set<string>();
-      await this._scanStat(rootStat, generation, () => ++visited <= MAX_INDEXED_FILES, discoveredPaths);
+      const scanState = { complete: true };
 
-      if (canReconcile && generation === this._generation) {
+      for (let rootIndex = 0; rootIndex < roots.length; rootIndex++) {
+        if (generation !== this._generation) {
+          scanState.complete = false;
+          break;
+        }
+
+        const root = roots[rootIndex];
+        let rootStat: IFileStat;
+        try {
+          rootStat = await this._fileService.resolve(root, { resolveMetadata: true });
+        } catch (error) {
+          this._report(error);
+          scanState.complete = false;
+          continue;
+        }
+        if (rootStat.isSymbolicLink) {
+          continue;
+        }
+        if (!rootStat.isDirectory) {
+          scanState.complete = false;
+          continue;
+        }
+
+        await this._scanStat(
+          rootStat,
+          generation,
+          () => ++visited <= MAX_INDEXED_FILES,
+          discoveredPaths,
+          root,
+          rootIndex,
+          scanState
+        );
+      }
+
+      if (canReconcile && scanState.complete && generation === this._generation) {
         for (const stalePath of previousPaths) {
           if (!discoveredPaths.has(stalePath)) {
             await this._removeFile(client, stalePath);
@@ -145,14 +178,17 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
   public handleFileChanges(changes: IFloatDaemonWorkspaceFileChanges): Promise<void> {
     const generation = this._generation;
     return this._enqueue(async () => {
-      const root = this._root;
       const client = this._getClient();
-      if (!root || !client || generation !== this._generation) {
+      if (this._roots.length === 0 || !client || generation !== this._generation) {
         return;
       }
 
       for (const resource of changes.deleted ?? []) {
-        const relativePath = this._toRelativePath(root, resource);
+        const rootContext = this._findRootForResource(resource);
+        if (!rootContext) {
+          continue;
+        }
+        const relativePath = this._toRelativePath(rootContext.root, resource, rootContext.index);
         if (!relativePath) {
           continue;
         }
@@ -165,19 +201,14 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
       }
 
       for (const resource of [...(changes.added ?? []), ...(changes.updated ?? [])]) {
-        if (generation !== this._generation) {
-          return;
-        }
-        await this._indexResource(resource, generation);
-      }
-    });
-  }
-
-  private async _scanStat(
+        if   private async _scanStat(
     stat: IFileStat,
     generation: number,
     allowNextFile: () => boolean,
-    discoveredPaths?: Set<string>
+    discoveredPaths: Set<string>,
+    root: URI,
+    rootIndex: number,
+    scanState: { complete: boolean }
   ): Promise<void> {
     if (generation !== this._generation || stat.isSymbolicLink) {
       return;
@@ -186,9 +217,10 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     if (stat.isDirectory) {
       for (const child of stat.children ?? []) {
         if (generation !== this._generation) {
+          scanState.complete = false;
           return;
         }
-        const relativePath = this._toRelativePath(this._root!, child.resource);
+        const relativePath = this._toRelativePath(root, child.resource, rootIndex);
         if (!relativePath || this._isExcludedPath(relativePath)) {
           continue;
         }
@@ -199,27 +231,34 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
               resolved = await this._fileService.resolve(child.resource, { resolveMetadata: true });
             } catch (error) {
               this._report(error);
+              scanState.complete = false;
               continue;
             }
           }
-          await this._scanStat(resolved, generation, allowNextFile, discoveredPaths);
+          await this._scanStat(resolved, generation, allowNextFile, discoveredPaths, root, rootIndex, scanState);
         } else if (child.isFile && allowNextFile()) {
-          await this._indexResource(child.resource, generation, discoveredPaths);
+          await this._indexResource(child.resource, generation, discoveredPaths, { root, index: rootIndex }, scanState);
         }
       }
     } else if (stat.isFile && allowNextFile()) {
-      await this._indexResource(stat.resource, generation, discoveredPaths);
+      await this._indexResource(stat.resource, generation, discoveredPaths, { root, index: rootIndex }, scanState);
     }
   }
 
-  private async _indexResource(resource: URI, generation: number, discoveredPaths?: Set<string>): Promise<void> {
-    const root = this._root;
+  private async _indexResource(
+    resource: URI,
+    generation: number,
+    discoveredPaths?: Set<string>,
+    knownRoot?: { root: URI; index: number },
+    scanState?: { complete: boolean }
+  ): Promise<void> {
     const client = this._getClient();
-    if (!root || !client || generation !== this._generation) {
+    const rootContext = knownRoot ?? this._findRootForResource(resource);
+    if (!rootContext || !client || generation !== this._generation) {
       return;
     }
 
-    const relativePath = this._toRelativePath(root, resource);
+    const relativePath = this._toRelativePath(rootContext.root, resource, rootContext.index);
     if (!relativePath) {
       return;
     }
@@ -229,6 +268,9 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
       stat = await this._fileService.stat(resource);
     } catch (error) {
       this._report(error);
+      if (scanState) {
+        scanState.complete = false;
+      }
       return;
     }
 
@@ -241,9 +283,20 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
         resolved = await this._fileService.resolve(resource, { resolveMetadata: true });
       } catch (error) {
         this._report(error);
+        if (scanState) {
+          scanState.complete = false;
+        }
         return;
       }
-      await this._scanStat(resolved, generation, () => this._indexedPaths.size < MAX_INDEXED_FILES, discoveredPaths);
+      await this._scanStat(
+        resolved,
+        generation,
+        () => this._indexedPaths.size < MAX_INDEXED_FILES,
+        discoveredPaths ?? new Set<string>(),
+        rootContext.root,
+        rootContext.index,
+        scanState ?? { complete: true }
+      );
       return;
     }
 
@@ -267,6 +320,9 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
       discoveredPaths?.add(relativePath);
     } catch (error) {
       this._report(error);
+      if (scanState) {
+        scanState.complete = false;
+      }
     }
   }
 
@@ -282,7 +338,24 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     }
   }
 
-  private _toRelativePath(root: URI, resource: URI): string | undefined {
+  private _findRootForResource(resource: URI): { root: URI; index: number } | undefined {
+    let match: { root: URI; index: number; length: number } | undefined;
+    for (let index = 0; index < this._roots.length; index++) {
+      const root = this._roots[index];
+      if (resource.scheme !== root.scheme || resource.authority !== root.authority) {
+        continue;
+      }
+      const rootPath = root.path.endsWith('/') ? root.path : root.path + '/';
+      if (resource.path === root.path || resource.path.startsWith(rootPath)) {
+        if (!match || root.path.length > match.length) {
+          match = { root, index, length: root.path.length };
+        }
+      }
+    }
+    return match ? { root: match.root, index: match.index } : undefined;
+  }
+
+  private _toRelativePath(root: URI, resource: URI, rootIndex: number): string | undefined {
     if (resource.scheme !== root.scheme || resource.authority !== root.authority) {
       return undefined;
     }
@@ -290,11 +363,13 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     if (!resource.path.startsWith(rootPath)) {
       return undefined;
     }
-    const relativePath = resource.path.slice(rootPath.length).replace(/^\/+/, '');
+    const relativePath = resource.path.slice(rootPath.length).replace(/^\\/+/, '');
     if (!relativePath || relativePath.startsWith('../') || relativePath.includes('\\0')) {
       return undefined;
     }
-    return relativePath;
+    return this._roots.length > 1
+      ? `workspace-${rootIndex + 1}/${relativePath}`
+      : relativePath;
   }
 
   private _isExcludedPath(relativePath: string): boolean {
