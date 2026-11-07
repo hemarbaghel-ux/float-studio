@@ -18,7 +18,7 @@ import {
 import { FloatShadowDaemon } from '../../../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowDaemon.js';
 import { FloatNextActionSpeculator } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatNextActionSpeculator.js';
 import { FloatVectorIndex } from '../../../desktop/src/vs/workbench/contrib/float/common/workspace/floatVectorIndex.js';
-import { FloatTreeSitterIndexer } from '../indexer/floatTreeSitterIndexer.js';
+import { FloatTreeSitterIndexer, IFloatFileMerkleNode } from '../indexer/floatTreeSitterIndexer.js';
 import { FloatVectorEngine } from '../vector/floatVectorEngine.js';
 import { FloatAstSemanticChunker } from '../chunker/floatAstSemanticChunker.js';
 import { FloatDiskIndexStore } from '../storage/floatDiskIndexStore.js';
