@@ -393,6 +393,63 @@ async function runTests() {
     }
   }
 
+  // Suite 5C: Caller AbortSignal is propagated to the underlying HTTP stream
+  {
+    console.log('[Suite 5C] Caller AbortSignal Propagation...');
+    let clientDisconnected = false;
+    let notifyDisconnect!: () => void;
+    const disconnectPromise = new Promise<void>(resolve => { notifyDisconnect = resolve; });
+    const server = http.createServer((_req, res) => {
+      res.on('close', () => {
+        clientDisconnected = true;
+        notifyDisconnect();
+      });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
+      res.write('data: {"type":"delta","text":"initial"}\\n\\n');
+      // Keep the response open until the caller aborts its stream.
+    });
+
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    const client = new FloatModelClient();
+    client.setEndpoint(`http://127.0.0.1:${port}/api/ai/chat`);
+    const callerController = new AbortController();
+    let receivedError: Error | null = null;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.streamChat(
+          [{ role: 'user', content: 'Cancel this generated stream from the caller' }],
+          'gpt-6.1-sol',
+          {
+            onChunk: () => callerController.abort(),
+            onError: error => {
+              receivedError = error;
+              resolve();
+            },
+            onComplete: () => reject(new Error('aborted stream must not complete successfully'))
+          },
+          undefined,
+          'project-caller-cancel',
+          undefined,
+          'conv-caller-cancel',
+          callerController.signal
+        );
+      });
+      await Promise.race([
+        disconnectPromise,
+        new Promise(resolve => setTimeout(resolve, 300))
+      ]);
+      assert.equal(callerController.signal.aborted, true);
+      assert.ok(receivedError);
+      assert.match(receivedError!.message, /cancelled by user/i);
+      assert.equal(clientDisconnected, true, 'caller abort must terminate the underlying HTTP connection');
+      console.log('  -> PASS: caller AbortSignal cancels fetch and closes the upstream response');
+    } finally {
+      client.cancelActiveStream('conv-caller-cancel');
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+
   // Suite 6: FloatAuthService Security & Token Lifecycle
   {
     console.log('[Suite 6] FloatAuthService Secret Storage & Token Lifecycle...');
