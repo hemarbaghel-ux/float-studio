@@ -41,7 +41,7 @@ export class FloatChatViewPane extends Disposable {
 
 	private readonly _sessions = new Map<string, IFloatChatSession>();
 	private _activeSessionId: string | null = null;
-	private _isStreaming: boolean = false;
+	private readonly _streamingSessionIds = new Set<string>();
 
 	private readonly _onDidChangeActiveSession = this._register(new Emitter<IFloatChatSession | null>());
 	public readonly onDidChangeActiveSession: Event<IFloatChatSession | null> = this._onDidChangeActiveSession.event;
@@ -68,6 +68,14 @@ export class FloatChatViewPane extends Disposable {
 
 	public getActiveSession(): IFloatChatSession | null {
 		return this._activeSessionId ? (this._sessions.get(this._activeSessionId) || null) : null;
+	}
+
+	public get isStreaming(): boolean {
+		return this._streamingSessionIds.size > 0;
+	}
+
+	public isSessionStreaming(sessionId: string): boolean {
+		return this._streamingSessionIds.has(sessionId);
 	}
 
 	public createNewSession(title: string = 'New Conversation'): IFloatChatSession {
@@ -127,7 +135,7 @@ export class FloatChatViewPane extends Disposable {
 		contextChips: IFloatChatContextChip[] = []
 	): Promise<void> {
 		const session = this.getActiveSession();
-		if (!session || !text.trim() || this._isStreaming) {
+		if (!session || !text.trim() || this._streamingSessionIds.has(session.id)) {
 			return;
 		}
 
@@ -156,8 +164,11 @@ export class FloatChatViewPane extends Disposable {
 		session.messages.push(assistantMsg);
 		this._onDidChangeMessages.fire(session.messages);
 
-		this._isStreaming = true;
-		this._onDidStartStreaming.fire();
+		const wasStreaming = this._streamingSessionIds.size > 0;
+		this._streamingSessionIds.add(session.id);
+		if (!wasStreaming) {
+			this._onDidStartStreaming.fire();
+		}
 
 		try {
 			if (this._floatService) {
@@ -197,8 +208,10 @@ export class FloatChatViewPane extends Disposable {
 				this._onDidChangeMessages.fire(session.messages);
 			}
 		} finally {
-			this._isStreaming = false;
-			this._onDidStopStreaming.fire();
+			this._streamingSessionIds.delete(session.id);
+			if (this._streamingSessionIds.size === 0) {
+				this._onDidStopStreaming.fire();
+			}
 		}
 	}
 
