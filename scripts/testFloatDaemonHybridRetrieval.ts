@@ -13,7 +13,7 @@ function makeChunk(
 	content: string,
 	symbols: string[] = []
 ): IFloatCodeChunk {
-	const lines = content.split(/\\r?\\n/);
+	const lines = content.split(/\r?\n/);
 	return {
 		id,
 		filePath,
