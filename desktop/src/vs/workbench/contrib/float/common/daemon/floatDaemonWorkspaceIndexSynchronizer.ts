@@ -40,10 +40,20 @@ export interface IFloatDaemonWorkspaceFileChanges {
   readonly deleted?: readonly URI[];
 }
 
+interface IFloatWorkspaceRootContext {
+  root: URI;
+  index: number;
+}
+
+interface IFloatWorkspaceScanState {
+  complete: boolean;
+}
+
 /**
- * Keeps one local workspace root synchronized with the in-memory semantic index
- * hosted by FLOAT's utility process. It never follows symlinks, indexes binary
- * files, or sends absolute workspace paths to the daemon.
+ * Keeps local workspace folders synchronized with FLOAT's daemon index.
+ * Multi-root paths are namespaced so identical relative paths in different
+ * roots cannot overwrite one another. It never follows symlinks, indexes
+ * binary files, or sends absolute workspace paths to the daemon.
  */
 export class FloatDaemonWorkspaceIndexSynchronizer {
   private _roots: readonly URI[] = [];
@@ -110,8 +120,8 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
         return;
       }
 
-      // Recover the daemon's pre-existing file set so a full scan can prune
-      // entries for files deleted while FLOAT was not running.
+      // Recover daemon paths so the scan can prune files deleted while FLOAT
+      // was closed. Never prune after an incomplete filesystem scan.
       let previousPaths: string[] = [];
       let canReconcile = false;
       try {
@@ -129,7 +139,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
 
       let visited = 0;
       const discoveredPaths = new Set<string>();
-      const scanState = { complete: true };
+      const scanState: IFloatWorkspaceScanState = { complete: true };
 
       for (let rootIndex = 0; rootIndex < roots.length; rootIndex++) {
         if (generation !== this._generation) {
@@ -146,6 +156,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
           scanState.complete = false;
           continue;
         }
+
         if (rootStat.isSymbolicLink) {
           continue;
         }
@@ -201,14 +212,22 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
       }
 
       for (const resource of [...(changes.added ?? []), ...(changes.updated ?? [])]) {
-        if   private async _scanStat(
+        if (generation !== this._generation) {
+          return;
+        }
+        await this._indexResource(resource, generation);
+      }
+    });
+  }
+
+  private async _scanStat(
     stat: IFileStat,
     generation: number,
     allowNextFile: () => boolean,
     discoveredPaths: Set<string>,
     root: URI,
     rootIndex: number,
-    scanState: { complete: boolean }
+    scanState: IFloatWorkspaceScanState
   ): Promise<void> {
     if (generation !== this._generation || stat.isSymbolicLink) {
       return;
@@ -220,10 +239,12 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
           scanState.complete = false;
           return;
         }
+
         const relativePath = this._toRelativePath(root, child.resource, rootIndex);
         if (!relativePath || this._isExcludedPath(relativePath)) {
           continue;
         }
+
         if (child.isDirectory) {
           let resolved = child;
           if (!child.children) {
@@ -235,13 +256,33 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
               continue;
             }
           }
-          await this._scanStat(resolved, generation, allowNextFile, discoveredPaths, root, rootIndex, scanState);
+          await this._scanStat(
+            resolved,
+            generation,
+            allowNextFile,
+            discoveredPaths,
+            root,
+            rootIndex,
+            scanState
+          );
         } else if (child.isFile && allowNextFile()) {
-          await this._indexResource(child.resource, generation, discoveredPaths, { root, index: rootIndex }, scanState);
+          await this._indexResource(
+            child.resource,
+            generation,
+            discoveredPaths,
+            { root, index: rootIndex },
+            scanState
+          );
         }
       }
     } else if (stat.isFile && allowNextFile()) {
-      await this._indexResource(stat.resource, generation, discoveredPaths, { root, index: rootIndex }, scanState);
+      await this._indexResource(
+        stat.resource,
+        generation,
+        discoveredPaths,
+        { root, index: rootIndex },
+        scanState
+      );
     }
   }
 
@@ -249,8 +290,8 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     resource: URI,
     generation: number,
     discoveredPaths?: Set<string>,
-    knownRoot?: { root: URI; index: number },
-    scanState?: { complete: boolean }
+    knownRoot?: IFloatWorkspaceRootContext,
+    scanState?: IFloatWorkspaceScanState
   ): Promise<void> {
     const client = this._getClient();
     const rootContext = knownRoot ?? this._findRootForResource(resource);
@@ -338,8 +379,8 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     }
   }
 
-  private _findRootForResource(resource: URI): { root: URI; index: number } | undefined {
-    let match: { root: URI; index: number; length: number } | undefined;
+  private _findRootForResource(resource: URI): IFloatWorkspaceRootContext | undefined {
+    let match: (IFloatWorkspaceRootContext & { length: number }) | undefined;
     for (let index = 0; index < this._roots.length; index++) {
       const root = this._roots[index];
       if (resource.scheme !== root.scheme || resource.authority !== root.authority) {
@@ -363,12 +404,12 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     if (!resource.path.startsWith(rootPath)) {
       return undefined;
     }
-    const relativePath = resource.path.slice(rootPath.length).replace(/^\\/+/, '');
-    if (!relativePath || relativePath.startsWith('../') || relativePath.includes('\\0')) {
+    const relativePath = resource.path.slice(rootPath.length).replace(/^\/+/, '');
+    if (!relativePath || relativePath.startsWith('../') || relativePath.includes('\0')) {
       return undefined;
     }
     return this._roots.length > 1
-      ? `workspace-${rootIndex + 1}/${relativePath}`
+      ? 'workspace-' + (rootIndex + 1) + '/' + relativePath
       : relativePath;
   }
 
@@ -396,7 +437,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
       basename.includes('client_secret') ||
       basename.includes('service-account') ||
       basename.includes('private_key') ||
-      /\.(pem|key|pfx|p12|ppk|jks|keystore|crt|cer|der)$/i.test(basename)
+      /\\.(pem|key|pfx|p12|ppk|jks|keystore|crt|cer|der)$/i.test(basename)
     ) {
       return false;
     }
