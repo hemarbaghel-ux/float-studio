@@ -47,7 +47,7 @@ export class FloatAstSemanticChunker {
 			return [];
 		}
 
-		// Extract symbols using Tree-Sitter indexer
+		// Extract symbols using the daemon's language-aware symbol indexer.
 		const fileNode = this._indexer.parseFileSymbols(filePath, content);
 		const symbols = fileNode.symbols.sort((a, b) => a.startLine - b.startLine);
 
