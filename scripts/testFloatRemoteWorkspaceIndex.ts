@@ -288,7 +288,28 @@ async function main(): Promise<void> {
 	assert(!context.includes('workspace-2/src/remoteService.ts'), 'the exact active remote URI must be excluded');
 	assert(context.includes('workspace-3/src/virtualService.ts'));
 
-	console.log('FLOAT remote/virtual workspace indexing: provider-backed scans, namespaced events and URI-scoped autocomplete filtering passed.');
+	// A symlinked workspace root is intentionally not traversed. Because that
+	// scan is incomplete, previously persisted files must not be pruned.
+	const symlinkRoot = URI.file('/home/dev/symlink-project');
+	fileService.add({
+		resource: symlinkRoot,
+		isFile: false,
+		isDirectory: true,
+		isSymbolicLink: true,
+		size: 0,
+		children: []
+	});
+	await synchronizer.setWorkspaceRoots([symlinkRoot]);
+	indexed.clear();
+	indexed.add('src/retained.ts');
+	await synchronizer.scanWorkspace();
+	assert.deepEqual(
+		Array.from(indexed),
+		['src/retained.ts'],
+		'a skipped symlink root must not cause the previous semantic index to be pruned'
+	);
+
+	console.log('FLOAT remote/virtual workspace indexing: provider-backed scans, namespaced events, URI-scoped autocomplete filtering and non-destructive symlink-root reconciliation passed.');
 }
 
 main().catch(error => {
