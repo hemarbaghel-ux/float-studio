@@ -35,16 +35,16 @@ export class FloatVectorEngine {
 	private _totalTokens = 0;
 
 	public chunkFile(filePath: string, content: string, chunkSize: number = 30): IFloatCodeChunk[] {
-		const lines = content.split('\\n');
+		const lines = content.split('\n');
 		const chunks: IFloatCodeChunk[] = [];
 
 		for (let i = 0; i < lines.length; i += chunkSize) {
 			const slice = lines.slice(i, i + chunkSize);
-			const chunkContent = slice.join('\\n');
+			const chunkContent = slice.join('\n');
 			const startLine = i + 1;
 			const endLine = Math.min(lines.length, i + chunkSize);
 			const symbols: string[] = [];
-			const symMatches = chunkContent.matchAll(/(?:function|def|fn|class|interface|struct)\\s+([a-zA-Z0-9_$]+)/g);
+			const symMatches = chunkContent.matchAll(/(?:function|def|fn|class|interface|struct)\s+([a-zA-Z0-9_$]+)/g);
 			for (const match of symMatches) {
 				symbols.push(match[1]);
 			}
@@ -146,7 +146,7 @@ export class FloatVectorEngine {
 	}
 
 	private _tokenize(text: string): string[] {
-		const identifiers = text.match(/[A-Za-z_$][A-Za-z0-9_$]*|\\d+/g) ?? [];
+		const identifiers = text.match(/[A-Za-z_$][A-Za-z0-9_$]*|\d+/g) ?? [];
 		const tokens: string[] = [];
 		for (const identifier of identifiers) {
 			const whole = identifier.toLowerCase();
@@ -155,7 +155,7 @@ export class FloatVectorEngine {
 			}
 			const parts = identifier
 				.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-				.split(/[_$\\s]+/)
+				.split(/[_$\s]+/)
 				.map(part => part.toLowerCase())
 				.filter(part => part.length >= 2);
 			tokens.push(...parts);
@@ -268,7 +268,7 @@ export class FloatVectorEngine {
 				}
 			}
 
-			const normalizedPath = chunk.filePath.toLowerCase().replace(/\\\\/g, '/');
+			const normalizedPath = chunk.filePath.toLowerCase().replace(/\\/g, '/');
 			const pathTokens = this._tokenize(normalizedPath);
 			const pathMatches = queryTokens.filter(token => pathTokens.includes(token)).length;
 			const pathBoost = queryTokens.length > 0
