@@ -400,12 +400,12 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
   }
 
   private _isAnotherWorkspaceRoot(resource: URI, currentRootIndex: number): boolean {
-    const normalizedPath = resource.path.length > 1 ? resource.path.replace(/\\/+$/, '') : resource.path;
+    const normalizedPath = resource.path.length > 1 ? resource.path.replace(/\/+$/, '') : resource.path;
     return this._roots.some((root, index) => {
       if (index === currentRootIndex || root.scheme !== resource.scheme || root.authority !== resource.authority) {
         return false;
       }
-      const rootPath = root.path.length > 1 ? root.path.replace(/\\/+$/, '') : root.path;
+      const rootPath = root.path.length > 1 ? root.path.replace(/\/+$/, '') : root.path;
       return rootPath === normalizedPath;
     });
   }
