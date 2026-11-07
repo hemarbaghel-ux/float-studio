@@ -90,10 +90,15 @@ export class FloatDaemonClient extends Disposable {
 			let receiveBuffer = Buffer.alloc(0);
 
 			socket.on('data', (data: Buffer) => {
-				receiveBuffer = Buffer.concat([receiveBuffer, data]);
-				receiveBuffer = FloatIpcFramer.decodeStream(receiveBuffer, (message: FloatIpcMessage) => {
-					this._routeIncomingMessage(message);
-				});
+				try {
+					receiveBuffer = Buffer.concat([receiveBuffer, data]);
+					receiveBuffer = FloatIpcFramer.decodeStream(receiveBuffer, (message: FloatIpcMessage) => {
+						this._routeIncomingMessage(message);
+					});
+				} catch (error) {
+					this._rejectAllPending(error instanceof Error ? error : new Error(String(error)));
+					socket.destroy();
+				}
 			});
 
 			socket.on('close', () => {
