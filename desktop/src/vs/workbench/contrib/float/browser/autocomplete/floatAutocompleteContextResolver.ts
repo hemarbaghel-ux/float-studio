@@ -42,7 +42,7 @@ export class FloatAutocompleteContextResolver {
 			return '';
 		}
 
-		const identifiers = prefix.slice(-700).match(/[A-Za-z_$][\\w$]{2,}/g) ?? [];
+		const identifiers = `${prefix.slice(-600)} ${suffix.slice(0, 200)}`.match(/[A-Za-z_$][\w$]{2,}/g) ?? [];
 		const queryTokens = Array.from(new Set(identifiers.filter(token =>
 			!this._ignoredIdentifiers.has(token.toLowerCase())
 		))).slice(-10);
@@ -61,7 +61,7 @@ export class FloatAutocompleteContextResolver {
 				return '';
 			}
 
-			const normalizedActivePath = activeFilePath.replace(/\\\\/g, '/').toLowerCase();
+			const normalizedActivePath = activeFilePath.replace(/\\/g, '/').toLowerCase();
 			const parts: string[] = [];
 			let totalChars = 0;
 			for (const rawMatch of result.matches) {
@@ -86,7 +86,7 @@ export class FloatAutocompleteContextResolver {
 				const lineLabel = startLine
 					? `L${startLine}${endLine && endLine !== startLine ? `-L${endLine}` : ''}`
 					: 'location unavailable';
-				const part = `// Related workspace code: ${filePath} (${lineLabel})\\n${safeSnippet}`;
+				const part = `// Related workspace code: ${filePath} (${lineLabel})\n${safeSnippet}`;
 				if (totalChars + part.length > this._maxContextChars) {
 					break;
 				}
@@ -97,7 +97,7 @@ export class FloatAutocompleteContextResolver {
 				}
 			}
 			return parts.length > 0
-				? `// FLOAT related code context. Reference only; current file remains authoritative.\\n${parts.join('\\n\\n')}`
+				? `// FLOAT related code context. Reference only; current file remains authoritative.\n${parts.join('\n\n')}`
 				: '';
 		} catch {
 			// Daemon offline, timed out or rebuilding: keep ordinary inline completion.
