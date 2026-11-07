@@ -105,7 +105,7 @@ export class FloatDiskIndexStore {
 		if (
 			manifest.version !== 2 ||
 			typeof manifest.dataFile !== 'string' ||
-			!/^index\\.data\\.[a-zA-Z0-9.-]+\\.json$/.test(manifest.dataFile) ||
+			!/^index\.data\.[a-zA-Z0-9.-]+\.json$/.test(manifest.dataFile) ||
 			path.basename(manifest.dataFile) !== manifest.dataFile
 		) {
 			return undefined;
@@ -243,7 +243,7 @@ export class FloatDiskIndexStore {
 			const entries = await fs.promises.readdir(this._storageDir);
 			const ownedFiles = entries.filter(name =>
 				name === 'index.data.json' ||
-				/^index\\.data\\.[a-zA-Z0-9.-]+\\.json(?:\\.tmp)?$/.test(name) ||
+				/^index\.data\.[a-zA-Z0-9.-]+\.json(?:\.tmp)?$/.test(name) ||
 				name.startsWith('manifest.json.tmp.')
 			);
 			await Promise.all(ownedFiles.map(name =>
