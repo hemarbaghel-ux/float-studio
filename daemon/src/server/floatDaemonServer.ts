@@ -130,7 +130,7 @@ export class FloatDaemonServer {
 			if (!stored) {
 				return;
 			}
-			this._vectorEngine.restoreChunks(stored.chunks);
+			this._vectorEngine.restoreChunks(stored.chunks.filter((chunk): chunk is import('../vector/floatVectorEngine.js').IFloatCodeChunk => 'symbols' in chunk));
 			this._indexer.restoreNodes(stored.nodes);
 			console.info('[FloatDaemonServer] Restored semantic index:', {
 				totalFiles: stored.manifest.totalFiles,
