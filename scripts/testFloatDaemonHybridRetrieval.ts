@@ -51,7 +51,7 @@ async function main(): Promise<void> {
 		)
 	]);
 
-	const matches = engine.search('refresh workspace token', 2);
+	const matches = engine.search('refreshWorkspaceToken', 2);
 	assert.equal(matches.length, 2);
 	assert.equal(matches[0].chunk.id, 'auth-refresh-1', 'highest-relevance exact symbol match should rank first');
 	assert.notEqual(
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
 	const restored = new FloatVectorEngine();
 	restored.restoreChunks(engine.getChunks());
 	assert.equal(restored.totalChunks, engine.totalChunks);
-	assert.ok(restored.search('refresh workspace token', 2).some(match => match.chunk.filePath === 'src/workspace/sessionManager.ts'));
+	assert.ok(restored.search('refreshWorkspaceToken', 2).some(match => match.chunk.filePath === 'src/workspace/sessionManager.ts'));
 
 	console.log('FLOAT daemon hybrid retrieval: BM25, camelCase tokenization, stable-ID upsert, file cleanup and MMR diversity passed.');
 }
