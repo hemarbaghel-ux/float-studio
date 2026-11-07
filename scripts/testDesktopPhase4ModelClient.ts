@@ -331,6 +331,68 @@ async function runTests() {
     console.log('  -> PASS: Conversations maintain strict multi-tenant session isolation');
   }
 
+  // Suite 5B: Independent conversation streams and cancellation ownership
+  {
+    console.log('[Suite 5B] Concurrent Conversation Stream Isolation...');
+    let resolveConversationASeen!: () => void;
+    const conversationASeen = new Promise<void>(resolve => { resolveConversationASeen = resolve; });
+    const server = http.createServer((req, res) => {
+      const conversationId = req.headers['x-float-conversation-id'];
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      });
+      const finish = (text: string) => {
+        res.write('data: ' + JSON.stringify({ type: 'delta', text }) + '\\n\\n');
+        res.write('data: ' + JSON.stringify({ type: 'done' }) + '\\n\\n');
+        res.end();
+      };
+      if (conversationId === 'conv-a') {
+        resolveConversationASeen();
+        setTimeout(() => finish('response-a'), 60);
+      } else if (conversationId === 'conv-b') {
+        finish('response-b');
+      } else {
+        res.writeHead(400);
+        res.end();
+      }
+    });
+
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    const client = new FloatModelClient();
+    client.setEndpoint(`http://127.0.0.1:${port}/api/ai/chat`);
+    const runConversation = (conversationId: string) => new Promise<string>((resolve, reject) => {
+      client.streamChat(
+        [{ role: 'user', content: 'Run independent conversation ' + conversationId }],
+        'gpt-6.1-sol',
+        {
+          onChunk: () => {},
+          onError: reject,
+          onComplete: fullText => resolve(fullText)
+        },
+        undefined,
+        'project-stream-isolation',
+        undefined,
+        conversationId
+      );
+    });
+
+    try {
+      const conversationA = runConversation('conv-a');
+      await conversationASeen;
+      const conversationB = runConversation('conv-b');
+      const [responseA, responseB] = await Promise.all([conversationA, conversationB]);
+      assert.equal(responseA, 'response-a', 'starting conversation B must not abort conversation A');
+      assert.equal(responseB, 'response-b', 'conversation B must complete independently');
+      console.log('  -> PASS: concurrent conversations keep independent abort controllers and both streams complete');
+    } finally {
+      client.cancelActiveStream();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+
   // Suite 6: FloatAuthService Security & Token Lifecycle
   {
     console.log('[Suite 6] FloatAuthService Secret Storage & Token Lifecycle...');
