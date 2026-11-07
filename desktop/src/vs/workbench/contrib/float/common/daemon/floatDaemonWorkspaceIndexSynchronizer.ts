@@ -47,6 +47,12 @@ interface IFloatWorkspaceRootContext {
 
 interface IFloatWorkspaceScanState {
   complete: boolean;
+  limitReached: boolean;
+}
+
+export interface IFloatDaemonWorkspaceIndexOptions {
+  maxIndexedFiles?: number;
+  maxFileBytes?: number;
 }
 
 /**
@@ -60,12 +66,22 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
   private readonly _indexedPaths = new Set<string>();
   private _generation = 0;
   private _queue: Promise<void> = Promise.resolve();
+  private readonly _maxIndexedFiles: number;
+  private readonly _maxFileBytes: number;
 
   constructor(
     private readonly _fileService: IFileService,
     private readonly _getClient: () => IFloatDaemonRuntimeClient | undefined,
-    private readonly _onError: (error: unknown) => void = () => undefined
-  ) {}
+    private readonly _onError: (error: unknown) => void = () => undefined,
+    options: IFloatDaemonWorkspaceIndexOptions = {}
+  ) {
+    this._maxIndexedFiles = Number.isSafeInteger(options.maxIndexedFiles) && (options.maxIndexedFiles ?? 0) > 0
+      ? options.maxIndexedFiles!
+      : MAX_INDEXED_FILES;
+    this._maxFileBytes = Number.isSafeInteger(options.maxFileBytes) && (options.maxFileBytes ?? 0) > 0
+      ? options.maxFileBytes!
+      : MAX_FILE_BYTES;
+  }
 
   public get indexedFileCount(): number {
     return this._indexedPaths.size;
@@ -139,7 +155,16 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
 
       let visited = 0;
       const discoveredPaths = new Set<string>();
-      const scanState: IFloatWorkspaceScanState = { complete: true };
+      const scanState: IFloatWorkspaceScanState = { complete: true, limitReached: false };
+      const allowNextFile = (): boolean => {
+        if (visited >= this._maxIndexedFiles) {
+          scanState.complete = false;
+          scanState.limitReached = true;
+          return false;
+        }
+        visited++;
+        return true;
+      };
 
       for (let rootIndex = 0; rootIndex < roots.length; rootIndex++) {
         if (generation !== this._generation) {
@@ -168,7 +193,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
         await this._scanStat(
           rootStat,
           generation,
-          () => ++visited <= MAX_INDEXED_FILES,
+          allowNextFile,
           discoveredPaths,
           root,
           rootIndex,
@@ -229,14 +254,16 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     rootIndex: number,
     scanState: IFloatWorkspaceScanState
   ): Promise<void> {
-    if (generation !== this._generation || stat.isSymbolicLink) {
+    if (generation !== this._generation || stat.isSymbolicLink || scanState.limitReached) {
       return;
     }
 
     if (stat.isDirectory) {
       for (const child of stat.children ?? []) {
-        if (generation !== this._generation) {
-          scanState.complete = false;
+        if (generation !== this._generation || scanState.limitReached) {
+          if (generation !== this._generation) {
+            scanState.complete = false;
+          }
           return;
         }
 
@@ -319,6 +346,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     }
 
     if (stat.isSymbolicLink) {
+      await this._removeFile(client, relativePath);
       return;
     }
     if (stat.isDirectory) {
@@ -335,16 +363,16 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
       await this._scanStat(
         resolved,
         generation,
-        () => this._indexedPaths.size < MAX_INDEXED_FILES,
+        () => this._indexedPaths.size < this._maxIndexedFiles,
         discoveredPaths ?? new Set<string>(),
         rootContext.root,
         rootContext.index,
-        scanState ?? { complete: true }
+        scanState ?? { complete: true, limitReached: false }
       );
       return;
     }
 
-    if (!stat.isFile || !this._isIndexablePath(relativePath) || (stat.size ?? 0) > MAX_FILE_BYTES) {
+    if (!stat.isFile || !this._isIndexablePath(relativePath) || (stat.size ?? 0) > this._maxFileBytes) {
       await this._removeFile(client, relativePath);
       return;
     }
