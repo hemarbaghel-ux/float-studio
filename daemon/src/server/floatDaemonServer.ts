@@ -379,6 +379,17 @@ export class FloatDaemonServer {
 					break;
 				}
 
+				case 'semantic_list_indexed_files': {
+					const files = this._indexer.getIndexedFiles();
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: { files, totalFiles: files.length }
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
 				case 'semantic_search': {
 					const { query, topK } = params;
 					const results = this._vectorEngine.search(query, topK || 5);
