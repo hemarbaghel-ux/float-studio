@@ -11,47 +11,47 @@ import { URI } from '../../../../../base/common/uri.js';
  * identical paths in local, remote and virtual filesystems cannot collide.
  */
 export function getFloatIndexedWorkspacePath(
-	activeFile: string | URI,
-	workspaceFolders: readonly URI[]
+\tactiveFile: string | URI,
+\tworkspaceFolders: readonly URI[]
 ): string | undefined {
-	const activePath = typeof activeFile === 'string' ? activeFile : activeFile.path;
-	const normalizedActivePath = activePath.replace(/\\/g, '/');
-	const activePathLower = normalizedActivePath.toLowerCase();
-	const activeScheme = typeof activeFile === 'string' ? undefined : activeFile.scheme;
-	const activeAuthority = typeof activeFile === 'string' ? undefined : activeFile.authority;
-	let bestMatch: { relativePath: string; index: number; rootLength: number } | undefined;
+\tconst activePath = typeof activeFile === 'string' ? activeFile : activeFile.path;
+\tconst normalizedActivePath = activePath.replace(/\\/g, '/');
+\tconst activePathLower = normalizedActivePath.toLowerCase();
+\tconst activeScheme = typeof activeFile === 'string' ? undefined : activeFile.scheme;
+\tconst activeAuthority = typeof activeFile === 'string' ? undefined : activeFile.authority;
+\tlet bestMatch: { relativePath: string; index: number; rootLength: number } | undefined;
 
-	for (let index = 0; index < workspaceFolders.length; index++) {
-		const root = workspaceFolders[index];
-		if (
-			activeScheme !== undefined &&
-			(root.scheme !== activeScheme || root.authority !== activeAuthority)
-		) {
-			continue;
-		}
+\tfor (let index = 0; index < workspaceFolders.length; index++) {
+\t\tconst root = workspaceFolders[index];
+\t\tif (
+\t\t\tactiveScheme !== undefined &&
+\t\t\t(root.scheme !== activeScheme || root.authority !== activeAuthority)
+\t\t) {
+\t\t\tcontinue;
+\t\t}
 
-		const rootPath = root.path.replace(/\\/g, '/').replace(/\\/+$/, '') || '/';
-		const prefix = rootPath === '/' ? '/' : rootPath + '/';
-		if (!activePathLower.startsWith(prefix.toLowerCase())) {
-			continue;
-		}
+\t\tconst rootPath = root.path.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
+\t\tconst prefix = rootPath === '/' ? '/' : rootPath + '/';
+\t\tif (!activePathLower.startsWith(prefix.toLowerCase())) {
+\t\t\tcontinue;
+\t\t}
 
-		const relativePath = normalizedActivePath.slice(prefix.length).replace(/^\\/+/, '');
-		const segments = relativePath.split('/');
-		if (!relativePath || segments.some(segment => segment === '.' || segment === '..')) {
-			continue;
-		}
+\t\tconst relativePath = normalizedActivePath.slice(prefix.length).replace(/^\/+/, '');
+\t\tconst segments = relativePath.split('/');
+\t\tif (!relativePath || segments.some(segment => segment === '.' || segment === '..')) {
+\t\t\tcontinue;
+\t\t}
 
-		if (!bestMatch || rootPath.length > bestMatch.rootLength) {
-			bestMatch = { relativePath, index, rootLength: rootPath.length };
-		}
-	}
+\t\tif (!bestMatch || rootPath.length > bestMatch.rootLength) {
+\t\t\tbestMatch = { relativePath, index, rootLength: rootPath.length };
+\t\t}
+\t}
 
-	if (!bestMatch) {
-		return undefined;
-	}
+\tif (!bestMatch) {
+\t\treturn undefined;
+\t}
 
-	return workspaceFolders.length > 1
-		? `workspace-${bestMatch.index + 1}/${bestMatch.relativePath}`
-		: bestMatch.relativePath;
+\treturn workspaceFolders.length > 1
+\t\t? \`workspace-\${bestMatch.index + 1}/\${bestMatch.relativePath}\`
+\t\t: bestMatch.relativePath;
 }
