@@ -5,6 +5,8 @@
 
 import { IFloatService } from '../../common/floatService.js';
 import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { getFloatIndexedWorkspacePath } from '../../common/daemon/floatWorkspaceIndexPath.js';
 import { parseFloatMentions, IFloatMention } from './floatMentionParser.js';
 import { FloatContextProvider, IFloatResolvedContext } from './floatContextProvider.js';
 
@@ -31,7 +33,8 @@ export class FloatDaemonContextResolver {
 
   constructor(
     private readonly _floatService: IFloatService,
-    private readonly _runtimeService?: IFloatDaemonRuntimeService
+    private readonly _runtimeService?: IFloatDaemonRuntimeService,
+    private readonly _workspaceContextService?: IWorkspaceContextService
   ) {
     this._fallback = new FloatContextProvider(_floatService);
   }
@@ -47,6 +50,13 @@ export class FloatDaemonContextResolver {
       return this._fallback.resolveContext(prompt, activeFilePath);
     }
 
+    const indexedActiveFilePath = activeFilePath
+      ? getFloatIndexedWorkspacePath(
+          activeFilePath,
+          this._workspaceContextService?.getWorkspace().folders.map(folder => folder.uri) ?? []
+        )?.toLowerCase()
+      : undefined;
+    const normalizedActiveFilePath = activeFilePath?.replace(/\\/g, '/').toLowerCase();
     const cleanPrompt = this._stripMentions(prompt, mentions);
     const files: Array<{ path: string; excerpt: string }> = [];
     const seen = new Set<string>();
@@ -66,6 +76,16 @@ export class FloatDaemonContextResolver {
           const match = rawMatch as IFloatDaemonSearchMatch;
           const filePath = typeof match.filePath === 'string' ? match.filePath : '';
           const snippet = typeof match.snippet === 'string' ? match.snippet.trim() : '';
+          const normalizedMatchPath = filePath.replace(/\\/g, '/').toLowerCase();
+          const isActiveFile = indexedActiveFilePath
+            ? normalizedMatchPath === indexedActiveFilePath
+            : !!normalizedActiveFilePath && (
+                normalizedMatchPath === normalizedActiveFilePath ||
+                normalizedActiveFilePath.endsWith('/' + normalizedMatchPath)
+              );
+          if (isActiveFile) {
+            continue;
+          }
           const startLine = typeof match.startLine === 'number' ? match.startLine : undefined;
           const endLine = typeof match.endLine === 'number' ? match.endLine : undefined;
 
