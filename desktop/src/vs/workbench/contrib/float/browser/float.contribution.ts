@@ -9,9 +9,7 @@ import { registerAction2 } from '../../../../platform/actions/common/actions.js'
 import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 
-import { IFloatService, FloatService } from '../common/floatService.js';
-import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
-import { FloatBrowserDaemonRuntimeService } from './floatDaemonRuntimeService.js';
+import { IFloatService, FloatService } from '../common/floatService.js';import { FloatBrowserDaemonRuntimeService } from './floatDaemonRuntimeService.js';
 import { FloatInlineDiffController } from './inline-diff/floatInlineDiffController.js';
 import { FloatInlineDiffAction } from './inline-diff/floatInlineDiffActions.js';
 import { OpenFloatComposerAction } from './composer/floatComposerActions.js';
