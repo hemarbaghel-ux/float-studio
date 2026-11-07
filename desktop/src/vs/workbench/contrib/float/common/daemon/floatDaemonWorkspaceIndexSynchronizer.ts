@@ -360,14 +360,23 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
         }
         return;
       }
+      const directoryScanState = scanState ?? { complete: true, limitReached: false };
+      const allowNextDirectoryFile = (): boolean => {
+        if (this._indexedPaths.size >= this._maxIndexedFiles) {
+          directoryScanState.complete = false;
+          directoryScanState.limitReached = true;
+          return false;
+        }
+        return true;
+      };
       await this._scanStat(
         resolved,
         generation,
-        () => this._indexedPaths.size < this._maxIndexedFiles,
+        allowNextDirectoryFile,
         discoveredPaths ?? new Set<string>(),
         rootContext.root,
         rootContext.index,
-        scanState ?? { complete: true, limitReached: false }
+        directoryScanState
       );
       return;
     }
