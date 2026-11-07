@@ -144,6 +144,52 @@ export class FloatVectorEngine {
 		return scored.slice(0, topK);
 	}
 
+	public getChunks(): IFloatCodeChunk[] {
+		return this._chunks.map(chunk => ({
+			...chunk,
+			symbols: [...chunk.symbols],
+			vector: chunk.vector ? [...chunk.vector] : undefined
+		}));
+	}
+
+	public restoreChunks(chunks: IFloatCodeChunk[]): void {
+		const restored: IFloatCodeChunk[] = [];
+		const seenIds = new Set<string>();
+
+		for (const chunk of chunks) {
+			if (
+				!chunk ||
+				typeof chunk.id !== 'string' ||
+				!chunk.id ||
+				typeof chunk.filePath !== 'string' ||
+				!chunk.filePath ||
+				!Number.isInteger(chunk.startLine) || chunk.startLine < 1 ||
+				!Number.isInteger(chunk.endLine) || chunk.endLine < chunk.startLine ||
+				typeof chunk.content !== 'string' ||
+				!Array.isArray(chunk.symbols) ||
+				!chunk.symbols.every(symbol => typeof symbol === 'string') ||
+				(chunk.vector !== undefined && (
+					!Array.isArray(chunk.vector) ||
+					chunk.vector.length !== this._vectorDim ||
+					!chunk.vector.every(value => Number.isFinite(value))
+				))
+			) {
+				throw new Error('FLOAT semantic index contains an invalid stored vector chunk.');
+			}
+			if (seenIds.has(chunk.id)) {
+				throw new Error('FLOAT semantic index contains duplicate vector chunk IDs.');
+			}
+			seenIds.add(chunk.id);
+			restored.push({
+				...chunk,
+				symbols: [...chunk.symbols],
+				vector: chunk.vector ? [...chunk.vector] : undefined
+			});
+		}
+
+		this._chunks.splice(0, this._chunks.length, ...restored);
+	}
+
 	public get totalChunks(): number {
 		return this._chunks.length;
 	}
