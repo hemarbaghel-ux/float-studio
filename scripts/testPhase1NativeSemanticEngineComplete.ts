@@ -61,6 +61,7 @@ import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as crypto from 'crypto';
 
 import { FloatAstSemanticChunker } from '../daemon/src/chunker/floatAstSemanticChunker.js';
 import { FloatDiskIndexStore } from '../daemon/src/storage/floatDiskIndexStore.js';
@@ -170,9 +171,31 @@ def scaled_dot_product(q, k, v):
 	assert.strictEqual(loaded.manifest.totalChunks, tsChunks.length + pyChunks.length, 'Chunks count must match');
 	assert.strictEqual(loaded.nodes.length, 2, 'File nodes count must match');
 
-	// Corruption detection test
-	const dataFilePath = path.join(testStoreDir, 'index.data.json');
-	fs.appendFileSync(dataFilePath, '   '); // Corrupt hash
+	// Version-2 snapshots use an immutable generation file referenced by manifest.json.
+	const manifestPath = path.join(testStoreDir, 'manifest.json');
+	const v2Manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+	assert.strictEqual(v2Manifest.version, 2, 'New snapshots must use the atomic manifest-pointer format');
+	assert.strictEqual(typeof v2Manifest.dataFile, 'string');
+	assert.ok(fs.existsSync(path.join(testStoreDir, v2Manifest.dataFile)), 'Manifest must reference the committed data generation');
+
+	// Version-1 compatibility: old releases stored data in index.data.json.
+	const legacyRawData = JSON.stringify({ nodes: [node1, node2], chunks: [...tsChunks, ...pyChunks] });
+	const legacyDataFilePath = path.join(testStoreDir, 'index.data.json');
+	fs.writeFileSync(legacyDataFilePath, legacyRawData, 'utf8');
+	fs.writeFileSync(manifestPath, JSON.stringify({
+		version: 1,
+		createdAt: Date.now(),
+		totalFiles: 2,
+		totalSymbols: node1.symbols.length + node2.symbols.length,
+		totalChunks: tsChunks.length + pyChunks.length,
+		checksum: crypto.createHash('sha256').update(legacyRawData, 'utf8').digest('hex')
+	}), 'utf8');
+	const legacyLoaded = await diskStore.loadIndex();
+	assert.ok(legacyLoaded !== null, 'Version-1 index snapshots must remain readable');
+	assert.strictEqual(legacyLoaded.manifest.version, 1);
+
+	// Corruption detection test against the file selected by the active manifest.
+	fs.appendFileSync(legacyDataFilePath, '   '); // Corrupt hash
 	const corruptedLoad = await diskStore.loadIndex();
 	assert.strictEqual(corruptedLoad, null, 'Corrupted index must be rejected by SHA-256 checksum check');
 
