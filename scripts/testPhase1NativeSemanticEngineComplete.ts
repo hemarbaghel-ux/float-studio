@@ -260,6 +260,24 @@ def scaled_dot_product(q, k, v):
 	const pingRes = await daemonClient.ping();
 	assert.strictEqual(pingRes.status, 'ok');
 
+	// The daemon independently enforces the renderer's relative-path and file-size policy.
+	await assert.rejects(
+		() => daemonClient.indexFileSemantics('../outside.ts', 'export const outside = true;'),
+		/safe workspace-relative/
+	);
+	await assert.rejects(
+		() => daemonClient.indexFileSemantics('C:\\Users\\outside.ts', 'export const outside = true;'),
+		/safe workspace-relative/
+	);
+	await assert.rejects(
+		() => daemonClient.indexFileSemantics('src/null\\0path.ts', 'export const invalid = true;'),
+		/safe workspace-relative/
+	);
+	await assert.rejects(
+		() => daemonClient.indexFileSemantics('src/oversized.ts', 'x'.repeat(2 * 1024 * 1024 + 1)),
+		/2 MiB/
+	);
+
 	// 2. Test semantic indexing over IPC
 	const indexIpcRes = await daemonClient.indexFileSemantics('src/math/matrix.ts', tsSource);
 	assert.strictEqual(indexIpcRes.delta, 'added');
