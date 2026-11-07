@@ -195,7 +195,8 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		}
 
 		const ctx = this.extractContext(model, position);
-		const filePath = model.uri.path;
+		// Include the provider and authority so local/remote files with the same path cannot share cache entries.
+		const filePath = model.uri.toString();
 
 		// 1. Cursor Tab Forward Cache Matching (<1ms local cache-hit latency)
 		if (this._cache && this._cache.filePath === filePath && this._cache.lineNumber === position.lineNumber) {
@@ -259,7 +260,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			const relatedContext = await this._daemonContextResolver.resolveRelatedContext(
 				ctx.prefix,
 				ctx.suffix,
-				filePath
+				model.uri
 			);
 			if (token.isCancellationRequested || signal.aborted) {
 				return undefined;
