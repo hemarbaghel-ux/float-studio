@@ -344,8 +344,8 @@ async function runTests() {
         'Connection': 'keep-alive'
       });
       const finish = (text: string) => {
-        res.write('data: ' + JSON.stringify({ type: 'delta', text }) + '\\n\\n');
-        res.write('data: ' + JSON.stringify({ type: 'done' }) + '\\n\\n');
+        res.write('data: ' + JSON.stringify({ type: 'delta', text }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ type: 'done' }) + '\n\n');
         res.end();
       };
       if (conversationId === 'conv-a') {
@@ -437,7 +437,7 @@ async function runTests() {
     console.log('  -> PASS: Secret storage persistence, JWT expiration and token sanitization verified');
   }
 
-  console.log('\nAll 6 production desktop AI and authentication suites PASSED (100%).\n');
+  console.log('\nAll production desktop AI, stream isolation and authentication suites PASSED.\n');
 }
 
 runTests().catch(err => {
