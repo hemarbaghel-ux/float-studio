@@ -183,10 +183,23 @@ export class FloatDaemonServer {
 			clearTimeout(this._indexPersistenceTimer);
 			this._indexPersistenceTimer = undefined;
 		}
-		if (this._indexDirty) {
+
+		// A transient filesystem error must not silently discard the final
+		// snapshot at shutdown. Retry once, then surface failure to stop().
+		let attempts = 0;
+		while (this._indexDirty && attempts < 2) {
+			attempts++;
 			this._enqueueIndexPersistence();
+			await this._indexPersistenceQueue;
 		}
-		await this._indexPersistenceQueue;
+
+		if (this._indexPersistenceTimer) {
+			clearTimeout(this._indexPersistenceTimer);
+			this._indexPersistenceTimer = undefined;
+		}
+		if (this._indexDirty) {
+			throw new Error(`FLOAT semantic index snapshot flush failed after ${attempts} attempts.`);
+		}
 	}
 
 	private _assertSandboxExecutionEnabled(): void {
@@ -720,7 +733,13 @@ export class FloatDaemonServer {
 
 	public async stop(): Promise<void> {
 		this._isShuttingDown = true;
-		await this._flushIndexPersistence();
+		try {
+			await this._flushIndexPersistence();
+		} catch (error) {
+			// Preserve daemon shutdown even when storage is unavailable; the
+			// previously committed generation remains the last known-good cache.
+			console.error('[FloatDaemonServer] Final semantic index flush failed:', error);
+		}
 
 		for (const client of this._clients) {
 			try {
