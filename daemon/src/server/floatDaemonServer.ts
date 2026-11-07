@@ -229,12 +229,17 @@ export class FloatDaemonServer {
 		let receiveBuffer = Buffer.alloc(0);
 
 		socket.on('data', (data: Buffer) => {
-			receiveBuffer = Buffer.concat([receiveBuffer, data]);
-			receiveBuffer = FloatIpcFramer.decodeStream(receiveBuffer, (message: FloatIpcMessage) => {
-				if (message.type === 'request') {
-					this._handleRequest(socket, message as IFloatIpcRequest);
-				}
-			});
+			try {
+				receiveBuffer = Buffer.concat([receiveBuffer, data]);
+				receiveBuffer = FloatIpcFramer.decodeStream(receiveBuffer, (message: FloatIpcMessage) => {
+					if (message.type === 'request') {
+						this._handleRequest(socket, message as IFloatIpcRequest);
+					}
+				});
+			} catch (error) {
+				console.warn('[FloatDaemonServer] Closing connection after invalid IPC frame:', error);
+				socket.destroy();
+			}
 		});
 
 		socket.on('close', () => {
