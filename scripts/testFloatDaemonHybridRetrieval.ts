@@ -69,15 +69,16 @@ async function main(): Promise<void> {
 	// CamelCase path components must be split before lowercasing. This fixture
 	// deliberately keeps the query terms out of the chunk body and symbols.
 	const pathRankingEngine = new FloatVectorEngine();
-	pathRankingEngine.addChunks([
-		makeChunk(
-			pathRankingEngine,
-			'path-only-session-manager',
-			'src/workspace/sessionManager.ts',
-			'export const adapter = createAdapter();',
-			['createAdapter']
-		)
-	]);
+	const pathOnlyChunk = makeChunk(
+		pathRankingEngine,
+		'path-only-session-manager',
+		'src/workspace/sessionManager.ts',
+		'export const adapter = createAdapter();',
+		['createAdapter']
+	);
+	// Remove the body vector signal so this assertion isolates path-token scoring.
+	pathOnlyChunk.vector = new Array(384).fill(0);
+	pathRankingEngine.addChunks([pathOnlyChunk]);
 	const pathOnlyResults = pathRankingEngine.search('session manager', 3);
 	assert.equal(
 		pathOnlyResults[0]?.chunk.filePath,
