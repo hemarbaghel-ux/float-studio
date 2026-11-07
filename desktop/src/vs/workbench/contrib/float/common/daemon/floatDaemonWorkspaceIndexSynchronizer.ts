@@ -85,7 +85,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
 
   public setWorkspaceRoots(roots: readonly URI[]): Promise<void> {
     const uniqueRoots = Array.from(new Map(roots.map(root => [root.toString(), root])).values());
-    const previousKey = this._roots.map(root => root.toString()).join('\\n');
+    const previousKey = this._roots.map(root => root.toString()).join('|');
     const nextKey = uniqueRoots.map(root => root.toString()).join('\\n');
     if (previousKey === nextKey) {
       return this._queue;
