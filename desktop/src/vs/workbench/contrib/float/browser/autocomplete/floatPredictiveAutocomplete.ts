@@ -299,7 +299,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 				totalLatencyMs: totalLatency
 			};
 
-			if (token.isCancellationRequested || result.cancelled || !result.completion) {
+			if (token.isCancellationRequested || signal.aborted || result.cancelled || !result.completion) {
 				return undefined;
 			}
 
