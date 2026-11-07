@@ -11,6 +11,7 @@ async function main(): Promise<void> {
 	const root = URI.file('/projects/float');
 	const nestedRoot = URI.file('/projects/float/packages/desktop');
 	const activeFile = URI.file('/projects/float/packages/desktop/src/main.ts');
+	const trailingSlashRoot = URI.from({ scheme: 'file', path: '/projects/float/' });
 	const outsideFile = URI.file('/projects/float-evil/src/main.ts');
 
 	assert.equal(
@@ -22,6 +23,11 @@ async function main(): Promise<void> {
 		getFloatComposerWorkspaceRoot([root], outsideFile),
 		undefined,
 		'a path-prefix sibling must not be treated as part of the workspace'
+	);
+	assert.equal(
+		getFloatComposerWorkspaceRoot([trailingSlashRoot], activeFile)?.toString(),
+		trailingSlashRoot.toString(),
+		'a trailing slash on the workspace root must not break containment checks'
 	);
 	assert.equal(
 		getFloatComposerWorkspaceRoot([root])?.toString(),
