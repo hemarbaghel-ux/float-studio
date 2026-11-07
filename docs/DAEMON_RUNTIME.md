@@ -69,8 +69,9 @@ Run `npm run build:float-daemon-worker` from the repository root to build it. Th
 
 ## Remaining work
 
-- Add multi-root and remote/virtual workspace indexing.
-- Replace regex-only daemon symbol extraction with real parser integration and validated language grammars.
+- Add remote and virtual workspace filesystem indexing; current indexing is limited to local `file:` roots.
+- Replace the non-TypeScript regex grammar profiles with maintained parser runtimes and versioned language grammars.
 - Add a pluggable learned-embedding provider and a scalable retrieval index; current hash vectors are not semantic embeddings or an ANN database.
-- Complete a packaged Windows/macOS Electron launch test.
+- Add relevance and latency benchmarks for Chat, Composer and Cursor Tab context retrieval against representative repositories.
+- Complete packaged Windows/macOS Electron launch and restart tests.
 - Keep legacy daemon shadow/toolchain execution disabled until it is explicitly wired to a hardened isolated execution adapter and security-tested.
