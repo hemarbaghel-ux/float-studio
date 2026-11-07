@@ -72,7 +72,7 @@ export class FloatAutocompleteContextResolver {
 					continue;
 				}
 
-				const normalizedMatchPath = filePath.replace(/\\\\/g, '/').toLowerCase();
+				const normalizedMatchPath = filePath.replace(/\\/g, '/').toLowerCase();
 				if (
 					normalizedMatchPath === normalizedActivePath ||
 					normalizedActivePath.endsWith('/' + normalizedMatchPath)
