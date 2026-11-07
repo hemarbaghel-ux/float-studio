@@ -4,12 +4,30 @@ import path from 'node:path';
 import os from 'node:os';
 import { ProductionComposerFileSystem, SpeculativeComposerFileSystem, IsolatedShadowWorkspaceCommandRunner, resolveComposerWorkspacePath, resolveComposerWorkspaceRelativePath } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
 import { copyComposerWorkspace } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatSandboxWorkspaceCopy.js';
+import { FloatComposer } from '../desktop/src/vs/workbench/contrib/float/browser/composer/floatComposer.js';
 import {
   buildFloatDockerSandboxArgs,
   DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE
 } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatDockerSandboxRunner.js';
 
 async function main(): Promise<void> {
+  // The production Composer wrapper must not let callers disable speculative
+  // workspace isolation, even when a goal explicitly supplies false.
+  let forwardedGoal: any;
+  const composerIsolationProbe = Object.create(FloatComposer.prototype) as any;
+  composerIsolationProbe._notificationService = { info: () => undefined };
+  composerIsolationProbe._agent = {
+    executeGoal: async (goal: any) => {
+      forwardedGoal = goal;
+      return { proposal: undefined, status: 'completed' };
+    }
+  };
+  await composerIsolationProbe.executeAutonomousGoal({
+    prompt: 'verify Composer isolation',
+    isolateWorkspaceMutations: false
+  });
+  assert.equal(forwardedGoal.isolateWorkspaceMutations, true, 'production Composer must enforce speculative workspace isolation');
+
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'float-composer-security-'));
   const workspace = path.join(tempRoot, 'workspace-root');
   const sibling = path.join(tempRoot, 'workspace-root-evil');
