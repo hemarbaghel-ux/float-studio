@@ -40,5 +40,8 @@ jobs:
       - name: Build native FLOAT utility-process entrypoint
         run: npm run build:float-daemon-worker
 
+      - name: Prepare Composer sandbox image for integration tests
+        run: docker pull node:22-bookworm-slim
+
       - name: Run full verification suite (Chat, Models, Persistence, Security)
         run: npm test
