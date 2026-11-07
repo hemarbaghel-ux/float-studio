@@ -32,10 +32,12 @@ export class FloatDaemonWorkspaceIndexContribution extends Disposable implements
     );
 
     this._register(fileService.onDidFilesChange(event => {
+      // IFileService events are scoped to the roots by the synchronizer,
+      // which also checks URI scheme and authority before deriving a relative path.
       void this._synchronizer.handleFileChanges({
-        added: event.rawAdded.filter(resource => resource.scheme === 'file'),
-        updated: event.rawUpdated.filter(resource => resource.scheme === 'file'),
-        deleted: event.rawDeleted.filter(resource => resource.scheme === 'file')
+        added: event.rawAdded,
+        updated: event.rawUpdated,
+        deleted: event.rawDeleted
       });
     }));
 
@@ -52,9 +54,7 @@ export class FloatDaemonWorkspaceIndexContribution extends Disposable implements
 
   private _activateWorkspace(): void {
     const folders = this._workspaceContextService.getWorkspace().folders;
-    const roots = folders
-      .filter(folder => folder.uri.scheme === 'file')
-      .map(folder => folder.uri);
+    const roots = folders.map(folder => folder.uri);
     const rootKey = roots.map(root => root.toString()).join('|');
 
     if (rootKey === this._requestedRoots) {
@@ -65,8 +65,8 @@ export class FloatDaemonWorkspaceIndexContribution extends Disposable implements
     }
 
     this._requestedRoots = rootKey;
-    if (roots.length !== folders.length) {
-      this._logService.warn('[FLOAT] Daemon semantic indexing currently supports local file workspace folders only; remote and virtual folders are skipped.');
+    if (roots.length > 0) {
+      this._logService.info('[FLOAT] Activating daemon indexing for', roots.length, 'workspace folder(s) using Code-OSS file providers.');
     }
 
     void this._synchronizer.setWorkspaceRoots(roots).then(() => {
