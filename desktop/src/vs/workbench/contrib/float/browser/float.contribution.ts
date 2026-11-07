@@ -9,7 +9,9 @@ import { registerAction2 } from '../../../../platform/actions/common/actions.js'
 import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 
-import { IFloatService, FloatService } from '../common/floatService.js';import { FloatBrowserDaemonRuntimeService } from './floatDaemonRuntimeService.js';
+import { IFloatService, FloatService } from '../common/floatService.js';
+import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
+import { FloatBrowserDaemonRuntimeService } from './floatDaemonRuntimeService.js';
 import { FloatInlineDiffController } from './inline-diff/floatInlineDiffController.js';
 import { FloatInlineDiffAction } from './inline-diff/floatInlineDiffActions.js';
 import { OpenFloatComposerAction } from './composer/floatComposerActions.js';
@@ -18,7 +20,6 @@ import { FloatTerminalListener } from './terminal/floatTerminalListener.js';
 import { FixWithFloatTerminalAction } from './terminal/floatTerminalActions.js';
 import { ToggleFloatAutocompleteAction } from './autocomplete/floatAutocompleteActions.js';
 import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutocomplete.js';
-import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
 registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
