@@ -67,11 +67,24 @@ The utility process entrypoint must be present at:
 
 Run `npm run build:float-daemon-worker` from the repository root to build it. The desktop package runs the same script after `npm run compile` and `npm run compile-build`.
 
+## Retrieval quality smoke benchmark
+
+`scripts/testFloatDaemonHybridRetrieval.ts` includes an offline relevance and
+latency smoke benchmark. It indexes six curated code fixtures plus 96 unrelated
+graphics fixtures, evaluates six natural-language/code-identifier queries,
+asserts Recall@5 = 1.0 and MRR >= 0.8, and reports index time plus search p50/p95.
+The test runs in the desktop regression suite and requires no API key or model
+download.
+
+This is a deterministic fixture benchmark, not an evaluation against production
+repositories. It does not establish semantic understanding, learned-embedding
+quality, ANN scalability, or end-to-end model completion latency.
+
 ## Remaining work
 
 - Add remote and virtual workspace filesystem indexing; current indexing is limited to local `file:` roots.
 - Replace the non-TypeScript regex grammar profiles with maintained parser runtimes and versioned language grammars.
 - Add a pluggable learned-embedding provider and a scalable retrieval index; current hash vectors are not semantic embeddings or an ANN database.
-- Add relevance and latency benchmarks for Chat, Composer and Cursor Tab context retrieval against representative repositories.
+- Expand retrieval relevance/latency benchmarks from deterministic fixtures to representative repositories and evaluate Chat, Composer and Cursor Tab context quality end to end.
 - Complete packaged Windows/macOS Electron launch and restart tests.
 - Keep legacy daemon shadow/toolchain execution disabled until it is explicitly wired to a hardened isolated execution adapter and security-tested.
