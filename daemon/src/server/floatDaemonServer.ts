@@ -436,8 +436,15 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_search': {
-					const { query, topK } = params;
-					const results = this._vectorEngine.search(query, topK || 5);
+					if (!params || typeof params !== 'object' || typeof params.query !== 'string' || params.query.length > 2_048) {
+						throw new Error('semantic_search query must be text of at most 2048 characters.');
+					}
+					const query = params.query as string;
+					const topK = params.topK === undefined ? 5 : params.topK;
+					if (!Number.isSafeInteger(topK) || topK < 1 || topK > 50) {
+						throw new Error('semantic_search topK must be an integer between 1 and 50.');
+					}
+					const results = this._vectorEngine.search(query, topK);
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -459,7 +466,13 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_get_symbols': {
-					const { query } = params;
+					if (params !== undefined && (!params || typeof params !== 'object')) {
+						throw new Error('semantic_get_symbols parameters must be an object.');
+					}
+					const query = params?.query;
+					if (query !== undefined && (typeof query !== 'string' || query.length > 256)) {
+						throw new Error('semantic_get_symbols query must be text of at most 256 characters.');
+					}
 					const syms = query ? this._indexer.findSymbolsByName(query) : this._indexer.getAllSymbols();
 					const res: IFloatIpcResponse = {
 						id,
@@ -481,7 +494,17 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_chunk_file': {
-					const { filePath, content } = params;
+					if (!params || typeof params !== 'object') {
+						throw new Error('semantic_chunk_file requires a filePath and text content.');
+					}
+					const filePath = this._resolveWorkspaceRelativePath(params.filePath, 'semantic_chunk_file');
+					const content = params.content;
+					if (typeof content !== 'string') {
+						throw new Error('semantic_chunk_file content must be text.');
+					}
+					if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) {
+						throw new Error('semantic_chunk_file content exceeds the 2 MiB indexing limit.');
+					}
 					const chunks = this._semanticChunker.chunkFile(filePath, content);
 					const res: IFloatIpcResponse = {
 						id,
