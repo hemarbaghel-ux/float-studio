@@ -53,7 +53,45 @@ async function main(): Promise<void> {
   assert.equal(calls[1].topK, 4);
   assert.ok(symbolContext.files.length > 0);
 
-  console.log('FLOAT daemon context resolver: @codebase and @symbol snippets reach bounded prompt context.');
+  // Multi-root context must filter the active file by its namespaced index path
+  // without hiding another root's file that has the same relative path.
+  const multiRootClient = {
+    searchSemantics: async () => ({
+      totalChunksIndexed: 3,
+      matches: [
+        { filePath: 'workspace-1/src/auth/tokenVerifier.ts', startLine: 2, endLine: 8, snippet: 'export function tokenVerifierFromFirstRoot() {}' },
+        { filePath: 'workspace-2/src/auth/tokenVerifier.ts', startLine: 2, endLine: 8, snippet: 'export function activeTokenVerifier() {}' },
+        { filePath: 'workspace-2/src/auth/session.ts', startLine: 4, endLine: 9, snippet: 'export function createSession() {}' }
+      ]
+    })
+  };
+  const multiRootRuntime = {
+    getClient: () => multiRootClient
+  } as unknown as IFloatDaemonRuntimeService;
+  const workspaceContext = {
+    getWorkspace: () => ({
+      folders: [
+        { uri: { scheme: 'file', path: '/workspace/one' } },
+        { uri: { scheme: 'file', path: '/workspace/two' } }
+      ]
+    })
+  } as any;
+  const multiRootResolver = new FloatDaemonContextResolver(floatService, multiRootRuntime, workspaceContext);
+  const multiRootContext = await multiRootResolver.resolveContext(
+    'Explain token verification. @codebase',
+    '/workspace/two/src/auth/tokenVerifier.ts'
+  );
+  assert.ok(
+    multiRootContext.files.some(file => file.path === 'workspace-1/src/auth/tokenVerifier.ts'),
+    'same-relative-path source from workspace-1 must remain eligible'
+  );
+  assert.ok(
+    !multiRootContext.files.some(file => file.path === 'workspace-2/src/auth/tokenVerifier.ts'),
+    'the exact active file in workspace-2 must not be included as retrieved context'
+  );
+  assert.ok(multiRootContext.files.some(file => file.path === 'workspace-2/src/auth/session.ts'));
+
+  console.log('FLOAT daemon context resolver: mentions and exact active-file filtering across multi-root workspaces passed.');
 }
 
 main().catch(error => {
