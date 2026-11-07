@@ -248,10 +248,13 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		}
 
 		// 3. Request Completion from Model Client with Cross-File Diff Prompting
-		this._activeAbortController = new AbortController();
-		const signal = this._activeAbortController.signal;
+		const requestController = new AbortController();
+		this._activeAbortController = requestController;
+		const signal = requestController.signal;
 		const cancelSub = token?.onCancellationRequested?.(() => {
-			this._activeAbortController?.abort();
+			// A token owns only its request. Never abort a newer request through
+			// the mutable shared controller reference.
+			requestController.abort();
 		});
 		this._telemetry.requestsCount++;
 		const netStart = Date.now();
@@ -341,7 +344,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			return undefined;
 		} finally {
 			cancelSub?.dispose?.();
-			this._activeAbortController = null;
+			// An older request may settle after a newer one has started. Clear
+			// the shared handle only when this request still owns it.
+			if (this._activeAbortController === requestController) {
+				this._activeAbortController = null;
+			}
 		}
 	}
 
