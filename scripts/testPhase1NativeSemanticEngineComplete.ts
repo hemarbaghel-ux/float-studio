@@ -167,7 +167,7 @@ def scaled_dot_product(q, k, v):
 		'}',
 		'export const verifySession = (token: string) => token.length > 0;',
 		'export function createSession() { return true; }'
-	].join('\\n');
+	].join('\n');
 	const astFixtureNode = indexer.parseFileSymbols('src/auth/astFixture.ts', astFixture);
 	const astSymbols = astFixtureNode.symbols;
 	const findAstSymbol = (name: string) => astSymbols.find(symbol => symbol.name === name);
