@@ -15,7 +15,7 @@ export class FloatDaemonWorkspaceIndexContribution extends Disposable implements
   public static readonly ID = 'workbench.contrib.floatDaemonWorkspaceIndex';
 
   private readonly _synchronizer: FloatDaemonWorkspaceIndexSynchronizer;
-  private _requestedRoot: string | undefined;
+  private _requestedRoots: string | undefined;
 
   constructor(
     @IFloatDaemonRuntimeService private readonly _runtimeService: IFloatDaemonRuntimeService,
@@ -52,27 +52,25 @@ export class FloatDaemonWorkspaceIndexContribution extends Disposable implements
 
   private _activateWorkspace(): void {
     const folders = this._workspaceContextService.getWorkspace().folders;
-    const firstFolder = folders[0];
-    const root = firstFolder?.uri.scheme === 'file' ? firstFolder.uri : undefined;
-    const rootKey = root?.toString();
+    const roots = folders
+      .filter(folder => folder.uri.scheme === 'file')
+      .map(folder => folder.uri);
+    const rootKey = roots.map(root => root.toString()).join('|');
 
-    if (rootKey === this._requestedRoot) {
+    if (rootKey === this._requestedRoots) {
       if (this._runtimeService.state === 'running') {
         void this._synchronizer.scanWorkspace();
       }
       return;
     }
 
-    this._requestedRoot = rootKey;
-    if (folders.length > 1) {
-      this._logService.warn('[FLOAT] Daemon semantic indexing currently uses the first workspace folder only.');
-    }
-    if (firstFolder && firstFolder.uri.scheme !== 'file') {
-      this._logService.warn('[FLOAT] Daemon semantic indexing currently supports local file workspaces only.');
+    this._requestedRoots = rootKey;
+    if (roots.length !== folders.length) {
+      this._logService.warn('[FLOAT] Daemon semantic indexing currently supports local file workspace folders only; remote and virtual folders are skipped.');
     }
 
-    void this._synchronizer.setWorkspaceRoot(root).then(() => {
-      if (root && this._runtimeService.state === 'running') {
+    void this._synchronizer.setWorkspaceRoots(roots).then(() => {
+      if (roots.length > 0 && this._runtimeService.state === 'running') {
         return this._synchronizer.scanWorkspace();
       }
     }).catch(error => this._logService.warn('[FLOAT] Failed to activate daemon workspace indexing:', error));
