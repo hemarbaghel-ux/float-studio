@@ -226,6 +226,41 @@ async function runSuite(): Promise<void> {
 
 
 	// -------------------------------------------------------------
+	// Suite 6: Separate codebase retrieval and model request latency
+	// -------------------------------------------------------------
+	console.log('--- Suite 6: Autocomplete Latency Attribution ---');
+	{
+		const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+		const fakeRuntime: any = {
+			getClient: () => ({
+				call: async () => {
+					await wait(15);
+					return { matches: [{ filePath: 'src/shared.ts', startLine: 1, endLine: 1, snippet: 'export const sharedValue = 1;' }] };
+				}
+			})
+		};
+		const mockFloatService: any = {
+			completeCode: async () => {
+				await wait(20);
+				return { completion: 'sharedValue + 1;' };
+			}
+		};
+		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService, undefined, fakeRuntime);
+		autocomplete.setConfig({ debounceMs: 0 });
+		const text = 'const result = sharedValue + ';
+		const result = await autocomplete.provideInlineCompletions(
+			createMockModel(text), new Position(1, text.length + 1), {} as any, new CancellationTokenSource().token
+		);
+		assert(result !== undefined);
+		const measurement = autocomplete.telemetry.lastMeasurement;
+		assert(measurement !== undefined);
+		assert((measurement.contextRetrievalLatencyMs ?? 0) >= 10, 'retrieval time must be measured separately');
+		assert((measurement.modelNetworkLatencyMs ?? 0) >= 15, 'model request time must exclude retrieval');
+		assert(measurement.totalLatencyMs >= (measurement.contextRetrievalLatencyMs ?? 0) + (measurement.modelNetworkLatencyMs ?? 0));
+		console.log('  -> PASS: codebase retrieval and model request latency are attributed independently');
+	}
+
+	// -------------------------------------------------------------
 	// Suite 6: Daemon-Backed Cross-File Context (bounded + fail-open)
 	// -------------------------------------------------------------
 	console.log('\n--- Suite 6: Daemon Codebase Context Integration ---');
