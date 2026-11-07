@@ -16,7 +16,8 @@ FLOAT starts its sidecar daemon as a Code-OSS Electron Utility Process Worker.
 
 ## Workspace indexing
 
-- The current synchronizer indexes the first local `file:` workspace folder. Multi-root aggregation and remote/virtual filesystems are not implemented.
+- The synchronizer indexes every local `file:` workspace folder. Multi-root paths are namespaced as `workspace-1/`, `workspace-2/`, and so on, preventing same-relative-path collisions; single-root workspaces keep unprefixed paths for compatibility.
+- Remote and virtual workspace folders are skipped until their filesystem providers are explicitly supported.
 - Initial scans are capped at 10,000 files. Individual files over 2 MB are skipped.
 - Only approved source, configuration and documentation extensions are included.
 - Dependency/build/cache directories, dotenv files, credential stores, private keys, binary files and symlinks are excluded.
