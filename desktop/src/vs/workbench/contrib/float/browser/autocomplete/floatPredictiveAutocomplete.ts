@@ -29,6 +29,7 @@ import { isFloatAutocompleteGloballyEnabled } from './floatAutocompleteActions.j
 import { FloatNextActionSpeculator } from './floatNextActionSpeculator.js';
 import { FloatAutocompleteContextResolver } from './floatAutocompleteContextResolver.js';
 import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 
 export class FloatPredictiveAutocomplete extends Disposable implements InlineCompletionsProvider {
 	private _config: IFloatAutocompleteConfig = {
@@ -67,10 +68,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 	constructor(
 		private readonly _floatService: IFloatService,
 		languageFeaturesService?: ILanguageFeaturesService,
-		daemonRuntimeService?: IFloatDaemonRuntimeService
+		daemonRuntimeService?: IFloatDaemonRuntimeService,
+		workspaceContextService?: IWorkspaceContextService
 	) {
 		super();
-		this._daemonContextResolver = new FloatAutocompleteContextResolver(daemonRuntimeService);
+		this._daemonContextResolver = new FloatAutocompleteContextResolver(daemonRuntimeService, workspaceContextService);
 		if (languageFeaturesService) {
 			this._register(languageFeaturesService.inlineCompletionsProvider.register('*', this));
 		}
