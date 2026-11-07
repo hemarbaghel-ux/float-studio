@@ -10,6 +10,8 @@ import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution 
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 
 import { IFloatService, FloatService } from '../common/floatService.js';
+import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
+import { FloatBrowserDaemonRuntimeService } from './floatDaemonRuntimeService.js';
 import { FloatInlineDiffController } from './inline-diff/floatInlineDiffController.js';
 import { FloatInlineDiffAction } from './inline-diff/floatInlineDiffActions.js';
 import { OpenFloatComposerAction } from './composer/floatComposerActions.js';
@@ -21,6 +23,9 @@ import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutoc
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
 registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
+
+// Browser-safe default; the Electron workbench registers its native implementation later.
+registerSingleton(IFloatDaemonRuntimeService, FloatBrowserDaemonRuntimeService, InstantiationType.Delayed);
 
 // 2. Register Inline Diff Controller (Ctrl+K) in Editor
 registerEditorContribution(
