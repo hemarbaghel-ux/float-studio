@@ -288,6 +288,31 @@ async function main(): Promise<void> {
 	assert(!context.includes('workspace-2/src/remoteService.ts'), 'the exact active remote URI must be excluded');
 	assert(context.includes('workspace-3/src/virtualService.ts'));
 
+	// Provider-supplied URIs must not be able to smuggle traversal segments
+	// into daemon-relative paths, even when '..' is not the first segment.
+	const traversalFile = {
+		scheme: 'vscode-remote',
+		authority: 'ssh-remote+devbox',
+		path: '/home/dev/project/src/../outside.ts',
+		toString: () => 'vscode-remote://ssh-remote+devbox/home/dev/project/src/../outside.ts'
+	} as URI;
+	fileService.add({
+		resource: traversalFile,
+		isFile: true,
+		isDirectory: false,
+		isSymbolicLink: false,
+		size: 48,
+		content: 'export function outsideWorkspaceSecret() { return true; }'
+	});
+	const indexCallsBeforeTraversal = indexCalls.length;
+	await synchronizer.handleFileChanges({ added: [traversalFile] });
+	assert.equal(indexCalls.length, indexCallsBeforeTraversal, 'a traversal URI must never be indexed');
+	assert.equal(
+		getFloatIndexedWorkspacePath(traversalFile, [localRoot, remoteRoot, virtualRoot]),
+		undefined,
+		'a traversal URI must not map to a workspace-relative path'
+	);
+
 	// A symlinked workspace root is intentionally not traversed. Because that
 	// scan is incomplete, previously persisted files must not be pruned.
 	const symlinkRoot = URI.file('/home/dev/symlink-project');
