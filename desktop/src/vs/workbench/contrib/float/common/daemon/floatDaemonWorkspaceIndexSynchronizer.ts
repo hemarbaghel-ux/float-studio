@@ -95,7 +95,8 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
     const generation = this._generation;
     return this._enqueue(async () => {
       const root = this._root;
-      if (!root || generation !== this._generation || !this._getClient()) {
+      const client = this._getClient();
+      if (!root || !client || generation !== this._generation) {
         return;
       }
 
@@ -110,8 +111,34 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
         return;
       }
 
+      // Recover the daemon's pre-existing file set so a full scan can prune
+      // entries for files deleted while FLOAT was not running.
+      let previousPaths: string[] = [];
+      let canReconcile = false;
+      try {
+        const indexed = await client.call<{ files?: unknown }>('semantic_list_indexed_files', {}, 5_000);
+        if (Array.isArray(indexed?.files) && indexed.files.every(filePath => typeof filePath === 'string')) {
+          previousPaths = indexed.files as string[];
+          canReconcile = true;
+          for (const filePath of previousPaths) {
+            this._indexedPaths.add(filePath);
+          }
+        }
+      } catch (error) {
+        this._report(error);
+      }
+
       let visited = 0;
-      await this._scanStat(rootStat, generation, () => ++visited <= MAX_INDEXED_FILES);
+      const discoveredPaths = new Set<string>();
+      await this._scanStat(rootStat, generation, () => ++visited <= MAX_INDEXED_FILES, discoveredPaths);
+
+      if (canReconcile && generation === this._generation) {
+        for (const stalePath of previousPaths) {
+          if (!discoveredPaths.has(stalePath)) {
+            await this._removeFile(client, stalePath);
+          }
+        }
+      }
     });
   }
 
@@ -149,7 +176,8 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
   private async _scanStat(
     stat: IFileStat,
     generation: number,
-    allowNextFile: () => boolean
+    allowNextFile: () => boolean,
+    discoveredPaths?: Set<string>
   ): Promise<void> {
     if (generation !== this._generation || stat.isSymbolicLink) {
       return;
@@ -174,17 +202,17 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
               continue;
             }
           }
-          await this._scanStat(resolved, generation, allowNextFile);
+          await this._scanStat(resolved, generation, allowNextFile, discoveredPaths);
         } else if (child.isFile && allowNextFile()) {
-          await this._indexResource(child.resource, generation);
+          await this._indexResource(child.resource, generation, discoveredPaths);
         }
       }
     } else if (stat.isFile && allowNextFile()) {
-      await this._indexResource(stat.resource, generation);
+      await this._indexResource(stat.resource, generation, discoveredPaths);
     }
   }
 
-  private async _indexResource(resource: URI, generation: number): Promise<void> {
+  private async _indexResource(resource: URI, generation: number, discoveredPaths?: Set<string>): Promise<void> {
     const root = this._root;
     const client = this._getClient();
     if (!root || !client || generation !== this._generation) {
@@ -215,7 +243,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
         this._report(error);
         return;
       }
-      await this._scanStat(resolved, generation, () => this._indexedPaths.size < MAX_INDEXED_FILES);
+      await this._scanStat(resolved, generation, () => this._indexedPaths.size < MAX_INDEXED_FILES, discoveredPaths);
       return;
     }
 
@@ -236,6 +264,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
       }
       await client.indexFileSemantics(relativePath, content);
       this._indexedPaths.add(relativePath);
+      discoveredPaths?.add(relativePath);
     } catch (error) {
       this._report(error);
     }
