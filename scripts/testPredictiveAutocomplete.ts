@@ -257,6 +257,37 @@ async function runSuite(): Promise<void> {
 		assert(!related.includes('src/auth/current.ts'), 'active-file duplicate context must be excluded');
 		assert(related.length <= 2_500, 'related context must remain bounded');
 
+		// Multi-root index paths must exclude only the active file, not another
+		// workspace's file with the same relative path.
+		const multiRootRuntime: any = {
+			getClient: () => ({
+				call: async () => ({
+					matches: [
+						{ filePath: 'workspace-1/src/auth/current.ts', startLine: 1, endLine: 4, snippet: 'export function otherWorkspaceCurrentFile() {}' },
+						{ filePath: 'workspace-2/src/auth/current.ts', startLine: 1, endLine: 4, snippet: 'export function activeWorkspaceCurrentFile() {}' },
+						{ filePath: 'workspace-2/src/auth/tokenLookup.ts', startLine: 18, endLine: 27, snippet: 'export function readProfileToken(sessionIdentifier) {}' }
+					]
+				})
+			})
+		};
+		const workspaceContext: any = {
+			getWorkspace: () => ({
+				folders: [
+					{ uri: { scheme: 'file', path: '/workspace/one' } },
+					{ uri: { scheme: 'file', path: '/workspace/two' } }
+				]
+			})
+		};
+		const multiRootResolver = new FloatAutocompleteContextResolver(multiRootRuntime, workspaceContext);
+		const multiRootRelated = await multiRootResolver.resolveRelatedContext(
+			prefix,
+			'',
+			'/workspace/two/src/auth/current.ts'
+		);
+		assert(multiRootRelated.includes('workspace-1/src/auth/current.ts'), 'same-relative-path code from another root must remain eligible');
+		assert(!multiRootRelated.includes('workspace-2/src/auth/current.ts'), 'active file in workspace-2 must be excluded exactly');
+		assert(multiRootRelated.includes('workspace-2/src/auth/tokenLookup.ts'));
+
 		let capturedPrefix = '';
 		const mockFloatService: any = {
 			completeCode: async (options: any) => {
