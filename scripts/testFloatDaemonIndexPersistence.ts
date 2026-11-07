@@ -38,6 +38,46 @@ async function main(): Promise<void> {
 		].join('\n');
 		const indexed = await firstClient.call<{ chunksCount: number }>('semantic_index_file', { filePath, content: source });
 		assert.ok(indexed.chunksCount > 0);
+
+		// The daemon validates its own RPC boundary rather than relying only on
+		// the workbench synchronizer to sanitize provider-supplied paths.
+		for (const invalidPath of [
+			'/etc/passwd',
+			'../outside.ts',
+			'src/../outside.ts',
+			'C:/workspace/outside.ts',
+			'src\\..\\outside.ts'
+		]) {
+			await assert.rejects(
+				() => firstClient!.call('semantic_chunk_file', {
+					filePath: invalidPath,
+					content: 'export function rejectedPath() {}'
+				}),
+				/safe workspace-relative file path/
+			);
+		}
+
+		await assert.rejects(
+			() => firstClient!.call('semantic_chunk_file', {
+				filePath: 'src/oversized.ts',
+				content: 'x'.repeat(2 * 1024 * 1024 + 1)
+			}),
+			/exceeds the 2 MiB indexing limit/
+		);
+
+		await assert.rejects(
+			() => firstClient!.call('semantic_search', { query: 'x'.repeat(2_049), topK: 5 }),
+			/at most 2048 characters/
+		);
+		await assert.rejects(
+			() => firstClient!.call('semantic_search', { query: 'persistedWorkspaceResolver', topK: 51 }),
+			/topK must be an integer between 1 and 50/
+		);
+		await assert.rejects(
+			() => firstClient!.call('semantic_get_symbols', { query: 'x'.repeat(257) }),
+			/at most 256 characters/
+		);
+
 		const indexedPaths = await firstClient.call<{ files: string[] }>('semantic_list_indexed_files', {});
 		assert.ok(indexedPaths.files.includes(filePath), 'daemon must expose its restored/indexed paths for workspace reconciliation');
 
