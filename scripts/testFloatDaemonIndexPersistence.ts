@@ -36,6 +36,8 @@ async function main(): Promise<void> {
 		].join('\\n');
 		const indexed = await firstClient.call<{ chunksCount: number }>('semantic_index_file', { filePath, content: source });
 		assert.ok(indexed.chunksCount > 0);
+		const indexedPaths = await firstClient.call<{ files: string[] }>('semantic_list_indexed_files', {});
+		assert.ok(indexedPaths.files.includes(filePath), 'daemon must expose its restored/indexed paths for workspace reconciliation');
 
 		firstClient.dispose();
 		await firstServer.stop();
