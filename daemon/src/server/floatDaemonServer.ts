@@ -22,6 +22,7 @@ import { FloatTreeSitterIndexer } from '../indexer/floatTreeSitterIndexer.js';
 import { FloatVectorEngine } from '../vector/floatVectorEngine.js';
 import { FloatAstSemanticChunker } from '../chunker/floatAstSemanticChunker.js';
 import { FloatDiskIndexStore } from '../storage/floatDiskIndexStore.js';
+import { FloatWorkspaceAutoIndexer } from '../workspace/floatWorkspaceAutoIndexer.js';
 import { FloatShadowWorkspaceManager } from '../shadow/floatShadowWorkspaceManager.js';
 import { FloatSandboxedProcessRunner } from '../sandbox/floatSandboxedProcessRunner.js';
 import { FloatShadowDiagnosticDiffCollector } from '../../../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowDiagnosticDiffCollector.js';
@@ -262,10 +263,10 @@ export class FloatDaemonServer {
 
 				case 'semantic_index_file': {
 					const { filePath, content } = params;
-					const indexRes = this._indexer.indexFile(filePath, content);
-					const chunks = this._vectorEngine.chunkFile(filePath, content);
+					const indexRes = await this._indexer.indexFileAsync(filePath, content);
+					const chunks = await this._semanticChunker.chunkFileAsync(filePath, content);
 					this._vectorEngine.clearFileChunks(filePath);
-					this._vectorEngine.addChunks(chunks);
+					await this._vectorEngine.addChunks(chunks);
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -281,8 +282,13 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_search': {
-					const { query, topK } = params;
-					const results = this._vectorEngine.search(query, topK || 5);
+					const { query, topK, languageFilter, pathFilter, activeFile } = params;
+					const results = await this._vectorEngine.searchHybrid(query, {
+						topK: topK || 5,
+						languageFilter,
+						pathFilter,
+						activeFile
+					});
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -293,9 +299,14 @@ export class FloatDaemonServer {
 								filePath: r.chunk.filePath,
 								startLine: r.chunk.startLine,
 								endLine: r.chunk.endLine,
-								snippet: r.chunk.content.substring(0, 200),
-								score: Math.round(r.score * 1000) / 1000,
-								matchType: r.matchType
+								symbolName: r.chunk.symbolName,
+								symbolKind: r.chunk.symbolKind,
+								parentName: r.chunk.parentName,
+								snippet: r.chunk.content.substring(0, 300),
+								score: r.score,
+								scoreBreakdown: r.scoreBreakdown,
+								matchType: r.matchType,
+								isNeuralScored: r.isNeuralScored
 							}))
 						}
 					};
@@ -353,7 +364,10 @@ export class FloatDaemonServer {
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const indexedFiles = this._indexer.getIndexedFiles();
 					const nodes = indexedFiles.map(f => this._indexer.getFileNode(f)!).filter(Boolean);
-					const writeRes = await store.saveIndex(nodes, []);
+					const chunks = this._vectorEngine.getAllChunks();
+					const writeRes = await store.saveIndex(nodes, chunks, {
+						workspaceRoot: params?.workspaceRoot
+					});
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -361,7 +375,9 @@ export class FloatDaemonServer {
 							saved: true,
 							manifestPath: writeRes.manifestPath,
 							bytesWritten: writeRes.bytesWritten,
-							totalFiles: nodes.length
+							checksum: writeRes.checksum,
+							totalFiles: nodes.length,
+							totalChunks: chunks.length
 						}
 					};
 					socket.write(FloatIpcFramer.encode(res));
@@ -372,6 +388,12 @@ export class FloatDaemonServer {
 					const storageDir = params?.storageDir;
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const loaded = await store.loadIndex();
+					if (loaded) {
+						for (const node of loaded.nodes) {
+							(this._indexer as any)._fileNodes.set(node.filePath, node);
+						}
+						await this._vectorEngine.addChunks(loaded.chunks);
+					}
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -379,8 +401,25 @@ export class FloatDaemonServer {
 							loaded: loaded !== null,
 							totalFiles: loaded?.manifest.totalFiles || 0,
 							totalSymbols: loaded?.manifest.totalSymbols || 0,
-							totalChunks: loaded?.manifest.totalChunks || 0
+							totalChunks: loaded?.manifest.totalChunks || 0,
+							restoredToEngine: loaded !== null
 						}
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'workspace_auto_index': {
+					const { workspaceRoot, storageDirectory } = params;
+					const autoIndexer = new FloatWorkspaceAutoIndexer({
+						workspaceRoot,
+						storageDirectory
+					}, this._indexer, this._vectorEngine);
+					const summary = await autoIndexer.startInitialIndex();
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: summary
 					};
 					socket.write(FloatIpcFramer.encode(res));
 					break;

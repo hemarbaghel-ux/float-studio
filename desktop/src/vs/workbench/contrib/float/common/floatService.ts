@@ -15,6 +15,8 @@ import { FloatBoundedAgentLoop } from './agent-runtime/floatAgentLoop.js';
 import { FloatAuthService, IFloatAuthService } from './auth/floatAuthService.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { IFloatWorkspaceContextService, FloatWorkspaceContextService } from './context/floatWorkspaceContextService.js';
+import * as path from 'path';
 
 export const IFloatService = createDecorator<IFloatService>('floatService');
 
@@ -35,6 +37,7 @@ export interface IFloatService {
 	getBrainService(): FloatBrainService;
 	getWorkspaceIndexer(): FloatWorkspaceIndexer;
 	createAgentLoop(maxIterations?: number): FloatBoundedAgentLoop;
+	getContextService(): IFloatWorkspaceContextService;
 
 	streamChat(
 		messages: IFloatChatMessage[],
@@ -69,6 +72,7 @@ export class FloatService extends Disposable implements IFloatService {
 	private readonly _checkpointService = new FloatCheckpointService();
 	private readonly _brainService = new FloatBrainService();
 	private readonly _workspaceIndexer = new FloatWorkspaceIndexer();
+	private readonly _contextService = this._register(new FloatWorkspaceContextService());
 
 	public getActiveModel(): IFloatModelInfo {
 		return this._activeModel;
@@ -110,6 +114,10 @@ export class FloatService extends Disposable implements IFloatService {
 
 	public getWorkspaceIndexer(): FloatWorkspaceIndexer {
 		return this._workspaceIndexer;
+	}
+
+	public getContextService(): IFloatWorkspaceContextService {
+		return this._contextService;
 	}
 
 	public createAgentLoop(maxIterations: number = 10): FloatBoundedAgentLoop {
