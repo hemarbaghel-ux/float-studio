@@ -10,6 +10,7 @@ import { parseModelProposals } from '../proposals/floatProposalValidator.js';
 import { FloatShadowWorkspaceService } from '../shadow/floatShadowWorkspaceService.js';
 import { IShadowValidationResult } from '../shadow/floatShadowTypes.js';
 import { SpeculativeComposerFileSystem, IsolatedShadowWorkspaceCommandRunner } from './floatProductionAdapters.js';
+import { FloatDagTaskPlanner, IFloatTaskNode, IFloatDagExecutionSummary } from '../planner/floatDagTaskPlanner.js';
 
 export interface IComposerAgentStep {
 	stepIndex: number;
@@ -40,6 +41,7 @@ export interface IComposerAgentExecution {
 }
 
 export class FloatComposerAgent {
+	private readonly _dagPlanner: FloatDagTaskPlanner = new FloatDagTaskPlanner();
 	constructor(
 		private readonly _floatService: IFloatService,
 		private readonly _toolRegistry: FloatComposerToolRegistry,
@@ -401,5 +403,130 @@ export class FloatComposerAgent {
 			signal?.removeEventListener('abort', abortHandler);
 			shadowCmdRunner?.dispose();
 		}
+	}
+
+	public get dagPlanner(): FloatDagTaskPlanner {
+		return this._dagPlanner;
+	}
+
+	public async executeDagPlan(
+		goal: IComposerAgentGoal,
+		tasks: Array<{ id: string; title: string; dependencies: string[]; subPrompt: string }>,
+		onStep?: (step: IComposerAgentStep) => void,
+		signal?: AbortSignal
+	): Promise<{ summary: IFloatDagExecutionSummary; execution: IComposerAgentExecution }> {
+		const startTime = Date.now();
+		const planner = new FloatDagTaskPlanner();
+		for (const t of tasks) {
+			planner.addTask({ id: t.id, title: t.title, dependencies: t.dependencies });
+		}
+
+		const batches = planner.getTopologicalBatches();
+		let completed = 0;
+		let failed = 0;
+		let rolledBack = 0;
+		let lastExecution: IComposerAgentExecution | null = null;
+		const completedCheckpoints: string[] = [];
+
+		for (const batch of batches) {
+			for (const task of batch) {
+				if (signal?.aborted) {
+					task.status = 'rolled_back';
+					rolledBack++;
+					continue;
+				}
+
+				task.status = 'running';
+				const taskItem = tasks.find(t => t.id === task.id);
+				const subPrompt = taskItem ? taskItem.subPrompt : task.title;
+
+				try {
+					const execution = await this.executeGoal(
+						{
+							...goal,
+							prompt: subPrompt,
+							isolateWorkspaceMutations: true
+						},
+						onStep,
+						signal
+					);
+
+					lastExecution = execution;
+					if (execution.status === 'completed') {
+						task.status = 'completed';
+						completed++;
+						if (execution.checkpointId) {
+							completedCheckpoints.push(execution.checkpointId);
+							task.checkpointId = execution.checkpointId;
+						}
+					} else {
+						task.status = 'failed';
+						failed++;
+						// Rollback completed checkpoints on failure
+						for (let i = completedCheckpoints.length - 1; i >= 0; i--) {
+							try {
+								await this._floatService.getCheckpointService().restoreCheckpoint(completedCheckpoints[i]);
+							} catch {}
+						}
+						return {
+							summary: {
+								goal: goal.prompt,
+								totalTasks: tasks.length,
+								completed,
+								failed,
+								rolledBack: tasks.length - completed - failed,
+								success: false,
+								durationMs: Date.now() - startTime
+							},
+							execution
+						};
+					}
+				} catch (err: any) {
+					task.status = 'failed';
+					failed++;
+					for (let i = completedCheckpoints.length - 1; i >= 0; i--) {
+						try {
+							await this._floatService.getCheckpointService().restoreCheckpoint(completedCheckpoints[i]);
+						} catch {}
+					}
+					return {
+						summary: {
+							goal: goal.prompt,
+							totalTasks: tasks.length,
+							completed,
+							failed,
+							rolledBack: tasks.length - completed - failed,
+							success: false,
+							durationMs: Date.now() - startTime
+						},
+						execution: {
+							id: `dag-fail-${Date.now()}`,
+							goal,
+							steps: [],
+							status: 'failed',
+							error: err.message || String(err)
+						}
+					};
+				}
+			}
+		}
+
+		return {
+			summary: {
+				goal: goal.prompt,
+				totalTasks: tasks.length,
+				completed,
+				failed,
+				rolledBack,
+				success: failed === 0 && !signal?.aborted,
+				durationMs: Date.now() - startTime
+			},
+			execution: lastExecution || {
+				id: `dag-${Date.now()}`,
+				goal,
+				steps: [],
+				status: 'completed'
+			}
+		};
 	}
 }

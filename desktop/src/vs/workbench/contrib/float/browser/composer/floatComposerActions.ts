@@ -296,3 +296,52 @@ export class RollbackFloatComposerTurnAction extends Action2 {
 
 registerAction2(OpenFloatComposerAction);
 registerAction2(RollbackFloatComposerTurnAction);
+
+export class OpenFloatSnapshotTimelineAction extends Action2 {
+	static readonly ID = 'float.snapshot.openTimeline';
+
+	constructor() {
+		super({
+			id: OpenFloatSnapshotTimelineAction.ID,
+			title: { value: 'FLOAT: Open Snapshot Timeline Scrub (Ctrl+Shift+H)', original: 'FLOAT: Open Snapshot Timeline Scrub (Ctrl+Shift+H)' },
+			f1: true,
+			keybinding: {
+				weight: KeybindingWeight.WorkbenchContrib,
+				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyH
+			}
+		});
+	}
+
+	public override async run(accessor: ServicesAccessor): Promise<void> {
+		const floatService = accessor.get(IFloatService);
+		const notificationService = accessor.get(INotificationService);
+		const quickInputService = accessor.get(IQuickInputService);
+
+		const checkpoints = floatService.getCheckpointService().listCheckpoints();
+		if (checkpoints.length === 0) {
+			notificationService.info('FLOAT Snapshot Timeline: No checkpoints recorded yet.');
+			return;
+		}
+
+		const picks = checkpoints.map((cp, idx) => ({
+			id: cp.id,
+			label: `$(history) #${idx + 1}: ${cp.description}`,
+			description: `${new Date(cp.timestamp).toLocaleTimeString()} • ${Object.keys(cp.files).length} files`
+		}));
+
+		const selected = await quickInputService.pick(picks.reverse(), {
+			placeHolder: 'Scrub to snapshot: select checkpoint to restore (0ms rollback)'
+		});
+
+		if (selected) {
+			const res = await floatService.getCheckpointService().restoreCheckpoint(selected.id);
+			if (res.success) {
+				notificationService.info(`Restored snapshot #${selected.id}: ${res.restoredFiles.length} file(s) rolled back.`);
+			} else {
+				notificationService.error(`Rollback failed: ${res.error}`);
+			}
+		}
+	}
+}
+
+registerAction2(OpenFloatSnapshotTimelineAction);
