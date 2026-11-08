@@ -135,6 +135,40 @@ async function runSuite(): Promise<void> {
 	}
 
 	// -------------------------------------------------------------
+	// Suite 2b: Cache invalidation when text after the cursor changes
+	// -------------------------------------------------------------
+	console.log('--- Suite 2b: Suffix-Aware Cache Invalidation ---');
+	{
+		let networkCalls = 0;
+		const mockFloatService: any = {
+			completeCode: async () => {
+				networkCalls++;
+				return { completion: `freshCompletion${networkCalls}();` };
+			}
+		};
+		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService);
+		autocomplete.setConfig({ debounceMs: 0 });
+
+		const initialText = 'const value = \\\nreturn originalValue;';
+		const cursor = new Position(1, 'const value = '.length + 1);
+		const first = await autocomplete.provideInlineCompletions(
+			createMockModel(initialText), cursor, {} as any, new CancellationTokenSource().token
+		);
+		assert.strictEqual(first?.items[0].insertText, 'freshCompletion1();');
+		assert.strictEqual(networkCalls, 1);
+
+		// Keep the prefix and cursor line unchanged while editing only the suffix.
+		const editedSuffixText = 'const value = \\\nreturn replacementValue;';
+		const second = await autocomplete.provideInlineCompletions(
+			createMockModel(editedSuffixText), cursor, {} as any, new CancellationTokenSource().token
+		);
+		assert.strictEqual(second?.items[0].insertText, 'freshCompletion2();',
+			'a changed suffix must invalidate the cached completion and request fresh model output');
+		assert.strictEqual(networkCalls, 2, 'suffix changes must not be served from the forward cache');
+		console.log('  -> PASS: cached ghost text is invalidated when code below the cursor changes');
+	}
+
+	// -------------------------------------------------------------
 	// Suite 3: Low-Latency Debounce & Cancellation
 	// -------------------------------------------------------------
 	console.log('\n--- Suite 3: Debounce & Cancellation ---');
