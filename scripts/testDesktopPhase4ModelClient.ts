@@ -156,6 +156,66 @@ async function runTests() {
     console.log('  -> PASS: Progressive SSE stream, split frame decoding and metadata verified');
   }
 
+  // Suite 1B: SSE error envelopes and unterminated final frames
+  {
+    console.log('[Suite 1B] SSE Error Events and Final Frame Flush...');
+    const errorServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
+      // Intentionally omit the trailing SSE blank line.
+      res.end('data: {"type":"error","error":"provider quota exhausted"}');
+    });
+    await new Promise<void>(resolve => errorServer.listen(0, '127.0.0.1', () => resolve()));
+    const errorPort = (errorServer.address() as AddressInfo).port;
+    const errorClient = new FloatModelClient();
+    errorClient.setEndpoint(`http://127.0.0.1:${errorPort}/api/ai/chat`);
+    let streamedText = '';
+    let streamError: Error | null = null;
+    let completed = false;
+    await errorClient.streamChat(
+      [{ role: 'user', content: 'Trigger a provider error' }],
+      'gpt-6.1-sol',
+      {
+        onChunk: chunk => { streamedText += chunk; },
+        onError: error => { streamError = error; },
+        onComplete: () => { completed = true; }
+      }
+    );
+    await new Promise<void>(resolve => errorServer.close(() => resolve()));
+    assert.ok(streamError, 'a valid SSE error event must reach onError');
+    assert.match(streamError!.message, /provider quota exhausted/);
+    assert.equal(streamedText, '', 'error JSON must never be surfaced as assistant text');
+    assert.equal(completed, false, 'an SSE error event must not complete successfully');
+
+    const finalServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
+      res.write('data: {"type":"delta","text":"Final answer"}\\n\\n');
+      // A final done event may arrive without a terminating blank line.
+      res.end('data: {"type":"done","usage":{"totalTokens":7}}');
+    });
+    await new Promise<void>(resolve => finalServer.listen(0, '127.0.0.1', () => resolve()));
+    const finalPort = (finalServer.address() as AddressInfo).port;
+    const finalClient = new FloatModelClient();
+    finalClient.setEndpoint(`http://127.0.0.1:${finalPort}/api/ai/chat`);
+    let finalText = '';
+    let finalMetadata: any = null;
+    let finalError: Error | null = null;
+    await finalClient.streamChat(
+      [{ role: 'user', content: 'Return a final answer' }],
+      'gpt-6.1-sol',
+      {
+        onChunk: chunk => { finalText += chunk; },
+        onError: error => { finalError = error; },
+        onComplete: (fullText, metadata) => { finalText = fullText; finalMetadata = metadata; }
+      }
+    );
+    await new Promise<void>(resolve => finalServer.close(() => resolve()));
+    assert.equal(finalError, null);
+    assert.equal(finalText, 'Final answer');
+    assert.equal(finalMetadata?.usage?.totalTokens, 7,
+      'the trailing done event must be parsed even without a final blank line');
+    console.log('  -> PASS: SSE error frames are propagated and final unterminated metadata is retained');
+  }
+
   // Suite 2: Routing Alias Resolution
   {
     console.log('[Suite 2] Routing Alias Resolution (auto -> gpt-6-astra)...');
