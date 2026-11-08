@@ -1,0 +1,95 @@
+{
+  "name": "typescript-language-features",
+  "displayName": "TypeScript and JavaScript Language Features",
+  "description": "Provides rich language support for TypeScript and JavaScript in FLOAT Studio",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:jsx-tags"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "typescript",
+        "aliases": ["TypeScript", "ts"],
+        "extensions": [".ts", ".cts", ".mts"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "typescriptreact",
+        "aliases": ["TypeScript JSX", "tsx"],
+        "extensions": [".tsx"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "javascript",
+        "aliases": ["JavaScript", "js"],
+        "extensions": [".js", ".cjs", ".mjs"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "javascriptreact",
+        "aliases": ["JavaScript JSX", "jsx"],
+        "extensions": [".jsx"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "typescript.restartTsServer",
+        "title": "TypeScript: Restart TS Server",
+        "category": "TypeScript"
+      },
+      {
+        "command": "typescript.openTsServerLog",
+        "title": "TypeScript: Open TS Server Log",
+        "category": "TypeScript"
+      },
+      {
+        "command": "typescript.selectTypeScriptVersion",
+        "title": "TypeScript: Select TypeScript Version...",
+        "category": "TypeScript"
+      },
+      {
+        "command": "typescript.goToProjectConfig",
+        "title": "TypeScript: Go to Project Configuration",
+        "category": "TypeScript"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": "tsconfig.json",
+        "url": "http://json.schemastore.org/tsconfig"
+      },
+      {
+        "fileMatch": "jsconfig.json",
+        "url": "http://json.schemastore.org/jsconfig"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "typescript"
+      },
+      {
+        "language": "typescriptreact"
+      },
+      {
+        "language": "javascript"
+      },
+      {
+        "language": "javascriptreact"
+      }
+    ]
+  }
+}

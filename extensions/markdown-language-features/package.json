@@ -1,0 +1,44 @@
+{
+  "name": "markdown-language-features",
+  "displayName": "Markdown Language Features",
+  "description": "Provides rich language support, document outline, and preview for Markdown in FLOAT Studio",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "markdown",
+        "aliases": ["Markdown", "md"],
+        "extensions": [".md", ".mdown", ".markdown", ".markdn"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "markdown.showPreview",
+        "title": "Markdown: Open Preview",
+        "category": "Markdown"
+      },
+      {
+        "command": "markdown.showPreviewToSide",
+        "title": "Markdown: Open Preview to the Side",
+        "category": "Markdown"
+      },
+      {
+        "command": "markdown.refreshPreview",
+        "title": "Markdown: Refresh Preview",
+        "category": "Markdown"
+      }
+    ]
+  }
+}
