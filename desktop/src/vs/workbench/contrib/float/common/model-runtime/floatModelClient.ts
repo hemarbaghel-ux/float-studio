@@ -213,7 +213,7 @@ export class FloatModelClient {
 				}
 
 				const dataLines = trimmedFrame
-					.split(/\\r?\\n/)
+					.split(/\r?\n/)
 					.filter(line => line.trimStart().startsWith('data:'))
 					.map(line => line.trimStart().slice(5).trim());
 
@@ -223,7 +223,7 @@ export class FloatModelClient {
 					return;
 				}
 
-				const payload = dataLines.join('\\n');
+				const payload = dataLines.join('\n');
 				let event: any;
 				try {
 					event = JSON.parse(payload);
@@ -260,7 +260,7 @@ export class FloatModelClient {
 				sseBuffer += decoder.decode(value, { stream: true });
 
 				// SSE permits LF and CRLF frame separators.
-				const frames = sseBuffer.split(/\\r?\\n\\r?\\n/);
+				const frames = sseBuffer.split(/\r?\n\r?\n/);
 				sseBuffer = frames.pop() || '';
 				for (const frame of frames) {
 					processFrame(frame);
