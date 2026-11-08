@@ -80,4 +80,8 @@ export interface INextActionSpeculationResult {
 	cursorJump?: ICursorJumpRecommendation;
 	source: 'cache' | 'model';
 	confidence: number;
+	actionType?: 'call_site_update' | 'interface_implementation' | 'test_file_update' | 'subsequent_line_continuation';
+	targetLocation?: { filePath: string; line: number; column: number };
+	suggestedPatch?: string;
+	explanation?: string;
 }
