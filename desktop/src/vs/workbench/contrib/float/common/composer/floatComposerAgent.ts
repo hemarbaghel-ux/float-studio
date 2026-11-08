@@ -73,7 +73,7 @@ export class FloatComposerAgent {
 				workspaceRoot,
 				speculativeFs.overlays,
 				30000,
-				this._toolRegistry.runner.requestExecutionApproval?.bind(this._toolRegistry.runner)
+				this._toolRegistry.runner?.requestExecutionApproval?.bind(this._toolRegistry.runner)
 			);
 			scopedRegistry = this._toolRegistry.createScopedRegistry(speculativeFs, undefined, shadowCmdRunner);
 		}
