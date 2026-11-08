@@ -942,7 +942,7 @@ ${selectedCode || fullCode}
     res.status(404).json({ error: 'API endpoint not found.' });
   });
 
-  if (!options.skipVite) {
+  if (!options.skipVite && process.env.SKIP_VITE !== 'true') {
     // Static files or Vite dev middleware
     const isRunningWithTsx = process.execArgv.some(arg => arg.includes('tsx')) || process.argv.some(arg => arg.includes('tsx'));
     const distPath = path.join(process.cwd(), 'dist');
@@ -1074,6 +1074,25 @@ export async function gracefulShutdownServer(server?: any): Promise<{ stoppedPro
 }
 
 // Auto start for direct TypeScript development execution or the compiled Cloud Run entry.
-if (process.argv[1] && /(?:^|[\\/])(app\.ts|server\.cjs)$/.test(process.argv[1])) {
-  startServer();
+if (process.argv[1] && /(?:^|[\\/])(app\.ts|server\.cjs|server\.js)$/.test(process.argv[1])) {
+  startServer().then((server) => {
+    let isShuttingDown = false;
+    const handleSignal = async (signal: string) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      console.log(`\n  🛑 Received ${signal}. Closing HTTP server and stopping active executions...`);
+      const forceExit = setTimeout(() => process.exit(0), 5000);
+      forceExit.unref?.();
+      try {
+        await gracefulShutdownServer(server);
+      } catch (err) {
+        console.error('Shutdown error:', err);
+      } finally {
+        clearTimeout(forceExit);
+        process.exit(0);
+      }
+    };
+    process.on('SIGTERM', () => void handleSignal('SIGTERM'));
+    process.on('SIGINT', () => void handleSignal('SIGINT'));
+  });
 }
