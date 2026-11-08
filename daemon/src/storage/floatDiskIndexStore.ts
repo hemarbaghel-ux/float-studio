@@ -10,33 +10,53 @@ import { IFloatFileMerkleNode } from '../indexer/floatTreeSitterIndexer.js';
 import { IFloatCodeChunk } from '../vector/floatVectorEngine.js';
 import { IFloatSemanticChunk } from '../chunker/floatAstSemanticChunker.js';
 
+export const FLOAT_INDEX_SCHEMA_VERSION = 2;
+export const FLOAT_PARSER_VERSION = 'tree-sitter-wasm-0.1.4';
 export type IFloatStoredChunk = IFloatCodeChunk | IFloatSemanticChunk;
 
 export interface IFloatIndexManifest {
-	version: number;
+	schemaVersion: number;
+	parserVersion: string;
 	createdAt: number;
 	totalFiles: number;
 	totalSymbols: number;
 	totalChunks: number;
 	checksum: string;
+	version?: number;
 	dataFile?: string;
+	workspaceConfig?: {
+		rootPath?: string;
+		indexedExtensions?: string[];
+	};
+	embeddingMetadata?: {
+		providerId?: string;
+		modelName?: string;
+		dimension?: number;
+	};
 }
 
 export interface IFloatStoredIndexPayload {
 	manifest: IFloatIndexManifest;
 	nodes: IFloatFileMerkleNode[];
 	chunks: IFloatStoredChunk[];
+	lexicalMetadata?: {
+		totalTokens?: number;
+	};
 }
 
 export class FloatDiskIndexStore {
 	private readonly _storageDir: string;
 	private readonly _manifestPath: string;
 	private readonly _dataPath: string;
+	private readonly _backupManifestPath: string;
+	private readonly _backupDataPath: string;
 
 	constructor(storageDirectory: string) {
 		this._storageDir = storageDirectory;
 		this._manifestPath = path.join(this._storageDir, 'manifest.json');
 		this._dataPath = path.join(this._storageDir, 'index.data.json');
+		this._backupManifestPath = path.join(this._storageDir, 'manifest.backup.json');
+		this._backupDataPath = path.join(this._storageDir, 'index.data.backup.json');
 	}
 
 	private _isValidNode(value: unknown): value is IFloatFileMerkleNode {
@@ -97,27 +117,38 @@ export class FloatDiskIndexStore {
 		}
 	}
 
-
 	private _resolveDataPath(manifest: IFloatIndexManifest): string | undefined {
 		if (manifest.version === 1) {
 			return this._dataPath;
 		}
 		if (
-			manifest.version !== 2 ||
-			typeof manifest.dataFile !== 'string' ||
-			!/^index\.data\.[a-zA-Z0-9.-]+\.json$/.test(manifest.dataFile) ||
-			path.basename(manifest.dataFile) !== manifest.dataFile
+			manifest.dataFile &&
+			/^index\.data\.[a-zA-Z0-9.-]+\.json$/.test(manifest.dataFile) &&
+			path.basename(manifest.dataFile) === manifest.dataFile
 		) {
-			return undefined;
+			return path.join(this._storageDir, manifest.dataFile);
 		}
-		return path.join(this._storageDir, manifest.dataFile);
+		return this._dataPath;
 	}
 
-	public async saveIndex(nodes: IFloatFileMerkleNode[], chunks: IFloatStoredChunk[]): Promise<{ bytesWritten: number; manifestPath: string }> {
+	public async saveIndex(
+		nodes: IFloatFileMerkleNode[],
+		chunks: IFloatStoredChunk[],
+		options?: {
+			workspaceRoot?: string;
+			embeddingMetadata?: IFloatIndexManifest['embeddingMetadata'];
+		}
+	): Promise<{ bytesWritten: number; manifestPath: string; checksum: string }> {
 		await this.ensureDirectory();
 
-		const totalSymbols = nodes.reduce((sum, node) => sum + (node.symbols ? node.symbols.length : 0), 0);
-		const rawData = JSON.stringify({ nodes, chunks });
+		const totalSymbols = nodes.reduce((sum, n) => sum + (n.symbols ? n.symbols.length : 0), 0);
+		const rawData = JSON.stringify({
+			nodes,
+			chunks,
+			lexicalMetadata: {
+				totalTokens: chunks.reduce((acc, c) => acc + (c.content.match(/\S+/g)?.length || 0), 0)
+			}
+		});
 		const checksum = crypto.createHash('sha256').update(rawData, 'utf8').digest('hex');
 		const generation = `${Date.now()}.${crypto.randomBytes(8).toString('hex')}`;
 		const dataFile = `index.data.${generation}.json`;
@@ -135,21 +166,34 @@ export class FloatDiskIndexStore {
 		}
 
 		const manifest: IFloatIndexManifest = {
+			schemaVersion: FLOAT_INDEX_SCHEMA_VERSION,
 			version: 2,
+			parserVersion: FLOAT_PARSER_VERSION,
 			createdAt: Date.now(),
 			totalFiles: nodes.length,
 			totalSymbols,
 			totalChunks: chunks.length,
 			checksum,
+			workspaceConfig: {
+				rootPath: options?.workspaceRoot
+			},
+			embeddingMetadata: options?.embeddingMetadata,
 			dataFile
 		};
 
 		let committed = false;
 		try {
-			// Write a new immutable data generation first. The old manifest keeps
-			// pointing at the previous generation until the final manifest rename.
 			await fs.promises.writeFile(tmpDataPath, rawData, { encoding: 'utf8', mode: 0o600 });
 			await fs.promises.rename(tmpDataPath, dataFilePath);
+
+			if (fs.existsSync(this._dataPath) && fs.existsSync(this._manifestPath)) {
+				try {
+					await fs.promises.copyFile(this._dataPath, this._backupDataPath);
+					await fs.promises.copyFile(this._manifestPath, this._backupManifestPath);
+				} catch {}
+			}
+			await fs.promises.writeFile(this._dataPath, rawData, 'utf8');
+
 			await fs.promises.writeFile(tmpManifestPath, JSON.stringify(manifest, null, 2), { encoding: 'utf8', mode: 0o600 });
 			await fs.promises.rename(tmpManifestPath, this._manifestPath);
 			committed = true;
@@ -168,13 +212,14 @@ export class FloatDiskIndexStore {
 		const stat = await fs.promises.stat(dataFilePath);
 		return {
 			bytesWritten: stat.size,
-			manifestPath: this._manifestPath
+			manifestPath: this._manifestPath,
+			checksum
 		};
 	}
 
 	public async loadIndex(): Promise<IFloatStoredIndexPayload | null> {
 		if (!fs.existsSync(this._manifestPath)) {
-			return null;
+			return this._tryRecoverFromBackup();
 		}
 
 		try {
@@ -187,39 +232,52 @@ export class FloatDiskIndexStore {
 
 			const dataRaw = await fs.promises.readFile(dataPath, 'utf8');
 			const currentChecksum = crypto.createHash('sha256').update(dataRaw, 'utf8').digest('hex');
-			if (typeof manifest.checksum !== 'string' || manifest.checksum !== currentChecksum) {
-				console.warn('[FloatDiskIndexStore] Checksum mismatch. Index corrupt, requiring rebuild.');
-				return null;
+
+			if (manifest.checksum !== currentChecksum) {
+				console.warn('[FloatDiskIndexStore] Primary index corrupted (checksum mismatch). Attempting recovery from backup.');
+				return this._tryRecoverFromBackup();
 			}
 
-			const parsed = JSON.parse(dataRaw) as { nodes?: unknown; chunks?: unknown };
-			if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.chunks)) {
-				console.warn('[FloatDiskIndexStore] Invalid index payload shape. Index requires rebuild.');
-				return null;
-			}
-
-			const nodes = parsed.nodes as IFloatFileMerkleNode[];
-			const chunks = parsed.chunks as IFloatStoredChunk[];
-			const totalSymbols = nodes.reduce((sum, node) => sum + (Array.isArray(node?.symbols) ? node.symbols.length : 0), 0);
-			if (
-				(manifest.version !== 1 && manifest.version !== 2) ||
-				!Number.isFinite(manifest.createdAt) ||
-				!Number.isSafeInteger(manifest.totalFiles) ||
-				!Number.isSafeInteger(manifest.totalSymbols) ||
-				!Number.isSafeInteger(manifest.totalChunks) ||
-				manifest.totalFiles !== nodes.length ||
-				manifest.totalSymbols !== totalSymbols ||
-				manifest.totalChunks !== chunks.length ||
-				!nodes.every(node => this._isValidNode(node)) ||
-				!chunks.every(chunk => this._isValidChunk(chunk) || this._isValidSemanticChunk(chunk))
-			) {
-				console.warn('[FloatDiskIndexStore] Invalid index manifest or records. Index requires rebuild.');
-				return null;
-			}
-
-			return { manifest, nodes, chunks };
+			const parsed = JSON.parse(dataRaw);
+			const nodes = (parsed.nodes || []) as IFloatFileMerkleNode[];
+			const chunks = (parsed.chunks || []) as IFloatStoredChunk[];
+			return {
+				manifest,
+				nodes,
+				chunks,
+				lexicalMetadata: parsed.lexicalMetadata
+			};
 		} catch (err) {
-			console.error('[FloatDiskIndexStore] Failed to load cached index:', err);
+			console.error('[FloatDiskIndexStore] Failed reading primary index:', err);
+			return this._tryRecoverFromBackup();
+		}
+	}
+
+	private async _tryRecoverFromBackup(): Promise<IFloatStoredIndexPayload | null> {
+		if (!fs.existsSync(this._backupManifestPath) || !fs.existsSync(this._backupDataPath)) {
+			return null;
+		}
+
+		try {
+			const manifestRaw = await fs.promises.readFile(this._backupManifestPath, 'utf8');
+			const manifest: IFloatIndexManifest = JSON.parse(manifestRaw);
+
+			const dataRaw = await fs.promises.readFile(this._backupDataPath, 'utf8');
+			const currentChecksum = crypto.createHash('sha256').update(dataRaw, 'utf8').digest('hex');
+
+			if (manifest.checksum !== currentChecksum) {
+				console.warn('[FloatDiskIndexStore] Backup index also corrupted; clean rebuild required.');
+				return null;
+			}
+
+			const parsed = JSON.parse(dataRaw);
+			return {
+				manifest,
+				nodes: (parsed.nodes || []) as IFloatFileMerkleNode[],
+				chunks: (parsed.chunks || []) as IFloatStoredChunk[],
+				lexicalMetadata: parsed.lexicalMetadata
+			};
+		} catch {
 			return null;
 		}
 	}
@@ -238,13 +296,25 @@ export class FloatDiskIndexStore {
 	}
 
 	public async clear(): Promise<void> {
-		await fs.promises.unlink(this._manifestPath).catch(() => undefined);
+		const filesToRemove = [
+			this._manifestPath,
+			this._dataPath,
+			this._backupManifestPath,
+			this._backupDataPath
+		];
+		for (const f of filesToRemove) {
+			if (fs.existsSync(f)) {
+				await fs.promises.unlink(f).catch(() => {});
+			}
+		}
 		try {
 			const entries = await fs.promises.readdir(this._storageDir);
 			const ownedFiles = entries.filter(name =>
 				name === 'index.data.json' ||
 				/^index\.data\.[a-zA-Z0-9.-]+\.json(?:\.tmp)?$/.test(name) ||
-				name.startsWith('manifest.json.tmp.')
+				name.startsWith('manifest.json.tmp.') ||
+				name.includes('.tmp') ||
+				name.includes('.backup.')
 			);
 			await Promise.all(ownedFiles.map(name =>
 				fs.promises.unlink(path.join(this._storageDir, name)).catch(() => undefined)
@@ -253,5 +323,4 @@ export class FloatDiskIndexStore {
 			// A missing directory is already equivalent to an empty store.
 		}
 	}
-
 }

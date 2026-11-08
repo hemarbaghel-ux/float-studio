@@ -7,17 +7,25 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import ts from 'typescript';
 import { FloatTreeSitterGrammarRegistry } from '../grammars/floatTreeSitterGrammarRegistry.js';
+import {
+	FloatTreeSitterSyntaxParser,
+	IFloatAstSymbol,
+	IFloatParsedAst,
+	FloatSymbolKind
+} from '../parser/floatSyntaxParser.js';
 
 export interface IFloatAstNode {
 	id: string;
 	name: string;
-	kind: 'function' | 'class' | 'interface' | 'method' | 'variable' | 'type' | 'module' | 'struct' | 'enum';
+	kind: 'function' | 'class' | 'interface' | 'method' | 'variable' | 'type' | 'module' | 'struct' | 'enum' | 'trait' | 'property';
 	language: string;
 	startLine: number;
 	endLine: number;
 	signature?: string;
 	docstring?: string;
 	hash: string;
+	parentName?: string;
+	parentSymbolId?: string;
 	children?: IFloatAstNode[];
 }
 
@@ -27,6 +35,7 @@ export interface IFloatFileMerkleNode {
 	language: string;
 	symbols: IFloatAstNode[];
 	lastModified: number;
+	isFallbackParser?: boolean;
 }
 
 export interface IFloatIncrementalIndexDelta {
@@ -41,6 +50,33 @@ export interface IFloatIncrementalIndexDelta {
 export class FloatTreeSitterIndexer {
 	private readonly _fileNodes = new Map<string, IFloatFileMerkleNode>();
 	private readonly _grammarRegistry = new FloatTreeSitterGrammarRegistry();
+	private readonly _syntaxParser = new FloatTreeSitterSyntaxParser();
+	private readonly _parsedTrees = new Map<string, any>(); // cache for incremental parsing
+
+	public get syntaxParser(): FloatTreeSitterSyntaxParser {
+		return this._syntaxParser;
+	}
+
+	public async parseFileSymbolsAsync(filePath: string, content: string): Promise<IFloatFileMerkleNode> {
+		const language = this._syntaxParser.getLanguageId(filePath);
+		const fileHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+
+		const parsedAst: IFloatParsedAst = await this._syntaxParser.parseFile(filePath, content, null);
+		if (parsedAst.tree) {
+			this._parsedTrees.set(filePath, parsedAst.tree);
+		}
+
+		const symbols = this._syntaxParser.extractSymbols(parsedAst).map(s => this._symbolToAstNode(s));
+
+		return {
+			filePath,
+			fileHash,
+			language,
+			symbols,
+			lastModified: Date.now(),
+			isFallbackParser: parsedAst.isFallback
+		};
+	}
 
 	public parseFileSymbols(filePath: string, content: string): IFloatFileMerkleNode {
 		const ext = path.extname(filePath).toLowerCase();
@@ -50,15 +86,30 @@ export class FloatTreeSitterIndexer {
 
 		const symbols = this._extractSymbolsByLanguage(filePath, language, content);
 
-		const merkleNode: IFloatFileMerkleNode = {
+		return {
 			filePath,
 			fileHash,
 			language,
 			symbols,
 			lastModified: Date.now()
 		};
+	}
 
-		return merkleNode;
+	public async indexFileAsync(filePath: string, content: string): Promise<{ delta: 'added' | 'modified' | 'unchanged'; node: IFloatFileMerkleNode }> {
+		const existing = this._fileNodes.get(filePath);
+		const newNode = await this.parseFileSymbolsAsync(filePath, content);
+
+		if (!existing) {
+			this._fileNodes.set(filePath, newNode);
+			return { delta: 'added', node: newNode };
+		}
+
+		if (existing.fileHash === newNode.fileHash) {
+			return { delta: 'unchanged', node: existing };
+		}
+
+		this._fileNodes.set(filePath, newNode);
+		return { delta: 'modified', node: newNode };
 	}
 
 	public indexFile(filePath: string, content: string): { delta: 'added' | 'modified' | 'unchanged'; node: IFloatFileMerkleNode } {
@@ -79,6 +130,7 @@ export class FloatTreeSitterIndexer {
 	}
 
 	public removeFile(filePath: string): boolean {
+		this._parsedTrees.delete(filePath);
 		return this._fileNodes.delete(filePath);
 	}
 
@@ -127,14 +179,28 @@ export class FloatTreeSitterIndexer {
 		return this.getAllSymbols().filter(s => s.symbol.name.toLowerCase().includes(lower));
 	}
 
+	private _symbolToAstNode(sym: IFloatAstSymbol): IFloatAstNode {
+		return {
+			id: sym.id,
+			name: sym.name,
+			kind: sym.kind,
+			language: sym.language,
+			startLine: sym.range.startLine,
+			endLine: sym.range.endLine,
+			signature: sym.signature,
+			docstring: sym.docstring,
+			parentName: sym.parentName,
+			parentSymbolId: sym.parentSymbolId,
+			hash: sym.hash,
+			children: sym.children ? sym.children.map(c => this._symbolToAstNode(c)) : undefined
+		};
+	}
+
 	private _extractSymbolsByLanguage(filePath: string, language: string, content: string): IFloatAstNode[] {
-		// TypeScript/JavaScript use the TypeScript compiler's real syntax tree. Other
-		// language profiles remain explicitly best-effort until their parser runtimes
-		// and grammar versions are bundled with the daemon.
-		if (language === 'typescript') {
+		// TypeScript/JavaScript use the TypeScript compiler's real syntax tree synchronously
+		if (language === 'typescript' || language === 'javascript' || language === 'tsx') {
 			return this._extractTypeScriptSymbols(filePath, content);
 		}
-
 		const profile = this._grammarRegistry.getProfile(language);
 		if (!profile) {
 			return [];
