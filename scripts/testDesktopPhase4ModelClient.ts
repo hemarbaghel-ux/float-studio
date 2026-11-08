@@ -188,7 +188,7 @@ async function runTests() {
 
     const finalServer = http.createServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
-      res.write('data: {"type":"delta","text":"Final answer"}\\n\\n');
+      res.write('data: {"type":"delta","text":"Final answer"}\n\n');
       // A final done event may arrive without a terminating blank line.
       res.end('data: {"type":"done","usage":{"totalTokens":7}}');
     });
