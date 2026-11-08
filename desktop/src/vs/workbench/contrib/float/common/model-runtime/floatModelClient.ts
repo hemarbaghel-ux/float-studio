@@ -203,79 +203,75 @@ export class FloatModelClient {
 			let latestContextExplanation: any = null;
 			let latestUsage: any = null;
 
+			// Parse every complete or trailing SSE frame through one code path. Keep
+			// JSON parsing separate from event handling so a valid { type: "error" }
+			// event cannot be mistaken for malformed JSON.
+			const processFrame = (frame: string): void => {
+				const trimmedFrame = frame.trim();
+				if (!trimmedFrame || trimmedFrame.startsWith(':')) {
+					return;
+				}
+
+				const dataLines = trimmedFrame
+					.split(/\\r?\\n/)
+					.filter(line => line.trimStart().startsWith('data:'))
+					.map(line => line.trimStart().slice(5).trim());
+
+				if (dataLines.length === 0) {
+					fullAccumulatedText += trimmedFrame;
+					callbacks.onChunk(trimmedFrame);
+					return;
+				}
+
+				const payload = dataLines.join('\\n');
+				let event: any;
+				try {
+					event = JSON.parse(payload);
+				} catch {
+					// Preserve compatibility with upstreams that stream plain text in
+					// data: frames instead of JSON event envelopes.
+					fullAccumulatedText += payload;
+					callbacks.onChunk(payload);
+					return;
+				}
+
+				if (!event || typeof event !== 'object') {
+					return;
+				}
+				if ((event.type === 'delta' || event.type === 'chunk') && typeof event.text === 'string') {
+					fullAccumulatedText += event.text;
+					callbacks.onChunk(event.text);
+				} else if (event.type === 'context_info' && event.contextExplanation) {
+					latestContextExplanation = event.contextExplanation;
+					callbacks.onContext?.(event.contextExplanation);
+				} else if (event.type === 'done') {
+					if (event.usage) latestUsage = event.usage;
+					if (event.contextExplanation) latestContextExplanation = event.contextExplanation;
+				} else if (event.type === 'error') {
+					throw new Error(event.error || event.message || 'Stream error from model router');
+				}
+			};
+
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) {
 					break;
 				}
-				const chunk = decoder.decode(value, { stream: true });
-				sseBuffer += chunk;
+				sseBuffer += decoder.decode(value, { stream: true });
 
-				// Process SSE double newline separated frames
-				const frames = sseBuffer.split('\n\n');
+				// SSE permits LF and CRLF frame separators.
+				const frames = sseBuffer.split(/\\r?\\n\\r?\\n/);
 				sseBuffer = frames.pop() || '';
-
 				for (const frame of frames) {
-					const trimmedFrame = frame.trim();
-					if (!trimmedFrame) {
-						continue;
-					}
-
-					// Process lines within the SSE frame (handles multiline data: frames)
-					const lines = trimmedFrame.split('\n');
-					const dataLines: string[] = [];
-
-					for (const line of lines) {
-						const trimmedLine = line.trim();
-						if (trimmedLine.startsWith('data:')) {
-							dataLines.push(trimmedLine.slice(5).trim());
-						}
-					}
-
-					if (dataLines.length > 0) {
-						const payload = dataLines.join('\n');
-						try {
-							const event = JSON.parse(payload);
-							if ((event.type === 'delta' || event.type === 'chunk') && typeof event.text === 'string') {
-								fullAccumulatedText += event.text;
-								callbacks.onChunk(event.text);
-							} else if (event.type === 'context_info' && event.contextExplanation) {
-								latestContextExplanation = event.contextExplanation;
-								callbacks.onContext?.(event.contextExplanation);
-							} else if (event.type === 'done') {
-								if (event.usage) latestUsage = event.usage;
-								if (event.contextExplanation) latestContextExplanation = event.contextExplanation;
-							} else if (event.type === 'error') {
-								throw new Error(event.error || event.message || 'Stream error from model router');
-							}
-						} catch (jsonErr: any) {
-							// If not valid JSON, treat raw payload as text delta
-							fullAccumulatedText += payload;
-							callbacks.onChunk(payload);
-						}
-					} else {
-						// Non-SSE raw chunk streaming fallback
-						fullAccumulatedText += trimmedFrame;
-						callbacks.onChunk(trimmedFrame);
-					}
+					processFrame(frame);
 				}
 			}
 
-			// Flush any remaining buffer if not empty
+			// Flush the decoder and parse the final frame even when the server
+			// closes without the optional trailing blank line.
+			sseBuffer += decoder.decode();
 			if (sseBuffer.trim()) {
-				const trimmed = sseBuffer.trim();
-				if (trimmed.startsWith('data:')) {
-					try {
-						const event = JSON.parse(trimmed.slice(5).trim());
-						if (event.text) {
-							fullAccumulatedText += event.text;
-							callbacks.onChunk(event.text);
-						}
-					} catch {}
-				} else {
-					fullAccumulatedText += trimmed;
-					callbacks.onChunk(trimmed);
-				}
+				processFrame(sseBuffer);
 			}
 
 			// Update conversation state with assistant response
