@@ -73,10 +73,7 @@ import { FloatVectorEngine } from '../daemon/src/vector/floatVectorEngine.js';
 import { FloatDaemonServer } from '../daemon/src/server/floatDaemonServer.js';
 import { FloatDaemonClient } from '../desktop/src/vs/workbench/contrib/float/common/daemon/floatDaemonClient.js';
 
-// Pillar 3: AI Editors, Diff Hunks, Rollback Timeline & Settings
-import { FloatMultiFileDiffEditor } from '../desktop/src/vs/workbench/contrib/float/browser/diff/floatMultiFileDiffEditor.js';
-import { FloatSnapshotRollbackWidget } from '../desktop/src/vs/workbench/contrib/float/browser/rollback/floatSnapshotRollbackWidget.js';
-import { FloatSettingsEditor } from '../desktop/src/vs/workbench/contrib/float/browser/settings/floatSettingsEditor.js';
+// Pillar 3 browser widgets dynamically imported in runAllTests
 
 // Pillar 4: DAP Auto-Repair & Enterprise SWE-bench Harness
 import { FloatDebugAutoRepairService } from '../desktop/src/vs/workbench/contrib/float/common/debug/floatDebugAutoRepairService.js';
@@ -242,6 +239,10 @@ async function runAllTests() {
 	// PILLAR 3: AI Editors, In-Buffer Diff Hunks, Rollback Timeline & Settings
 	// =========================================================================
 	console.log('\n--- Suite 3: AI Editors & In-Buffer Diff Rollback UI ---');
+	// Dynamically import browser widgets after window/document polyfills are established
+	const { FloatMultiFileDiffEditor } = await import('../desktop/src/vs/workbench/contrib/float/browser/diff/floatMultiFileDiffEditor.js');
+	const { FloatSnapshotRollbackWidget } = await import('../desktop/src/vs/workbench/contrib/float/browser/rollback/floatSnapshotRollbackWidget.js');
+	const { FloatSettingsEditor } = await import('../desktop/src/vs/workbench/contrib/float/browser/settings/floatSettingsEditor.js');
 	const diffEditor = new FloatMultiFileDiffEditor();
 	const origCode = 'line 1\nline 2 (old)\nline 3\nline 4 (old)\nline 5';
 	const propCode = 'line 1\nline 2 (NEW)\nline 3\nline 4 (NEW)\nline 5';

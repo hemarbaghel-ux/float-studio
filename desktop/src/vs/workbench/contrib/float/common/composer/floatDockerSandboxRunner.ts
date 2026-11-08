@@ -90,6 +90,12 @@ export function buildFloatDockerSandboxArgs(options: IFloatDockerSandboxOptions)
       throw new Error('FLOAT Composer dependencies must be a real directory, not a symlink.');
     }
     const dependenciesRealPath = fs.realpathSync(options.dependenciesDirectory);
+    const targetNodeModules = path.join(workspaceRoot, 'node_modules');
+    if (!fs.existsSync(targetNodeModules)) {
+      try {
+        fs.mkdirSync(targetNodeModules, { recursive: true });
+      } catch {}
+    }
     args.push('--mount', 'type=bind,source=' + toMountSource(dependenciesRealPath) + ',target=/workspace/node_modules,readonly');
   }
 

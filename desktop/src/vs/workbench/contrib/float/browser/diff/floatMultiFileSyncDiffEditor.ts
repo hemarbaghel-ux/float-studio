@@ -13,14 +13,19 @@ export interface IFloatDiffHunk {
 	originalText: string;
 	proposedText: string;
 	status: 'pending' | 'accepted' | 'rejected';
+	baseText?: string;
+	currentText?: string;
+	isConflict?: boolean;
 }
 
 export interface IFloatFileDiffSession {
 	filePath: string;
 	originalContent: string;
 	proposedContent: string;
+	baseContent?: string;
 	hunks: IFloatDiffHunk[];
 	isFullyReviewed: boolean;
+	hasConflicts?: boolean;
 }
 
 export class FloatMultiFileSyncDiffEditor {
@@ -34,8 +39,29 @@ export class FloatMultiFileSyncDiffEditor {
 			filePath: normPath,
 			originalContent,
 			proposedContent,
+			baseContent: originalContent,
 			hunks,
-			isFullyReviewed: hunks.length === 0
+			isFullyReviewed: hunks.length === 0,
+			hasConflicts: false
+		};
+
+		this._sessions.set(normPath, session);
+		return session;
+	}
+
+	public load3WayDiff(filePath: string, baseContent: string, currentBufferContent: string, proposedContent: string): IFloatFileDiffSession {
+		const normPath = filePath.replace(/\\/g, '/');
+		const hunks = this._calculate3WayHunks(normPath, baseContent, currentBufferContent, proposedContent);
+		const hasConflicts = hunks.some(h => h.isConflict);
+
+		const session: IFloatFileDiffSession = {
+			filePath: normPath,
+			originalContent: currentBufferContent,
+			proposedContent,
+			baseContent,
+			hunks,
+			isFullyReviewed: hunks.length === 0,
+			hasConflicts
 		};
 
 		this._sessions.set(normPath, session);
@@ -44,6 +70,28 @@ export class FloatMultiFileSyncDiffEditor {
 
 	public getSession(filePath: string): IFloatFileDiffSession | undefined {
 		return this._sessions.get(filePath.replace(/\\/g, '/'));
+	}
+
+	public getAllSessions(): IFloatFileDiffSession[] {
+		return Array.from(this._sessions.values());
+	}
+
+	public getNextHunk(filePath: string, currentHunkId?: string): IFloatDiffHunk | undefined {
+		const session = this.getSession(filePath);
+		if (!session || session.hunks.length === 0) return undefined;
+		if (!currentHunkId) return session.hunks[0];
+		const idx = session.hunks.findIndex(h => h.hunkId === currentHunkId);
+		if (idx === -1 || idx === session.hunks.length - 1) return session.hunks[0];
+		return session.hunks[idx + 1];
+	}
+
+	public getPrevHunk(filePath: string, currentHunkId?: string): IFloatDiffHunk | undefined {
+		const session = this.getSession(filePath);
+		if (!session || session.hunks.length === 0) return undefined;
+		if (!currentHunkId) return session.hunks[session.hunks.length - 1];
+		const idx = session.hunks.findIndex(h => h.hunkId === currentHunkId);
+		if (idx <= 0) return session.hunks[session.hunks.length - 1];
+		return session.hunks[idx - 1];
 	}
 
 	public acceptHunk(filePath: string, hunkId: string): void {
@@ -119,12 +167,44 @@ export class FloatMultiFileSyncDiffEditor {
 		return lines.join('\n');
 	}
 
+	public applyToEditorModel(model: any, filePath: string): boolean {
+		const session = this.getSession(filePath);
+		if (!session || !model) return false;
+
+		const finalContent = this.computeFinalBuffer(filePath);
+		if (typeof model.pushEditOperations === 'function') {
+			const fullRange = typeof model.getFullModelRange === 'function'
+				? model.getFullModelRange()
+				: { startLineNumber: 1, startColumn: 1, endLineNumber: model.getLineCount?.() || 1, endColumn: 10000 };
+			model.pushEditOperations([], [
+				{
+					range: fullRange,
+					text: finalContent,
+					forceMoveMarkers: true
+				}
+			], () => []);
+		} else if (typeof model.setValue === 'function') {
+			model.setValue(finalContent);
+		} else {
+			return false;
+		}
+
+		for (const hunk of session.hunks) {
+			if (hunk.status === 'pending') {
+				hunk.status = 'accepted';
+			}
+		}
+		session.isFullyReviewed = true;
+		return true;
+	}
+
 	public getAggregatedStats(): {
 		totalFiles: number;
 		totalHunks: number;
 		acceptedHunks: number;
 		rejectedHunks: number;
 		pendingHunks: number;
+		conflicts: number;
 		additions: number;
 		deletions: number;
 	} {
@@ -132,6 +212,7 @@ export class FloatMultiFileSyncDiffEditor {
 		let acceptedHunks = 0;
 		let rejectedHunks = 0;
 		let pendingHunks = 0;
+		let conflicts = 0;
 		let additions = 0;
 		let deletions = 0;
 
@@ -141,6 +222,8 @@ export class FloatMultiFileSyncDiffEditor {
 				if (h.status === 'accepted') acceptedHunks++;
 				else if (h.status === 'rejected') rejectedHunks++;
 				else pendingHunks++;
+
+				if (h.isConflict) conflicts++;
 
 				const origLines = h.originalText ? h.originalText.split('\n').length : 0;
 				const propLines = h.proposedText ? h.proposedText.split('\n').length : 0;
@@ -155,6 +238,7 @@ export class FloatMultiFileSyncDiffEditor {
 			acceptedHunks,
 			rejectedHunks,
 			pendingHunks,
+			conflicts,
 			additions,
 			deletions
 		};
@@ -229,10 +313,58 @@ export class FloatMultiFileSyncDiffEditor {
 				proposedEnd: Math.max(propStart, j),
 				originalText: origHunkLines.join('\n'),
 				proposedText: propHunkLines.join('\n'),
-				status: 'pending'
+				status: 'pending',
+				isConflict: false
 			});
 		}
 
 		return hunks;
+	}
+
+	private _calculate3WayHunks(filePath: string, base: string, mine: string, theirs: string): IFloatDiffHunk[] {
+		// Calculate hunks from Base to Mine, and Base to Theirs
+		const mineChanges = this._calculateHunks(filePath, base, mine);
+		const theirChanges = this._calculateHunks(filePath, base, theirs);
+
+		// Direct delta between current working buffer (mine) and proposed changes (theirs)
+		const directHunks = this._calculateHunks(filePath, mine, theirs);
+
+		// If either side didn't touch anything, there is no conflict
+		if (mineChanges.length === 0 || theirChanges.length === 0) {
+			return directHunks.map(h => ({
+				...h,
+				baseText: base,
+				currentText: h.originalText,
+				isConflict: false
+			}));
+		}
+
+		// Find conflicting regions: where both mine and theirs modified the same base lines differently
+		const conflictingBaseRanges: Array<{ start: number; end: number }> = [];
+		for (const mc of mineChanges) {
+			for (const tc of theirChanges) {
+				const overlap = Math.max(mc.originalStart, tc.originalStart) <= Math.min(mc.originalEnd, tc.originalEnd);
+				if (overlap && mc.proposedText !== tc.proposedText) {
+					conflictingBaseRanges.push({
+						start: Math.min(mc.originalStart, tc.originalStart),
+						end: Math.max(mc.originalEnd, tc.originalEnd)
+					});
+				}
+			}
+		}
+
+		return directHunks.map(hunk => {
+			// A hunk is in conflict if it overlaps with any detected conflicting base range
+			const isConflict = conflictingBaseRanges.some(cr =>
+				hunk.originalStart <= cr.end && hunk.originalEnd >= cr.start
+			);
+
+			return {
+				...hunk,
+				baseText: base,
+				currentText: hunk.originalText,
+				isConflict
+			};
+		});
 	}
 }

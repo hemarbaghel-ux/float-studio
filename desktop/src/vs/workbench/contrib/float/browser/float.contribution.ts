@@ -14,7 +14,14 @@ import { IFloatService, FloatService } from '../common/floatService.js';
 import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
 import { FloatBrowserDaemonRuntimeService } from './floatDaemonRuntimeService.js';
 import { FloatInlineDiffController } from './inline-diff/floatInlineDiffController.js';
-import { FloatInlineDiffAction } from './inline-diff/floatInlineDiffActions.js';
+import {
+	FloatInlineDiffAction,
+	FloatInlineDiffAcceptAction,
+	FloatInlineDiffRejectAction,
+	FloatInlineDiffEscapeAction,
+	FloatInlineDiffNextHunkAction,
+	FloatInlineDiffPrevHunkAction
+} from './inline-diff/floatInlineDiffActions.js';
 import { OpenFloatComposerAction } from './composer/floatComposerActions.js';
 import { OpenFloatChatAction } from './chat/floatChatActions.js';
 import { FloatTerminalListener } from './terminal/floatTerminalListener.js';
@@ -37,6 +44,11 @@ registerEditorContribution(
 
 // 3. Register Keybindings & Actions
 registerAction2(FloatInlineDiffAction);           // Ctrl+K
+registerAction2(FloatInlineDiffAcceptAction);     // Ctrl+Enter
+registerAction2(FloatInlineDiffRejectAction);     // Ctrl+Backspace
+registerAction2(FloatInlineDiffEscapeAction);     // Escape
+registerAction2(FloatInlineDiffNextHunkAction);   // Alt+Down
+registerAction2(FloatInlineDiffPrevHunkAction);   // Alt+Up
 registerAction2(OpenFloatComposerAction);         // Ctrl+I
 registerAction2(OpenFloatChatAction);             // Ctrl+L
 registerAction2(FixWithFloatTerminalAction);      // Terminal Fix

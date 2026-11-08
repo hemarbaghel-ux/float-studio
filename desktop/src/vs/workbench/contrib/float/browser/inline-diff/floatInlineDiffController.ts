@@ -15,8 +15,11 @@ import { FloatInlineDiffZoneWidget } from './floatInlineDiffZoneWidget.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { FloatShadowWorkspaceService } from '../../common/shadow/floatShadowWorkspaceService.js';
 import { IShadowDiagnostic } from '../../common/shadow/floatShadowTypes.js';
+import { IContextKey, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
+import { ctxFloatInlineDiffVisible, ctxFloatInlineDiffGenerating } from './floatInlineDiffActions.js';
 
 export interface IInlineDiffHunk {
+	id?: string;
 	originalRange: Range;
 	originalText: string;
 	proposedText: string;
@@ -51,16 +54,25 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 	private _decorationsCollection: IEditorDecorationsCollection | null = null;
 	private _preEditCheckpointId: string | null = null;
 	private _activeHunk: IInlineDiffHunk | null = null;
+	private _hunks: IInlineDiffHunk[] = [];
+	private _activeHunkIndex: number = 0;
 	private readonly _shadowWorkspace: FloatShadowWorkspaceService = FloatShadowWorkspaceService.getInstance();
+	private readonly _ctxInlineDiffVisible?: IContextKey<boolean>;
+	private readonly _ctxInlineDiffGenerating?: IContextKey<boolean>;
 
 	constructor(
 		private readonly _editor: ICodeEditor,
 		@IFloatService private readonly _floatService: IFloatService,
 		@INotificationService private readonly _notificationService: INotificationService,
-		@ITextFileService private readonly _textFileService: ITextFileService
+		@ITextFileService private readonly _textFileService: ITextFileService,
+		@IContextKeyService private readonly _contextKeyService?: IContextKeyService
 	) {
 		super();
 		this._decorationsCollection = this._editor.createDecorationsCollection();
+		if (this._contextKeyService) {
+			this._ctxInlineDiffVisible = ctxFloatInlineDiffVisible.bindTo(this._contextKeyService);
+			this._ctxInlineDiffGenerating = ctxFloatInlineDiffGenerating.bindTo(this._contextKeyService);
+		}
 		this._registerModelListeners();
 	}
 
@@ -94,6 +106,14 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 
 	public get activeHunk(): IInlineDiffHunk | null {
 		return this._activeHunk;
+	}
+
+	public get hunks(): IInlineDiffHunk[] {
+		return [...this._hunks];
+	}
+
+	public get activeHunkIndex(): number {
+		return this._activeHunkIndex;
 	}
 
 	public get proposedText(): string {
@@ -130,6 +150,8 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 		this._isStale = false;
 		this._isGenerating = false;
 		this._activeHunk = null;
+		this._hunks = [];
+		this._activeHunkIndex = 0;
 
 		// 1. Create native pre-edit rollback checkpoint
 		const cp = this._floatService.getCheckpointService().createCheckpoint(
@@ -137,6 +159,9 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 			{ [model.uri.path]: model.getValue() }
 		);
 		this._preEditCheckpointId = cp.id;
+
+		// Update context key
+		this._ctxInlineDiffVisible?.set(true);
 
 		// 2. Open inline zone widget near cursor/selection
 		this._zoneWidget = new FloatInlineDiffZoneWidget(this._editor);
@@ -166,6 +191,7 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 		}
 
 		this._isGenerating = true;
+		this._ctxInlineDiffGenerating?.set(true);
 		this._isStale = false;
 		this._initialVersionId = model.getVersionId();
 		this._proposedText = '';
@@ -204,6 +230,7 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 					},
 					onError: (err: Error) => {
 						this._isGenerating = false;
+						this._ctxInlineDiffGenerating?.set(false);
 						if (this._zoneWidget) {
 							this._zoneWidget.setStatus(`Error: ${err.message}`, true);
 						}
@@ -211,6 +238,7 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 					},
 					onComplete: async (fullResult?: string) => {
 						this._isGenerating = false;
+						this._ctxInlineDiffGenerating?.set(false);
 						let cleanCode = fullResult || this._proposedText;
 
 						// Strip markdown code fences if wrapped by the model
@@ -222,11 +250,14 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 
 						// Create active hunk
 						this._activeHunk = {
+							id: 'hunk-1',
 							originalRange: this._activeRange!,
 							originalText: this._originalText,
 							proposedText: this._proposedText,
 							status: 'pending'
 						};
+						this._hunks = [this._activeHunk];
+						this._activeHunkIndex = 0;
 
 						// Highlight diff lines in buffer
 						this._renderDiffDecorations(this._activeRange!);
@@ -264,6 +295,7 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 			);
 		} catch (err: any) {
 			this._isGenerating = false;
+			this._ctxInlineDiffGenerating?.set(false);
 			if (this._zoneWidget) {
 				this._zoneWidget.setStatus(`Request failed: ${err.message}`, true);
 			}
@@ -281,6 +313,30 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 				options: INSERT_DECORATION
 			}
 		]);
+	}
+
+	public goToNextHunk(): void {
+		if (this._hunks.length <= 1) {
+			return;
+		}
+		this._activeHunkIndex = (this._activeHunkIndex + 1) % this._hunks.length;
+		this._activeHunk = this._hunks[this._activeHunkIndex];
+		this._editor.revealRangeInCenter(this._activeHunk.originalRange);
+		if (this._zoneWidget) {
+			this._zoneWidget.setStatus(`Hunk ${this._activeHunkIndex + 1}/${this._hunks.length}`);
+		}
+	}
+
+	public goToPreviousHunk(): void {
+		if (this._hunks.length <= 1) {
+			return;
+		}
+		this._activeHunkIndex = (this._activeHunkIndex - 1 + this._hunks.length) % this._hunks.length;
+		this._activeHunk = this._hunks[this._activeHunkIndex];
+		this._editor.revealRangeInCenter(this._activeHunk.originalRange);
+		if (this._zoneWidget) {
+			this._zoneWidget.setStatus(`Hunk ${this._activeHunkIndex + 1}/${this._hunks.length}`);
+		}
 	}
 
 	public async acceptProposal(): Promise<boolean> {
@@ -305,6 +361,9 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 		]);
 
 		this._activeHunk.status = 'accepted';
+		for (const h of this._hunks) {
+			h.status = 'accepted';
+		}
 
 		// Save disk file so disk content matches accepted editor content
 		try {
@@ -323,6 +382,9 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 		if (this._activeHunk) {
 			this._activeHunk.status = 'rejected';
 		}
+		for (const h of this._hunks) {
+			h.status = 'rejected';
+		}
 
 		// Leave document buffer untouched; clean up decorations and widget
 		this._cleanup();
@@ -338,12 +400,16 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 	private _cleanup(): void {
 		this._isGenerating = false;
 		this._isStale = false;
+		this._ctxInlineDiffVisible?.set(false);
+		this._ctxInlineDiffGenerating?.set(false);
 		this._decorationsCollection?.clear();
 		if (this._zoneWidget) {
 			this._zoneWidget.dispose();
 			this._zoneWidget = null;
 		}
 		this._activeHunk = null;
+		this._hunks = [];
+		this._activeHunkIndex = 0;
 	}
 
 	public override dispose(): void {
