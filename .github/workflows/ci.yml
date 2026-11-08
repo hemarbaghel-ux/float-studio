@@ -40,6 +40,9 @@ jobs:
       - name: Build native FLOAT utility-process entrypoint
         run: npm run build:float-daemon-worker
 
+      - name: Build all built-in core language extensions
+        run: npm run build:extensions
+
       - name: Prepare Composer sandbox image for integration tests
         run: docker pull node:22-bookworm-slim
 
