@@ -17,6 +17,7 @@ export interface IFloatInlineCompletionContext {
 export interface IFloatAutocompleteCacheEntry {
 	filePath: string;
 	prefix: string;
+	suffix: string;
 	completion: string;
 	lineNumber: number;
 	column: number;
