@@ -7,30 +7,22 @@ const esbuild = require('esbuild');
 const path = require('path');
 const fs = require('fs');
 
-const EXTENSIONS = [
-  'typescript-language-features',
-  'json-language-features',
-  'markdown-language-features',
-  'html-language-features',
-  'css-language-features',
-  'git',
-  'configuration-editing'
-];
-
 async function buildAllExtensions() {
-  console.log('=== Building FLOAT Built-in Core Language Extensions ===');
+  console.log('=== Building All FLOAT Built-in Core Language Extensions ===');
   const baseDir = path.resolve(__dirname, '../extensions');
 
-  for (const ext of EXTENSIONS) {
+  const extensionDirs = fs.readdirSync(baseDir).filter(item => {
+    const full = path.join(baseDir, item);
+    return fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, 'src/extension.ts'));
+  });
+
+  console.log(`Discovered ${extensionDirs.length} extensions to bundle.`);
+
+  for (const ext of extensionDirs) {
     const extDir = path.join(baseDir, ext);
     const entryPoint = path.join(extDir, 'src/extension.ts');
     const outdir = path.join(extDir, 'dist');
     const outfile = path.join(outdir, 'extension.js');
-
-    if (!fs.existsSync(entryPoint)) {
-      console.warn(`[SKIP] Entrypoint not found: ${entryPoint}`);
-      continue;
-    }
 
     if (!fs.existsSync(outdir)) {
       fs.mkdirSync(outdir, { recursive: true });
@@ -46,7 +38,7 @@ async function buildAllExtensions() {
         format: 'cjs',
         external: ['vscode'],
         sourcemap: true,
-        logLevel: 'info',
+        logLevel: 'error',
       });
       const stat = fs.statSync(outfile);
       console.log(`[PASS] Built ${ext} -> dist/extension.js (${stat.size} bytes)`);
@@ -56,7 +48,7 @@ async function buildAllExtensions() {
     }
   }
 
-  console.log('=== All Built-in Core Language Extensions Built Successfully ===');
+  console.log(`=== All ${extensionDirs.length} Built-in Core Language Extensions Built Successfully ===`);
 }
 
 buildAllExtensions();

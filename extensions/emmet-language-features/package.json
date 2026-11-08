@@ -1,0 +1,30 @@
+{
+  "name": "emmet-language-features",
+  "displayName": "Emmet Language Features",
+  "description": "Emmet abbreviation expansion engine, snippet expansion for HTML, CSS, JSX, and TSX",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:emmet"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "emmet.expandAbbreviation",
+        "title": "Emmet: Expand Abbreviation"
+      },
+      {
+        "command": "emmet.wrapWithAbbreviation",
+        "title": "Emmet: Wrap with Abbreviation"
+      }
+    ]
+  }
+}

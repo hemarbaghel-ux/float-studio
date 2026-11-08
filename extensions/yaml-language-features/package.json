@@ -1,0 +1,44 @@
+{
+  "name": "yaml-language-features",
+  "displayName": "YAML Language Features",
+  "description": "YAML language service with SchemaStore validation, Kubernetes schema, and CI/CD workflow linting",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "yaml.validateSchema",
+        "title": "YAML: Validate Against Active Schema"
+      },
+      {
+        "command": "yaml.formatDocument",
+        "title": "YAML: Format Document"
+      }
+    ],
+    "languages": [
+      {
+        "id": "yaml",
+        "aliases": [
+          "YAML Language Features",
+          "yaml"
+        ],
+        "extensions": [
+          ".yaml",
+          ".yml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "name": "java-language-features",
+  "displayName": "Java Language Features",
+  "description": "Java language tools with Maven and Gradle project resolvers, JUnit runner, and class outline",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:java"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "java.buildProject",
+        "title": "Java: Build Project (Maven/Gradle)"
+      },
+      {
+        "command": "java.runJunitTests",
+        "title": "Java: Run JUnit Tests"
+      },
+      {
+        "command": "java.cleanWorkspace",
+        "title": "Java: Clean Java Language Server Workspace"
+      }
+    ],
+    "languages": [
+      {
+        "id": "java",
+        "aliases": [
+          "Java Language Features",
+          "java"
+        ],
+        "extensions": [
+          ".java",
+          ".jav"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

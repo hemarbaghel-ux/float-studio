@@ -1,0 +1,47 @@
+{
+  "name": "rust-language-features",
+  "displayName": "Rust Language Features",
+  "description": "Rust language features with rust-analyzer bridge, cargo task runner, and clippy diagnostic parser",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:rust"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "rust.cargoBuild",
+        "title": "Rust: Cargo Build"
+      },
+      {
+        "command": "rust.cargoTest",
+        "title": "Rust: Cargo Test"
+      },
+      {
+        "command": "rust.cargoClippy",
+        "title": "Rust: Cargo Clippy Diagnostics"
+      }
+    ],
+    "languages": [
+      {
+        "id": "rust",
+        "aliases": [
+          "Rust Language Features",
+          "rust"
+        ],
+        "extensions": [
+          ".rs"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

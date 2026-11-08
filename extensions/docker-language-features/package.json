@@ -1,0 +1,44 @@
+{
+  "name": "docker-language-features",
+  "displayName": "Docker Language Features",
+  "description": "Dockerfile and docker-compose syntax validation, directive linting, and container tooling",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:dockerfile"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "docker.lintDockerfile",
+        "title": "Docker: Lint Dockerfile"
+      },
+      {
+        "command": "docker.buildImage",
+        "title": "Docker: Build Image from Current File"
+      }
+    ],
+    "languages": [
+      {
+        "id": "dockerfile",
+        "aliases": [
+          "Docker Language Features",
+          "dockerfile"
+        ],
+        "extensions": [
+          "Dockerfile",
+          ".dockerfile"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}
