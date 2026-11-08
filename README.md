@@ -25,16 +25,28 @@ FLOAT AI is an AI-powered software development environment combining a Monaco co
    ```
    Configure `OPENAI_API_KEY` on the server for real model requests. Configure Firebase Admin credentials when using cloud persistence. Do not place provider credentials in browser code or commit them.
 
-3. **Start the development server (Port 3000):**
-   ```bash
-   npm run dev
-   ```
+3. **Start the development server:**
+   - **Recommended (Full Stack with Vite HMR + Express API):**
+     ```bash
+     npm run dev:all
+     ```
+     Spawns the Express API server (Port 3000) and the Vite frontend with Hot Module Replacement (Port 5173, reverse-proxying `/api` to Port 3000).
+
+   - **Integrated Dev Server (Single Port 3000):**
+     ```bash
+     npm run dev
+     ```
+
+   - **Backend API Server Only:**
+     ```bash
+     npm run dev:server
+     ```
 
 ---
 
 ## Production Build & Execution
 
-Build the Vite frontend (`dist/`) and Express server bundle (`dist/server.cjs`):
+Build the Vite frontend (`dist/`) and Express server bundles (`dist/server.cjs` and `dist/server.js`):
 
 ```bash
 npm run build
