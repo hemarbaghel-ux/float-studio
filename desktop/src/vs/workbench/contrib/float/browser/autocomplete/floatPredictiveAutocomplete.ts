@@ -199,7 +199,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		const filePath = model.uri.toString();
 
 		// 1. Cursor Tab Forward Cache Matching (<1ms local cache-hit latency)
-		if (this._cache && this._cache.filePath === filePath && this._cache.lineNumber === position.lineNumber) {
+		if (this._cache && this._cache.filePath === filePath && this._cache.lineNumber === position.lineNumber && ctx.suffix === this._cache.suffix) {
 			if (ctx.prefix.startsWith(this._cache.prefix)) {
 				const typedChars = ctx.prefix.slice(this._cache.prefix.length);
 				if (this._cache.completion.startsWith(typedChars)) {
@@ -317,6 +317,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			this._cache = {
 				filePath,
 				prefix: ctx.prefix,
+				suffix: ctx.suffix,
 				completion: cleanCompletion,
 				lineNumber: position.lineNumber,
 				column: position.column,
