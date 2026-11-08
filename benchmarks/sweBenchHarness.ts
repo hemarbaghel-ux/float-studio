@@ -26,12 +26,20 @@ export interface ISweBenchResult {
 	error?: string;
 }
 
+export interface ISweBenchCategoryMetric {
+	total: number;
+	passed: number;
+	passRatePercent: number;
+}
+
 export interface ISweBenchSuiteReport {
 	totalTasks: number;
 	passedTasks: number;
 	failedTasks: number;
 	passRatePercent: number;
 	totalDurationMs: number;
+	categoryMetrics: Record<string, ISweBenchCategoryMetric>;
+	languageMetrics: Record<string, ISweBenchCategoryMetric>;
 	results: ISweBenchResult[];
 }
 
@@ -262,14 +270,123 @@ export class SweBenchEvaluationHarness {
 		}
 
 		const totalDurationMs = Date.now() - tStart;
+		const categoryMetrics = this._computeCategoryMetrics(results);
+		const languageMetrics = this._computeLanguageMetrics(results);
+
 		return {
 			totalTasks: this._tasks.length,
 			passedTasks,
 			failedTasks: this._tasks.length - passedTasks,
 			passRatePercent: Math.round((passedTasks / this._tasks.length) * 100),
 			totalDurationMs,
+			categoryMetrics,
+			languageMetrics,
 			results
 		};
+	}
+
+	/**
+	 * Evaluates an AI Agent runner across all 20 SWE-bench multi-file tasks
+	 */
+	public async runAgentEvaluation(
+		agentRunner: (task: ISweBenchTask) => Promise<Record<string, string>>
+	): Promise<ISweBenchSuiteReport> {
+		const results: ISweBenchResult[] = [];
+		const tStart = Date.now();
+		let passedTasks = 0;
+
+		for (const task of this._tasks) {
+			const t0 = Date.now();
+			try {
+				const generatedPatches = await agentRunner(task);
+				const workspace: Record<string, string> = { ...task.initialFiles, ...generatedPatches };
+				const passed = task.testValidator(workspace);
+				if (passed) passedTasks++;
+
+				results.push({
+					taskId: task.taskId,
+					title: task.title,
+					language: task.language,
+					passed,
+					durationMs: Date.now() - t0
+				});
+			} catch (err: any) {
+				results.push({
+					taskId: task.taskId,
+					title: task.title,
+					language: task.language,
+					passed: false,
+					durationMs: Date.now() - t0,
+					error: err.message
+				});
+			}
+		}
+
+		const totalDurationMs = Date.now() - tStart;
+		return {
+			totalTasks: this._tasks.length,
+			passedTasks,
+			failedTasks: this._tasks.length - passedTasks,
+			passRatePercent: Math.round((passedTasks / this._tasks.length) * 100),
+			totalDurationMs,
+			categoryMetrics: this._computeCategoryMetrics(results),
+			languageMetrics: this._computeLanguageMetrics(results),
+			results
+		};
+	}
+
+	private _computeCategoryMetrics(results: ISweBenchResult[]): Record<string, ISweBenchCategoryMetric> {
+		const metrics: Record<string, { total: number; passed: number }> = {};
+		for (const task of this._tasks) {
+			const r = results.find(res => res.taskId === task.taskId);
+			const cat = task.category;
+			if (!metrics[cat]) metrics[cat] = { total: 0, passed: 0 };
+			metrics[cat].total++;
+			if (r?.passed) metrics[cat].passed++;
+		}
+		const out: Record<string, ISweBenchCategoryMetric> = {};
+		for (const [k, v] of Object.entries(metrics)) {
+			out[k] = { ...v, passRatePercent: Math.round((v.passed / v.total) * 100) };
+		}
+		return out;
+	}
+
+	private _computeLanguageMetrics(results: ISweBenchResult[]): Record<string, ISweBenchCategoryMetric> {
+		const metrics: Record<string, { total: number; passed: number }> = {};
+		for (const task of this._tasks) {
+			const r = results.find(res => res.taskId === task.taskId);
+			const lang = task.language;
+			if (!metrics[lang]) metrics[lang] = { total: 0, passed: 0 };
+			metrics[lang].total++;
+			if (r?.passed) metrics[lang].passed++;
+		}
+		const out: Record<string, ISweBenchCategoryMetric> = {};
+		for (const [k, v] of Object.entries(metrics)) {
+			out[k] = { ...v, passRatePercent: Math.round((v.passed / v.total) * 100) };
+		}
+		return out;
+	}
+
+	public formatMarkdownReport(report: ISweBenchSuiteReport): string {
+		const lines = [
+			`# SWE-bench Autonomous Evaluation Report`,
+			`- **Overall Pass Rate**: ${report.passRatePercent}% (${report.passedTasks}/${report.totalTasks})`,
+			`- **Total Duration**: ${report.totalDurationMs}ms`,
+			``,
+			`### Category Performance:`
+		];
+		for (const [cat, m] of Object.entries(report.categoryMetrics)) {
+			lines.push(`- **${cat}**: ${m.passRatePercent}% (${m.passed}/${m.total})`);
+		}
+		lines.push(``, `### Language Breakdown:`);
+		for (const [lang, m] of Object.entries(report.languageMetrics)) {
+			lines.push(`- **${lang}**: ${m.passRatePercent}% (${m.passed}/${m.total})`);
+		}
+		return lines.join('\n');
+	}
+
+	public getTasks(): readonly ISweBenchTask[] {
+		return this._tasks;
 	}
 
 	public getTaskCount(): number {

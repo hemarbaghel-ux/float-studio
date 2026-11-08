@@ -6,6 +6,7 @@
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { IDebugService, State, IStackFrame, IThread, IDebugSession } from '../../../debug/common/debug.js';
+import type { FloatDebugAutoRepairService } from './floatDebugAutoRepairService.js';
 
 export interface IFloatDebugStackFrame {
 	sourceUri?: string;
@@ -46,7 +47,8 @@ export class FloatDebugAdapterBridge extends Disposable {
 	public readonly onDidCaptureBreak: Event<IFloatDebugBreakContext> = this._onDidCaptureBreak.event;
 
 	constructor(
-		private readonly _debugService?: IDebugService
+		private readonly _debugService?: IDebugService,
+		private readonly _autoRepairService?: FloatDebugAutoRepairService
 	) {
 		super();
 		if (this._debugService) {
@@ -139,6 +141,9 @@ export class FloatDebugAdapterBridge extends Disposable {
 
 		this._lastBreakContext = context;
 		this._onDidCaptureBreak.fire(context);
+		if (this._autoRepairService) {
+			this._autoRepairService.handleBreakContext(context);
+		}
 		return context;
 	}
 
