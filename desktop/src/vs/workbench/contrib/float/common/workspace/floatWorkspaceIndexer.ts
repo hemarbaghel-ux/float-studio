@@ -30,11 +30,17 @@ const EXCLUDED_PATTERNS = [
 	/(^|[\\/])\.gemini([\\/]|$)/i,
 	/(^|[\\/])\.vscode([\\/]|$)/i,
 	/(^|[\\/])\.idea([\\/]|$)/i,
+	/(^|[\\/])(?:\.ssh|\.aws|\.azure|\.gnupg|\.kube|\.docker|\.npm|secrets?|credentials|private)([\\/]|$)/i,
 	/(^|[\\/])\.env(\..+)?$/i,
-	/(^|[\\/]).*\.(pem|key|pfx|p12)$/i,
+	/(^|[\\/])(?:\.npmrc|\.pnpmrc|\.pypirc|\.netrc|\.git-credentials|\.gitconfig|\.yarnrc\.yml)$/i,
+	/(^|[\\/])\.cargo[\\/]credentials(?:\.[^/]+)?$/i,
+	/(^|[\\/]).*\.(pem|key|pfx|p12|ppk|jks|keystore|crt|cer|der)$/i,
 	/(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)/i,
-	/(^|[\\/])(credentials|client_secret.*|service-account.*|serviceAccount.*|token|auth)\.json$/i
+	/(^|[\\/])[^/]*(credential|client[_-]?secret|service[-_]?account|private[_-]?key|access[_-]?token|refresh[_-]?token)[^/]*\.(json|ya?ml|txt)$/i,
+	/(^|[\\/])(credentials|secrets|token|auth)\.(json|ya?ml|txt)$/i
 ];
+
+const INDEXABLE_EXTENSIONLESS_NAMES = new Set(['dockerfile', 'makefile', 'justfile', '.gitignore', '.gitattributes', '.editorconfig']);
 
 export interface IFloatIndexedFile {
 	readonly relativePath: string;
@@ -78,15 +84,35 @@ export class FloatWorkspaceIndexer {
 	}
 
 	public isExcluded(filePath: string): boolean {
-		const normalized = filePath.replace(/\\/g, '/');
+		const normalized = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
 		return EXCLUDED_PATTERNS.some(pattern => pattern.test(normalized));
+	}
+
+	public isIndexableFile(filePath: string): boolean {
+		if (!filePath || filePath.includes('\0') || this.isExcluded(filePath)) {
+			return false;
+		}
+		const normalized = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+		const portablePath = path.posix.normalize(normalized);
+		if (
+			portablePath === '.' ||
+			portablePath === '..' ||
+			portablePath.startsWith('../') ||
+			path.posix.isAbsolute(portablePath) ||
+			/^[a-zA-Z]:\//.test(portablePath)
+		) {
+			return false;
+		}
+		const baseName = path.posix.basename(portablePath).toLowerCase();
+		const extension = path.posix.extname(baseName);
+		return INDEXABLE_TEXT_EXTENSIONS.has(extension) || INDEXABLE_EXTENSIONLESS_NAMES.has(baseName);
 	}
 
 	/**
 	 * Incrementally indexes a file. If the file's Merkle hash has not changed, skips re-indexing.
 	 */
 	public indexFile(relativePath: string, content: string): boolean {
-		if (this.isExcluded(relativePath)) {
+		if (!this.isIndexableFile(relativePath)) {
 			return false;
 		}
 
@@ -159,23 +185,31 @@ export class FloatWorkspaceIndexer {
 					skipped++;
 					continue;
 				}
-
-				const extension = path.extname(entry.name).toLowerCase();
-				const extensionless = new Set(['dockerfile', 'makefile', 'justfile', '.gitignore', '.gitattributes', '.editorconfig']);
-				if (!INDEXABLE_TEXT_EXTENSIONS.has(extension) && !extensionless.has(entry.name.toLowerCase())) {
+				if (!this.isIndexableFile(relPath)) {
 					skipped++;
 					continue;
 				}
 
 				const normalized = relPath.replace(/\\/g, '/').replace(/^\.\//, '');
-				discovered.add(normalized);
 				try {
-					const stat = await fsp.stat(fullPath);
-					if (stat.size > 2 * 1024 * 1024) {
+					const stat = await fsp.lstat(fullPath);
+					if (!stat.isFile() || stat.isSymbolicLink()) {
 						skipped++;
 						continue;
 					}
-					const content = await fsp.readFile(fullPath, 'utf8');
+					if (stat.size > 2 * 1024 * 1024) {
+						this.unregisterFile(normalized);
+						skipped++;
+						continue;
+					}
+					const buffer = await fsp.readFile(fullPath);
+					if (buffer.includes(0)) {
+						this.unregisterFile(normalized);
+						skipped++;
+						continue;
+					}
+					const content = buffer.toString('utf8');
+					discovered.add(normalized);
 					if (this.indexFile(normalized, content)) {
 						indexed++;
 					} else {
@@ -186,6 +220,7 @@ export class FloatWorkspaceIndexer {
 				}
 			}
 		};
+
 
 		await scanDir(rootPath, '');
 		for (const existing of this._files.keys()) {
@@ -299,6 +334,20 @@ export class FloatWorkspaceIndexer {
 		this._files.delete(norm);
 		this._merkleTree.removeFile(norm);
 		this._vectorIndex.removeChunksForFile(norm);
+	}
+
+	/** Removes one file or every indexed file below a deleted directory. */
+	public unregisterPath(relativePath: string): void {
+		const norm = relativePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+		if (!norm || norm === '.' || norm.startsWith('../') || path.posix.isAbsolute(norm)) {
+			return;
+		}
+		const prefix = norm + '/';
+		for (const indexedPath of Array.from(this._files.keys())) {
+			if (indexedPath === norm || indexedPath.startsWith(prefix)) {
+				this.unregisterFile(indexedPath);
+			}
+		}
 	}
 
 	public getIndexedFiles(): IFloatIndexedFile[] {
