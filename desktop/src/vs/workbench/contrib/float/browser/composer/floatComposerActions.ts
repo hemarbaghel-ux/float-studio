@@ -10,6 +10,9 @@ import { IQuickInputService } from '../../../../../platform/quickinput/common/qu
 import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { IFloatService } from '../../common/floatService.js';
+import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { getFloatComposerWorkspaceRoot } from './floatComposerWorkspaceRoot.js';
 import { FloatComposer } from './floatComposer.js';
 import { FloatFloatingComposerWidget } from './floatFloatingComposerWidget.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
@@ -36,9 +39,49 @@ export class OpenFloatComposerAction extends Action2 {
 		const floatService = accessor.get(IFloatService);
 		const textFileService = accessor.get(ITextFileService);
 		const codeEditorService = accessor.get(ICodeEditorService);
-
-		const composer = new FloatComposer(floatService, notificationService, textFileService);
+		const daemonRuntimeService = accessor.get(IFloatDaemonRuntimeService);
+		const workspaceContextService = accessor.get(IWorkspaceContextService);
 		const activeEditor = codeEditorService.getFocusedCodeEditor() || codeEditorService.getActiveCodeEditor();
+		const workspaceFolders = workspaceContextService.getWorkspace().folders.map(folder => folder.uri);
+		const activeResource = activeEditor?.getModel()?.uri;
+
+		let workspaceRoot = getFloatComposerWorkspaceRoot(workspaceFolders, activeResource);
+		if (!activeResource && !workspaceRoot) {
+			const localFolders = workspaceFolders.filter(folder => folder.scheme === 'file');
+			if (localFolders.length === 1 && workspaceFolders.length === 1) {
+				workspaceRoot = localFolders[0];
+			} else if (localFolders.length > 0) {
+				const selected = await quickInputService.pick(
+					localFolders.map((folder, index) => ({
+						id: String(index),
+						label: folder.fsPath,
+						description: 'Local workspace folder'
+					})),
+					{ placeHolder: 'Select the local workspace folder for FLOAT Composer:' }
+				);
+				if (selected) {
+					workspaceRoot = localFolders[Number(selected.id)];
+				}
+			}
+		}
+
+		if (!workspaceRoot) {
+			notificationService.warn(
+				'FLOAT Composer requires a local workspace folder. Open a local file inside the project or select one folder; remote and virtual workspace editing is not supported by the local command sandbox yet.'
+			);
+			return;
+		}
+
+		const composer = new FloatComposer(
+			floatService,
+			notificationService,
+			textFileService,
+			undefined,
+			undefined,
+			workspaceRoot.fsPath,
+			daemonRuntimeService,
+			workspaceContextService
+		);
 
 		// If an active code editor exists, present the sleek floating Composer widget overlay (Cursor style)
 		if (activeEditor) {

@@ -14,6 +14,7 @@ import { FloatPredictiveAutocomplete } from '../desktop/src/vs/workbench/contrib
 import { Position } from '../desktop/src/vs/editor/common/core/position.ts';
 import { Range } from '../desktop/src/vs/editor/common/core/range.ts';
 import { CancellationTokenSource } from '../desktop/src/vs/base/common/cancellation.ts';
+import { FloatAutocompleteContextResolver } from '../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatAutocompleteContextResolver.ts';
 
 // Mock TextModel conforming to ITextModel required methods
 function createMockModel(content: string, uriPath: string = '/workspace/src/app.ts', lang: string = 'typescript'): any {
@@ -134,6 +135,40 @@ async function runSuite(): Promise<void> {
 	}
 
 	// -------------------------------------------------------------
+	// Suite 2b: Cache invalidation when text after the cursor changes
+	// -------------------------------------------------------------
+	console.log('--- Suite 2b: Suffix-Aware Cache Invalidation ---');
+	{
+		let networkCalls = 0;
+		const mockFloatService: any = {
+			completeCode: async () => {
+				networkCalls++;
+				return { completion: `freshCompletion${networkCalls}();` };
+			}
+		};
+		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService);
+		autocomplete.setConfig({ debounceMs: 0 });
+
+		const initialText = ['const value = ', 'return originalValue;'].join('\n');
+		const cursor = new Position(1, 'const value = '.length + 1);
+		const first = await autocomplete.provideInlineCompletions(
+			createMockModel(initialText), cursor, {} as any, new CancellationTokenSource().token
+		);
+		assert.strictEqual(first?.items[0].insertText, 'freshCompletion1();');
+		assert.strictEqual(networkCalls, 1);
+
+		// Keep the prefix and cursor line unchanged while editing only the suffix.
+		const editedSuffixText = ['const value = ', 'return replacementValue;'].join('\n');
+		const second = await autocomplete.provideInlineCompletions(
+			createMockModel(editedSuffixText), cursor, {} as any, new CancellationTokenSource().token
+		);
+		assert.strictEqual(second?.items[0].insertText, 'freshCompletion2();',
+			'a changed suffix must invalidate the cached completion and request fresh model output');
+		assert.strictEqual(networkCalls, 2, 'suffix changes must not be served from the forward cache');
+		console.log('  -> PASS: cached ghost text is invalidated when code below the cursor changes');
+	}
+
+	// -------------------------------------------------------------
 	// Suite 3: Low-Latency Debounce & Cancellation
 	// -------------------------------------------------------------
 	console.log('\n--- Suite 3: Debounce & Cancellation ---');
@@ -221,6 +256,190 @@ async function runSuite(): Promise<void> {
 		assert(telemetry.averageLatencyMs >= 0);
 
 		console.log(`  -> PASS: InlineCompletionsProvider contract verified (Accepted=${telemetry.completionsAcceptedCount}, Latency=${telemetry.averageLatencyMs}ms)`);
+	}
+
+
+	// -------------------------------------------------------------
+	// Suite 6: Separate codebase retrieval and model request latency
+	// -------------------------------------------------------------
+	console.log('--- Suite 6: Autocomplete Latency Attribution ---');
+	{
+		const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+		const fakeRuntime: any = {
+			getClient: () => ({
+				call: async () => {
+					await wait(15);
+					return { matches: [{ filePath: 'src/shared.ts', startLine: 1, endLine: 1, snippet: 'export const sharedValue = 1;' }] };
+				}
+			})
+		};
+		const mockFloatService: any = {
+			completeCode: async () => {
+				await wait(20);
+				return { completion: 'sharedValue + 1;' };
+			}
+		};
+		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService, undefined, fakeRuntime);
+		autocomplete.setConfig({ debounceMs: 0 });
+		const text = 'const result = sharedValue + ';
+		const result = await autocomplete.provideInlineCompletions(
+			createMockModel(text), new Position(1, text.length + 1), {} as any, new CancellationTokenSource().token
+		);
+		assert(result !== undefined);
+		const measurement = autocomplete.telemetry.lastMeasurement;
+		assert(measurement !== undefined);
+		assert((measurement.contextRetrievalLatencyMs ?? 0) >= 10, 'retrieval time must be measured separately');
+		assert((measurement.modelNetworkLatencyMs ?? 0) >= 15, 'model request time must exclude retrieval');
+		assert(measurement.totalLatencyMs >= (measurement.contextRetrievalLatencyMs ?? 0) + (measurement.modelNetworkLatencyMs ?? 0));
+		console.log('  -> PASS: codebase retrieval and model request latency are attributed independently');
+	}
+
+	// -------------------------------------------------------------
+	// Suite 6: Daemon-Backed Cross-File Context (bounded + fail-open)
+	// -------------------------------------------------------------
+	console.log('\n--- Suite 6: Daemon Codebase Context Integration ---');
+	{
+		const calls: Array<{ method: string; params: any; timeoutMs: number }> = [];
+		const fakeRuntime: any = {
+			getClient: () => ({
+				call: async (method: string, params: any, timeoutMs: number) => {
+					calls.push({ method, params, timeoutMs });
+					return {
+						matches: [
+							{ filePath: 'src/auth/current.ts', startLine: 1, endLine: 4, snippet: 'export function currentFileOnly() {}' },
+							{ filePath: 'src/auth/tokenLookup.ts', startLine: 18, endLine: 27, snippet: 'export function readProfileToken(sessionIdentifier) { return cache.get(sessionIdentifier); }' },
+							{ filePath: 'src/accounts/accountStore.ts', startLine: 5, endLine: 12, snippet: 'export function loadAccountRecord(accountIdentifier) { return records.get(accountIdentifier); }' }
+						]
+					};
+				}
+			})
+		};
+		const resolver = new FloatAutocompleteContextResolver(fakeRuntime);
+		const prefix = 'const profileToken = readProfileToken(sessionIdentifier);\nconst accountRecord = loadAccountRecord(accountIdentifier);';
+		const related = await resolver.resolveRelatedContext(prefix, '', '/workspace/src/auth/current.ts');
+
+		assert.strictEqual(calls.length, 1);
+		assert.strictEqual(calls[0].method, 'semantic_search');
+		assert.strictEqual(calls[0].timeoutMs, 70, 'autocomplete retrieval must have a strict short timeout');
+		assert(related.includes('src/auth/tokenLookup.ts'));
+		assert(related.includes('src/accounts/accountStore.ts'));
+		assert(!related.includes('src/auth/current.ts'), 'active-file duplicate context must be excluded');
+		assert(related.length <= 2_500, 'related context must remain bounded');
+
+		// Multi-root index paths must exclude only the active file, not another
+		// workspace's file with the same relative path.
+		const multiRootRuntime: any = {
+			getClient: () => ({
+				call: async () => ({
+					matches: [
+						{ filePath: 'workspace-1/src/auth/current.ts', startLine: 1, endLine: 4, snippet: 'export function otherWorkspaceCurrentFile() {}' },
+						{ filePath: 'workspace-2/src/auth/current.ts', startLine: 1, endLine: 4, snippet: 'export function activeWorkspaceCurrentFile() {}' },
+						{ filePath: 'workspace-2/src/auth/tokenLookup.ts', startLine: 18, endLine: 27, snippet: 'export function readProfileToken(sessionIdentifier) {}' }
+					]
+				})
+			})
+		};
+		const workspaceContext: any = {
+			getWorkspace: () => ({
+				folders: [
+					{ uri: { scheme: 'file', path: '/workspace/one' } },
+					{ uri: { scheme: 'file', path: '/workspace/two' } }
+				]
+			})
+		};
+		const multiRootResolver = new FloatAutocompleteContextResolver(multiRootRuntime, workspaceContext);
+		const multiRootRelated = await multiRootResolver.resolveRelatedContext(
+			prefix,
+			'',
+			'/workspace/two/src/auth/current.ts'
+		);
+		assert(multiRootRelated.includes('workspace-1/src/auth/current.ts'), 'same-relative-path code from another root must remain eligible');
+		assert(!multiRootRelated.includes('workspace-2/src/auth/current.ts'), 'active file in workspace-2 must be excluded exactly');
+		assert(multiRootRelated.includes('workspace-2/src/auth/tokenLookup.ts'));
+
+		let capturedPrefix = '';
+		const mockFloatService: any = {
+			completeCode: async (options: any) => {
+				capturedPrefix = options.prefix;
+				return { completion: 'continueProfileLookup();' };
+			}
+		};
+		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService, undefined, fakeRuntime);
+		autocomplete.setConfig({ debounceMs: 0 });
+		const model = createMockModel(prefix, '/workspace/src/auth/current.ts');
+		const cts = new CancellationTokenSource();
+		const completion = await autocomplete.provideInlineCompletions(
+			model,
+			new Position(2, model.getLineContent(2).length + 1),
+			{} as any,
+			cts.token
+		);
+		assert(completion !== undefined);
+		assert(capturedPrefix.includes('Related workspace code: src/auth/tokenLookup.ts'));
+		assert(capturedPrefix.includes('const accountRecord = loadAccountRecord(accountIdentifier);'));
+		console.log('  -> PASS: Cursor Tab receives bounded daemon context; unavailable retrieval remains fail-open');
+	}
+
+	// -------------------------------------------------------------
+	// Suite 7: Overlapping request ownership and stale response suppression
+	// -------------------------------------------------------------
+	console.log('\\n--- Suite 7: Overlapping Request Cancellation Ownership ---');
+	{
+		const pending: Array<(value: any) => void> = [];
+		const signals: AbortSignal[] = [];
+		const mockFloatService: any = {
+			completeCode: async (_options: any, _token?: string, _project?: string, signal?: AbortSignal) =>
+				new Promise(resolve => {
+					pending.push(resolve);
+					if (signal) signals.push(signal);
+				})
+		};
+		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService);
+		autocomplete.setConfig({ debounceMs: 0 });
+		const waitForRequests = async (count: number) => {
+			for (let i = 0; i < 20 && pending.length < count; i++) {
+				await Promise.resolve();
+			}
+			assert.strictEqual(pending.length, count, 'completion request should reach the model client');
+		};
+
+		const firstText = 'const firstValue = calculateFirstValue(';
+		const firstToken = new CancellationTokenSource();
+		const firstRequest = autocomplete.provideInlineCompletions(
+			createMockModel(firstText), new Position(1, firstText.length + 1), {} as any, firstToken.token
+		);
+		await waitForRequests(1);
+
+		const secondText = 'const secondValue = calculateSecondValue(';
+		const secondToken = new CancellationTokenSource();
+		const secondRequest = autocomplete.provideInlineCompletions(
+			createMockModel(secondText), new Position(1, secondText.length + 1), {} as any, secondToken.token
+		);
+		await waitForRequests(2);
+		assert.strictEqual(signals[0].aborted, true, 'new typing must abort the previous request');
+
+		// Simulate a provider that ignores AbortSignal and resolves late.
+		pending[0]({ completion: 'staleFirstValue();' });
+		assert.strictEqual(await firstRequest, undefined, 'an aborted late response must never be shown');
+
+		const thirdText = 'const thirdValue = calculateThirdValue(';
+		const thirdToken = new CancellationTokenSource();
+		const thirdRequest = autocomplete.provideInlineCompletions(
+			createMockModel(thirdText), new Position(1, thirdText.length + 1), {} as any, thirdToken.token
+		);
+		await waitForRequests(3);
+		assert.strictEqual(
+			signals[1].aborted,
+			true,
+			'a late cleanup from request one must not detach request two from cancellation'
+		);
+
+		pending[1]({ completion: 'staleSecondValue();' });
+		pending[2]({ completion: 'currentThirdValue();' });
+		assert.strictEqual(await secondRequest, undefined, 'the superseded second response must be discarded');
+		const thirdResult = await thirdRequest;
+		assert.strictEqual(thirdResult?.items[0].insertText, 'currentThirdValue();');
+		console.log('  -> PASS: stale responses are discarded and each request retains its own cancellation handle');
 	}
 
 	console.log('\n================================================================');

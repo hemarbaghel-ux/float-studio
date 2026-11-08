@@ -27,6 +27,9 @@ import {
 } from './floatAutocompleteTypes.js';
 import { isFloatAutocompleteGloballyEnabled } from './floatAutocompleteActions.js';
 import { FloatNextActionSpeculator } from './floatNextActionSpeculator.js';
+import { FloatAutocompleteContextResolver } from './floatAutocompleteContextResolver.js';
+import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 
 export class FloatPredictiveAutocomplete extends Disposable implements InlineCompletionsProvider {
 	private _config: IFloatAutocompleteConfig = {
@@ -54,6 +57,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 	private _debounceResolver: ((proceed: boolean) => void) | null = null;
 	private _debounceTimer: any = null;
 	private readonly _speculator = new FloatNextActionSpeculator();
+	private readonly _daemonContextResolver: FloatAutocompleteContextResolver;
 
 	private readonly _onDidShowCursorJump = this._register(new Emitter<{ position: Position; recommendation: ICursorJumpRecommendation }>());
 	public readonly onDidShowCursorJump: Event<{ position: Position; recommendation: ICursorJumpRecommendation }> = this._onDidShowCursorJump.event;
@@ -63,9 +67,12 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 
 	constructor(
 		private readonly _floatService: IFloatService,
-		languageFeaturesService?: ILanguageFeaturesService
+		languageFeaturesService?: ILanguageFeaturesService,
+		daemonRuntimeService?: IFloatDaemonRuntimeService,
+		workspaceContextService?: IWorkspaceContextService
 	) {
 		super();
+		this._daemonContextResolver = new FloatAutocompleteContextResolver(daemonRuntimeService, workspaceContextService);
 		if (languageFeaturesService) {
 			this._register(languageFeaturesService.inlineCompletionsProvider.register('*', this));
 		}
@@ -188,10 +195,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		}
 
 		const ctx = this.extractContext(model, position);
-		const filePath = model.uri.path;
+		// Include the provider and authority so local/remote files with the same path cannot share cache entries.
+		const filePath = model.uri.toString();
 
 		// 1. Cursor Tab Forward Cache Matching (<1ms local cache-hit latency)
-		if (this._cache && this._cache.filePath === filePath && this._cache.lineNumber === position.lineNumber) {
+		if (this._cache && this._cache.filePath === filePath && this._cache.lineNumber === position.lineNumber && ctx.suffix === this._cache.suffix) {
 			if (ctx.prefix.startsWith(this._cache.prefix)) {
 				const typedChars = ctx.prefix.slice(this._cache.prefix.length);
 				if (this._cache.completion.startsWith(typedChars)) {
@@ -240,18 +248,37 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		}
 
 		// 3. Request Completion from Model Client with Cross-File Diff Prompting
-		this._activeAbortController = new AbortController();
-		const signal = this._activeAbortController.signal;
+		const requestController = new AbortController();
+		this._activeAbortController = requestController;
+		const signal = requestController.signal;
 		const cancelSub = token?.onCancellationRequested?.(() => {
-			this._activeAbortController?.abort();
+			// A token owns only its request. Never abort a newer request through
+			// the mutable shared controller reference.
+			requestController.abort();
 		});
 		this._telemetry.requestsCount++;
-		const netStart = Date.now();
+		let contextRetrievalLatency = 0;
+		let modelNetLatency = 0;
 
 		try {
-			const promptContext = this._speculator.buildPromptContext(ctx);
-			const fullPrefix = promptContext ? `${promptContext}\n${ctx.prefix}` : ctx.prefix;
+			const contextStart = Date.now();
+			const relatedContext = await this._daemonContextResolver.resolveRelatedContext(
+				ctx.prefix,
+				ctx.suffix,
+				model.uri
+			);
+			contextRetrievalLatency = Date.now() - contextStart;
+			if (token.isCancellationRequested || signal.aborted) {
+				return undefined;
+			}
 
+			const speculativeContext = this._speculator.buildPromptContext(ctx);
+			const promptParts = [relatedContext, speculativeContext].filter(Boolean);
+			const fullPrefix = promptParts.length > 0
+				? `${promptParts.join('\n')}\n${ctx.prefix}`
+				: ctx.prefix;
+
+			const modelRequestStart = Date.now();
 			const result = await this._floatService.completeCode(
 				{
 					prefix: fullPrefix,
@@ -265,18 +292,19 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 				signal
 			);
 
-			const modelNetLatency = Date.now() - netStart;
-			const totalLatency = debounceDuration + modelNetLatency;
+			modelNetLatency = Date.now() - modelRequestStart;
+			const totalLatency = debounceDuration + contextRetrievalLatency + modelNetLatency;
 
 			this._updateModelLatency(modelNetLatency, totalLatency);
 			this._telemetry.lastMeasurement = {
 				type: 'model_network',
 				debounceLatencyMs: debounceDuration,
+				contextRetrievalLatencyMs: contextRetrievalLatency,
 				modelNetworkLatencyMs: modelNetLatency,
 				totalLatencyMs: totalLatency
 			};
 
-			if (token.isCancellationRequested || result.cancelled || !result.completion) {
+			if (token.isCancellationRequested || signal.aborted || result.cancelled || !result.completion) {
 				return undefined;
 			}
 
@@ -289,6 +317,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			this._cache = {
 				filePath,
 				prefix: ctx.prefix,
+				suffix: ctx.suffix,
 				completion: cleanCompletion,
 				lineNumber: position.lineNumber,
 				column: position.column,
@@ -321,7 +350,11 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			return undefined;
 		} finally {
 			cancelSub?.dispose?.();
-			this._activeAbortController = null;
+			// An older request may settle after a newer one has started. Clear
+			// the shared handle only when this request still owns it.
+			if (this._activeAbortController === requestController) {
+				this._activeAbortController = null;
+			}
 		}
 	}
 

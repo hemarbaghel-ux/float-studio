@@ -47,7 +47,7 @@ export class FloatAstSemanticChunker {
 			return [];
 		}
 
-		// Extract symbols using Tree-Sitter indexer
+		// Extract symbols using the daemon's language-aware symbol indexer.
 		const fileNode = this._indexer.parseFileSymbols(filePath, content);
 		const symbols = fileNode.symbols.sort((a, b) => a.startLine - b.startLine);
 
@@ -81,11 +81,18 @@ export class FloatAstSemanticChunker {
 			const next = symbols[i + 1];
 
 			const startIdx = Math.max(0, current.startLine - 1);
-			// Calculate end index: either up to next symbol start, or end of current file/block
-			let endIdx = next ? Math.max(startIdx + 1, next.startLine - 2) : lines.length - 1;
-			if (endIdx < startIdx) {
-				endIdx = startIdx;
-			}
+			// TypeScript AST nodes carry the actual source range. Prefer it so
+			// methods/functions are indexed as complete scopes rather than
+			// arbitrary text up to the next nested declaration. Regex profiles
+			// currently expose only a start line, so retain the legacy bounded
+			// fallback for those languages.
+			const hasSourceRange = Number.isInteger(current.endLine) && current.endLine > current.startLine;
+			const proposedEndIdx = hasSourceRange
+				? current.endLine - 1
+				: next
+					? Math.max(startIdx, next.startLine - 2)
+					: lines.length - 1;
+			const endIdx = Math.max(startIdx, Math.min(lines.length - 1, proposedEndIdx));
 
 			const chunkLines = lines.slice(startIdx, endIdx + 1);
 			const chunkContent = chunkLines.join('\n').trim();

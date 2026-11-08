@@ -46,21 +46,35 @@ export class FloatSyntaxContextSlicer {
 			}
 		}
 
-		// Find enclosing scope
+		// Select the smallest declaration scope that actually contains the cursor.
+		// Variables and properties are symbols, but they are not enclosing scopes.
 		let enclosingScope: IFloatAstNode | undefined;
 		let enclosingClass: IFloatAstNode | undefined;
+		const scopeKinds = new Set<IFloatAstNode['kind']>([
+			'class', 'struct', 'interface', 'function', 'method', 'module', 'enum'
+		]);
+		const classKinds = new Set<IFloatAstNode['kind']>(['class', 'struct', 'interface']);
+		const containsCursor = (symbol: IFloatAstNode): boolean =>
+			cursorLine >= symbol.startLine && cursorLine <= symbol.endLine;
+		const span = (symbol: IFloatAstNode): number => symbol.endLine - symbol.startLine;
 
-		// Sort symbols by line
-		const sorted = [...symbols].sort((a, b) => a.startLine - b.startLine);
-
-		for (const s of sorted) {
-			if (s.kind === 'class' || s.kind === 'struct' || s.kind === 'interface') {
-				if (cursorLine >= s.startLine) {
-					enclosingClass = s;
-				}
+		for (const symbol of symbols) {
+			if (!containsCursor(symbol)) {
+				continue;
 			}
-			if (cursorLine >= s.startLine) {
-				enclosingScope = s;
+			if (
+				classKinds.has(symbol.kind) &&
+				(!enclosingClass || span(symbol) < span(enclosingClass) ||
+					(span(symbol) === span(enclosingClass) && symbol.startLine > enclosingClass.startLine))
+			) {
+				enclosingClass = symbol;
+			}
+			if (
+				scopeKinds.has(symbol.kind) &&
+				(!enclosingScope || span(symbol) < span(enclosingScope) ||
+					(span(symbol) === span(enclosingScope) && symbol.startLine > enclosingScope.startLine))
+			) {
+				enclosingScope = symbol;
 			}
 		}
 

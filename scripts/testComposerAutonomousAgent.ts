@@ -277,6 +277,54 @@ async function runStep4Tests() {
   assert.strictEqual(execution.proposal?.files.length, 1);
   console.log('  -> PASS: Structured multi-file proposal attached to execution record\n');
 
+  // --- Suite 3B: Composer cancellation reaches an in-flight model stream ---
+  console.log('--- Suite 3B: In-Flight Model Stream Cancellation ---');
+
+  let forwardedSignal: AbortSignal | undefined;
+  let notifyStreamStarted!: () => void;
+  const streamStarted = new Promise<void>(resolve => { notifyStreamStarted = resolve; });
+  const cancellableFloatService: any = {
+    getCheckpointService: () => sharedCheckpointService,
+    streamChat: async (
+      _messages: any[],
+      _callbacks: any,
+      _authToken?: string,
+      _projectId?: string,
+      _contextItems?: any[],
+      _conversationId?: string,
+      signal?: AbortSignal
+    ) => {
+      forwardedSignal = signal;
+      notifyStreamStarted();
+      await new Promise<void>((_resolve, reject) => {
+        if (!signal) {
+          reject(new Error('Composer did not forward its AbortSignal to streamChat'));
+          return;
+        }
+        if (signal.aborted) {
+          reject(new Error('generation aborted'));
+          return;
+        }
+        signal.addEventListener('abort', () => reject(new Error('generation aborted')), { once: true });
+      });
+    }
+  };
+  const cancellationAgent = new FloatComposerAgent(cancellableFloatService, toolRegistry, orchestrator);
+  const cancelController = new AbortController();
+  const pendingExecution = cancellationAgent.executeGoal(
+    { prompt: 'cancel a pending model generation', maxSteps: 2 },
+    undefined,
+    cancelController.signal
+  );
+  await streamStarted;
+  assert.ok(forwardedSignal, 'Composer must pass an AbortSignal to the model service');
+  cancelController.abort();
+  const cancelledExecution = await pendingExecution;
+  assert.equal(forwardedSignal?.aborted, true, 'caller cancellation must abort the in-flight model request');
+  assert.equal(cancelledExecution.status, 'cancelled', 'an aborted model stream must produce a cancelled Composer execution');
+  assert.equal(cancelledExecution.proposal, undefined, 'cancelled generation must not create a proposal');
+  console.log('  -> PASS: Composer turn cancellation aborts pending model generation without proposing changes');
+
   // --- Suite 4: Multi-File Turn Checkpointing & Atomic Rollback ---
   console.log('--- Suite 4: Multi-File Checkpoint & Atomic Rollback ---');
   assert.ok(execution.checkpointId, 'Execution must record turn checkpoint ID');
