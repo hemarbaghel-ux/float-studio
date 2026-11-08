@@ -46,7 +46,7 @@ export interface IFloatConversation {
 }
 
 export class FloatModelClient {
-	private _activeAbortController: AbortController | null = null;
+	private readonly _activeAbortControllers = new Map<string, AbortController>();
 	private _endpoint: string = 'http://localhost:3000/api/ai/chat';
 	private readonly _conversations = new Map<string, IFloatConversation>();
 
@@ -85,11 +85,23 @@ export class FloatModelClient {
 		this._conversations.delete(id);
 	}
 
-	public cancelActiveStream(): void {
-		if (this._activeAbortController) {
-			this._activeAbortController.abort();
-			this._activeAbortController = null;
+	public cancelActiveStream(conversationId?: string): void {
+		if (conversationId !== undefined) {
+			const key = conversationId || 'default';
+			const controller = this._activeAbortControllers.get(key);
+			if (controller) {
+				controller.abort();
+				if (this._activeAbortControllers.get(key) === controller) {
+					this._activeAbortControllers.delete(key);
+				}
+			}
+			return;
 		}
+
+		for (const controller of this._activeAbortControllers.values()) {
+			controller.abort();
+		}
+		this._activeAbortControllers.clear();
 	}
 
 	public async streamChat(
@@ -99,11 +111,22 @@ export class FloatModelClient {
 		authToken?: string,
 		projectId: string = 'default-project',
 		contextItems?: Array<{ path: string; content: string }>,
-		conversationId?: string
+		conversationId?: string,
+		callerSignal?: AbortSignal
 	): Promise<void> {
-		this.cancelActiveStream();
-		this._activeAbortController = new AbortController();
-		const signal = this._activeAbortController.signal;
+		const requestKey = conversationId || 'default';
+		// Replace only the previous stream for this conversation. Independent
+		// conversations must not cancel each other's model requests.
+		this.cancelActiveStream(requestKey);
+		const requestController = new AbortController();
+		const abortFromCaller = () => requestController.abort();
+		if (callerSignal?.aborted) {
+			requestController.abort();
+		} else {
+			callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+		}
+		this._activeAbortControllers.set(requestKey, requestController);
+		const signal = requestController.signal;
 
 		// 1. Model resolution and capability validation
 		const registeredModel = getFloatModel(modelId);
@@ -180,79 +203,75 @@ export class FloatModelClient {
 			let latestContextExplanation: any = null;
 			let latestUsage: any = null;
 
+			// Parse every complete or trailing SSE frame through one code path. Keep
+			// JSON parsing separate from event handling so a valid { type: "error" }
+			// event cannot be mistaken for malformed JSON.
+			const processFrame = (frame: string): void => {
+				const trimmedFrame = frame.trim();
+				if (!trimmedFrame || trimmedFrame.startsWith(':')) {
+					return;
+				}
+
+				const dataLines = trimmedFrame
+					.split(/\r?\n/)
+					.filter(line => line.trimStart().startsWith('data:'))
+					.map(line => line.trimStart().slice(5).trim());
+
+				if (dataLines.length === 0) {
+					fullAccumulatedText += trimmedFrame;
+					callbacks.onChunk(trimmedFrame);
+					return;
+				}
+
+				const payload = dataLines.join('\n');
+				let event: any;
+				try {
+					event = JSON.parse(payload);
+				} catch {
+					// Preserve compatibility with upstreams that stream plain text in
+					// data: frames instead of JSON event envelopes.
+					fullAccumulatedText += payload;
+					callbacks.onChunk(payload);
+					return;
+				}
+
+				if (!event || typeof event !== 'object') {
+					return;
+				}
+				if ((event.type === 'delta' || event.type === 'chunk') && typeof event.text === 'string') {
+					fullAccumulatedText += event.text;
+					callbacks.onChunk(event.text);
+				} else if (event.type === 'context_info' && event.contextExplanation) {
+					latestContextExplanation = event.contextExplanation;
+					callbacks.onContext?.(event.contextExplanation);
+				} else if (event.type === 'done') {
+					if (event.usage) latestUsage = event.usage;
+					if (event.contextExplanation) latestContextExplanation = event.contextExplanation;
+				} else if (event.type === 'error') {
+					throw new Error(event.error || event.message || 'Stream error from model router');
+				}
+			};
+
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) {
 					break;
 				}
-				const chunk = decoder.decode(value, { stream: true });
-				sseBuffer += chunk;
+				sseBuffer += decoder.decode(value, { stream: true });
 
-				// Process SSE double newline separated frames
-				const frames = sseBuffer.split('\n\n');
+				// SSE permits LF and CRLF frame separators.
+				const frames = sseBuffer.split(/\r?\n\r?\n/);
 				sseBuffer = frames.pop() || '';
-
 				for (const frame of frames) {
-					const trimmedFrame = frame.trim();
-					if (!trimmedFrame) {
-						continue;
-					}
-
-					// Process lines within the SSE frame (handles multiline data: frames)
-					const lines = trimmedFrame.split('\n');
-					const dataLines: string[] = [];
-
-					for (const line of lines) {
-						const trimmedLine = line.trim();
-						if (trimmedLine.startsWith('data:')) {
-							dataLines.push(trimmedLine.slice(5).trim());
-						}
-					}
-
-					if (dataLines.length > 0) {
-						const payload = dataLines.join('\n');
-						try {
-							const event = JSON.parse(payload);
-							if ((event.type === 'delta' || event.type === 'chunk') && typeof event.text === 'string') {
-								fullAccumulatedText += event.text;
-								callbacks.onChunk(event.text);
-							} else if (event.type === 'context_info' && event.contextExplanation) {
-								latestContextExplanation = event.contextExplanation;
-								callbacks.onContext?.(event.contextExplanation);
-							} else if (event.type === 'done') {
-								if (event.usage) latestUsage = event.usage;
-								if (event.contextExplanation) latestContextExplanation = event.contextExplanation;
-							} else if (event.type === 'error') {
-								throw new Error(event.error || event.message || 'Stream error from model router');
-							}
-						} catch (jsonErr: any) {
-							// If not valid JSON, treat raw payload as text delta
-							fullAccumulatedText += payload;
-							callbacks.onChunk(payload);
-						}
-					} else {
-						// Non-SSE raw chunk streaming fallback
-						fullAccumulatedText += trimmedFrame;
-						callbacks.onChunk(trimmedFrame);
-					}
+					processFrame(frame);
 				}
 			}
 
-			// Flush any remaining buffer if not empty
+			// Flush the decoder and parse the final frame even when the server
+			// closes without the optional trailing blank line.
+			sseBuffer += decoder.decode();
 			if (sseBuffer.trim()) {
-				const trimmed = sseBuffer.trim();
-				if (trimmed.startsWith('data:')) {
-					try {
-						const event = JSON.parse(trimmed.slice(5).trim());
-						if (event.text) {
-							fullAccumulatedText += event.text;
-							callbacks.onChunk(event.text);
-						}
-					} catch {}
-				} else {
-					fullAccumulatedText += trimmed;
-					callbacks.onChunk(trimmed);
-				}
+				processFrame(sseBuffer);
 			}
 
 			// Update conversation state with assistant response
@@ -281,7 +300,11 @@ export class FloatModelClient {
 				callbacks.onError(err instanceof Error ? err : new Error(String(err)));
 			}
 		} finally {
-			this._activeAbortController = null;
+			callerSignal?.removeEventListener('abort', abortFromCaller);
+			// A late request must not clear a newer request's cancellation handle.
+			if (this._activeAbortControllers.get(requestKey) === requestController) {
+				this._activeAbortControllers.delete(requestKey);
+			}
 		}
 	}
 

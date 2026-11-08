@@ -60,6 +60,8 @@ export type FloatIpcMessage =
 	| IFloatIpcEvent;
 
 export class FloatIpcFramer {
+	public static readonly MAX_FRAME_BYTES = 8 * 1024 * 1024;
+
 	/**
 	 * Encodes a message with a 4-byte big-endian length prefix.
 	 */
@@ -83,6 +85,9 @@ export class FloatIpcFramer {
 
 		while (current.length >= 4) {
 			const payloadLength = current.readUInt32BE(0);
+			if (payloadLength === 0 || payloadLength > FloatIpcFramer.MAX_FRAME_BYTES) {
+				throw new Error(`Invalid FLOAT IPC frame length: ${payloadLength} bytes.`);
+			}
 			const totalLength = 4 + payloadLength;
 
 			if (current.length < totalLength) {

@@ -148,7 +148,7 @@ async function runEndToEndEvaluation() {
 	// TASK 2: Real Permitted Terminal Command Execution
 	// -------------------------------------------------------------
 	console.log('[Task 2/20] Real Permitted Terminal Command Execution...');
-	const runner = new ProductionComposerCommandRunner(ws1);
+	const runner = new ProductionComposerCommandRunner(ws1, 30000, async request => request.workspaceRoot === path.resolve(ws1));
 	const execResult = await runner.runCommand('node -e "console.log(\'FLOAT_RUNNER_OK\')"');
 	assert.strictEqual(execResult.exitCode, 0, 'Permitted command must exit with code 0');
 	assert.ok(execResult.stdout.includes('FLOAT_RUNNER_OK'), 'Stdout must contain command output');

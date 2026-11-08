@@ -42,7 +42,17 @@ export interface IComposerFileSystem {
 	findFiles(pattern: string): Promise<string[]>;
 }
 
+export interface IFloatCommandApprovalRequest {
+	command: string;
+	workingDirectory: string;
+	workspaceRoot: string;
+}
+
+/** User approval for a command. This consent gate complements, but does not replace, Docker isolation. */
+export type IFloatCommandApprovalHandler = (request: IFloatCommandApprovalRequest) => Promise<boolean>;
+
 export interface IComposerCommandRunner {
+	requestExecutionApproval?(request: IFloatCommandApprovalRequest): Promise<boolean>;
 	runCommand(command: string, cwd?: string): Promise<{
 		exitCode: number;
 		stdout: string;

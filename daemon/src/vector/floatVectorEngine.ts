@@ -237,11 +237,34 @@ export interface IFloatHybridSearchResult {
 	isNeuralScored: boolean;
 }
 
+export interface IFloatSearchDiagnostics {
+	indexedChunks: number;
+	candidateChunks: number;
+	scoredChunks: number;
+	queryTokenCount: number;
+}
+
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+
 export class FloatVectorEngine {
-	private readonly _chunks = new Map<string, IFloatSemanticChunk>();
+	private readonly _chunks: (IFloatCodeChunk | IFloatSemanticChunk)[] = [];
+	private readonly _chunkById = new Map<string, IFloatCodeChunk | IFloatSemanticChunk>();
+	private readonly _fileChunkIds = new Map<string, Set<string>>();
+	private readonly _chunkTokens = new Map<string, string[]>();
+	private readonly _docLengths = new Map<string, number>();
+	private readonly _invertedIndex = new Map<string, Map<string, number>>();
 	private readonly _chunkVectors = new Map<string, number[]>();
+	private readonly _vectorDim = 384;
+	private _totalTokens = 0;
 	private readonly _bm25 = new FloatBm25Engine();
 	private _embeddingProvider: IFloatEmbeddingProvider | null = null;
+	private _lastSearchDiagnostics: IFloatSearchDiagnostics = {
+		indexedChunks: 0,
+		candidateChunks: 0,
+		scoredChunks: 0,
+		queryTokenCount: 0
+	};
 
 	constructor(embeddingProvider?: IFloatEmbeddingProvider) {
 		this._embeddingProvider = embeddingProvider || null;
@@ -265,6 +288,11 @@ export class FloatVectorEngine {
 			const endLine = Math.min(lines.length, i + chunkSize);
 			const hash = crypto.createHash('sha256').update(chunkContent, 'utf8').digest('hex');
 			const id = `${filePath}#L${startLine}-L${endLine}:${hash.substring(0, 8)}`;
+			const symbols: string[] = [];
+			const symMatches = chunkContent.matchAll(/(?:function|def|fn|class|interface|struct)\s+([a-zA-Z0-9_$]+)/g);
+			for (const match of symMatches) {
+				symbols.push(match[1]);
+			}
 			chunks.push({
 				id,
 				filePath,
@@ -272,50 +300,169 @@ export class FloatVectorEngine {
 				startLine,
 				endLine,
 				content: chunkContent,
-				hash
+				hash,
+				symbols,
+				vector: this.embedText(`${chunkContent} ${symbols.join(' ')}`)
 			});
 		}
 		return chunks;
 	}
 
-	public async addChunks(chunks: IFloatSemanticChunk[], signal?: AbortSignal): Promise<void> {
+	public async addChunks(chunks: (IFloatCodeChunk | IFloatSemanticChunk)[], signal?: AbortSignal): Promise<void> {
 		for (const chunk of chunks) {
-			this._chunks.set(chunk.id, chunk);
-			// BM25 indexes full chunk text plus symbol name and docstring
-			const indexableText = `${chunk.filePath} ${chunk.symbolName || ''} ${chunk.docstring || ''}\n${chunk.content}`;
+			this._removeChunkById(chunk.id);
+
+			const symArray: string[] = 'symbols' in chunk && Array.isArray(chunk.symbols)
+				? chunk.symbols
+				: (chunk as IFloatSemanticChunk).symbolName ? [(chunk as IFloatSemanticChunk).symbolName!] : [];
+
+			const stored: any = {
+				...chunk,
+				symbols: symArray,
+				vector: chunk.vector ? [...chunk.vector] : this.embedText(`${chunk.content} ${symArray.join(' ')}`)
+			};
+
+			const indexedPath = stored.filePath.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+			const tokens = this._tokenize(`${indexedPath} ${stored.content} ${symArray.join(' ')}`);
+			const termFrequencies = new Map<string, number>();
+			for (const token of tokens) {
+				termFrequencies.set(token, (termFrequencies.get(token) || 0) + 1);
+			}
+
+			this._chunks.push(stored);
+			this._chunkById.set(stored.id, stored);
+			this._chunkTokens.set(stored.id, tokens);
+			this._docLengths.set(stored.id, tokens.length);
+			this._totalTokens += tokens.length;
+
+			let fileIds = this._fileChunkIds.get(stored.filePath);
+			if (!fileIds) {
+				fileIds = new Set<string>();
+				this._fileChunkIds.set(stored.filePath, fileIds);
+			}
+			fileIds.add(stored.id);
+
+			for (const [token, frequency] of termFrequencies) {
+				let posting = this._invertedIndex.get(token);
+				if (!posting) {
+					posting = new Map<string, number>();
+					this._invertedIndex.set(token, posting);
+				}
+				posting.set(stored.id, frequency);
+			}
+
+			const indexableText = `${chunk.filePath} ${symArray.join(' ')}\n${chunk.content}`;
 			this._bm25.addDocument(chunk.id, indexableText);
 		}
 
-		// If embedding provider is available, batch embed
 		if (this._embeddingProvider) {
 			try {
 				const available = await this._embeddingProvider.isAvailable();
 				if (available) {
-					const textsToEmbed = chunks.map(c => `${c.symbolName || ''}\n${c.content.substring(0, 500)}`);
+					const textsToEmbed = chunks.map(c => {
+						const sym = 'symbols' in c ? c.symbols.join(' ') : (c as any).symbolName || '';
+						return `${sym}\n${c.content.substring(0, 500)}`;
+					});
 					const vectors = await this._embeddingProvider.embedBatch(textsToEmbed, signal);
 					for (let i = 0; i < chunks.length; i++) {
 						this._chunkVectors.set(chunks[i].id, vectors[i]);
 					}
 				}
 			} catch (err) {
-				// Retain lexical index; do NOT fabricate embeddings
 				console.warn('[FloatVectorEngine] Embedding provider failed; retaining BM25 and symbol search:', err);
 			}
 		}
 	}
 
 	public clearFileChunks(filePath: string): void {
-		for (const [id, chunk] of this._chunks.entries()) {
-			if (chunk.filePath === filePath) {
-				this._chunks.delete(id);
-				this._chunkVectors.delete(id);
-				this._bm25.removeDocument(id);
-			}
+		const ids = this._fileChunkIds.get(filePath);
+		if (!ids) {
+			return;
+		}
+		for (const id of Array.from(ids)) {
+			this._removeChunkById(id);
 		}
 	}
 
+	private _removeChunkById(id: string): void {
+		const existing = this._chunkById.get(id);
+		if (!existing) {
+			return;
+		}
+
+		for (const token of new Set(this._chunkTokens.get(id) ?? [])) {
+			const posting = this._invertedIndex.get(token);
+			posting?.delete(id);
+			if (posting?.size === 0) {
+				this._invertedIndex.delete(token);
+			}
+		}
+		this._totalTokens = Math.max(0, this._totalTokens - (this._docLengths.get(id) ?? 0));
+		this._chunkTokens.delete(id);
+		this._docLengths.delete(id);
+		this._chunkById.delete(id);
+		this._chunkVectors.delete(id);
+		this._bm25.removeDocument(id);
+
+		const fileIds = this._fileChunkIds.get(existing.filePath);
+		fileIds?.delete(id);
+		if (fileIds?.size === 0) {
+			this._fileChunkIds.delete(existing.filePath);
+		}
+
+		const index = this._chunks.findIndex(chunk => chunk.id === id);
+		if (index >= 0) {
+			this._chunks.splice(index, 1);
+		}
+	}
+
+	private _tokenize(text: string): string[] {
+		const identifiers = text.match(/[A-Za-z_$][A-Za-z0-9_$]*|\d+/g) ?? [];
+		const tokens: string[] = [];
+		for (const identifier of identifiers) {
+			const whole = identifier.toLowerCase();
+			if (whole.length >= 2) {
+				tokens.push(whole);
+			}
+			const parts = identifier
+				.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+				.split(/[_$\s]+/)
+				.map(part => part.toLowerCase())
+				.filter(part => part.length >= 2);
+			tokens.push(...parts);
+		}
+		return tokens;
+	}
+
+	public embedText(text: string): number[] {
+		// Deterministic hash-projection features. These are not learned embeddings.
+		const vector = new Float64Array(this._vectorDim);
+		const tokens = this._tokenize(text);
+		for (const token of tokens) {
+			const hash = crypto.createHash('sha256').update(token, 'utf8').digest();
+			for (let i = 0; i < 16; i++) {
+				const index = (hash[i] * 31 + hash[i + 16]) % this._vectorDim;
+				vector[index] += 1;
+			}
+		}
+
+		let norm = 0;
+		for (let i = 0; i < this._vectorDim; i++) {
+			norm += vector[i] * vector[i];
+		}
+		norm = Math.sqrt(norm);
+		if (norm > 0) {
+			for (let i = 0; i < this._vectorDim; i++) {
+				vector[i] /= norm;
+			}
+		}
+		return Array.from(vector);
+	}
+
 	public cosineSimilarity(a: number[], b: number[]): number {
-		if (!a || !b || a.length !== b.length) return 0;
+		if (a.length !== b.length || a.length !== this._vectorDim) {
+			return 0;
+		}
 		let dot = 0;
 		let normA = 0;
 		let normB = 0;
@@ -328,60 +475,239 @@ export class FloatVectorEngine {
 		return Math.max(0, Math.min(1, dot / (Math.sqrt(normA) * Math.sqrt(normB))));
 	}
 
-	public search(query: string, topK: number = 5): { chunk: any; score: number; matchType: 'vector' | 'lexical' | 'hybrid' }[] {
-		const queryLower = query.toLowerCase();
-		const queryTokens = this._bm25.tokenize(query);
-		const bm25RawScores = this._bm25.search(query);
-		let maxBm25 = 0;
-		for (const s of bm25RawScores.values()) {
-			if (s > maxBm25) maxBm25 = s;
+	private _computeBM25Scores(queryTokens: string[]): Map<string, number> {
+		const scores = new Map<string, number>();
+		const documentCount = this._chunks.length;
+		if (documentCount === 0 || queryTokens.length === 0) {
+			return scores;
+		}
+		const averageDocumentLength = this._totalTokens / documentCount;
+		if (averageDocumentLength <= 0) {
+			return scores;
 		}
 
-		const scored: { chunk: any; score: number; matchType: 'vector' | 'lexical' | 'hybrid' }[] = [];
-		for (const [id, chunk] of this._chunks.entries()) {
-			const rawBm25 = bm25RawScores.get(id) || 0;
-			const bm25Score = maxBm25 > 0 ? rawBm25 / maxBm25 : 0;
+		for (const token of new Set(queryTokens)) {
+			const posting = this._invertedIndex.get(token);
+			if (!posting || posting.size === 0) {
+				continue;
+			}
+			const documentFrequency = posting.size;
+			const inverseDocumentFrequency = Math.log(
+				1 + (documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5)
+			);
+			for (const [chunkId, frequency] of posting) {
+				const documentLength = this._docLengths.get(chunkId) ?? averageDocumentLength;
+				const denominator = frequency + BM25_K1 * (
+					1 - BM25_B + BM25_B * (documentLength / averageDocumentLength)
+				);
+				const termScore = inverseDocumentFrequency * (
+					(frequency * (BM25_K1 + 1)) / denominator
+				);
+				scores.set(chunkId, (scores.get(chunkId) ?? 0) + termScore);
+			}
+		}
+		return scores;
+	}
 
-			let symbolMatchScore = 0;
-			if (chunk.symbolName) {
-				const symLower = chunk.symbolName.toLowerCase();
-				if (queryLower.includes(symLower) || queryTokens.includes(symLower)) {
-					symbolMatchScore = 1.0;
-				} else if (queryTokens.some(t => symLower.includes(t) || (t.length >= 5 && symLower.startsWith(t.substring(0, 5))))) {
-					symbolMatchScore = 0.7;
+	public search(query: string, topK: number = 5): IFloatSearchResult[] {
+		const normalizedQuery = query.trim().toLowerCase();
+		if (!normalizedQuery || this._chunks.length === 0) {
+			this._lastSearchDiagnostics = {
+				indexedChunks: this._chunks.length,
+				candidateChunks: 0,
+				scoredChunks: 0,
+				queryTokenCount: 0
+			};
+			return [];
+		}
+		const limit = Number.isFinite(topK) ? Math.max(1, Math.min(50, Math.trunc(topK))) : 5;
+		const queryTokens = this._tokenize(query);
+		if (queryTokens.length === 0) {
+			this._lastSearchDiagnostics = {
+				indexedChunks: this._chunks.length,
+				candidateChunks: 0,
+				scoredChunks: 0,
+				queryTokenCount: 0
+			};
+			return [];
+		}
+		// Keep complete identifiers separate from prose tokens. A natural-language
+		// request can contain an exact symbol plus several descriptive words;
+		// comparing the symbol against the entire normalized sentence loses that
+		// high-confidence signal.
+		const queryIdentifiers = new Set(
+			(query.match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? [])
+				.map(identifier => identifier.toLowerCase().replace(/[^a-z0-9_$]/g, ''))
+		);
+		const queryVector = this.embedText(query);
+		const bm25Scores = this._computeBM25Scores(queryTokens);
+		const candidateIds = Array.from(bm25Scores.keys());
+		this._lastSearchDiagnostics = {
+			indexedChunks: this._chunks.length,
+			candidateChunks: candidateIds.length,
+			scoredChunks: 0,
+			queryTokenCount: new Set(queryTokens).size
+		};
+		if (candidateIds.length === 0) {
+			return [];
+		}
+		const queryIdentifier = normalizedQuery.replace(/[^a-z0-9_$]/g, '');
+		const ranked: IFloatSearchResult[] = [];
+
+		// Candidate generation uses the inverted BM25 index. The expensive vector,
+		// symbol and MMR scoring stages now evaluate only documents with a lexical,
+		// symbol or path token hit, rather than scanning the complete workspace.
+		for (const chunkId of candidateIds) {
+			const chunk = this._chunkById.get(chunkId);
+			if (!chunk) {
+				continue;
+			}
+			this._lastSearchDiagnostics.scoredChunks++;
+			const vectorScore = chunk.vector ? this.cosineSimilarity(queryVector, chunk.vector) : 0;
+			const bm25Score = bm25Scores.get(chunk.id) ?? 0;
+			const normalizedBM25 = bm25Score / (bm25Score + 1.5);
+
+			let symbolBoost = 0;
+			for (const symbol of chunk.symbols) {
+				const normalizedSymbol = symbol.toLowerCase().replace(/[^a-z0-9_$]/g, '');
+				if (normalizedSymbol && queryIdentifiers.has(normalizedSymbol)) {
+					// Exact identifier match remains strong even inside a prose query.
+					symbolBoost = Math.max(symbolBoost, 0.36);
+				} else if (
+					normalizedSymbol &&
+					(normalizedSymbol === queryIdentifier ||
+						queryTokens.some(token => normalizedSymbol === token) ||
+						normalizedSymbol.includes(queryIdentifier) ||
+						queryIdentifier.includes(normalizedSymbol))
+				) {
+					symbolBoost = Math.max(symbolBoost, 0.14);
 				}
 			}
 
-			let contentMatch = 0;
-			const contentLower = chunk.content.toLowerCase();
-			for (const t of queryTokens) {
-				if (contentLower.includes(t)) {
-					contentMatch += 0.25;
-				} else if (t.length >= 5 && contentLower.includes(t.substring(0, 5))) {
-					contentMatch += 0.15;
-				}
-			}
-			contentMatch = Math.min(1.0, contentMatch);
+			// Split camelCase path components before _tokenize lowercases identifiers.
+			const pathTokens = this._tokenize(chunk.filePath.replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
+			const uniqueQueryTokens = new Set(queryTokens);
+			const pathMatches = queryTokens.filter(token => pathTokens.includes(token)).length;
+			const pathBoost = uniqueQueryTokens.size > 0
+				? (pathMatches / uniqueQueryTokens.size) * 0.10
+				: 0;
 
-			const score = (bm25Score * 0.4) + (contentMatch * 0.3) + (symbolMatchScore * 0.3);
-			if (score > 0.05 || bm25Score > 0.1 || symbolMatchScore > 0 || contentMatch > 0.2) {
-				scored.push({
-					chunk: {
-						id: chunk.id,
-						filePath: chunk.filePath,
-						startLine: chunk.startLine,
-						endLine: chunk.endLine,
-						content: chunk.content,
-						symbols: chunk.symbolName ? [chunk.symbolName] : []
-					},
-					score: Math.round(score * 1000) / 1000,
-					matchType: symbolMatchScore > bm25Score ? 'lexical' : 'hybrid'
-				});
+			// BM25 is the main lexical signal; hash projection is a secondary signal.
+			const score = (normalizedBM25 * 0.58) + (vectorScore * 0.22) + symbolBoost + pathBoost;
+			if (score <= 0.025) {
+				continue;
 			}
+
+			ranked.push({
+				chunk,
+				score,
+				matchType: bm25Score > 0 && vectorScore > 0.02
+					? 'hybrid'
+					: bm25Score > 0 || symbolBoost > 0 || pathBoost > 0
+						? 'lexical'
+						: 'vector'
+			});
 		}
 
-		scored.sort((a, b) => b.score - a.score);
-		return scored.slice(0, topK);
+		ranked.sort((a, b) => b.score - a.score);
+		return this._applyMMR(ranked, limit);
+	}
+
+	public getLastSearchDiagnostics(): IFloatSearchDiagnostics {
+		return { ...this._lastSearchDiagnostics };
+	}
+
+	private _applyMMR(
+		ranked: IFloatSearchResult[],
+		limit: number,
+		lambda: number = 0.72
+	): IFloatSearchResult[] {
+		if (ranked.length <= limit) {
+			return ranked;
+		}
+		const selected: IFloatSearchResult[] = [];
+		const remaining = [...ranked];
+
+		while (selected.length < limit && remaining.length > 0) {
+			let bestIndex = 0;
+			let bestMMRScore = -Infinity;
+			for (let i = 0; i < remaining.length; i++) {
+				const candidate = remaining[i];
+				let redundancy = 0;
+				for (const chosen of selected) {
+					if (candidate.chunk.filePath === chosen.chunk.filePath) {
+						redundancy = 1;
+						continue;
+					}
+					if (candidate.chunk.vector && chosen.chunk.vector) {
+						redundancy = Math.max(
+							redundancy,
+							this.cosineSimilarity(candidate.chunk.vector, chosen.chunk.vector)
+						);
+					}
+				}
+				const mmrScore = lambda * candidate.score - (1 - lambda) * redundancy;
+				if (mmrScore > bestMMRScore) {
+					bestMMRScore = mmrScore;
+					bestIndex = i;
+				}
+			}
+			selected.push(remaining[bestIndex]);
+			remaining.splice(bestIndex, 1);
+		}
+		return selected;
+	}
+
+	public getChunks(): IFloatCodeChunk[] {
+		return this._chunks.map(chunk => ({
+			...chunk,
+			symbols: [...chunk.symbols],
+			vector: chunk.vector ? [...chunk.vector] : undefined
+		}));
+	}
+
+	public restoreChunks(chunks: IFloatCodeChunk[]): void {
+		const seenIds = new Set<string>();
+		const valid: IFloatCodeChunk[] = [];
+		for (const chunk of chunks) {
+			if (
+				!chunk ||
+				typeof chunk.id !== 'string' ||
+				!chunk.id ||
+				typeof chunk.filePath !== 'string' ||
+				!chunk.filePath ||
+				!Number.isInteger(chunk.startLine) || chunk.startLine < 1 ||
+				!Number.isInteger(chunk.endLine) || chunk.endLine < chunk.startLine ||
+				typeof chunk.content !== 'string' ||
+				!Array.isArray(chunk.symbols) ||
+				!chunk.symbols.every(symbol => typeof symbol === 'string') ||
+				(chunk.vector !== undefined && (
+					!Array.isArray(chunk.vector) ||
+					chunk.vector.length !== this._vectorDim ||
+					!chunk.vector.every(Number.isFinite)
+				))
+			) {
+				throw new Error('FLOAT semantic index contains an invalid stored vector chunk.');
+			}
+			if (seenIds.has(chunk.id)) {
+				throw new Error('FLOAT semantic index contains duplicate vector chunk IDs.');
+			}
+			seenIds.add(chunk.id);
+			valid.push({
+				...chunk,
+				symbols: [...chunk.symbols],
+				vector: chunk.vector ? [...chunk.vector] : undefined
+			});
+		}
+
+		this._chunks.length = 0;
+		this._chunkById.clear();
+		this._fileChunkIds.clear();
+		this._chunkTokens.clear();
+		this._docLengths.clear();
+		this._invertedIndex.clear();
+		this._totalTokens = 0;
+		this.addChunks(valid);
 	}
 
 	public async searchHybrid(query: string, options: IFloatSearchOptions = {}): Promise<IFloatHybridSearchResult[]> {
@@ -391,7 +717,7 @@ export class FloatVectorEngine {
 
 		// 1. Candidate Filtering
 		const candidateIds = new Set<string>();
-		for (const [id, chunk] of this._chunks.entries()) {
+		for (const [id, chunk] of this._chunkById.entries()) {
 			if (options.languageFilter && chunk.language !== options.languageFilter) continue;
 			if (options.pathFilter && !chunk.filePath.toLowerCase().includes(options.pathFilter.toLowerCase())) continue;
 			candidateIds.add(id);
@@ -420,7 +746,7 @@ export class FloatVectorEngine {
 		const scoredResults: IFloatHybridSearchResult[] = [];
 
 		for (const id of candidateIds) {
-			const chunk = this._chunks.get(id)!;
+			const chunk = this._chunkById.get(id)!;
 
 			// Normalized BM25 score (0 to 1)
 			const rawBm25 = bm25RawScores.get(id) || 0;
@@ -515,10 +841,10 @@ export class FloatVectorEngine {
 	}
 
 	public get totalChunks(): number {
-		return this._chunks.size;
+		return this._chunkById.size;
 	}
 
 	public getAllChunks(): IFloatSemanticChunk[] {
-		return Array.from(this._chunks.values());
+		return Array.from(this._chunkById.values()) as any;
 	}
 }

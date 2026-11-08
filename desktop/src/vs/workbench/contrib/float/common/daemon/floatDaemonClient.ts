@@ -43,6 +43,7 @@ export class FloatDaemonClient extends Disposable {
 			onChunk: (chunk: any) => void;
 			onEnd: (summary: any) => void;
 			onError: (err: any) => void;
+			timer: NodeJS.Timeout;
 		}
 	>();
 
@@ -90,10 +91,15 @@ export class FloatDaemonClient extends Disposable {
 			let receiveBuffer = Buffer.alloc(0);
 
 			socket.on('data', (data: Buffer) => {
-				receiveBuffer = Buffer.concat([receiveBuffer, data]);
-				receiveBuffer = FloatIpcFramer.decodeStream(receiveBuffer, (message: FloatIpcMessage) => {
-					this._routeIncomingMessage(message);
-				});
+				try {
+					receiveBuffer = Buffer.concat([receiveBuffer, data]);
+					receiveBuffer = FloatIpcFramer.decodeStream(receiveBuffer, (message: FloatIpcMessage) => {
+						this._routeIncomingMessage(message);
+					});
+				} catch (error) {
+					this._rejectAllPending(error instanceof Error ? error : new Error(String(error)));
+					socket.destroy();
+				}
 			});
 
 			socket.on('close', () => {
@@ -125,6 +131,20 @@ export class FloatDaemonClient extends Disposable {
 				} else {
 					pending.resolve(res.result);
 				}
+			} else {
+				// A server-side error or ordinary response may terminate a request
+				// that the caller started through stream(). Always release its
+				// listener and notify the caller instead of leaking the entry.
+				const stream = this._streamingListeners.get(res.id);
+				if (stream) {
+					clearTimeout(stream.timer);
+					this._streamingListeners.delete(res.id);
+					if (res.error) {
+						stream.onError(new Error(res.error.message));
+					} else {
+						stream.onEnd(res.result);
+					}
+				}
 			}
 		} else if (message.type === 'stream_chunk') {
 			const chunk = message as IFloatIpcStreamChunk;
@@ -136,6 +156,7 @@ export class FloatDaemonClient extends Disposable {
 			const end = message as IFloatIpcStreamEnd;
 			const stream = this._streamingListeners.get(end.id);
 			if (stream) {
+				clearTimeout(stream.timer);
 				this._streamingListeners.delete(end.id);
 				stream.onEnd(end.summary);
 			}
@@ -173,10 +194,14 @@ export class FloatDaemonClient extends Disposable {
 			onChunk: (chunk: any) => void;
 			onEnd: (summary: any) => void;
 			onError: (err: any) => void;
-		}
+		},
+		timeoutMs: number = 30_000
 	): Promise<void> {
 		if (!this._isConnected || !this._socket) {
 			throw new Error('FLOAT Daemon client is not connected');
+		}
+		if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
+			throw new Error('FLOAT Daemon stream timeout must be between 1 and 120000 ms.');
 		}
 
 		const id = `stream-${++this._requestCounter}-${Date.now()}`;
@@ -187,8 +212,33 @@ export class FloatDaemonClient extends Disposable {
 			params
 		};
 
-		this._streamingListeners.set(id, callbacks);
-		this._socket.write(FloatIpcFramer.encode(request));
+		const timer = setTimeout(() => {
+			const stream = this._streamingListeners.get(id);
+			if (!stream) {
+				return;
+			}
+			this._streamingListeners.delete(id);
+			stream.onError(new Error(`FLOAT Daemon stream timed out for method: ${method}`));
+		}, timeoutMs);
+		this._streamingListeners.set(id, { ...callbacks, timer });
+
+		try {
+			this._socket.write(FloatIpcFramer.encode(request), error => {
+				if (!error) {
+					return;
+				}
+				const stream = this._streamingListeners.get(id);
+				if (stream) {
+					clearTimeout(stream.timer);
+					this._streamingListeners.delete(id);
+					stream.onError(error);
+				}
+			});
+		} catch (error) {
+			clearTimeout(timer);
+			this._streamingListeners.delete(id);
+			throw error;
+		}
 	}
 
 	public async createCowShadowWorkspace(sourceRoot: string, sessionId?: string): Promise<any> {
@@ -287,6 +337,7 @@ export class FloatDaemonClient extends Disposable {
 		this._pendingRequests.clear();
 
 		for (const [id, stream] of this._streamingListeners.entries()) {
+			clearTimeout(stream.timer);
 			stream.onError(err);
 		}
 		this._streamingListeners.clear();

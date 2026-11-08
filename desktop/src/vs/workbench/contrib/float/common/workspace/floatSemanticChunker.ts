@@ -80,64 +80,130 @@ export class FloatSemanticChunker {
 
 		let chunkIndex = 0;
 
-		const visitNode = (node: ts.Node, containerName?: string) => {
+		const pushChunk = (
+			name: string,
+			kind: NonNullable<ISemanticCodeChunk['symbolKind']>,
+			node: ts.Node,
+			containerName?: string,
+			contentOverride?: string
+		): void => {
+			const startPosition = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+			const endPosition = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
+			const nodeContent = contentOverride ?? node.getText(sourceFile);
+			chunks.push({
+				id: `${filePath}#${name}-${++chunkIndex}`,
+				filePath,
+				symbolName: name,
+				symbolKind: kind,
+				containerName,
+				startLine: startPosition.line + 1,
+				endLine: endPosition.line + 1,
+				content: nodeContent,
+				tokens: tokenizeCode(`${name} ${containerName || ''} ${nodeContent}`)
+			});
+		};
+
+		const visitNode = (node: ts.Node, containerName?: string): void => {
+			// A single VariableStatement may declare several independent symbols.
+			// Index each identifier separately and classify callable initializers as functions.
+			if (ts.isVariableStatement(node)) {
+				const modifiers = node.modifiers?.map(modifier => modifier.getText(sourceFile)).join(' ') ?? '';
+				const declarationKeyword = node.declarationList.flags & ts.NodeFlags.Const
+					? 'const'
+					: node.declarationList.flags & ts.NodeFlags.Let
+						? 'let'
+						: 'var';
+
+				for (const declaration of node.declarationList.declarations) {
+					if (!ts.isIdentifier(declaration.name)) {
+						continue;
+					}
+					if (!declaration.initializer && !modifiers.includes('export')) {
+						continue;
+					}
+
+					const name = declaration.name.text;
+					const initializer = declaration.initializer;
+					let kind: ISemanticCodeChunk['symbolKind'] = 'variable';
+					if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) {
+						kind = 'function';
+					} else if (initializer && ts.isClassExpression(initializer)) {
+						kind = 'class';
+					}
+
+					const declarationText = `${modifiers ? modifiers + ' ' : ''}${declarationKeyword} ${declaration.getText(sourceFile)};`;
+					pushChunk(name, kind, declaration, containerName, declarationText);
+
+					// Class expressions assigned to variables also expose their methods as
+					// child chunks, using the variable name as their containing symbol.
+					if (initializer && ts.isClassExpression(initializer)) {
+						ts.forEachChild(initializer, child => visitNode(child, name));
+					}
+				}
+				return;
+			}
+
 			let name: string | undefined;
 			let kind: ISemanticCodeChunk['symbolKind'] | undefined;
+			let recurseWithContainer = false;
 
-			if (ts.isFunctionDeclaration(node) && node.name) {
-				name = node.name.text;
+			if (ts.isFunctionDeclaration(node)) {
+				name = node.name?.text ?? (node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.DefaultKeyword) ? 'default' : undefined);
 				kind = 'function';
-			} else if (ts.isClassDeclaration(node) && node.name) {
-				name = node.name.text;
+			} else if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+				name = node.name?.text ?? (ts.isClassDeclaration(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.DefaultKeyword) ? 'default' : undefined);
 				kind = 'class';
+				recurseWithContainer = true;
 			} else if (ts.isInterfaceDeclaration(node)) {
 				name = node.name.text;
 				kind = 'interface';
+				recurseWithContainer = true;
 			} else if (ts.isTypeAliasDeclaration(node)) {
 				name = node.name.text;
 				kind = 'type';
 			} else if (ts.isEnumDeclaration(node)) {
 				name = node.name.text;
 				kind = 'enum';
-			} else if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) {
-				name = node.name.text;
+			} else if (
+				ts.isMethodDeclaration(node) ||
+				ts.isMethodSignature(node) ||
+				ts.isConstructorDeclaration(node) ||
+				ts.isGetAccessorDeclaration(node) ||
+				ts.isSetAccessorDeclaration(node)
+			) {
+				name = ts.isConstructorDeclaration(node)
+					? 'constructor'
+					: node.name && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) || ts.isNumericLiteral(node.name))
+						? node.name.text
+						: undefined;
 				kind = 'method';
-			} else if (ts.isVariableStatement(node)) {
-				const isExported = node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword);
-				for (const decl of node.declarationList.declarations) {
-					if (ts.isIdentifier(decl.name) && (isExported || decl.initializer)) {
-						name = decl.name.text;
-						kind = 'variable';
-						break;
-					}
-				}
+			} else if (ts.isPropertyDeclaration(node) && node.initializer &&
+				(ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
+				name = node.name && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))
+					? node.name.text
+					: undefined;
+				kind = 'function';
+			} else if (ts.isModuleDeclaration(node)) {
+				name = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : undefined;
+				kind = 'module';
+				recurseWithContainer = true;
+			} else if (ts.isExportAssignment(node) &&
+				(ts.isArrowFunction(node.expression) || ts.isFunctionExpression(node.expression) || ts.isClassExpression(node.expression))) {
+				name = 'default';
+				kind = ts.isClassExpression(node.expression) ? 'class' : 'function';
 			}
 
 			if (name && kind) {
-				const start = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-				const end = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
-				const nodeContent = node.getText(sourceFile);
-
-				chunks.push({
-					id: `${filePath}#${name}-${++chunkIndex}`,
-					filePath,
-					symbolName: name,
-					symbolKind: kind,
-					containerName,
-					startLine: start.line + 1,
-					endLine: end.line + 1,
-					content: nodeContent,
-					tokens: tokenizeCode(`${name} ${containerName || ''} ${nodeContent}`)
-				});
-
-				// If class, also chunk its methods with containerName
-				if (kind === 'class') {
+				pushChunk(name, kind, node, containerName);
+				if (recurseWithContainer) {
 					ts.forEachChild(node, child => visitNode(child, name));
-					return;
+				} else if (ts.isExportAssignment(node) && ts.isClassExpression(node.expression)) {
+					ts.forEachChild(node.expression, child => visitNode(child, name));
 				}
-			} else {
-				ts.forEachChild(node, child => visitNode(child, containerName));
+				return;
 			}
+
+			ts.forEachChild(node, child => visitNode(child, containerName));
 		};
 
 		ts.forEachChild(sourceFile, node => visitNode(node));

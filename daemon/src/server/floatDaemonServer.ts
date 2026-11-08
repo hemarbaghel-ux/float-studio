@@ -18,7 +18,7 @@ import {
 import { FloatShadowDaemon } from '../../../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowDaemon.js';
 import { FloatNextActionSpeculator } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatNextActionSpeculator.js';
 import { FloatVectorIndex } from '../../../desktop/src/vs/workbench/contrib/float/common/workspace/floatVectorIndex.js';
-import { FloatTreeSitterIndexer } from '../indexer/floatTreeSitterIndexer.js';
+import { FloatTreeSitterIndexer, IFloatFileMerkleNode } from '../indexer/floatTreeSitterIndexer.js';
 import { FloatVectorEngine } from '../vector/floatVectorEngine.js';
 import { FloatAstSemanticChunker } from '../chunker/floatAstSemanticChunker.js';
 import { FloatDiskIndexStore } from '../storage/floatDiskIndexStore.js';
@@ -35,6 +35,7 @@ import { FloatDagTaskPlanner } from '../../../desktop/src/vs/workbench/contrib/f
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;
+	storageDir?: string;
 	maxConnections?: number;
 }
 
@@ -43,6 +44,7 @@ export class FloatDaemonServer {
 	private _pipePath: string;
 	private readonly _clients = new Set<net.Socket>();
 	private _isShuttingDown: boolean = false;
+	private readonly _allowSandboxExecution: boolean;
 	private readonly _shadowDaemon: FloatShadowDaemon;
 	private readonly _speculator: FloatNextActionSpeculator;
 	private readonly _indexer: FloatTreeSitterIndexer;
@@ -58,15 +60,19 @@ export class FloatDaemonServer {
 	private readonly _multiDiffEditor: FloatMultiFileSyncDiffEditor;
 	private readonly _terminalAgent: FloatTerminalPtyAgent;
 	private readonly _dagPlanner: FloatDagTaskPlanner;
+	private _indexPersistenceTimer: ReturnType<typeof setTimeout> | undefined;
+	private _indexPersistenceQueue: Promise<void> = Promise.resolve();
+	private _indexDirty = false;
 
 	constructor(options?: IFloatDaemonOptions) {
 		this._pipePath = options?.pipeName || this._resolveDefaultPipePath();
+		this._allowSandboxExecution = options?.allowSandboxExecution === true;
 		this._shadowDaemon = new FloatShadowDaemon();
 		this._speculator = new FloatNextActionSpeculator();
 		this._indexer = new FloatTreeSitterIndexer();
 		this._vectorEngine = new FloatVectorEngine();
 		this._semanticChunker = new FloatAstSemanticChunker(this._indexer);
-		this._diskStore = new FloatDiskIndexStore(path.join(os.tmpdir(), 'float-daemon-index'));
+		this._diskStore = new FloatDiskIndexStore(options?.storageDir || path.join(os.tmpdir(), 'float-daemon-index', String(process.pid)));
 		this._shadowManager = new FloatShadowWorkspaceManager();
 		this._sandboxRunner = new FloatSandboxedProcessRunner();
 		this._diagnosticCollector = new FloatShadowDiagnosticDiffCollector();
@@ -91,7 +97,7 @@ export class FloatDaemonServer {
 	}
 
 	public async start(): Promise<void> {
-		return new Promise<void>((resolve, reject) => {
+		await new Promise<void>((resolve, reject) => {
 			if (process.platform !== 'win32' && fs.existsSync(this._pipePath)) {
 				try {
 					fs.unlinkSync(this._pipePath);
@@ -115,6 +121,108 @@ export class FloatDaemonServer {
 				resolve();
 			});
 		});
+
+		await this._restoreSemanticIndex();
+	}
+
+	private async _restoreSemanticIndex(): Promise<void> {
+		try {
+			const stored = await this._diskStore.loadIndex();
+			if (!stored) {
+				return;
+			}
+			this._vectorEngine.restoreChunks(stored.chunks.filter((chunk): chunk is import('../vector/floatVectorEngine.js').IFloatCodeChunk => 'symbols' in chunk));
+			this._indexer.restoreNodes(stored.nodes);
+			console.info('[FloatDaemonServer] Restored semantic index:', {
+				totalFiles: stored.manifest.totalFiles,
+				totalSymbols: stored.manifest.totalSymbols,
+				totalChunks: stored.manifest.totalChunks
+			});
+		} catch (error) {
+			console.warn('[FloatDaemonServer] Cached semantic index could not be restored; workspace scan will rebuild it:', error);
+		}
+	}
+
+	private _scheduleIndexPersistence(): void {
+		this._indexDirty = true;
+		if (this._indexPersistenceTimer) {
+			clearTimeout(this._indexPersistenceTimer);
+		}
+		this._indexPersistenceTimer = setTimeout(() => {
+			this._indexPersistenceTimer = undefined;
+			this._enqueueIndexPersistence();
+		}, 750);
+	}
+
+	private _enqueueIndexPersistence(): void {
+		this._indexPersistenceQueue = this._indexPersistenceQueue
+			.catch(error => {
+				console.warn('[FloatDaemonServer] Previous semantic index save failed:', error);
+			})
+			.then(async () => {
+				if (!this._indexDirty) {
+					return;
+				}
+				this._indexDirty = false;
+				const indexedFiles = this._indexer.getIndexedFiles();
+				const nodes = indexedFiles
+					.map(filePath => this._indexer.getFileNode(filePath))
+					.filter((node): node is IFloatFileMerkleNode => !!node);
+				await this._diskStore.saveIndex(nodes, this._vectorEngine.getChunks());
+			})
+			.catch(error => {
+				this._indexDirty = true;
+				console.error('[FloatDaemonServer] Failed to persist semantic index:', error);
+			});
+	}
+
+	private async _flushIndexPersistence(force: boolean = false): Promise<void> {
+		if (force) {
+			this._indexDirty = true;
+		}
+		if (this._indexPersistenceTimer) {
+			clearTimeout(this._indexPersistenceTimer);
+			this._indexPersistenceTimer = undefined;
+		}
+
+		// A transient filesystem error must not silently discard the final
+		// snapshot at shutdown. Retry once, then surface failure to stop().
+		let attempts = 0;
+		while (this._indexDirty && attempts < 2) {
+			attempts++;
+			this._enqueueIndexPersistence();
+			await this._indexPersistenceQueue;
+		}
+
+		if (this._indexPersistenceTimer) {
+			clearTimeout(this._indexPersistenceTimer);
+			this._indexPersistenceTimer = undefined;
+		}
+		if (this._indexDirty) {
+			throw new Error(`FLOAT semantic index snapshot flush failed after ${attempts} attempts.`);
+		}
+	}
+
+	private _resolveWorkspaceRelativePath(value: unknown, operation: string): string {
+		if (typeof value !== 'string' || value.trim().length === 0 || value.length > 2048) {
+			throw new Error(`${operation} requires a non-empty workspace-relative file path.`);
+		}
+		const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '');
+		if (
+			normalized.includes('\0') ||
+			normalized.startsWith('/') ||
+			/^[a-zA-Z]:\//.test(normalized) ||
+			normalized.split('/').some(segment => segment === '..' || segment === '.')
+		) {
+			throw new Error(`${operation} requires a safe workspace-relative file path.`);
+		}
+		return normalized;
+	}
+
+	private _assertSandboxExecutionEnabled(): void {
+		if (!this._allowSandboxExecution) {
+			throw new Error('FLOAT daemon shadow/toolchain operations are disabled until the isolated execution adapter is explicitly enabled.');
+		}
 	}
 
 	private _handleConnection(socket: net.Socket): void {
@@ -122,12 +230,17 @@ export class FloatDaemonServer {
 		let receiveBuffer = Buffer.alloc(0);
 
 		socket.on('data', (data: Buffer) => {
-			receiveBuffer = Buffer.concat([receiveBuffer, data]);
-			receiveBuffer = FloatIpcFramer.decodeStream(receiveBuffer, (message: FloatIpcMessage) => {
-				if (message.type === 'request') {
-					this._handleRequest(socket, message as IFloatIpcRequest);
-				}
-			});
+			try {
+				receiveBuffer = Buffer.concat([receiveBuffer, data]);
+				receiveBuffer = FloatIpcFramer.decodeStream(receiveBuffer, (message: FloatIpcMessage) => {
+					if (message.type === 'request') {
+						this._handleRequest(socket, message as IFloatIpcRequest);
+					}
+				});
+			} catch (error) {
+				console.warn('[FloatDaemonServer] Closing connection after invalid IPC frame:', error);
+				socket.destroy();
+			}
 		});
 
 		socket.on('close', () => {
@@ -162,6 +275,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'create_shadow_sandbox': {
+					this._assertSandboxExecutionEnabled();
 					const t0 = Date.now();
 					const sandboxRoot = await this._shadowDaemon.createShadowSandbox(params.sessionId, params.sourceWorkspaceRoot);
 					const res: IFloatIpcResponse = {
@@ -178,6 +292,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'run_shadow_toolchain': {
+					this._assertSandboxExecutionEnabled();
 					const fullCommand = Array.isArray(params.args) && params.args.length > 0
 						? `${params.command} ${params.args.join(' ')}`
 						: params.command;
@@ -262,11 +377,23 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_index_file': {
-					const { filePath, content } = params;
+					if (!params || typeof params !== 'object') {
+						throw new Error('semantic_index_file requires a filePath and text content.');
+					}
+					const rawPath = params.filePath;
+					const filePath = this._resolveWorkspaceRelativePath(rawPath, 'semantic_index_file');
+					const content = params.content;
+					if (typeof content !== 'string') {
+						throw new Error('semantic_index_file content must be text.');
+					}
+					if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) {
+						throw new Error('semantic_index_file content exceeds the 2 MiB indexing limit.');
+					}
 					const indexRes = await this._indexer.indexFileAsync(filePath, content);
 					const chunks = await this._semanticChunker.chunkFileAsync(filePath, content);
 					this._vectorEngine.clearFileChunks(filePath);
 					await this._vectorEngine.addChunks(chunks);
+					this._scheduleIndexPersistence();
 					const res: IFloatIpcResponse = {
 						id,
 						type: 'response',
@@ -281,10 +408,43 @@ export class FloatDaemonServer {
 					break;
 				}
 
+				case 'semantic_remove_file': {
+					const filePath = this._resolveWorkspaceRelativePath(params?.filePath, 'semantic_remove_file');
+					this._indexer.removeFile(filePath);
+					this._vectorEngine.clearFileChunks(filePath);
+					this._scheduleIndexPersistence();
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: { removed: true, filePath }
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
+				case 'semantic_list_indexed_files': {
+					const files = this._indexer.getIndexedFiles();
+					const res: IFloatIpcResponse = {
+						id,
+						type: 'response',
+						result: { files, totalFiles: files.length }
+					};
+					socket.write(FloatIpcFramer.encode(res));
+					break;
+				}
+
 				case 'semantic_search': {
-					const { query, topK, languageFilter, pathFilter, activeFile } = params;
+					if (!params || typeof params !== 'object' || typeof params.query !== 'string' || params.query.length > 2_048) {
+						throw new Error('semantic_search query must be text of at most 2048 characters.');
+					}
+					const query = params.query as string;
+					const topK = params.topK === undefined ? 5 : params.topK;
+					if (!Number.isSafeInteger(topK) || topK < 1 || topK > 50) {
+						throw new Error('semantic_search topK must be an integer between 1 and 50.');
+					}
+					const { languageFilter, pathFilter, activeFile } = params;
 					const results = await this._vectorEngine.searchHybrid(query, {
-						topK: topK || 5,
+						topK,
 						languageFilter,
 						pathFilter,
 						activeFile
@@ -315,7 +475,13 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_get_symbols': {
-					const { query } = params;
+					if (params !== undefined && (!params || typeof params !== 'object')) {
+						throw new Error('semantic_get_symbols parameters must be an object.');
+					}
+					const query = params?.query;
+					if (query !== undefined && (typeof query !== 'string' || query.length > 256)) {
+						throw new Error('semantic_get_symbols query must be text of at most 256 characters.');
+					}
 					const syms = query ? this._indexer.findSymbolsByName(query) : this._indexer.getAllSymbols();
 					const res: IFloatIpcResponse = {
 						id,
@@ -337,7 +503,17 @@ export class FloatDaemonServer {
 				}
 
 				case 'semantic_chunk_file': {
-					const { filePath, content } = params;
+					if (!params || typeof params !== 'object') {
+						throw new Error('semantic_chunk_file requires a filePath and text content.');
+					}
+					const filePath = this._resolveWorkspaceRelativePath(params.filePath, 'semantic_chunk_file');
+					const content = params.content;
+					if (typeof content !== 'string') {
+						throw new Error('semantic_chunk_file content must be text.');
+					}
+					if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) {
+						throw new Error('semantic_chunk_file content exceeds the 2 MiB indexing limit.');
+					}
 					const chunks = this._semanticChunker.chunkFile(filePath, content);
 					const res: IFloatIpcResponse = {
 						id,
@@ -364,7 +540,7 @@ export class FloatDaemonServer {
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const indexedFiles = this._indexer.getIndexedFiles();
 					const nodes = indexedFiles.map(f => this._indexer.getFileNode(f)!).filter(Boolean);
-					const chunks = this._vectorEngine.getAllChunks();
+					const chunks = (this._vectorEngine.getAllChunks ? this._vectorEngine.getAllChunks() : this._vectorEngine.getChunks()) as any[];
 					const writeRes = await store.saveIndex(nodes, chunks, {
 						workspaceRoot: params?.workspaceRoot
 					});
@@ -389,10 +565,18 @@ export class FloatDaemonServer {
 					const store = storageDir ? new FloatDiskIndexStore(storageDir) : this._diskStore;
 					const loaded = await store.loadIndex();
 					if (loaded) {
-						for (const node of loaded.nodes) {
-							(this._indexer as any)._fileNodes.set(node.filePath, node);
+						if (this._indexer.restoreNodes) {
+							this._indexer.restoreNodes(loaded.nodes);
+						} else {
+							for (const node of loaded.nodes) {
+								(this._indexer as any)._fileNodes.set(node.filePath, node);
+							}
 						}
-						await this._vectorEngine.addChunks(loaded.chunks);
+						if (this._vectorEngine.restoreChunks) {
+							this._vectorEngine.restoreChunks(loaded.chunks);
+						} else {
+							await this._vectorEngine.addChunks(loaded.chunks);
+						}
 					}
 					const res: IFloatIpcResponse = {
 						id,
@@ -426,6 +610,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'shadow_create_cow_workspace': {
+					this._assertSandboxExecutionEnabled();
 					const { sourceRoot, sessionId } = params;
 					const session = await this._shadowManager.createShadowWorkspace(sourceRoot, sessionId);
 					const res: IFloatIpcResponse = {
@@ -443,6 +628,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'shadow_apply_cow_edits': {
+					this._assertSandboxExecutionEnabled();
 					const { sessionId, relativePath, newContent } = params;
 					await this._shadowManager.applyShadowEdit(sessionId, relativePath, newContent);
 					const res: IFloatIpcResponse = {
@@ -471,6 +657,7 @@ export class FloatDaemonServer {
 				}
 
 				case 'shadow_run_sandboxed_toolchain': {
+					this._assertSandboxExecutionEnabled();
 					const { sessionId, command, args, timeoutMs } = params;
 					const session = this._shadowManager.getSession(sessionId);
 					if (!session) {
@@ -642,6 +829,13 @@ export class FloatDaemonServer {
 
 	public async stop(): Promise<void> {
 		this._isShuttingDown = true;
+		try {
+			await this._flushIndexPersistence();
+		} catch (error) {
+			// Preserve daemon shutdown even when storage is unavailable; the
+			// previously committed generation remains the last known-good cache.
+			console.error('[FloatDaemonServer] Final semantic index flush failed:', error);
+		}
 
 		for (const client of this._clients) {
 			try {

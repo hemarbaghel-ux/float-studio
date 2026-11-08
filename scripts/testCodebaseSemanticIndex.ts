@@ -12,7 +12,7 @@
 import assert from 'node:assert';
 import { FloatMerkleTree } from '../desktop/src/vs/workbench/contrib/float/common/workspace/floatMerkleTree.ts';
 import { FloatSemanticChunker } from '../desktop/src/vs/workbench/contrib/float/common/workspace/floatSemanticChunker.ts';
-import { FloatVectorIndex } from '../desktop/src/vs/workbench/contrib/float/common/workspace/floatVectorIndex.ts';
+import { FloatVectorIndex, IRankedCodeChunk } from '../desktop/src/vs/workbench/contrib/float/common/workspace/floatVectorIndex.ts';
 import { FloatWorkspaceIndexer } from '../desktop/src/vs/workbench/contrib/float/common/workspace/floatWorkspaceIndexer.ts';
 import { FloatContextProvider } from '../desktop/src/vs/workbench/contrib/float/browser/context/floatContextProvider.ts';
 import { FloatBrainService } from '../desktop/src/vs/workbench/contrib/float/common/brain/floatBrainService.ts';
@@ -108,6 +108,39 @@ def load_dataset(path):
 		const pyChunks = FloatSemanticChunker.chunkFile('scripts/pipeline.py', pyCode);
 		assert(pyChunks.some(c => c.symbolName === 'DataPipeline'));
 		assert(pyChunks.some(c => c.symbolName === 'load_dataset'));
+
+		// Additional TSX/TypeScript AST precision: exported arrows, multi-declarators,
+		// default exports, class accessors, class arrow properties and namespace members.
+		const advancedTsx = `
+export const NebulaButton = (label: string) => <button>{label}</button>;
+export const calculateOrbitTax = (amount: number) => amount * 0.1,
+    calculateOrbitNet = (amount: number) => amount * 0.9;
+export default function () { return 'default'; }
+export class SessionVault {
+    constructor(private readonly key: string) {}
+    get activeToken(): string { return this.key; }
+    set activeToken(value: string) { void value; }
+    refreshSession() { return true; }
+    handleEvent = (event: string) => event.length > 0;
+}
+namespace InternalJobs {
+    export function resolveQueueJob(id: string) { return id; }
+}
+`;
+		const advancedChunks = FloatSemanticChunker.chunkFile('src/components/NebulaButton.tsx', advancedTsx);
+		const advancedSymbol = (name: string) => advancedChunks.find(chunk => chunk.symbolName === name);
+		assert.strictEqual(advancedSymbol('NebulaButton')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('calculateOrbitTax')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('calculateOrbitNet')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('default')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('SessionVault')?.symbolKind, 'class');
+		assert.strictEqual(advancedSymbol('constructor')?.containerName, 'SessionVault');
+		assert.strictEqual(advancedSymbol('activeToken')?.symbolKind, 'method');
+		assert.strictEqual(advancedSymbol('refreshSession')?.containerName, 'SessionVault');
+		assert.strictEqual(advancedSymbol('handleEvent')?.symbolKind, 'function');
+		assert.strictEqual(advancedSymbol('InternalJobs')?.symbolKind, 'module');
+		assert.strictEqual(advancedSymbol('resolveQueueJob')?.containerName, 'InternalJobs');
+
 		console.log('  -> PASS: TypeScript and Python AST symbols accurately chunked with line boundaries');
 	}
 
@@ -165,6 +198,69 @@ def load_dataset(path):
 		const chartResults = vectorIndex.search('renderBarChart');
 		assert.strictEqual(chartResults[0].chunk.symbolName, 'renderBarChart');
 		assert(chartResults[0].signals.includes('exact_symbol'));
+
+
+		// Stable-ID upsert must remove the old BM25 postings and document-length contribution.
+		const maintenanceIndex = new FloatVectorIndex();
+		maintenanceIndex.addChunk({
+			id: 'stable-id',
+			filePath: 'src/old.ts',
+			symbolName: 'legacyCredentialLookup',
+			symbolKind: 'function',
+			startLine: 1,
+			endLine: 3,
+			content: 'export function legacyCredentialLookup() {}',
+			tokens: ['legacycredential', 'lookup', 'credential', 'credential']
+		});
+		maintenanceIndex.addChunk({
+			id: 'stable-id',
+			filePath: 'src/new.ts',
+			symbolName: 'freshWorkspaceResolver',
+			symbolKind: 'function',
+			startLine: 1,
+			endLine: 3,
+			content: 'export function freshWorkspaceResolver() {}',
+			tokens: ['freshworkspace', 'resolver', 'workspace']
+		});
+		assert.strictEqual(maintenanceIndex.chunkCount, 1);
+		assert.strictEqual(maintenanceIndex.search('legacycredential', 10).length, 0, 'replaced chunk must not retain stale BM25 terms');
+		assert.strictEqual(maintenanceIndex.search('freshworkspace', 10)[0]?.chunk.filePath, 'src/new.ts');
+		maintenanceIndex.removeChunksForFile('src/old.ts');
+		assert.strictEqual(maintenanceIndex.chunkCount, 1, 'removing the old file must not remove the replacement chunk');
+		maintenanceIndex.removeChunksForFile('src/new.ts');
+		assert.strictEqual(maintenanceIndex.chunkCount, 0);
+
+		// MMR must normalize by the highest candidate score, otherwise large raw
+		// relevance scores can overwhelm its redundancy penalty.
+		const mmrIndex = new FloatVectorIndex();
+		const makeChunk = (id: string, filePath: string, symbolName: string, tokens: string[]) => ({
+			id, filePath, symbolName, symbolKind: 'function' as const,
+			startLine: 1, endLine: 3, content: 'export function ' + symbolName + '() {}', tokens
+		});
+		const duplicateA = makeChunk('dup-a', 'src/cache.ts', 'cachePrimary', ['cache', 'refresh', 'solar', 'token']);
+		const duplicateB = makeChunk('dup-b', 'src/cache.ts', 'cacheSecondary', ['cache', 'refresh', 'solar', 'token']);
+		const independent = makeChunk('independent', 'src/scheduler.ts', 'solarScheduler', ['schedule', 'planet', 'orbit', 'worker']);
+		mmrIndex.addChunk(duplicateA);
+		mmrIndex.addChunk(duplicateB);
+		mmrIndex.addChunk(independent);
+		const rankedForMmr: IRankedCodeChunk[] = [
+			{ chunk: duplicateA, score: 200, cosineSimilarity: 0.99, bm25Score: 4, signals: [] },
+			{ chunk: duplicateB, score: 195, cosineSimilarity: 0.95, bm25Score: 4, signals: [] },
+			{ chunk: independent, score: 150, cosineSimilarity: 0.8, bm25Score: 3, signals: [] }
+		];
+		const mmrInternals = mmrIndex as unknown as {
+			_applyMMR: (items: IRankedCodeChunk[], queryVector: Float64Array, limit: number, lambda?: number) => IRankedCodeChunk[];
+		};
+		const diversified = mmrInternals._applyMMR(rankedForMmr, new Float64Array(256), 2, 0.7);
+		assert.strictEqual(diversified[0].chunk.id, 'dup-a');
+		assert.strictEqual(diversified[1].chunk.id, 'independent', 'MMR should prefer a less-redundant candidate when normalized relevance is close');
+
+		// Serialized chunks must rebuild BM25 postings after restart.
+		const serializedIndex = new FloatVectorIndex();
+		serializedIndex.addChunk(makeChunk('persisted', 'src/persist.ts', 'persistedHandler', ['persisted', 'handler']));
+		const restoredIndex = new FloatVectorIndex();
+		restoredIndex.deserialize(serializedIndex.serialize());
+		assert.strictEqual(restoredIndex.search('persisted', 5)[0]?.chunk.symbolName, 'persistedHandler');
 
 		console.log('  -> PASS: Multi-signal ranking accurately prioritizes semantic similarity and exact symbols');
 	}

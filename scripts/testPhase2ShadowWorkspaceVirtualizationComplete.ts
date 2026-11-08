@@ -201,7 +201,9 @@ Traceback (most recent call last):
 		? `\\\\.\\pipe\\float-phase2-test-${Date.now()}`
 		: path.join(os.tmpdir(), `float-phase2-test-${Date.now()}.sock`);
 
-	const daemonServer = new FloatDaemonServer({ pipeName });
+	// This is an isolated legacy integration fixture. Production daemon workers keep
+		// allowSandboxExecution disabled and expose none of these shadow RPC handlers.
+		const daemonServer = new FloatDaemonServer({ pipeName, allowSandboxExecution: true });
 	await daemonServer.start();
 	console.log(`[DaemonServer] Running on pipe: ${pipeName}`);
 

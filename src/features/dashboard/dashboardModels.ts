@@ -3,13 +3,13 @@ import { VERIFIED_MODELS } from '../../data/verifiedModels';
 
 /** UI model cards are derived from the same catalog used by the server router. */
 export const DASHBOARD_MODELS: AIModel[] = VERIFIED_MODELS
-  .filter((model) => model.id === 'gpt-6-astra' || model.id === 'gpt-6.1-sol')
+  .filter((model) => ['gpt-6-astra', 'gpt-6.1-sol', 'gemini-3.8-flash'].includes(model.id))
   .map((model) => ({
     id: model.id,
     exactModelId: model.exactModelId,
     apiModelId: model.upstreamModelId || model.exactModelId,
     providerId: model.providerId,
-    provider: 'OpenAI',
+    provider: model.providerId === 'google' ? 'Google Gemini' : 'OpenAI',
     displayName: model.displayName,
     shortName: model.displayName.replace(' Flagship Coding', '').replace(' Deep Reasoning', ''),
     family: model.family,

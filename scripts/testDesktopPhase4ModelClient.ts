@@ -20,7 +20,7 @@ import http from 'http';
 import { AddressInfo } from 'net';
 import { FloatModelClient } from '../desktop/src/vs/workbench/contrib/float/common/model-runtime/floatModelClient.js';
 import { FloatAuthService } from '../desktop/src/vs/workbench/contrib/float/common/auth/floatAuthService.js';
-import { FLOAT_MODELS, getFloatModel, getDefaultFloatModel } from '../desktop/src/vs/workbench/contrib/float/common/model-runtime/floatModelRegistry.js';
+import { FLOAT_MODELS, getFloatModel, getDefaultFloatModel, calculateModelCost } from '../desktop/src/vs/workbench/contrib/float/common/model-runtime/floatModelRegistry.js';
 import { ISecretStorageService } from '../desktop/src/vs/platform/secrets/common/secrets.js';
 
 class MockSecretStorageService implements ISecretStorageService {
@@ -74,7 +74,46 @@ async function runTests() {
     const autoModel = getFloatModel('auto');
     assert.strictEqual(autoModel?.isRoutingAlias, true, 'auto must be flagged as routing alias');
     assert.strictEqual(autoModel?.upstreamModelId, 'gpt-6-astra', 'auto must route to gpt-6-astra');
-    console.log('  -> PASS: Desktop registry perfectly consistent with server models');
+    const geminiPaidCost = calculateModelCost('gemini-3.8-flash', 1_000_000, 1_000_000);
+    assert.strictEqual(geminiPaidCost, 4.5, 'Gemini 3.8 Flash paid-tier estimator must use $0.75 input + $3.75 output per 1M tokens');
+    console.log('  -> PASS: Desktop registry and Gemini paid-tier cost metadata are aligned');
+  }
+
+  // Suite 0.1: Native desktop client preserves the Google model ID through the API boundary.
+  {
+    console.log('[Suite 0.1] Native Gemini model request routing...');
+    let receivedModel: string | undefined;
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        receivedModel = JSON.parse(body).model;
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end('data: {"type":"delta","text":"Gemini desktop route"}\\n\\n');
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const client = new FloatModelClient();
+    client.setEndpoint(`http://127.0.0.1:${port}/api/ai/chat`);
+    let metadata: any = null;
+    await new Promise<void>((resolve, reject) => {
+      client.streamChat(
+        [{ role: 'user', content: 'Verify Gemini desktop route' }],
+        'gemini-3.8-flash',
+        {
+          onChunk: () => {},
+          onError: reject,
+          onComplete: (_text, result) => { metadata = result; resolve(); }
+        }
+      );
+    });
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    assert.strictEqual(receivedModel, 'gemini-3.8-flash', 'Native desktop client must send Gemini 3.8 Flash model ID unchanged');
+    assert.strictEqual(metadata.requestedModelId, 'gemini-3.8-flash');
+    assert.strictEqual(metadata.executedModelId, 'gemini-3.8-flash');
+    assert.strictEqual(metadata.isRoutingAlias, false);
+    console.log('  -> PASS: Native desktop stream sends exact Gemini model ID to FLOAT server');
   }
 
   // Suite 1: Progressive SSE Streaming with Split Frames
@@ -154,6 +193,66 @@ async function runTests() {
     assert.strictEqual(streamMetadata.executedModelId, 'gpt-6.1-sol');
     assert.strictEqual(streamMetadata.isRoutingAlias, false);
     console.log('  -> PASS: Progressive SSE stream, split frame decoding and metadata verified');
+  }
+
+  // Suite 1B: SSE error envelopes and unterminated final frames
+  {
+    console.log('[Suite 1B] SSE Error Events and Final Frame Flush...');
+    const errorServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
+      // Intentionally omit the trailing SSE blank line.
+      res.end('data: {"type":"error","error":"provider quota exhausted"}');
+    });
+    await new Promise<void>(resolve => errorServer.listen(0, '127.0.0.1', () => resolve()));
+    const errorPort = (errorServer.address() as AddressInfo).port;
+    const errorClient = new FloatModelClient();
+    errorClient.setEndpoint(`http://127.0.0.1:${errorPort}/api/ai/chat`);
+    let streamedText = '';
+    let streamError: Error | null = null;
+    let completed = false;
+    await errorClient.streamChat(
+      [{ role: 'user', content: 'Trigger a provider error' }],
+      'gpt-6.1-sol',
+      {
+        onChunk: chunk => { streamedText += chunk; },
+        onError: error => { streamError = error; },
+        onComplete: () => { completed = true; }
+      }
+    );
+    await new Promise<void>(resolve => errorServer.close(() => resolve()));
+    assert.ok(streamError, 'a valid SSE error event must reach onError');
+    assert.match(streamError!.message, /provider quota exhausted/);
+    assert.equal(streamedText, '', 'error JSON must never be surfaced as assistant text');
+    assert.equal(completed, false, 'an SSE error event must not complete successfully');
+
+    const finalServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
+      res.write('data: {"type":"delta","text":"Final answer"}\n\n');
+      // A final done event may arrive without a terminating blank line.
+      res.end('data: {"type":"done","usage":{"totalTokens":7}}');
+    });
+    await new Promise<void>(resolve => finalServer.listen(0, '127.0.0.1', () => resolve()));
+    const finalPort = (finalServer.address() as AddressInfo).port;
+    const finalClient = new FloatModelClient();
+    finalClient.setEndpoint(`http://127.0.0.1:${finalPort}/api/ai/chat`);
+    let finalText = '';
+    let finalMetadata: any = null;
+    let finalError: Error | null = null;
+    await finalClient.streamChat(
+      [{ role: 'user', content: 'Return a final answer' }],
+      'gpt-6.1-sol',
+      {
+        onChunk: chunk => { finalText += chunk; },
+        onError: error => { finalError = error; },
+        onComplete: (fullText, metadata) => { finalText = fullText; finalMetadata = metadata; }
+      }
+    );
+    await new Promise<void>(resolve => finalServer.close(() => resolve()));
+    assert.equal(finalError, null);
+    assert.equal(finalText, 'Final answer');
+    assert.equal(finalMetadata?.usage?.totalTokens, 7,
+      'the trailing done event must be parsed even without a final blank line');
+    console.log('  -> PASS: SSE error frames are propagated and final unterminated metadata is retained');
   }
 
   // Suite 2: Routing Alias Resolution
@@ -331,6 +430,125 @@ async function runTests() {
     console.log('  -> PASS: Conversations maintain strict multi-tenant session isolation');
   }
 
+  // Suite 5B: Independent conversation streams and cancellation ownership
+  {
+    console.log('[Suite 5B] Concurrent Conversation Stream Isolation...');
+    let resolveConversationASeen!: () => void;
+    const conversationASeen = new Promise<void>(resolve => { resolveConversationASeen = resolve; });
+    const server = http.createServer((req, res) => {
+      const conversationId = req.headers['x-float-conversation-id'];
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      });
+      const finish = (text: string) => {
+        res.write('data: ' + JSON.stringify({ type: 'delta', text }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ type: 'done' }) + '\n\n');
+        res.end();
+      };
+      if (conversationId === 'conv-a') {
+        resolveConversationASeen();
+        setTimeout(() => finish('response-a'), 60);
+      } else if (conversationId === 'conv-b') {
+        finish('response-b');
+      } else {
+        res.writeHead(400);
+        res.end();
+      }
+    });
+
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    const client = new FloatModelClient();
+    client.setEndpoint(`http://127.0.0.1:${port}/api/ai/chat`);
+    const runConversation = (conversationId: string) => new Promise<string>((resolve, reject) => {
+      client.streamChat(
+        [{ role: 'user', content: 'Run independent conversation ' + conversationId }],
+        'gpt-6.1-sol',
+        {
+          onChunk: () => {},
+          onError: reject,
+          onComplete: fullText => resolve(fullText)
+        },
+        undefined,
+        'project-stream-isolation',
+        undefined,
+        conversationId
+      );
+    });
+
+    try {
+      const conversationA = runConversation('conv-a');
+      await conversationASeen;
+      const conversationB = runConversation('conv-b');
+      const [responseA, responseB] = await Promise.all([conversationA, conversationB]);
+      assert.equal(responseA, 'response-a', 'starting conversation B must not abort conversation A');
+      assert.equal(responseB, 'response-b', 'conversation B must complete independently');
+      console.log('  -> PASS: concurrent conversations keep independent abort controllers and both streams complete');
+    } finally {
+      client.cancelActiveStream();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+
+  // Suite 5C: Caller AbortSignal is propagated to the underlying HTTP stream
+  {
+    console.log('[Suite 5C] Caller AbortSignal Propagation...');
+    let clientDisconnected = false;
+    let notifyDisconnect!: () => void;
+    const disconnectPromise = new Promise<void>(resolve => { notifyDisconnect = resolve; });
+    const server = http.createServer((_req, res) => {
+      res.on('close', () => {
+        clientDisconnected = true;
+        notifyDisconnect();
+      });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
+      res.write('data: {"type":"delta","text":"initial"}\n\n');
+      // Keep the response open until the caller aborts its stream.
+    });
+
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    const client = new FloatModelClient();
+    client.setEndpoint(`http://127.0.0.1:${port}/api/ai/chat`);
+    const callerController = new AbortController();
+    let receivedError: Error | null = null;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.streamChat(
+          [{ role: 'user', content: 'Cancel this generated stream from the caller' }],
+          'gpt-6.1-sol',
+          {
+            onChunk: () => callerController.abort(),
+            onError: error => {
+              receivedError = error;
+              resolve();
+            },
+            onComplete: () => reject(new Error('aborted stream must not complete successfully'))
+          },
+          undefined,
+          'project-caller-cancel',
+          undefined,
+          'conv-caller-cancel',
+          callerController.signal
+        );
+      });
+      await Promise.race([
+        disconnectPromise,
+        new Promise(resolve => setTimeout(resolve, 300))
+      ]);
+      assert.equal(callerController.signal.aborted, true);
+      assert.ok(receivedError);
+      assert.match(receivedError!.message, /cancelled by user/i);
+      assert.equal(clientDisconnected, true, 'caller abort must terminate the underlying HTTP connection');
+      console.log('  -> PASS: caller AbortSignal cancels fetch and closes the upstream response');
+    } finally {
+      client.cancelActiveStream('conv-caller-cancel');
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+
   // Suite 6: FloatAuthService Security & Token Lifecycle
   {
     console.log('[Suite 6] FloatAuthService Secret Storage & Token Lifecycle...');
@@ -375,7 +593,7 @@ async function runTests() {
     console.log('  -> PASS: Secret storage persistence, JWT expiration and token sanitization verified');
   }
 
-  console.log('\nAll 6 production desktop AI and authentication suites PASSED (100%).\n');
+  console.log('\nAll production desktop AI, stream isolation and authentication suites PASSED.\n');
 }
 
 runTests().catch(err => {

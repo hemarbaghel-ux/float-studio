@@ -90,7 +90,43 @@ export class FloatVectorIndex {
 		return this._chunks.size;
 	}
 
+	private _removeChunkById(id: string): void {
+		const existingChunk = this._chunks.get(id);
+		if (!existingChunk) {
+			this._vectors.delete(id);
+			this._docLengths.delete(id);
+			return;
+		}
+
+		// Remove each posting once. Repeated tokens in a chunk must not cause
+		// stale document-frequency entries or inconsistent average document length.
+		for (const token of new Set(existingChunk.tokens)) {
+			const posting = this._invertedIndex.get(token);
+			if (posting) {
+				posting.delete(id);
+				if (posting.size === 0) {
+					this._invertedIndex.delete(token);
+				}
+			}
+		}
+
+		const documentLength = this._docLengths.get(id) ?? 0;
+		this._totalTokens = Math.max(0, this._totalTokens - documentLength);
+		this._docLengths.delete(id);
+		this._chunks.delete(id);
+		this._vectors.delete(id);
+
+		const fileChunks = this._fileChunks.get(existingChunk.filePath);
+		fileChunks?.delete(id);
+		if (fileChunks?.size === 0) {
+			this._fileChunks.delete(existingChunk.filePath);
+		}
+	}
+
 	public addChunk(chunk: ISemanticCodeChunk): void {
+		// Treat addChunk as an upsert. Callers may restore or refresh a chunk by
+		// stable id without first removing its old inverted-index postings.
+		this._removeChunkById(chunk.id);
 		this._chunks.set(chunk.id, chunk);
 		this._vectors.set(chunk.id, embedTokens(chunk.tokens));
 
@@ -124,28 +160,12 @@ export class FloatVectorIndex {
 	public removeChunksForFile(filePath: string): void {
 		const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
 		const chunkIds = this._fileChunks.get(norm);
-		if (chunkIds) {
-			for (const id of chunkIds) {
-				const chunk = this._chunks.get(id);
-				if (chunk) {
-					for (const t of chunk.tokens) {
-						const posting = this._invertedIndex.get(t);
-						if (posting) {
-							posting.delete(id);
-							if (posting.size === 0) {
-								this._invertedIndex.delete(t);
-							}
-						}
-					}
-					const docLen = this._docLengths.get(id) || 0;
-					this._totalTokens = Math.max(0, this._totalTokens - docLen);
-					this._docLengths.delete(id);
-				}
+		if (!chunkIds) {
+			return;
+		}
 
-				this._chunks.delete(id);
-				this._vectors.delete(id);
-			}
-			this._fileChunks.delete(norm);
+		for (const id of Array.from(chunkIds)) {
+			this._removeChunkById(id);
 		}
 	}
 
@@ -304,6 +324,7 @@ export class FloatVectorIndex {
 
 		const selected: IRankedCodeChunk[] = [];
 		const remaining = [...ranked];
+		const maxRelevanceScore = Math.max(1, ...ranked.map(candidate => candidate.score));
 
 		while (selected.length < limit && remaining.length > 0) {
 			let bestIdx = 0;
@@ -330,7 +351,8 @@ export class FloatVectorIndex {
 				}
 
 				// MMR formula
-				const mmrScore = lambda * (candidate.score / 100) - (1 - lambda) * maxSimToSelected;
+				const normalizedRelevance = Math.max(0, candidate.score) / maxRelevanceScore;
+				const mmrScore = lambda * normalizedRelevance - (1 - lambda) * maxSimToSelected;
 				if (mmrScore > bestScore) {
 					bestScore = mmrScore;
 					bestIdx = i;

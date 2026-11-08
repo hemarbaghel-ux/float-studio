@@ -22,7 +22,9 @@ async function runTests() {
 	fs.mkdirSync(testWorkspace, { recursive: true });
 	fs.writeFileSync(path.join(testWorkspace, 'package.json'), JSON.stringify({ name: 'daemon-test' }), 'utf8');
 
-	const server = new FloatDaemonServer({ pipeName: testPipeName });
+	// This legacy integration fixture explicitly opts in to the old shadow execution
+	// handlers. The production workbench runtime always passes allowSandboxExecution:false.
+	const server = new FloatDaemonServer({ pipeName: testPipeName, allowSandboxExecution: true });
 	const client = new FloatDaemonClient({ pipeName: testPipeName });
 
 	try {
@@ -120,6 +122,27 @@ async function runTests() {
 		assert.strictEqual(streamSummary.status, 'completed');
 		assert.strictEqual(streamSummary.stepsExecuted, 4);
 		console.log('  ✓ 4 multiplexed binary/JSON-RPC stream chunks successfully received.');
+
+		// A normal RPC error response must terminate a stream with onError;
+		// it must not leave an unreachable listener in the client map.
+		let streamErrorMessage = '';
+		await new Promise<void>((resolve, reject) => {
+			void client.stream(
+				'float_method_that_does_not_exist',
+				{},
+				{
+					onChunk: () => reject(new Error('Unknown stream unexpectedly emitted a chunk.')),
+					onEnd: () => reject(new Error('Unknown stream unexpectedly ended successfully.')),
+					onError: error => {
+						streamErrorMessage = error.message;
+						resolve();
+					}
+				},
+				5_000
+			);
+		});
+		assert.match(streamErrorMessage, /Method not found/);
+
 
 		console.log('\n✅ All Phase 1 Sidecar Daemon & IPC Subsystem tests PASSED successfully!\n');
 	} finally {

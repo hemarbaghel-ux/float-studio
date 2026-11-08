@@ -7,7 +7,7 @@ import { IFloatModelInfo } from '../protocols/floatProtocol.js';
 
 /**
  * Native Desktop Model Registry
- * Strictly aligned with FLOAT server verified models (OpenAI Responses protocol: gpt-6-astra & gpt-6.1-sol).
+ * Strictly aligned with FLOAT server verified models (GPT-6 Astra, GPT-6.1 Sol, Gemini 3.8 Flash).
  * Dynamically extensible for local Ollama and BYOK models.
  */
 export const FLOAT_MODELS: IFloatModelInfo[] = [
@@ -20,6 +20,22 @@ export const FLOAT_MODELS: IFloatModelInfo[] = [
 		contextWindow: 1050000,
 		supportsStreaming: true,
 		isDefault: true,
+		capabilities: {
+			coding: true,
+			reasoning: true,
+			vision: true,
+			tools: true,
+			streaming: true
+		}
+	},
+	{
+		id: 'gemini-3.8-flash',
+		name: 'Gemini 3.8 Flash',
+		provider: 'google',
+		upstreamModelId: 'gemini-3.8-flash',
+		isRoutingAlias: false,
+		contextWindow: 1048576,
+		supportsStreaming: true,
 		capabilities: {
 			coding: true,
 			reasoning: true,
@@ -103,8 +119,10 @@ export function calculateModelCost(modelId: string, promptTokens: number, comple
 		promptCostPerMillion = 0.14;
 		completionCostPerMillion = 0.28;
 	} else if (normalized.includes('gemini')) {
-		promptCostPerMillion = 1.25;
-		completionCostPerMillion = 5.0;
+		// Google's standard paid-tier Gemini 3.8 Flash list price as of 2026-11-06.
+		// Eligible free-tier requests may incur no charge within the account's quota.
+		promptCostPerMillion = 0.75;
+		completionCostPerMillion = 3.75;
 	}
 
 	const promptCost = (promptTokens / 1_000_000) * promptCostPerMillion;

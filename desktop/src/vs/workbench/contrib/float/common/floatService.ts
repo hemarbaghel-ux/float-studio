@@ -45,7 +45,8 @@ export interface IFloatService {
 		authToken?: string,
 		projectId?: string,
 		contextItems?: Array<{ path: string; content: string }>,
-		conversationId?: string
+		conversationId?: string,
+		signal?: AbortSignal
 	): Promise<void>;
 	completeCode(
 		options: IFloatCompletionOptions,
@@ -53,7 +54,7 @@ export interface IFloatService {
 		projectId?: string,
 		signal?: AbortSignal
 	): Promise<IFloatCompletionResult>;
-	cancelActiveStream(): void;
+	cancelActiveStream(conversationId?: string): void;
 }
 
 export class FloatService extends Disposable implements IFloatService {
@@ -130,7 +131,8 @@ export class FloatService extends Disposable implements IFloatService {
 		authToken?: string,
 		projectId?: string,
 		contextItems?: Array<{ path: string; content: string }>,
-		conversationId?: string
+		conversationId?: string,
+		signal?: AbortSignal
 	): Promise<void> {
 		const token = authToken || this._authService.getAuthToken() || undefined;
 		const projId = projectId || this._authService.getActiveProjectId() || 'default-project';
@@ -141,7 +143,8 @@ export class FloatService extends Disposable implements IFloatService {
 			token,
 			projId,
 			contextItems,
-			conversationId
+			conversationId,
+			signal
 		);
 	}
 
@@ -164,7 +167,7 @@ export class FloatService extends Disposable implements IFloatService {
 		);
 	}
 
-	public cancelActiveStream(): void {
-		this._modelClient.cancelActiveStream();
+	public cancelActiveStream(conversationId?: string): void {
+		this._modelClient.cancelActiveStream(conversationId);
 	}
 }

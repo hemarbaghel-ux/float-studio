@@ -8,8 +8,11 @@ import { EditorContributionInstantiation, registerEditorContribution } from '../
 import { registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 
 import { IFloatService, FloatService } from '../common/floatService.js';
+import { IFloatDaemonRuntimeService } from '../common/daemon/floatDaemonRuntimeService.js';
+import { FloatBrowserDaemonRuntimeService } from './floatDaemonRuntimeService.js';
 import { FloatInlineDiffController } from './inline-diff/floatInlineDiffController.js';
 import { FloatInlineDiffAction } from './inline-diff/floatInlineDiffActions.js';
 import { OpenFloatComposerAction } from './composer/floatComposerActions.js';
@@ -21,6 +24,9 @@ import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutoc
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
 registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
+
+// Browser-safe default; the Electron workbench registers its native implementation later.
+registerSingleton(IFloatDaemonRuntimeService, FloatBrowserDaemonRuntimeService, InstantiationType.Delayed);
 
 // 2. Register Inline Diff Controller (Ctrl+K) in Editor
 registerEditorContribution(
@@ -51,9 +57,11 @@ export class FloatPredictiveAutocompleteContribution implements IWorkbenchContri
 
 	constructor(
 		@IFloatService floatService: IFloatService,
-		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService
+		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
+		@IFloatDaemonRuntimeService daemonRuntimeService: IFloatDaemonRuntimeService,
+		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService
 	) {
-		this._provider = new FloatPredictiveAutocomplete(floatService, languageFeaturesService);
+		this._provider = new FloatPredictiveAutocomplete(floatService, languageFeaturesService, daemonRuntimeService, workspaceContextService);
 	}
 
 	public get provider(): FloatPredictiveAutocomplete {

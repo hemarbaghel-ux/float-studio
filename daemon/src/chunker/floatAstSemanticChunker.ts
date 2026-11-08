@@ -159,6 +159,7 @@ export class FloatAstSemanticChunker {
 			return [];
 		}
 
+		// Extract symbols using the daemon's language-aware symbol indexer.
 		const fileNode = this._indexer.parseFileSymbols(filePath, content);
 		const language = fileNode.language;
 		const symbols = (fileNode.symbols || []).sort((a, b) => a.startLine - b.startLine);
@@ -191,18 +192,50 @@ export class FloatAstSemanticChunker {
 			const startLine = sym.startLine;
 			const endLine = sym.endLine && sym.endLine >= startLine ? sym.endLine : (next ? next.startLine - 1 : lines.length);
 
-			const symbolLines = lines.slice(startLine - 1, endLine);
-			const symbolContent = symbolLines.join('\n').trim();
-			if (symbolContent.length > 0) {
-				chunks.push(this._createChunk(
-					filePath,
-					language,
-					startLine,
-					endLine,
-					symbolContent,
-					sym.name,
-					sym.kind
-				));
+			const startIdx = Math.max(0, startLine - 1);
+			const hasSourceRange = Number.isInteger(sym.endLine) && sym.endLine! > sym.startLine;
+			const proposedEndIdx = hasSourceRange
+				? sym.endLine! - 1
+				: next
+					? Math.max(startIdx, next.startLine - 2)
+					: lines.length - 1;
+			const endIdx = Math.max(startIdx, Math.min(lines.length - 1, proposedEndIdx));
+
+			const chunkLines = lines.slice(startIdx, endIdx + 1);
+			const chunkContent = chunkLines.join('\n').trim();
+
+			if (chunkContent.length > 0) {
+				if (chunkLines.length > maxLines) {
+					// Subdivide large symbol (e.g. 200-line class/function) with overlap
+					const subChunks = this._slidingWindowChunk(
+						filePath,
+						language,
+						chunkLines,
+						maxLines,
+						overlap,
+						startIdx + 1,
+						sym.name,
+						sym.kind,
+						undefined,
+						sym.parentSymbolId,
+						sym.parentName,
+						sym.docstring
+					);
+					chunks.push(...subChunks);
+				} else {
+					chunks.push(this._createChunk(
+						filePath,
+						language,
+						startIdx + 1,
+						endIdx + 1,
+						chunkContent,
+						sym.name,
+						sym.kind,
+						sym.parentSymbolId,
+						sym.parentName,
+						sym.docstring
+					));
+					}
 			}
 		}
 

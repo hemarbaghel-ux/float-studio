@@ -69,7 +69,12 @@ export class FloatComposerAgent {
 		if (isolateMutations) {
 			speculativeFs = new SpeculativeComposerFileSystem(this._toolRegistry.fileSystem);
 			const workspaceRoot = (this._toolRegistry.fileSystem as any).workspaceRoot || process.cwd();
-			shadowCmdRunner = new IsolatedShadowWorkspaceCommandRunner(workspaceRoot, speculativeFs.overlays);
+			shadowCmdRunner = new IsolatedShadowWorkspaceCommandRunner(
+				workspaceRoot,
+				speculativeFs.overlays,
+				30000,
+				this._toolRegistry.runner?.requestExecutionApproval?.bind(this._toolRegistry.runner)
+			);
 			scopedRegistry = this._toolRegistry.createScopedRegistry(speculativeFs, undefined, shadowCmdRunner);
 		}
 
@@ -150,11 +155,25 @@ export class FloatComposerAgent {
 						onChunk: chunk => { assistantResponse += chunk; },
 						onError: err => { throw err; },
 						onComplete: () => {}
-					}
+					},
+					undefined,
+					undefined,
+					undefined,
+					id,
+					signal
 				);
 			} catch (err: any) {
+				if (signal?.aborted) {
+					execution.status = 'cancelled';
+					return execution;
+				}
 				execution.status = 'failed';
 				execution.error = err.message || String(err);
+				return execution;
+			}
+
+			if (signal?.aborted) {
+				execution.status = 'cancelled';
 				return execution;
 			}
 

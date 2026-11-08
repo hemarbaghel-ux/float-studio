@@ -13,7 +13,7 @@ const rawInitialModels: AIModel[] = [
     exactModelId: vm.exactModelId,
     apiModelId: vm.exactModelId,
     providerId: vm.providerId,
-    provider: vm.providerId === 'openai' ? 'OpenAI' : 'FLOAT',
+    provider: vm.providerId === 'openai' ? 'OpenAI' : vm.providerId === 'google' ? 'Google Gemini' : 'FLOAT',
     displayName: vm.displayName,
     shortName: vm.displayName.replace('OpenAI ', ''),
     family: vm.family,
@@ -68,7 +68,7 @@ const rawInitialModels: AIModel[] = [
 
 const seenInitialModelIds = new Set<string>();
 export const INITIAL_MODELS: AIModel[] = [
-  ...rawInitialModels.filter(m => m.id === 'gpt-6-astra' || m.id === 'gpt-6.1-sol')
+  ...rawInitialModels.filter(m => ['gpt-6-astra', 'gpt-6.1-sol', 'gemini-3.8-flash'].includes(m.id))
 ].filter(m => {
   if (seenInitialModelIds.has(m.id)) return false;
   seenInitialModelIds.add(m.id);
