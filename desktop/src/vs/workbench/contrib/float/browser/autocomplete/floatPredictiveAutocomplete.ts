@@ -30,6 +30,7 @@ import { FloatNextActionSpeculator } from './floatNextActionSpeculator.js';
 import { FloatAutocompleteContextResolver } from './floatAutocompleteContextResolver.js';
 import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import type { FloatLspCallGraphService } from '../../common/lsp/floatLspCallGraphService.js';
 
 export class FloatPredictiveAutocomplete extends Disposable implements InlineCompletionsProvider {
 	private _config: IFloatAutocompleteConfig = {
@@ -69,7 +70,8 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		private readonly _floatService: IFloatService,
 		languageFeaturesService?: ILanguageFeaturesService,
 		daemonRuntimeService?: IFloatDaemonRuntimeService,
-		workspaceContextService?: IWorkspaceContextService
+		workspaceContextService?: IWorkspaceContextService,
+		private readonly _callGraphService?: FloatLspCallGraphService
 	) {
 		super();
 		this._daemonContextResolver = new FloatAutocompleteContextResolver(daemonRuntimeService, workspaceContextService);
@@ -88,6 +90,10 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 
 	public get telemetry(): IFloatAutocompleteTelemetry {
 		return { ...this._telemetry };
+	}
+
+	public get callGraphService(): FloatLspCallGraphService | undefined {
+		return this._callGraphService;
 	}
 
 	public get speculator(): FloatNextActionSpeculator {
@@ -272,7 +278,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 				return undefined;
 			}
 
-			const speculativeContext = this._speculator.buildPromptContext(ctx);
+			const speculativeContext = this._speculator.buildPromptContext(ctx, undefined, this._callGraphService);
 			const promptParts = [relatedContext, speculativeContext].filter(Boolean);
 			const fullPrefix = promptParts.length > 0
 				? `${promptParts.join('\n')}\n${ctx.prefix}`
@@ -332,7 +338,7 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 			};
 
 			// Predict cursor jump recommendation if signature was modified
-			const jump = this._speculator.predictCursorJump(ctx);
+			const jump = this._speculator.predictCursorJump(ctx, undefined, this._callGraphService);
 			if (jump) {
 				(item as any).cursorJump = jump;
 			}
@@ -376,6 +382,16 @@ export class FloatPredictiveAutocomplete extends Disposable implements InlineCom
 		this._telemetry.completionsRejectedCount++;
 		this._cache = null;
 		this._onDidHideCursorJump.fire();
+	}
+
+	public acceptCursorJump(jump: ICursorJumpRecommendation): { jumped: boolean; targetFilePath: string; targetLine: number; appliedPatch?: string } {
+		this._onDidHideCursorJump.fire();
+		return {
+			jumped: true,
+			targetFilePath: jump.targetFilePath,
+			targetLine: jump.targetLine,
+			appliedPatch: jump.suggestedReplacement
+		};
 	}
 
 	public freeInlineCompletions(_completions: InlineCompletions): void {

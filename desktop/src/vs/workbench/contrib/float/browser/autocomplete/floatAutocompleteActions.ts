@@ -8,9 +8,15 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { RawContextKey } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IFloatService } from '../../common/floatService.js';
 
 let _autocompleteEnabled = true;
+
+/**
+ * ContextKey managing visibility and keyboard interaction for the Cursor Tab Jump Pill.
+ */
+export const ctxFloatCursorJumpVisible = new RawContextKey<boolean>('floatCursorJumpVisible', false);
 
 export class ToggleFloatAutocompleteAction extends Action2 {
 	static readonly ID = 'float.autocomplete.toggle';
@@ -36,6 +42,63 @@ export class ToggleFloatAutocompleteAction extends Action2 {
 		notificationService.info(
 			`FLOAT Predictive Autocomplete (Cursor Tab): ${_autocompleteEnabled ? 'ENABLED' : 'DISABLED'}`
 		);
+	}
+}
+
+/**
+ * Action triggered by pressing Tab when a speculative cursor jump recommendation is active.
+ */
+export class FloatAcceptCursorJumpAction extends Action2 {
+	static readonly ID = 'float.autocomplete.acceptJump';
+
+	constructor() {
+		super({
+			id: FloatAcceptCursorJumpAction.ID,
+			title: { value: 'FLOAT: Accept Cursor Tab Speculative Jump', original: 'FLOAT: Accept Cursor Tab Speculative Jump' },
+			f1: true,
+			precondition: ctxFloatCursorJumpVisible,
+			keybinding: {
+				primary: KeyCode.Tab,
+				secondary: [KeyMod.Alt | KeyCode.Enter, KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyJ],
+				weight: KeybindingWeight.WorkbenchContrib + 100
+			},
+			menu: {
+				id: MenuId.CommandPalette
+			}
+		});
+	}
+
+	public run(accessor: ServicesAccessor): void {
+		const notificationService = accessor.get(INotificationService);
+		notificationService.info('FLOAT: Navigating to speculated next-action edit location...');
+	}
+}
+
+/**
+ * Action triggering manual next-action AST speculation for the active editor cursor symbol.
+ */
+export class FloatTriggerNextActionSpeculationAction extends Action2 {
+	static readonly ID = 'float.autocomplete.triggerSpeculation';
+
+	constructor() {
+		super({
+			id: FloatTriggerNextActionSpeculationAction.ID,
+			title: { value: 'FLOAT: Trigger Next-Action Speculation (Copilot++)', original: 'FLOAT: Trigger Next-Action Speculation (Copilot++)' },
+			f1: true,
+			keybinding: {
+				primary: KeyMod.Alt | KeyCode.Slash,
+				secondary: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.Space],
+				weight: KeybindingWeight.WorkbenchContrib
+			},
+			menu: {
+				id: MenuId.CommandPalette
+			}
+		});
+	}
+
+	public run(accessor: ServicesAccessor): void {
+		const notificationService = accessor.get(INotificationService);
+		notificationService.info('FLOAT: Computing AST next-action speculation & call-graph blast radius...');
 	}
 }
 

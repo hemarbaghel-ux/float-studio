@@ -26,7 +26,12 @@ import { OpenFloatComposerAction } from './composer/floatComposerActions.js';
 import { OpenFloatChatAction } from './chat/floatChatActions.js';
 import { FloatTerminalListener } from './terminal/floatTerminalListener.js';
 import { FixWithFloatTerminalAction } from './terminal/floatTerminalActions.js';
-import { ToggleFloatAutocompleteAction } from './autocomplete/floatAutocompleteActions.js';
+import {
+	ToggleFloatAutocompleteAction,
+	FloatAcceptCursorJumpAction,
+	FloatTriggerNextActionSpeculationAction
+} from './autocomplete/floatAutocompleteActions.js';
+import { IFloatLspCallGraphService, FloatLspCallGraphService } from '../common/lsp/floatLspCallGraphService.js';
 import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutocomplete.js';
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
@@ -34,6 +39,7 @@ registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
 
 // Browser-safe default; the Electron workbench registers its native implementation later.
 registerSingleton(IFloatDaemonRuntimeService, FloatBrowserDaemonRuntimeService, InstantiationType.Delayed);
+registerSingleton(IFloatLspCallGraphService, FloatLspCallGraphService, InstantiationType.Delayed);
 
 // 2. Register Inline Diff Controller (Ctrl+K) in Editor
 registerEditorContribution(
@@ -53,6 +59,8 @@ registerAction2(OpenFloatComposerAction);         // Ctrl+I
 registerAction2(OpenFloatChatAction);             // Ctrl+L
 registerAction2(FixWithFloatTerminalAction);      // Terminal Fix
 registerAction2(ToggleFloatAutocompleteAction);   // Alt+Shift+A (Predictive Autocomplete)
+registerAction2(FloatAcceptCursorJumpAction);     // Tab / Alt+Enter / Ctrl+Shift+J (Cursor Jump)
+registerAction2(FloatTriggerNextActionSpeculationAction); // Alt+/ / Ctrl+Shift+Space (Speculation)
 
 // 4. Register Workbench Terminal Exit-Code Listener
 registerWorkbenchContribution2(
@@ -71,9 +79,16 @@ export class FloatPredictiveAutocompleteContribution implements IWorkbenchContri
 		@IFloatService floatService: IFloatService,
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
 		@IFloatDaemonRuntimeService daemonRuntimeService: IFloatDaemonRuntimeService,
-		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService
+		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService,
+		@IFloatLspCallGraphService callGraphService: IFloatLspCallGraphService
 	) {
-		this._provider = new FloatPredictiveAutocomplete(floatService, languageFeaturesService, daemonRuntimeService, workspaceContextService);
+		this._provider = new FloatPredictiveAutocomplete(
+			floatService,
+			languageFeaturesService,
+			daemonRuntimeService,
+			workspaceContextService,
+			callGraphService as FloatLspCallGraphService
+		);
 	}
 
 	public get provider(): FloatPredictiveAutocomplete {
