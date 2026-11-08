@@ -147,8 +147,9 @@ async function main(): Promise<void> {
 
 
     // Composer must require explicit user approval before invoking Docker.
+    const approvalCommand = `node -e "console.log('must-not-run')"`;
     const noApprovalRunner = new ProductionComposerCommandRunner(workspace, 5_000);
-    const noApproval = await noApprovalRunner.runCommand('node -e "console.log(\\'must-not-run\\')"');
+    const noApproval = await noApprovalRunner.runCommand(approvalCommand);
     assert.equal(noApproval.exitCode, 126);
     assert.match(noApproval.stderr, /User approval is required/);
 
@@ -157,16 +158,16 @@ async function main(): Promise<void> {
       approvalRequest = request;
       return false;
     });
-    const denied = await deniedRunner.runCommand('node -e "console.log(\\'must-not-run\\')"');
+    const denied = await deniedRunner.runCommand(approvalCommand);
     assert.equal(denied.exitCode, 126);
     assert.match(denied.stderr, /No command was executed/);
-    assert.equal(approvalRequest.command, 'node -e "console.log(\\'must-not-run\\')"');
+    assert.equal(approvalRequest.command, approvalCommand);
     assert.equal(approvalRequest.workspaceRoot, path.resolve(workspace));
     assert.equal(approvalRequest.workingDirectory, path.resolve(workspace));
 
     const isolatedNoApprovalRunner = new IsolatedShadowWorkspaceCommandRunner(workspace);
     try {
-      const isolatedBlocked = await isolatedNoApprovalRunner.runCommand('node -e "console.log(\\'must-not-run\\')"');
+      const isolatedBlocked = await isolatedNoApprovalRunner.runCommand(approvalCommand);
       assert.equal(isolatedBlocked.exitCode, 126);
       assert.match(isolatedBlocked.stderr, /User approval is required/);
     } finally {
