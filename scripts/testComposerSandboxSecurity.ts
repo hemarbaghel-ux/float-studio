@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { ProductionComposerFileSystem, SpeculativeComposerFileSystem, IsolatedShadowWorkspaceCommandRunner, resolveComposerWorkspacePath, resolveComposerWorkspaceRelativePath } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
+import { ProductionComposerFileSystem, ProductionComposerCommandRunner, SpeculativeComposerFileSystem, IsolatedShadowWorkspaceCommandRunner, resolveComposerWorkspacePath, resolveComposerWorkspaceRelativePath } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js';
 import { copyComposerWorkspace } from '../desktop/src/vs/workbench/contrib/float/common/composer/floatSandboxWorkspaceCopy.js';
 import { FloatComposer } from '../desktop/src/vs/workbench/contrib/float/browser/composer/floatComposer.js';
 import {
@@ -146,6 +146,34 @@ async function main(): Promise<void> {
     }
 
 
+    // Composer must require explicit user approval before invoking Docker.
+    const approvalCommand = `node -e "console.log('must-not-run')"`;
+    const noApprovalRunner = new ProductionComposerCommandRunner(workspace, 5_000);
+    const noApproval = await noApprovalRunner.runCommand(approvalCommand);
+    assert.equal(noApproval.exitCode, 126);
+    assert.match(noApproval.stderr, /User approval is required/);
+
+    let approvalRequest: any;
+    const deniedRunner = new ProductionComposerCommandRunner(workspace, 5_000, async request => {
+      approvalRequest = request;
+      return false;
+    });
+    const denied = await deniedRunner.runCommand(approvalCommand);
+    assert.equal(denied.exitCode, 126);
+    assert.match(denied.stderr, /No command was executed/);
+    assert.equal(approvalRequest.command, approvalCommand);
+    assert.equal(approvalRequest.workspaceRoot, path.resolve(workspace));
+    assert.equal(approvalRequest.workingDirectory, path.resolve(workspace));
+
+    const isolatedNoApprovalRunner = new IsolatedShadowWorkspaceCommandRunner(workspace);
+    try {
+      const isolatedBlocked = await isolatedNoApprovalRunner.runCommand(approvalCommand);
+      assert.equal(isolatedBlocked.exitCode, 126);
+      assert.match(isolatedBlocked.stderr, /User approval is required/);
+    } finally {
+      isolatedNoApprovalRunner.dispose();
+    }
+
     // The Docker-backed runner's host-side overlay writer must also reject a
     // symlink created by a command inside the disposable container workspace.
     const isolatedRunner = new IsolatedShadowWorkspaceCommandRunner(workspace);
@@ -181,7 +209,7 @@ async function main(): Promise<void> {
     let dockerUnavailableResult: { exitCode: number; stdout: string; stderr: string } | undefined;
     try {
       process.env[pathKey] = missingDockerPath;
-      const productionRunner = new (await import('../desktop/src/vs/workbench/contrib/float/common/composer/floatProductionAdapters.js')).ProductionComposerCommandRunner(workspace, 5_000);
+      const productionRunner = new ProductionComposerCommandRunner(workspace, 5_000, async () => true);
       const markerLiteral = JSON.stringify(markerPath);
       const hostCommand = `${JSON.stringify(process.execPath)} -e "require('node:fs').writeFileSync(${markerLiteral}, 'executed')"`;
       dockerUnavailableResult = await productionRunner.runCommand(hostCommand);

@@ -9,7 +9,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { FloatDockerSandboxRunner } from './floatDockerSandboxRunner.js';
 import { copyComposerWorkspace, isComposerSandboxExcludedDirectory, isComposerSandboxSensitivePath } from './floatSandboxWorkspaceCopy.js';
-import { IComposerFileSystem, IComposerCommandRunner } from './floatComposerTools.js';
+import { IComposerFileSystem, IComposerCommandRunner, IFloatCommandApprovalHandler, IFloatCommandApprovalRequest } from './floatComposerTools.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
 
@@ -276,11 +276,21 @@ export class SpeculativeComposerFileSystem implements IComposerFileSystem {
 export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 	constructor(
 		protected readonly _workspaceRoot: string,
-		protected readonly _timeoutMs: number = 30000
+		protected readonly _timeoutMs: number = 30000,
+		private readonly _approvalHandler?: IFloatCommandApprovalHandler
 	) {}
 
 	public get workspaceRoot(): string {
 		return this._workspaceRoot;
+	}
+
+	public async requestExecutionApproval(request: IFloatCommandApprovalRequest): Promise<boolean> {
+		if (!this._approvalHandler) return false;
+		try {
+			return await this._approvalHandler(request) === true;
+		} catch {
+			return false;
+		}
 	}
 
 	public async runCommand(command: string, cwd?: string): Promise<{
@@ -293,6 +303,20 @@ export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 		}
 
 		const safeCwd = !cwd || cwd === '.' || cwd === '' ? '.' : sanitizeProposalPath(cwd);
+		const workspaceRoot = path.resolve(this._workspaceRoot);
+		const workingDirectory = path.resolve(workspaceRoot, safeCwd);
+		const relativeWorkingDirectory = path.relative(workspaceRoot, workingDirectory);
+		if (relativeWorkingDirectory === '..' || relativeWorkingDirectory.startsWith('..' + path.sep) || path.isAbsolute(relativeWorkingDirectory)) {
+			return { exitCode: 1, stdout: '', stderr: '[SECURITY REJECTION] Command working directory escaped the workspace.' };
+		}
+		const approved = await this.requestExecutionApproval({
+			command,
+			workingDirectory,
+			workspaceRoot
+		});
+		if (!approved) {
+			return { exitCode: 126, stdout: '', stderr: '[COMMAND BLOCKED] User approval is required before Composer can run a command. No command was executed.' };
+		}
 		const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'float-composer-command-'));
 		const scratchWorkspace = path.join(scratchRoot, 'workspace');
 
@@ -336,7 +360,8 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 	constructor(
 		private readonly _originalWorkspaceRoot: string,
 		speculativeOverlays?: Map<string, string>,
-		private readonly _timeoutMs: number = 30000
+		private readonly _timeoutMs: number = 30000,
+		private readonly _approvalHandler?: IFloatCommandApprovalHandler
 	) {
 		this._shadowDir = path.join(
 			os.tmpdir(),
@@ -413,6 +438,26 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 			return { exitCode: 1, stdout: '', stderr: '[SECURITY REJECTION] Command refused by FLOAT Security Policy.' };
 		}
 		const safeCwd = !cwd || cwd === '.' || cwd === '' ? '.' : sanitizeProposalPath(cwd);
+		const workingDirectory = path.resolve(this._shadowDir, safeCwd);
+		const relativeWorkingDirectory = path.relative(this._shadowDir, workingDirectory);
+		if (relativeWorkingDirectory === '..' || relativeWorkingDirectory.startsWith('..' + path.sep) || path.isAbsolute(relativeWorkingDirectory)) {
+			return { exitCode: 1, stdout: '', stderr: '[SECURITY REJECTION] Command working directory escaped the speculative workspace copy.' };
+		}
+		let approved = false;
+		if (this._approvalHandler) {
+			try {
+				approved = await this._approvalHandler({
+					command,
+					workingDirectory,
+					workspaceRoot: path.resolve(this._originalWorkspaceRoot)
+				}) === true;
+			} catch {
+				approved = false;
+			}
+		}
+		if (!approved) {
+			return { exitCode: 126, stdout: '', stderr: '[COMMAND BLOCKED] User approval is required before Composer can run a command. No command was executed.' };
+		}
 		return await this._sandboxRunner.run(command, { cwd: safeCwd, timeoutMs: this._timeoutMs });
 	}
 

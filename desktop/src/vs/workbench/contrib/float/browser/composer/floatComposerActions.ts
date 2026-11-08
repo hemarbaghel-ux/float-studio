@@ -12,6 +12,7 @@ import { ICodeEditorService } from '../../../../../editor/browser/services/codeE
 import { IFloatService } from '../../common/floatService.js';
 import { IFloatDaemonRuntimeService } from '../../common/daemon/floatDaemonRuntimeService.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IFloatCommandApprovalHandler } from '../../common/composer/floatComposerTools.js';
 import { getFloatComposerWorkspaceRoot } from './floatComposerWorkspaceRoot.js';
 import { FloatComposer } from './floatComposer.js';
 import { FloatFloatingComposerWidget } from './floatFloatingComposerWidget.js';
@@ -72,6 +73,24 @@ export class OpenFloatComposerAction extends Action2 {
 			return;
 		}
 
+		const commandApprovalHandler: IFloatCommandApprovalHandler = async request => {
+			const choice = await quickInputService.pick([
+				{
+					id: 'approve',
+					label: '$(check) Run this command in the Docker sandbox',
+					description: 'Uses a disposable workspace copy, no network, and resource limits.'
+				},
+				{
+					id: 'deny',
+					label: '$(x) Block command',
+					description: 'Do not execute; Composer receives an approval-denied result.'
+				}
+			], {
+				placeHolder: `Review command: ${request.command} | CWD: ${request.workingDirectory} | Workspace: ${request.workspaceRoot}`
+			});
+			return choice?.id === 'approve';
+		};
+
 		const composer = new FloatComposer(
 			floatService,
 			notificationService,
@@ -80,7 +99,8 @@ export class OpenFloatComposerAction extends Action2 {
 			undefined,
 			workspaceRoot.fsPath,
 			daemonRuntimeService,
-			workspaceContextService
+			workspaceContextService,
+			commandApprovalHandler
 		);
 
 		// If an active code editor exists, present the sleek floating Composer widget overlay (Cursor style)
