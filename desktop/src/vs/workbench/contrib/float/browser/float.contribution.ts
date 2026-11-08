@@ -39,6 +39,7 @@ import {
 } from './debug/floatDebugActions.js';
 import { IFloatDebugAutoRepairService, FloatDebugAutoRepairService } from '../common/debug/floatDebugAutoRepairService.js';
 import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutocomplete.js';
+import { FloatAgentStartGoalAction, FloatAgentCancelTaskAction } from './agent/floatMultiAgentActions.js';
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
 registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
@@ -71,6 +72,8 @@ registerAction2(FloatTriggerNextActionSpeculationAction); // Alt+/ / Ctrl+Shift+
 registerAction2(FloatTriggerDebugAutoRepairAction);     // Ctrl+Shift+D / Alt+F5 (Debug Auto-Repair)
 registerAction2(FloatDismissDebugRepairAction);         // Escape (Dismiss Debug Repair)
 registerAction2(FloatInspectLastDebugContextAction);    // Ctrl+Alt+D (Inspect Debug Context)
+registerAction2(FloatAgentStartGoalAction);             // Ctrl+Shift+G (Multi-Agent Goal)
+registerAction2(FloatAgentCancelTaskAction);            // Cancel Multi-Agent Task
 
 // 4. Register Workbench Terminal Exit-Code Listener
 registerWorkbenchContribution2(
