@@ -7,6 +7,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const require = createRequire(import.meta.url);
 
@@ -92,9 +95,10 @@ let _initPromise: Promise<void> | null = null;
 
 function resolveTreeSitterWasmDir(): string {
 	const candidates = [
+		path.resolve(__dirname, '../../wasm'),
+		path.resolve(process.cwd(), 'daemon/wasm'),
 		path.resolve(process.cwd(), 'desktop/node_modules/@vscode/tree-sitter-wasm/wasm'),
-		path.resolve(process.cwd(), 'node_modules/@vscode/tree-sitter-wasm/wasm'),
-		path.resolve('C:/Users/ADMIN/Documents/ChatGPT/Float/float-studio-mainline/desktop/node_modules/@vscode/tree-sitter-wasm/wasm')
+		path.resolve(process.cwd(), 'node_modules/@vscode/tree-sitter-wasm/wasm')
 	];
 
 	for (const candidate of candidates) {
