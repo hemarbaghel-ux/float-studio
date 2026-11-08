@@ -1,0 +1,51 @@
+{
+  "name": "css-language-features",
+  "displayName": "CSS Language Features",
+  "description": "Provides rich language support, color decorators, and property completion for CSS, SCSS, and LESS in FLOAT Studio",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:css",
+    "onLanguage:scss",
+    "onLanguage:less"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "css",
+        "aliases": ["CSS", "css"],
+        "extensions": [".css"],
+        "mimetypes": ["text/css"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "scss",
+        "aliases": ["SCSS", "scss"],
+        "extensions": [".scss"],
+        "mimetypes": ["text/x-scss"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "less",
+        "aliases": ["Less", "less"],
+        "extensions": [".less"],
+        "mimetypes": ["text/x-less"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "css.formatDocument",
+        "title": "CSS: Format Stylesheet",
+        "category": "CSS"
+      }
+    ]
+  }
+}

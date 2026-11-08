@@ -1,0 +1,26 @@
+{
+  "name": "configuration-editing",
+  "displayName": "Configuration Editing",
+  "description": "Provides schema-based validation and autocomplete for configuration files (settings.json, keybindings.json, launch.json, tasks.json)",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:json",
+    "onLanguage:jsonc"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "config.validate",
+        "title": "Validate Configuration File"
+      }
+    ]
+  }
+}

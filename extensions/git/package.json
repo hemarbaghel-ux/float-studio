@@ -1,0 +1,65 @@
+{
+  "name": "git",
+  "displayName": "Git SCM Integration",
+  "description": "Provides native Git source control management and repository integration in FLOAT Studio",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "SCM Providers"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "git.refresh",
+        "title": "Git: Refresh Repositories",
+        "category": "Git",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "git.stageAll",
+        "title": "Git: Stage All Changes",
+        "category": "Git"
+      },
+      {
+        "command": "git.unstageAll",
+        "title": "Git: Unstage All Changes",
+        "category": "Git"
+      },
+      {
+        "command": "git.commit",
+        "title": "Git: Commit Staged",
+        "category": "Git"
+      },
+      {
+        "command": "git.push",
+        "title": "Git: Push to Remote",
+        "category": "Git"
+      },
+      {
+        "command": "git.pull",
+        "title": "Git: Pull from Remote",
+        "category": "Git"
+      },
+      {
+        "command": "git.branch",
+        "title": "Git: Create Branch...",
+        "category": "Git"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "git.refresh",
+          "group": "navigation"
+        }
+      ]
+    }
+  }
+}

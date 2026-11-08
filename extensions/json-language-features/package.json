@@ -1,0 +1,47 @@
+{
+  "name": "json-language-features",
+  "displayName": "JSON Language Features",
+  "description": "Provides rich language support for JSON and JSON with Comments in FLOAT Studio",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:json",
+    "onLanguage:jsonc"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "json",
+        "aliases": ["JSON", "json"],
+        "extensions": [".json", ".bowerrc", ".jshintrc", ".jscsrc", ".eslintcache"],
+        "mimetypes": ["application/json", "application/manifest+json"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "jsonc",
+        "aliases": ["JSON with Comments", "jsonc"],
+        "extensions": [".jsonc", ".eslintrc", ".babelrc", ".swcrc", "tsconfig.json", "jsconfig.json"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "json.clearCache",
+        "title": "JSON: Clear Schema Cache",
+        "category": "JSON"
+      },
+      {
+        "command": "json.sort",
+        "title": "JSON: Sort Document Keys",
+        "category": "JSON"
+      }
+    ]
+  }
+}
