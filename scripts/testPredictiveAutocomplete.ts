@@ -149,7 +149,7 @@ async function runSuite(): Promise<void> {
 		const autocomplete = new FloatPredictiveAutocomplete(mockFloatService);
 		autocomplete.setConfig({ debounceMs: 0 });
 
-		const initialText = 'const value = \\\nreturn originalValue;';
+		const initialText = ['const value = ', 'return originalValue;'].join('\n');
 		const cursor = new Position(1, 'const value = '.length + 1);
 		const first = await autocomplete.provideInlineCompletions(
 			createMockModel(initialText), cursor, {} as any, new CancellationTokenSource().token
@@ -158,7 +158,7 @@ async function runSuite(): Promise<void> {
 		assert.strictEqual(networkCalls, 1);
 
 		// Keep the prefix and cursor line unchanged while editing only the suffix.
-		const editedSuffixText = 'const value = \\\nreturn replacementValue;';
+		const editedSuffixText = ['const value = ', 'return replacementValue;'].join('\n');
 		const second = await autocomplete.provideInlineCompletions(
 			createMockModel(editedSuffixText), cursor, {} as any, new CancellationTokenSource().token
 		);
