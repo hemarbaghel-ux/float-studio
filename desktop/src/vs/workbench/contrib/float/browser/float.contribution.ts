@@ -32,6 +32,12 @@ import {
 	FloatTriggerNextActionSpeculationAction
 } from './autocomplete/floatAutocompleteActions.js';
 import { IFloatLspCallGraphService, FloatLspCallGraphService } from '../common/lsp/floatLspCallGraphService.js';
+import {
+	FloatTriggerDebugAutoRepairAction,
+	FloatDismissDebugRepairAction,
+	FloatInspectLastDebugContextAction
+} from './debug/floatDebugActions.js';
+import { IFloatDebugAutoRepairService, FloatDebugAutoRepairService } from '../common/debug/floatDebugAutoRepairService.js';
 import { FloatPredictiveAutocomplete } from './autocomplete/floatPredictiveAutocomplete.js';
 
 // 1. Register Core FLOAT Platform Service as Eager Singleton
@@ -40,6 +46,7 @@ registerSingleton(IFloatService, FloatService, InstantiationType.Eager);
 // Browser-safe default; the Electron workbench registers its native implementation later.
 registerSingleton(IFloatDaemonRuntimeService, FloatBrowserDaemonRuntimeService, InstantiationType.Delayed);
 registerSingleton(IFloatLspCallGraphService, FloatLspCallGraphService, InstantiationType.Delayed);
+registerSingleton(IFloatDebugAutoRepairService, FloatDebugAutoRepairService, InstantiationType.Delayed);
 
 // 2. Register Inline Diff Controller (Ctrl+K) in Editor
 registerEditorContribution(
@@ -61,6 +68,9 @@ registerAction2(FixWithFloatTerminalAction);      // Terminal Fix
 registerAction2(ToggleFloatAutocompleteAction);   // Alt+Shift+A (Predictive Autocomplete)
 registerAction2(FloatAcceptCursorJumpAction);     // Tab / Alt+Enter / Ctrl+Shift+J (Cursor Jump)
 registerAction2(FloatTriggerNextActionSpeculationAction); // Alt+/ / Ctrl+Shift+Space (Speculation)
+registerAction2(FloatTriggerDebugAutoRepairAction);     // Ctrl+Shift+D / Alt+F5 (Debug Auto-Repair)
+registerAction2(FloatDismissDebugRepairAction);         // Escape (Dismiss Debug Repair)
+registerAction2(FloatInspectLastDebugContextAction);    // Ctrl+Alt+D (Inspect Debug Context)
 
 // 4. Register Workbench Terminal Exit-Code Listener
 registerWorkbenchContribution2(
