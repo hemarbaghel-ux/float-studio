@@ -1,0 +1,44 @@
+{
+  "name": "sql-language-features",
+  "displayName": "SQL Language Features",
+  "description": "SQL language features with dialect detection (PostgreSQL, MySQL, SQLite) and query formatting",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:sql"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sql.formatQuery",
+        "title": "SQL: Format Active Query"
+      },
+      {
+        "command": "sql.detectDialect",
+        "title": "SQL: Detect Active Dialect"
+      }
+    ],
+    "languages": [
+      {
+        "id": "sql",
+        "aliases": [
+          "SQL Language Features",
+          "sql"
+        ],
+        "extensions": [
+          ".sql",
+          ".dsql"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

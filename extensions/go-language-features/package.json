@@ -1,0 +1,47 @@
+{
+  "name": "go-language-features",
+  "displayName": "Go Language Features",
+  "description": "Go language support with gopls server client, go vet, and benchmark runner",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:go"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "go.runTests",
+        "title": "Go: Run Package Tests"
+      },
+      {
+        "command": "go.vet",
+        "title": "Go: Vet Current Package"
+      },
+      {
+        "command": "go.restartGopls",
+        "title": "Go: Restart Gopls Language Server"
+      }
+    ],
+    "languages": [
+      {
+        "id": "go",
+        "aliases": [
+          "Go Language Features",
+          "go"
+        ],
+        "extensions": [
+          ".go"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

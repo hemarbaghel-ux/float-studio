@@ -1,0 +1,26 @@
+{
+  "name": "debug-server-ready",
+  "displayName": "Server-Ready Debug Action",
+  "description": "Monitors debug server output for open ports and URLs, automatically launching browser windows",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "debug.inspectPort",
+        "title": "Debug: Inspect Active Server Ports"
+      }
+    ]
+  }
+}

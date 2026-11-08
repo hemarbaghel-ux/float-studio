@@ -1,0 +1,47 @@
+{
+  "name": "php-language-features",
+  "displayName": "PHP Language Features",
+  "description": "PHP language features with syntax validation, Composer autoloading, and PSR formatting",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:php"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "php.validateSyntax",
+        "title": "PHP: Validate Syntax"
+      },
+      {
+        "command": "php.composerInstall",
+        "title": "PHP: Composer Install"
+      }
+    ],
+    "languages": [
+      {
+        "id": "php",
+        "aliases": [
+          "PHP Language Features",
+          "php"
+        ],
+        "extensions": [
+          ".php",
+          ".phtml",
+          ".php4",
+          ".php5",
+          ".phps"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

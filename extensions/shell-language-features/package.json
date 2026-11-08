@@ -1,0 +1,47 @@
+{
+  "name": "shell-language-features",
+  "displayName": "Shell Language Features",
+  "description": "Shell script language features for Bash, Zsh, and PowerShell with shellcheck linting",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:shellscript"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "shell.runScript",
+        "title": "Shell: Run Script in Integrated Terminal"
+      },
+      {
+        "command": "shell.lintScript",
+        "title": "Shell: Lint with ShellCheck"
+      }
+    ],
+    "languages": [
+      {
+        "id": "shellscript",
+        "aliases": [
+          "Shell Language Features",
+          "shellscript"
+        ],
+        "extensions": [
+          ".sh",
+          ".bash",
+          ".zsh",
+          ".ps1",
+          ".psm1"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

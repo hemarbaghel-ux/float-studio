@@ -1,0 +1,47 @@
+{
+  "name": "ruby-language-features",
+  "displayName": "Ruby Language Features",
+  "description": "Ruby language features including Ruby-LSP client, Bundler integration, and RuboCop linter",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:ruby"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ruby.bundleInstall",
+        "title": "Ruby: Bundle Install"
+      },
+      {
+        "command": "ruby.runRubocop",
+        "title": "Ruby: Run RuboCop Linter"
+      }
+    ],
+    "languages": [
+      {
+        "id": "ruby",
+        "aliases": [
+          "Ruby Language Features",
+          "ruby"
+        ],
+        "extensions": [
+          ".rb",
+          ".rbx",
+          ".rjs",
+          ".rake",
+          ".gemspec"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "name": "python-language-features",
+  "displayName": "Python Language Features",
+  "description": "Rich language features for Python including LSP server, environment selection, and test discovery",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "python.selectInterpreter",
+        "title": "Python: Select Interpreter"
+      },
+      {
+        "command": "python.restartLspServer",
+        "title": "Python: Restart LSP Server"
+      },
+      {
+        "command": "python.runTests",
+        "title": "Python: Run All Tests"
+      }
+    ],
+    "languages": [
+      {
+        "id": "python",
+        "aliases": [
+          "Python Language Features",
+          "python"
+        ],
+        "extensions": [
+          ".py",
+          ".rpy",
+          ".pyw",
+          ".cpy",
+          ".gyp",
+          ".gypi"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

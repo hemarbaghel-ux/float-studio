@@ -1,0 +1,53 @@
+{
+  "name": "cpp-language-features",
+  "displayName": "C/C++ Language Features",
+  "description": "C and C++ language features including clang-format, compile_commands analyzer, and IntelliSense",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:cpp"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cpp.switchHeaderSource",
+        "title": "C/C++: Switch Header/Source"
+      },
+      {
+        "command": "cpp.rescanCompileCommands",
+        "title": "C/C++: Rescan compile_commands.json"
+      },
+      {
+        "command": "cpp.formatDocument",
+        "title": "C/C++: Format Document"
+      }
+    ],
+    "languages": [
+      {
+        "id": "cpp",
+        "aliases": [
+          "C/C++ Language Features",
+          "cpp"
+        ],
+        "extensions": [
+          ".c",
+          ".cpp",
+          ".cc",
+          ".cxx",
+          ".h",
+          ".hpp",
+          ".hxx"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "name": "xml-language-features",
+  "displayName": "XML Language Features",
+  "description": "XML language features with automated tag closing, DTD/XSD validation, and formatting",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:xml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "xml.formatDocument",
+        "title": "XML: Format Document"
+      },
+      {
+        "command": "xml.validateSchema",
+        "title": "XML: Validate Well-Formedness"
+      }
+    ],
+    "languages": [
+      {
+        "id": "xml",
+        "aliases": [
+          "XML Language Features",
+          "xml"
+        ],
+        "extensions": [
+          ".xml",
+          ".xsd",
+          ".dtd",
+          ".svg",
+          ".xaml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}

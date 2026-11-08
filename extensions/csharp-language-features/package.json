@@ -1,0 +1,48 @@
+{
+  "name": "csharp-language-features",
+  "displayName": "C# Language Features",
+  "description": "C# and .NET language services, solution explorer, and Roslyn diagnostic integration",
+  "version": "1.0.0",
+  "publisher": "float-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:csharp"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "csharp.restore",
+        "title": "C#: dotnet restore"
+      },
+      {
+        "command": "csharp.build",
+        "title": "C#: dotnet build"
+      },
+      {
+        "command": "csharp.restartOmniSharp",
+        "title": "C#: Restart Language Engine"
+      }
+    ],
+    "languages": [
+      {
+        "id": "csharp",
+        "aliases": [
+          "C# Language Features",
+          "csharp"
+        ],
+        "extensions": [
+          ".cs",
+          ".csx"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  }
+}
