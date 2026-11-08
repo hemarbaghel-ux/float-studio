@@ -197,6 +197,10 @@ export class FloatTreeSitterSyntaxParser implements IFloatSyntaxParser {
 		return FloatTreeSitterSyntaxParser.EXT_TO_LANG[ext] || 'generic';
 	}
 
+	public supportsLanguage(languageId: string): boolean {
+		return !!FloatTreeSitterSyntaxParser.LANG_TO_WASM[languageId];
+	}
+
 	public getLanguageSupport(languageId: string): IFloatLanguageSupportInfo {
 		if (FloatTreeSitterSyntaxParser.LANG_TO_WASM[languageId]) {
 			return {

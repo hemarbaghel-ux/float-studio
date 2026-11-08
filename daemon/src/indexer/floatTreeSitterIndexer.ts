@@ -197,18 +197,8 @@ export class FloatTreeSitterIndexer {
 	}
 
 	private _extractSymbolsByLanguage(filePath: string, language: string, content: string): IFloatAstNode[] {
-		// 1. If real Tree-Sitter WASM parser is available for this language, use it for exact AST extraction
-		if (this._syntaxParser && this._syntaxParser.supportsLanguage(language)) {
-			try {
-				const symbols = this._syntaxParser.extractSymbols(content, language);
-				return symbols.map(s => this._symbolToAstNode(s));
-			} catch (err) {
-				console.warn(`[FloatTreeSitterIndexer] WASM parser error for ${filePath} (${language}):`, err);
-			}
-		}
-
-		// 2. TypeScript compiler AST fallback for TS/JS
-		if (language === 'typescript') {
+		// TypeScript/JavaScript use the TypeScript compiler's real syntax tree synchronously
+		if (language === 'typescript' || language === 'javascript' || language === 'tsx') {
 			return this._extractTypeScriptSymbols(filePath, content);
 		}
 		const profile = this._grammarRegistry.getProfile(language);
