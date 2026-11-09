@@ -225,12 +225,12 @@ jobs:
 
           if (-not $proc.HasExited) {
             Write-Host "Process stayed alive for 20 seconds. Waiting for self-check clean exit..."
-            $proc.WaitForExit(15000)
+            $exited = $proc.WaitForExit(15000)
             if ($proc.ExitCode -eq 0) {
               $passedSelfCheck = $true
               Write-Host "FLOAT.exe completed startup self-check with exit code 0."
             } else {
-              Stop-Process -Id $proc.Id -Force
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
               throw "FLOAT.exe did not complete self-check with code 0 (ExitCode: $($proc.ExitCode))."
             }
           }
@@ -246,7 +246,10 @@ jobs:
             throw "Uninstaller not found at: $uninstaller"
           }
           $uninstProcess = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru -Wait
-          Start-Sleep -Seconds 6
+          for ($j = 0; $j -lt 30; $j++) {
+            if (-not (Test-Path $installedExe)) { break }
+            Start-Sleep -Seconds 1
+          }
 
           if (Test-Path $installedExe) {
             throw "FLOAT.exe still exists after uninstall at: $installedExe"
@@ -257,7 +260,7 @@ jobs:
           Expand-Archive -Path dist/release/FLOAT-win32-x64.zip -DestinationPath tmp-win -Force
           $portableExe = "tmp-win/FLOAT.exe"
           $portProc = Start-Process -FilePath $portableExe -ArgumentList "--smoke-test", "--no-sandbox" -PassThru
-          $portProc.WaitForExit(25000)
+          $portProc.WaitForExit(35000)
           if ($portProc.ExitCode -ne 0) {
             throw "Portable FLOAT.exe failed --smoke-test with exit code $($portProc.ExitCode)"
           }

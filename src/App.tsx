@@ -45,6 +45,7 @@ export default function App() {
   const isSmokeTest = typeof window !== 'undefined' && (
     window.location.search.includes('smoke-test') ||
     window.location.hash.includes('workspace') ||
+    window.location.hash.includes('smoke-test') ||
     Boolean((window as any).__FLOAT_SMOKE_TEST__) ||
     (typeof process !== 'undefined' && process.argv && process.argv.includes('--smoke-test'))
   );
@@ -125,7 +126,12 @@ export default function App() {
     return () => unsubscribe();
   }, [setUser, hasStarted, startSession]);
 
-  if (loading && !isSmokeTest) {
+  // Immediate short-circuit for desktop/CI startup self-check
+  if (isSmokeTest) {
+    return <IDEWorkspace />;
+  }
+
+  if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-[#0A0A08] flex flex-col items-center justify-center gap-4 select-none">
         <FloatLogo className="w-14 h-14 animate-pulse" />

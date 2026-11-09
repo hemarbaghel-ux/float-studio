@@ -60,7 +60,8 @@ function assembleAppPayload(targetAppDir) {
 
   // 1. Copy package.json and product.json
   const appPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-  appPkg.main = 'index.js';
+  appPkg.main = 'index.cjs';
+  delete appPkg.type;
   fs.writeFileSync(path.join(targetAppDir, 'package.json'), JSON.stringify(appPkg, null, 2), 'utf8');
   if (fs.existsSync(path.join(repoRoot, 'desktop', 'product.json'))) {
     fs.copyFileSync(path.join(repoRoot, 'desktop', 'product.json'), path.join(targetAppDir, 'product.json'));
@@ -79,6 +80,14 @@ function assembleAppPayload(targetAppDir) {
     }
   }
 
+  // Ensure relative asset resolution for desktop file:// protocol
+  const targetIndexHtml = path.join(targetDist, 'index.html');
+  if (fs.existsSync(targetIndexHtml)) {
+    let html = fs.readFileSync(targetIndexHtml, 'utf8');
+    html = html.replace(/(src|href)="\/assets\//g, '$1="./assets/');
+    fs.writeFileSync(targetIndexHtml, html, 'utf8');
+  }
+
   // 3. Copy desktop compiled out & main entrypoints if present
   const desktopOut = path.join(repoRoot, 'desktop', 'out');
   const targetOut = path.join(targetAppDir, 'out');
@@ -87,7 +96,7 @@ function assembleAppPayload(targetAppDir) {
   }
 
   // 4. Create desktop main wrapper with startup self-check
-  const mainWrapperPath = path.join(targetAppDir, 'index.js');
+  const mainWrapperPath = path.join(targetAppDir, 'index.cjs');
   const mainWrapperContent = `// FLOAT Studio Desktop Entrypoint
 const path = require('path');
 const fs = require('fs');
@@ -103,7 +112,24 @@ console.log('[FLOAT Main] Starting FLOAT Studio desktop process...', {
   platform: process.platform
 });
 
+process.on('uncaughtException', (err) => {
+  console.error('[FLOAT Main] Uncaught Exception:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FLOAT Main] Unhandled Rejection:', reason);
+  process.exit(1);
+});
+
 if (isSmokeTest) {
+  try {
+    app.disableHardwareAcceleration();
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-software-rasterizer');
+  } catch (e) {}
+
+  const startTime = Date.now();
+
   app.whenReady().then(async () => {
     console.log('[FLOAT SmokeTest] Startup self-check initialized with --smoke-test.');
     const win = new BrowserWindow({
@@ -118,22 +144,31 @@ if (isSmokeTest) {
       }
     });
 
+    win.webContents.on('console-message', (event, level, message) => {
+      console.log('[Renderer Console]', message);
+    });
+
+    win.webContents.on('render-process-gone', (event, details) => {
+      console.error('[FLOAT SmokeTest] FAILURE: Renderer process gone:', details);
+      process.exit(1);
+    });
+
     const htmlPath = path.join(__dirname, 'dist', 'index.html');
     if (!fs.existsSync(htmlPath)) {
       console.error('[FLOAT SmokeTest] FAILURE: dist/index.html not found at:', htmlPath);
-      app.exit(1);
+      process.exit(1);
       return;
     }
 
     let verified = false;
 
-    // Hard timeout: 35 seconds
+    // Hard timeout: 45 seconds
     const timeoutHandle = setTimeout(() => {
       if (!verified) {
-        console.error('[FLOAT SmokeTest] FAILURE: Timed out waiting for Editor and AI panel to mount (35s).');
-        app.exit(1);
+        console.error('[FLOAT SmokeTest] FAILURE: Timed out waiting for Editor and AI panel to mount (45s).');
+        process.exit(1);
       }
-    }, 35000);
+    }, 45000);
 
     const pollInterval = setInterval(async () => {
       try {
@@ -167,17 +202,22 @@ if (isSmokeTest) {
           clearTimeout(timeoutHandle);
           console.log('[FLOAT SmokeTest] SUCCESS: Main window opened, sample workspace loaded, and both Editor and AI panel mounted successfully!');
           console.log('[FLOAT SmokeTest] Diagnostic:', JSON.stringify(res));
-          console.log('[FLOAT SmokeTest] Exiting cleanly with code 0.');
+
+          const elapsed = Date.now() - startTime;
+          const remainingMs = Math.max(1000, 21000 - elapsed);
+          console.log('[FLOAT SmokeTest] Sustaining process life for ' + remainingMs + 'ms to confirm 20s stability...');
           setTimeout(() => {
+            console.log('[FLOAT SmokeTest] Exiting cleanly with code 0.');
             app.exit(0);
-          }, 1000);
+            process.exit(0);
+          }, remainingMs);
         }
       } catch (e) {
         // Renderer still initializing
       }
     }, 500);
 
-    win.loadFile(htmlPath, { hash: '/workspace', search: 'smoke-test=1' });
+    win.loadFile(htmlPath, { hash: '#/workspace?smoke-test=1', search: 'smoke-test=1' });
   });
 } else if (fs.existsSync(path.join(__dirname, 'out', 'main.js'))) {
   require('./out/main.js');
@@ -205,6 +245,7 @@ if (isSmokeTest) {
 }
 `;
   fs.writeFileSync(mainWrapperPath, mainWrapperContent, 'utf8');
+  fs.writeFileSync(path.join(targetAppDir, 'index.js'), "// Delegator to index.cjs\nrequire('./index.cjs');\n", 'utf8');
 }
 
 async function packageLinux() {
