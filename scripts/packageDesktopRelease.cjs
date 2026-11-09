@@ -34,7 +34,7 @@ function downloadFile(url, destPath) {
   console.log(`Downloading: ${url} -> ${destPath}`);
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
   const curlCmd = process.platform === 'win32' ? 'curl.exe' : 'curl';
-  exec(`${curlCmd} -f -sL --retry 3 --connect-timeout 30 -o "${destPath}" "${url}"`);
+  exec(`${curlCmd} -f -sSL --retry 5 --retry-delay 3 --connect-timeout 30 -o "${destPath}" "${url}"`);
   const size = fs.statSync(destPath).size;
   console.log(`Downloaded ${(size / 1024 / 1024).toFixed(1)} MB.`);
   return destPath;
@@ -221,7 +221,7 @@ Section: devel
 Priority: optional
 Architecture: ${debArch}
 Maintainer: FLOAT Studio Team <support@float.dev>
-Depends: libgtk-3-0, libnss3, libasound2, libxss1, libx11-xcb1, libsecret-1-0, libc6 (>= 2.31)
+Depends: libgtk-3-0, libnss3, libasound2 | libasound2t64, libxss1, libx11-xcb1, libsecret-1-0, libc6 (>= 2.31)
 Description: FLOAT Studio
  Modern AI-native development environment and autonomous coding platform.
 `;
