@@ -1,3 +1,4 @@
+import { scanChangesForSecrets } from '../../services/git/secretScanner';
 import { Router, Response } from 'express';
 import JSZip from 'jszip';
 import { createTwoFilesPatch } from 'diff';
@@ -418,6 +419,14 @@ async function createCommit(body: any, ctx: GitContext, progress: (stage: string
   }
 
   if (!changes.length) throw httpError(409, 'There are no staged workspace changes to commit.');
+  const filesToScan = new Map<string, string>();
+  for (const change of changes) {
+    if (change.status !== 'deleted') filesToScan.set(change.path, local.get(change.path) || '');
+  }
+  const leaks = scanChangesForSecrets(filesToScan);
+  if (leaks.length > 0 && body.bypassSecretScan !== true) {
+    throw httpError(400, 'Commit aborted: detected ' + leaks.length + ' credential leak(s). Remove credentials before committing.', { leaks });
+  }
   progress('review', 'Preparing ' + changes.length + ' changed file(s) for the commit.');
   const entries: any[] = [];
   for (const change of changes) {
