@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Canonical Agent Tool Registry Contracts (Phase 2)
+ * Canonical Agent Tool Registry Contracts (Phase 2 & Phase 5)
  *
  * Establishes a unified tool interface, parameter schema validation, execution boundaries,
  * and explicit approval gates for both server-side agent loops and native desktop composer agents.
@@ -75,6 +75,14 @@ export const CANONICAL_TOOL_SCHEMAS = {
       limit: { type: 'number', description: 'Maximum search results (1-25)' },
     },
     required: ['query'],
+  },
+  inspect_symbol: {
+    type: 'object',
+    properties: {
+      symbol: { type: 'string', description: 'Name of the function, class, or symbol to inspect' },
+      path: { type: 'string', description: 'Optional relative path to restrict symbol search' },
+    },
+    required: ['symbol'],
   },
   propose_changes: {
     type: 'object',

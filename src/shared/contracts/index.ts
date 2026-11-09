@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Authoritative Shared Domain Contracts Barrel (Phase 2)
+ * Authoritative Shared Domain Contracts Barrel (Phase 2 & Phase 5)
  */
 
 export * from './workspace';
@@ -14,3 +14,4 @@ export * from './tools';
 export * from './daemonIpc';
 export * from './proposals';
 export * from './validation';
+export * from './checkpoints';
