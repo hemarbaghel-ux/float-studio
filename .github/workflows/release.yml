@@ -125,7 +125,7 @@ jobs:
       # -------------------------------------------------------------------------
       # Linux Smoke Test
       # -------------------------------------------------------------------------
-      - name: Linux Smoke Test (Install .deb & Test Headless)
+      - name: Linux Smoke Test (Install .deb, Verify AppArmor & Self-Check)
         if: matrix.platform == 'linux-x64'
         run: |
           echo "Installing system prerequisites..."
@@ -138,46 +138,131 @@ jobs:
           
           test -f /usr/share/float-studio/float-studio
           test -f /usr/share/applications/float-studio.desktop
+          test -f /etc/apparmor.d/float-studio
           
-          echo "Launching FLOAT Studio headless via xvfb-run (testing 15s stability)..."
-          xvfb-run --auto-servernum timeout 15 /usr/share/float-studio/float-studio --no-sandbox --headless || [ $? -eq 124 ] || [ $? -eq 0 ]
+          echo "Verifying and reloading AppArmor profile..."
+          sudo apparmor_parser -r /etc/apparmor.d/float-studio || sudo apparmor_parser -r -T /etc/apparmor.d/float-studio
+          echo "AppArmor profile successfully loaded."
+          
+          echo "Launching installed FLOAT Studio WITHOUT --no-sandbox (verifying AppArmor sandbox & --smoke-test self-check)..."
+          xvfb-run --auto-servernum /usr/share/float-studio/float-studio --smoke-test
+          echo "Linux desktop installed app started with sandbox enabled and passed startup self-check (exit code 0)."
           
           echo "Testing portable tar.gz unpack and execution..."
           mkdir -p tmp-tar && tar -xzf dist/release/FLOAT-linux-x64.tar.gz -C tmp-tar
-          xvfb-run --auto-servernum timeout 15 ./tmp-tar/float-studio --no-sandbox --headless || [ $? -eq 124 ] || [ $? -eq 0 ]
+          xvfb-run --auto-servernum ./tmp-tar/float-studio --smoke-test --no-sandbox
           echo "Linux desktop artifacts passed all headless smoke tests."
 
       # -------------------------------------------------------------------------
       # Windows Smoke Test
       # -------------------------------------------------------------------------
-      - name: Windows Smoke Test (Extract ZIP & Test Headless)
+      - name: Windows Smoke Test (Install, Launch Installed App, Self-Check, Uninstall)
         if: matrix.platform == 'windows-x64'
         shell: powershell
         run: |
-          Write-Host "Unpacking portable Windows ZIP..."
-          Expand-Archive -Path dist/release/FLOAT-win32-x64.zip -DestinationPath tmp-win -Force
-          $exe = "tmp-win/FLOAT.exe"
-          if (-not (Test-Path $exe)) {
-            throw "Executable $exe does not exist in portable bundle!"
-          }
-          
-          Write-Host "Launching FLOAT.exe in headless verification mode..."
-          $proc = Start-Process -FilePath $exe -ArgumentList "--headless", "--no-sandbox" -PassThru
-          Start-Sleep -Seconds 12
-          if ($proc.HasExited -and $proc.ExitCode -ne 0) {
-            throw "FLOAT.exe crashed on launch with exit code $($proc.ExitCode)"
-          }
-          if (-not $proc.HasExited) {
-            Stop-Process -Id $proc.Id -Force
-            Write-Host "FLOAT.exe process PID $($proc.Id) ran stably and was terminated cleanly."
-          }
-          
-          Write-Host "Verifying Inno Setup installer..."
           $installer = "dist/release/FLOAT-Setup-x64.exe"
           if (-not (Test-Path $installer)) {
             throw "Installer $installer does not exist!"
           }
-          Write-Host "Windows desktop artifacts passed all smoke tests."
+          
+          Write-Host "Step 1: Running silent installation of FLOAT Studio..."
+          $installProcess = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru -Wait
+          if ($installProcess.ExitCode -ne 0) {
+            throw "Inno Setup installer failed with exit code $($installProcess.ExitCode)"
+          }
+          Write-Host "Installer finished cleanly."
+
+          # Determine install location (PrivilegesRequired=lowest installs to {localappdata}\Programs\FLOAT Studio)
+          $installDirs = @(
+            "$env:LOCALAPPDATA\Programs\FLOAT Studio",
+            "$env:ProgramFiles\FLOAT Studio",
+            "${env:ProgramFiles(x86)}\FLOAT Studio"
+          )
+          $installDir = $installDirs | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $installDir) {
+            throw "Installation folder was not found! Checked: $($installDirs -join ', ')"
+          }
+          Write-Host "Confirmed installation folder exists: $installDir"
+
+          $installedExe = Join-Path $installDir "FLOAT.exe"
+          if (-not (Test-Path $installedExe)) {
+            throw "Installed executable not found at: $installedExe"
+          }
+          Write-Host "Confirmed installed executable exists: $installedExe"
+
+          # Confirm Start Menu shortcut
+          $startMenuCandidates = @(
+            "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\FLOAT Studio.lnk",
+            "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\FLOAT Studio\FLOAT Studio.lnk",
+            "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\FLOAT Studio.lnk",
+            "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\FLOAT Studio\FLOAT Studio.lnk"
+          )
+          $startMenuShortcut = $startMenuCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $startMenuShortcut) {
+            Get-ChildItem -Recurse "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -ErrorAction SilentlyContinue | Select-Object FullName
+            throw "Start Menu entry was not found! Checked: $($startMenuCandidates -join ', ')"
+          }
+          Write-Host "Confirmed Start Menu entry exists: $startMenuShortcut"
+
+          Write-Host "Step 2: Launching installed FLOAT.exe with --smoke-test (verifying 20s stability & self-check)..."
+          $proc = Start-Process -FilePath $installedExe -ArgumentList "--smoke-test", "--no-sandbox" -PassThru
+          Write-Host "Launched process PID $($proc.Id). Monitoring for 20 seconds..."
+          
+          # Monitor process status for 20 seconds
+          $passedSelfCheck = $false
+          for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Seconds 1
+            if ($proc.HasExited) {
+              if ($proc.ExitCode -eq 0) {
+                Write-Host "FLOAT.exe completed startup self-check successfully with exit code 0 at second $i."
+                $passedSelfCheck = $true
+                break
+              } else {
+                throw "FLOAT.exe crashed or exited with error code $($proc.ExitCode) at second $i!"
+              }
+            }
+          }
+
+          if (-not $proc.HasExited) {
+            Write-Host "Process stayed alive for 20 seconds. Waiting for self-check clean exit..."
+            $proc.WaitForExit(15000)
+            if ($proc.ExitCode -eq 0) {
+              $passedSelfCheck = $true
+              Write-Host "FLOAT.exe completed startup self-check with exit code 0."
+            } else {
+              Stop-Process -Id $proc.Id -Force
+              throw "FLOAT.exe did not complete self-check with code 0 (ExitCode: $($proc.ExitCode))."
+            }
+          }
+
+          if (-not $passedSelfCheck) {
+            throw "Startup self-check did not complete successfully."
+          }
+          Write-Host "Installed application confirmed alive and successfully passed startup self-check."
+
+          Write-Host "Step 3: Running uninstaller and confirming cleanup..."
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path $uninstaller)) {
+            throw "Uninstaller not found at: $uninstaller"
+          }
+          $uninstProcess = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru -Wait
+          Start-Sleep -Seconds 6
+
+          if (Test-Path $installedExe) {
+            throw "FLOAT.exe still exists after uninstall at: $installedExe"
+          }
+          Write-Host "Confirmed FLOAT.exe was removed by the uninstaller."
+
+          Write-Host "Step 4: Testing portable Windows ZIP unpack and --smoke-test..."
+          Expand-Archive -Path dist/release/FLOAT-win32-x64.zip -DestinationPath tmp-win -Force
+          $portableExe = "tmp-win/FLOAT.exe"
+          $portProc = Start-Process -FilePath $portableExe -ArgumentList "--smoke-test", "--no-sandbox" -PassThru
+          $portProc.WaitForExit(25000)
+          if ($portProc.ExitCode -ne 0) {
+            throw "Portable FLOAT.exe failed --smoke-test with exit code $($portProc.ExitCode)"
+          }
+          Write-Host "Portable ZIP confirmed passed startup self-check."
+          Write-Host "Windows desktop artifacts passed all installer, launcher, self-check, and uninstaller smoke tests."
 
   create-github-release:
     name: Publish Release & Checksums

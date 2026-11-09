@@ -54,7 +54,7 @@ export function EditorArea() {
 
   if (openTabs.length === 0) {
     return (
-      <div className="h-full w-full flex items-center justify-center bg-white dark:bg-[#0A0A0A] transition-colors">
+      <div data-testid="editor-area" data-component="editor-area" className="h-full w-full flex items-center justify-center bg-white dark:bg-[#0A0A0A] transition-colors">
         <div className="text-center text-slate-500 dark:text-[#8B949E] select-none">
           <div className="mb-4">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mx-auto text-slate-300 dark:text-[#2A2A2A]">
@@ -69,7 +69,7 @@ export function EditorArea() {
   }
 
   return (
-    <div className="h-full w-full flex flex-col bg-white dark:bg-[#0A0A0A] min-w-0">
+    <div data-testid="editor-area" data-component="editor-area" className="h-full w-full flex flex-col bg-white dark:bg-[#0A0A0A] min-w-0">
       <EditorTabs onToggleSplit={toggleSplit} isSplitActive={Boolean(splitFileId)} />
       
       {!splitFileId ? (

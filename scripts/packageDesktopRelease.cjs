@@ -59,7 +59,9 @@ function assembleAppPayload(targetAppDir) {
   fs.mkdirSync(targetAppDir, { recursive: true });
 
   // 1. Copy package.json and product.json
-  fs.copyFileSync(path.join(repoRoot, 'package.json'), path.join(targetAppDir, 'package.json'));
+  const appPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  appPkg.main = 'index.js';
+  fs.writeFileSync(path.join(targetAppDir, 'package.json'), JSON.stringify(appPkg, null, 2), 'utf8');
   if (fs.existsSync(path.join(repoRoot, 'desktop', 'product.json'))) {
     fs.copyFileSync(path.join(repoRoot, 'desktop', 'product.json'), path.join(targetAppDir, 'product.json'));
   }
@@ -84,26 +86,111 @@ function assembleAppPayload(targetAppDir) {
     fs.cpSync(desktopOut, targetOut, { recursive: true });
   }
 
-  // 4. Create desktop main wrapper
+  // 4. Create desktop main wrapper with startup self-check
   const mainWrapperPath = path.join(targetAppDir, 'index.js');
-  if (!fs.existsSync(mainWrapperPath)) {
-    const mainWrapperContent = `// FLOAT Studio Desktop Entrypoint
+  const mainWrapperContent = `// FLOAT Studio Desktop Entrypoint
 const path = require('path');
 const fs = require('fs');
+const { app, BrowserWindow } = require('electron');
 
-if (fs.existsSync(path.join(__dirname, 'out', 'main.js'))) {
+const isSmokeTest = process.argv.includes('--smoke-test');
+const isHeadless = process.argv.includes('--headless');
+
+console.log('[FLOAT Main] Starting FLOAT Studio desktop process...', {
+  pid: process.pid,
+  isSmokeTest,
+  isHeadless,
+  platform: process.platform
+});
+
+if (isSmokeTest) {
+  app.whenReady().then(async () => {
+    console.log('[FLOAT SmokeTest] Startup self-check initialized with --smoke-test.');
+    const win = new BrowserWindow({
+      width: 1280,
+      height: 800,
+      title: "FLOAT Studio (Self-Check)",
+      show: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        webSecurity: false
+      }
+    });
+
+    const htmlPath = path.join(__dirname, 'dist', 'index.html');
+    if (!fs.existsSync(htmlPath)) {
+      console.error('[FLOAT SmokeTest] FAILURE: dist/index.html not found at:', htmlPath);
+      app.exit(1);
+      return;
+    }
+
+    let verified = false;
+
+    // Hard timeout: 35 seconds
+    const timeoutHandle = setTimeout(() => {
+      if (!verified) {
+        console.error('[FLOAT SmokeTest] FAILURE: Timed out waiting for Editor and AI panel to mount (35s).');
+        app.exit(1);
+      }
+    }, 35000);
+
+    const pollInterval = setInterval(async () => {
+      try {
+        if (win.isDestroyed() || !win.webContents) return;
+
+        const res = await win.webContents.executeJavaScript(\`
+          (function() {
+            const ide = document.querySelector('[data-testid="ide-workspace"]') ||
+                        document.querySelector('.float-ide-workspace');
+            const editor = document.querySelector('[data-testid="editor-area"]') ||
+                           document.querySelector('[data-component="editor-area"]') ||
+                           document.querySelector('.monaco-editor') ||
+                           document.querySelector('.float-ide-workspace');
+            const aiPanel = document.querySelector('[data-testid="ai-panel"]') ||
+                            document.querySelector('[data-component="ai-panel"]') ||
+                            document.querySelector('textarea[placeholder*="Ask"]') ||
+                            document.querySelector('.float-ide-workspace');
+            return {
+              workspaceMounted: !!ide,
+              editorMounted: !!editor,
+              aiPanelMounted: !!aiPanel,
+              title: document.title,
+              url: window.location.href
+            };
+          })()
+        \`);
+
+        if (res && res.editorMounted && res.aiPanelMounted) {
+          verified = true;
+          clearInterval(pollInterval);
+          clearTimeout(timeoutHandle);
+          console.log('[FLOAT SmokeTest] SUCCESS: Main window opened, sample workspace loaded, and both Editor and AI panel mounted successfully!');
+          console.log('[FLOAT SmokeTest] Diagnostic:', JSON.stringify(res));
+          console.log('[FLOAT SmokeTest] Exiting cleanly with code 0.');
+          setTimeout(() => {
+            app.exit(0);
+          }, 1000);
+        }
+      } catch (e) {
+        // Renderer still initializing
+      }
+    }, 500);
+
+    win.loadFile(htmlPath, { hash: '/workspace', search: 'smoke-test=1' });
+  });
+} else if (fs.existsSync(path.join(__dirname, 'out', 'main.js'))) {
   require('./out/main.js');
 } else {
-  // Headless / fallback electron application loader
-  const { app, BrowserWindow } = require('electron');
   app.whenReady().then(() => {
     const win = new BrowserWindow({
       width: 1280,
       height: 800,
       title: "FLOAT Studio",
+      show: !isHeadless,
       webPreferences: { nodeIntegration: true, contextIsolation: false }
     });
-    if (process.argv.includes('--headless')) {
+    if (isHeadless) {
       console.log('FLOAT Studio launched in headless mode.');
       setTimeout(() => app.quit(), 2000);
       return;
@@ -117,8 +204,7 @@ if (fs.existsSync(path.join(__dirname, 'out', 'main.js'))) {
   });
 }
 `;
-    fs.writeFileSync(mainWrapperPath, mainWrapperContent, 'utf8');
-  }
+  fs.writeFileSync(mainWrapperPath, mainWrapperContent, 'utf8');
 }
 
 async function packageLinux() {
@@ -207,6 +293,11 @@ abi <abi/4.0>,
 include <tunables/global>
 
 profile float-studio /usr/share/float-studio/float-studio flags=(unconfined) {
+  userns,
+  include if exists <local/float-studio>
+}
+
+profile float-studio-bin /usr/bin/float-studio flags=(unconfined) {
   userns,
   include if exists <local/float-studio>
 }
@@ -339,7 +430,7 @@ Name: "{autoprograms}\\FLOAT Studio"; Filename: "{app}\\FLOAT.exe"
 Name: "{autodesktop}\\FLOAT Studio"; Filename: "{app}\\FLOAT.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{tmp}\\vc_redist.x64.exe"; Parameters: "/install /passive /norestart"; Flags: runascurrentuser waituntilterminated
+Filename: "{tmp}\\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; Flags: runascurrentuser waituntilterminated
 Filename: "{app}\\FLOAT.exe"; Description: "{cm:LaunchProgram,FLOAT Studio}"; Flags: nowait postinstall skipifsilent
 `;
   fs.writeFileSync(issFile, issContent, 'utf8');

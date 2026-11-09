@@ -1016,7 +1016,7 @@ export function AIPanel() {
   const isSelectionAvailable = !!(activeSelection && activeSelection.text.trim());
 
   return (
-    <div className="h-full w-full min-h-0 flex flex-col bg-slate-50 dark:bg-[#0A0A0A] overflow-hidden relative">
+    <div data-testid="ai-panel" data-component="ai-panel" className="h-full w-full min-h-0 flex flex-col bg-slate-50 dark:bg-[#0A0A0A] overflow-hidden relative">
       {/* Hidden File Input for local source upload */}
       <input
         ref={fileInputRef}

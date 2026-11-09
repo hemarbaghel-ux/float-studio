@@ -29,6 +29,10 @@ async function runTests() {
 	assert(yamlContent.includes('float-studio_amd64.deb'), 'Must target Linux Debian package');
 	assert(yamlContent.includes('SHA256SUMS.txt'), 'Must compute SHA256 checksums');
 	assert(yamlContent.includes('action-gh-release'), 'Must publish release assets to GitHub');
+	assert(yamlContent.includes('--smoke-test'), 'Workflow must use --smoke-test startup self-check');
+	assert(yamlContent.includes('/VERYSILENT'), 'Workflow must run Windows installer silently');
+	assert(yamlContent.includes('unins000.exe'), 'Workflow must verify Windows uninstaller execution and removal');
+	assert(yamlContent.includes('apparmor_parser'), 'Workflow must verify Linux AppArmor profile loading');
 	console.log('  ✓ Multi-platform GitHub Actions release matrix validated (Windows, macOS, Linux).');
 
 	// =========================================================================
