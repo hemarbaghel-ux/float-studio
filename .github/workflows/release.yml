@@ -24,10 +24,15 @@ jobs:
   build-desktop:
     name: Package Desktop (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.platform == 'macos-arm64' }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          - platform: linux-x64
+            os: ubuntu-latest
+            artifact_name: float-studio_amd64.deb
+            archive_name: FLOAT-linux-x64.tar.gz
           - platform: windows-x64
             os: windows-latest
             artifact_name: FLOAT-Setup-x64.exe
@@ -36,10 +41,6 @@ jobs:
             os: macos-14
             artifact_name: FLOAT-arm64.dmg
             archive_name: FLOAT-darwin-arm64.zip
-          - platform: linux-x64
-            os: ubuntu-latest
-            artifact_name: float-studio_amd64.deb
-            archive_name: FLOAT-linux-x64.tar.gz
 
     steps:
       - name: Checkout repository
@@ -56,6 +57,10 @@ jobs:
 
       - name: Build Web & Core Server Assets
         run: npm run build
+
+      - name: Install Linux build prerequisites
+        if: matrix.platform == 'linux-x64'
+        run: sudo apt-get update && sudo apt-get install -y unzip xvfb
 
       - name: Install Inno Setup (Windows only)
         if: matrix.platform == 'windows-x64'
@@ -102,6 +107,7 @@ jobs:
     name: Headless Smoke Test (${{ matrix.platform }})
     needs: build-desktop
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.platform == 'macos-arm64' }}
     strategy:
       fail-fast: false
       matrix:

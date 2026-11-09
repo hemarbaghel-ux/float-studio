@@ -10,7 +10,6 @@
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
-const https = require('https');
 
 const ELECTRON_VERSION = '34.3.2';
 const APP_NAME = 'FLOAT Studio';
@@ -28,37 +27,17 @@ function exec(cmd, opts = {}) {
 }
 
 function downloadFile(url, destPath) {
-  return new Promise((resolve, reject) => {
-    if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000000) {
-      console.log(`[Cache Hit] ${destPath} already exists (${(fs.statSync(destPath).size / 1024 / 1024).toFixed(1)} MB)`);
-      return resolve(destPath);
-    }
-    console.log(`Downloading: ${url} -> ${destPath}`);
-    const file = fs.createWriteStream(destPath);
-    
-    function makeRequest(currentUrl) {
-      https.get(currentUrl, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return makeRequest(res.headers.location);
-        }
-        if (res.statusCode !== 200) {
-          return reject(new Error(`Failed to download ${url}: HTTP ${res.statusCode}`));
-        }
-        res.pipe(file);
-        file.on('finish', () => {
-          file.close(() => {
-            console.log(`Downloaded ${(fs.statSync(destPath).size / 1024 / 1024).toFixed(1)} MB.`);
-            resolve(destPath);
-          });
-        });
-      }).on('error', (err) => {
-        fs.unlink(destPath, () => {});
-        reject(err);
-      });
-    }
-
-    makeRequest(url);
-  });
+  if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000000) {
+    console.log(`[Cache Hit] ${destPath} already exists (${(fs.statSync(destPath).size / 1024 / 1024).toFixed(1)} MB)`);
+    return destPath;
+  }
+  console.log(`Downloading: ${url} -> ${destPath}`);
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  const curlCmd = process.platform === 'win32' ? 'curl.exe' : 'curl';
+  exec(`${curlCmd} -f -sL --retry 3 --connect-timeout 30 -o "${destPath}" "${url}"`);
+  const size = fs.statSync(destPath).size;
+  console.log(`Downloaded ${(size / 1024 / 1024).toFixed(1)} MB.`);
+  return destPath;
 }
 
 function extractZip(zipPath, targetDir) {
@@ -67,7 +46,11 @@ function extractZip(zipPath, targetDir) {
   if (process.platform === 'win32') {
     exec(`powershell -NoProfile -Command "Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${targetDir}' -Force"`);
   } else {
-    exec(`unzip -q -o "${zipPath}" -d "${targetDir}"`);
+    try {
+      exec(`unzip -q -o "${zipPath}" -d "${targetDir}"`);
+    } catch {
+      exec(`python3 -m zipfile -e "${zipPath}" "${targetDir}"`);
+    }
   }
 }
 
@@ -94,14 +77,14 @@ function assembleAppPayload(targetAppDir) {
     }
   }
 
-  // 3. Copy desktop compiled out & main entrypoints
+  // 3. Copy desktop compiled out & main entrypoints if present
   const desktopOut = path.join(repoRoot, 'desktop', 'out');
   const targetOut = path.join(targetAppDir, 'out');
   if (fs.existsSync(desktopOut)) {
     fs.cpSync(desktopOut, targetOut, { recursive: true });
   }
 
-  // 4. Create desktop main wrapper if needed
+  // 4. Create desktop main wrapper
   const mainWrapperPath = path.join(targetAppDir, 'index.js');
   if (!fs.existsSync(mainWrapperPath)) {
     const mainWrapperContent = `// FLOAT Studio Desktop Entrypoint
@@ -142,7 +125,7 @@ async function packageLinux() {
   console.log('\n=== Building Real Linux Packages (amd64) ===');
   const electronZipUrl = `https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-x64.zip`;
   const cachedZip = path.join(buildTmpDir, `electron-v${ELECTRON_VERSION}-linux-x64.zip`);
-  await downloadFile(electronZipUrl, cachedZip);
+  downloadFile(electronZipUrl, cachedZip);
 
   const linuxBuildDir = path.join(buildTmpDir, 'linux-unpacked');
   fs.rmSync(linuxBuildDir, { recursive: true, force: true });
@@ -188,7 +171,7 @@ async function packageLinux() {
   // Copy app contents into /usr/share/float-studio
   fs.cpSync(linuxBuildDir, shareDir, { recursive: true });
 
-  // Create /usr/bin/float-studio symlink relative
+  // Create /usr/bin/float-studio symlink
   exec(`ln -sf /usr/share/float-studio/float-studio "${path.join(binDir, 'float-studio')}"`);
 
   // Create .desktop file
@@ -213,7 +196,6 @@ MimeType=text/plain;inode/directory;
   if (fs.existsSync(iconSource)) {
     fs.copyFileSync(iconSource, iconDest);
   } else {
-    // Generate simple png fallback if icon missing
     fs.writeFileSync(iconDest, Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2d400000000049454e44ae426082', 'hex'));
   }
 
@@ -253,19 +235,25 @@ if [ -x /usr/sbin/apparmor_parser ] && [ -f /etc/apparmor.d/float-studio ]; then
   /usr/sbin/apparmor_parser -r -T /etc/apparmor.d/float-studio 2>/dev/null || true
 fi
 if [ -x /usr/bin/update-desktop-database ]; then
-  update-desktop-database -q /usr/share/applications || true
+  update-desktop-database -q /usr/share/applications 2>/dev/null || true
 fi
 `;
-  fs.writeFileSync(postinstFile, postinstContent, { encoding: 'utf8', mode: 0o755 });
+  fs.writeFileSync(postinstFile, postinstContent, 'utf8');
 
   const postrmFile = path.join(debianDir, 'postrm');
   const postrmContent = `#!/bin/sh
 set -e
 if [ -x /usr/bin/update-desktop-database ]; then
-  update-desktop-database -q /usr/share/applications || true
+  update-desktop-database -q /usr/share/applications 2>/dev/null || true
 fi
 `;
-  fs.writeFileSync(postrmFile, postrmContent, { encoding: 'utf8', mode: 0o755 });
+  fs.writeFileSync(postrmFile, postrmContent, 'utf8');
+
+  // Strict permissions required by dpkg-deb
+  fs.chmodSync(debianDir, 0o755);
+  fs.chmodSync(controlFile, 0o644);
+  fs.chmodSync(postinstFile, 0o755);
+  fs.chmodSync(postrmFile, 0o755);
 
   // Build .deb with dpkg-deb
   const debOut = path.join(distReleaseDir, 'float-studio_amd64.deb');
@@ -287,7 +275,7 @@ async function packageWindows() {
   } else {
     const electronZipUrl = `https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-win32-x64.zip`;
     const cachedZip = path.join(buildTmpDir, `electron-v${ELECTRON_VERSION}-win32-x64.zip`);
-    await downloadFile(electronZipUrl, cachedZip);
+    downloadFile(electronZipUrl, cachedZip);
     extractZip(cachedZip, winBuildDir);
   }
 
@@ -311,10 +299,14 @@ async function packageWindows() {
   // 2. Download Microsoft Visual C++ 2015-2022 Redistributable
   const vcRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
   const vcRedistPath = path.join(buildTmpDir, 'vc_redist.x64.exe');
-  await downloadFile(vcRedistUrl, vcRedistPath);
+  downloadFile(vcRedistUrl, vcRedistPath);
 
   // 3. Build Inno Setup Installer
   const issFile = path.join(buildTmpDir, 'float_setup.iss');
+  const escapedWinBuildDir = winBuildDir.replace(/\\/g, '\\\\');
+  const escapedVcRedistPath = vcRedistPath.replace(/\\/g, '\\\\');
+  const escapedDistReleaseDir = distReleaseDir.replace(/\\/g, '\\\\');
+
   const issContent = `; Inno Setup Script for FLOAT Studio
 [Setup]
 AppId={{D77B7E06-80BA-4137-BCF4-654B95CCEBC5}}
@@ -328,8 +320,8 @@ OutputDir=${distReleaseDir}
 OutputBaseFilename=FLOAT-Setup-x64
 Compression=lzma2/ultra64
 SolidCompression=yes
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 WizardStyle=modern
@@ -352,16 +344,24 @@ Filename: "{app}\\FLOAT.exe"; Description: "{cm:LaunchProgram,FLOAT Studio}"; Fl
   fs.writeFileSync(issFile, issContent, 'utf8');
 
   console.log(`Compiling Inno Setup installer: ${path.join(distReleaseDir, 'FLOAT-Setup-x64.exe')}...`);
+  
   // Locate ISCC.exe
   let isccCmd = 'iscc';
-  const possiblePaths = [
+  const candidatePaths = [
+    'iscc',
     'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe',
     'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
     'C:\\ProgramData\\chocolatey\\bin\\iscc.exe'
   ];
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      isccCmd = `"${p}"`;
+  for (const c of candidatePaths) {
+    if (c === 'iscc') {
+      try {
+        cp.execSync('iscc /?', { stdio: 'ignore' });
+        isccCmd = 'iscc';
+        break;
+      } catch {}
+    } else if (fs.existsSync(c)) {
+      isccCmd = `"${c}"`;
       break;
     }
   }
@@ -372,7 +372,7 @@ async function packageMacOS() {
   console.log('\n=== Building Real macOS Packages (arm64) ===');
   const electronZipUrl = `https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-darwin-arm64.zip`;
   const cachedZip = path.join(buildTmpDir, `electron-v${ELECTRON_VERSION}-darwin-arm64.zip`);
-  await downloadFile(electronZipUrl, cachedZip);
+  downloadFile(electronZipUrl, cachedZip);
 
   const macBuildDir = path.join(buildTmpDir, 'mac-unpacked');
   fs.rmSync(macBuildDir, { recursive: true, force: true });
@@ -477,7 +477,6 @@ function validateArtifacts(expectedFiles) {
     const isGzip = buffer[0] === 0x1f && buffer[1] === 0x8b; // \x1f\x8b
     const isPe = buffer[0] === 0x4d && buffer[1] === 0x5a; // MZ
     const isDeb = buffer.toString('utf8', 0, 7) === '!<arch>'; // Debian ar archive
-    const isDmg = buffer.length >= 4; // DMG UDZO trailer or HFS
 
     if (fileName.endsWith('.zip') && !isZip) {
       throw new Error(`CRITICAL: "${fileName}" is not a valid ZIP file.`);
