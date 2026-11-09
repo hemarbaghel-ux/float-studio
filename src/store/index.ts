@@ -633,7 +633,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       try {
         const filePath = flattenFileTree(newFiles).find(f => f.id === file!.id)?.path || normalizeFilePath(idOrPath) || file.name;
         workspaceIndexManager.getIndex(state.projectId).updateFile(filePath, content);
-      } catch {}
+      } catch (err: any) {
+        console.warn('[WorkspaceIndex] updateFile failed:', err?.message || err);
+      }
     }
 
     // Save locally
@@ -674,7 +676,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
           const parentPath = parentId ? flattenFileTree(state.files).find(f => f.id === parentId)?.path : '';
           const filePath = parentPath ? `${parentPath}/${file.name}` : file.name;
           workspaceIndexManager.getIndex(state.projectId).updateFile(filePath, file.content || '');
-        } catch {}
+        } catch (err: any) {
+          console.warn('[WorkspaceIndex] updateFile on add failed:', err?.message || err);
+        }
       }
     }
 
@@ -718,7 +722,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
             idx.updateFile(f.path, f.content || "");
           }
         }
-      } catch {}
+      } catch (err: any) {
+        console.warn('[WorkspaceIndex] batch update failed:', err?.message || err);
+      }
     }
     if (state.projectId && state.projectName) {
       saveStoredProject({
@@ -755,7 +761,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
             idx.removeFile(entry.path);
           }
         }
-      } catch {}
+      } catch (err: any) {
+        console.warn('[WorkspaceIndex] removeFile failed:', err?.message || err);
+      }
     }
 
     const targetId = target ? target.id : id;
@@ -845,7 +853,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
         const idx = workspaceIndexManager.getIndex(state.projectId);
         for (const d of deletedFiles) idx.removeFile(normalizeFilePath(d));
         for (const c of changedFiles) idx.updateFile(normalizeFilePath(c.path), c.content || '');
-      } catch {}
+      } catch (err: any) {
+        console.warn('[WorkspaceIndex] sync files failed:', err?.message || err);
+      }
     }
     if (state.projectId && state.projectName) saveStoredProject({ projectId: state.projectId, projectName: state.projectName, files: nextFiles, openTabs, activeFileId });
     return { files: nextFiles, openTabs, activeFileId };
@@ -879,7 +889,9 @@ export const useIDEStore = create<IDEState>((set, get) => ({
           content: f.content || '',
           type: f.type
         })));
-      } catch {}
+      } catch (err: any) {
+        console.warn('[WorkspaceIndex] syncProject on restoreCheckpoint failed:', err?.message || err);
+      }
     }
     if (get().projectId && get().projectName) {
       saveStoredProject({

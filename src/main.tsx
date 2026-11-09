@@ -2,6 +2,9 @@ import {StrictMode, Suspense, lazy} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { LanguageProvider } from './components/LanguageProvider';
+import { initSentry } from './services/telemetry/sentry';
+
+initSentry();
 import './index.css';
 
 // Remove credentials left behind by the retired browser-local BYOK settings.

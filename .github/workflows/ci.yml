@@ -28,13 +28,16 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install dependencies (strict lockfile verification)
+      - name: Install dependencies (npm ci)
         run: npm ci --no-audit --no-fund
 
-      - name: TypeScript static check (lint)
+      - name: Lint & Typecheck (tsc --noEmit)
         run: npm run lint
 
-      - name: Production build (client + server bundles)
+      - name: Core Flow Tests (Vitest)
+        run: npm run test:vitest
+
+      - name: Production Build (Client & Server Bundles)
         run: npm run build
 
       - name: Build native FLOAT utility-process entrypoint
@@ -46,5 +49,5 @@ jobs:
       - name: Prepare Composer sandbox image for integration tests
         run: docker pull node:22-bookworm-slim
 
-      - name: Run full verification suite (Chat, Models, Persistence, Security)
+      - name: Run Full Test Suite (Unit, Integration & Desktop)
         run: npm test

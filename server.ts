@@ -2,10 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
+import { initSentry, captureException } from './src/services/telemetry/sentry';
 
 // Load environment variables from .env.local and .env
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
 dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
+
+// Initialize Sentry error tracking if SENTRY_DSN is configured
+initSentry();
 
 /**
  * Checks whether an error is a known client request AbortError from an aborted HTTP/SSE stream.
@@ -27,6 +31,7 @@ process.on('unhandledRejection', (reason: any) => {
     return;
   }
   console.error('[FLOAT Server] Unhandled Rejection:', reason);
+  captureException(reason, { mechanism: 'unhandledRejection' });
 });
 
 process.on('uncaughtException', (err: any) => {
@@ -39,6 +44,7 @@ process.on('uncaughtException', (err: any) => {
     return;
   }
   console.error('[FLOAT Server] Uncaught Exception:', err);
+  captureException(err, { mechanism: 'uncaughtException' });
 });
 
 let activeServer: any = null;

@@ -38,7 +38,9 @@ const getInitialSelectedModel = () => {
         return saved;
       }
       localStorage.setItem('float_selected_model', 'gpt-6-astra');
-    } catch {}
+    } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
   }
   return 'gpt-6-astra';
 };
@@ -50,7 +52,9 @@ const getInitialEffort = (): ReasoningEffortLevel => {
       if (saved === 'low' || saved === 'medium' || saved === 'high') {
         return saved;
       }
-    } catch {}
+    } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
   }
   return 'high';
 };
@@ -66,7 +70,9 @@ const getInitialFavorites = (): string[] => {
           if (filtered.length > 0) return filtered;
         }
       }
-    } catch {}
+    } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
   }
   return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
@@ -82,7 +88,9 @@ const getInitialRecents = (): string[] => {
           if (filtered.length > 0) return filtered;
         }
       }
-    } catch {}
+    } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
   }
   return ['gpt-6-astra', 'gpt-6.1-sol'];
 };
@@ -118,14 +126,18 @@ export const useAIStore = create<AIStore>((set) => ({
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('float_selected_model', validModel);
-      } catch {}
+      } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
     }
     set((state) => {
       const updatedRecents = [validModel, ...state.recentModels.filter(id => id !== validModel && VALID_FLOAT_MODELS.includes(id))].slice(0, 5);
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('float_recent_models', JSON.stringify(updatedRecents));
-        } catch {}
+        } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
       }
       return { selectedModel: validModel, recentModels: updatedRecents };
     });
@@ -134,7 +146,9 @@ export const useAIStore = create<AIStore>((set) => ({
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('float_selected_effort', selectedEffort);
-      } catch {}
+      } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
     }
     set({ selectedEffort });
   },
@@ -147,7 +161,9 @@ export const useAIStore = create<AIStore>((set) => ({
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('float_favorite_models', JSON.stringify(favoriteModels));
-        } catch {}
+        } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
       }
       return { favoriteModels };
     });
@@ -158,7 +174,9 @@ export const useAIStore = create<AIStore>((set) => ({
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('float_recent_models', JSON.stringify(updatedRecents));
-        } catch {}
+        } catch (err: any) {
+      console.warn('[AIStore] LocalStorage access warning:', err?.message || err);
+    }
       }
       return { recentModels: updatedRecents };
     });

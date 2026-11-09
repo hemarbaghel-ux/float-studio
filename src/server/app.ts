@@ -375,7 +375,9 @@ export async function createApp(options: CreateAppOptions = {}) {
               };
             }
           }
-        } catch {}
+        } catch (err: any) {
+          console.warn('[Server] Failed to fetch projectGitLinks:', err?.message || err);
+        }
       }
 
       const priorTurns = messages.slice(0, lastMsgIdx).map((m: any) => ({
