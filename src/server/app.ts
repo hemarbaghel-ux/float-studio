@@ -287,7 +287,7 @@ export async function createApp(options: CreateAppOptions = {}) {
       });
     }
 
-    const isStream = req.body.stream === true || req.headers.accept?.includes('text/event-stream');
+    const isStream = req.body.stream === true || req.body.isStream === true || req.headers.accept?.includes('text/event-stream');
     const {
       messages,
       model = 'gpt-6.1-sol',
@@ -422,6 +422,10 @@ export async function createApp(options: CreateAppOptions = {}) {
       });
 
       const abortController = new AbortController();
+      const requestTimeout = setTimeout(() => {
+        abortController.abort(new Error('Gateway request timed out after 120 seconds.'));
+      }, 120000);
+      requestTimeout.unref?.();
       res.on('close', () => {
         if (!res.writableEnded) abortController.abort();
       });
@@ -450,6 +454,7 @@ export async function createApp(options: CreateAppOptions = {}) {
           abortController.signal
         );
 
+        clearTimeout(requestTimeout);
         res.write(`data: ${JSON.stringify({ type: 'done', text: result.text, usage: result.usage, isSimulated: result.isSimulated, contextExplanation })}\n\n`);
         res.end();
       } catch (error: any) {
@@ -462,6 +467,7 @@ export async function createApp(options: CreateAppOptions = {}) {
           /cancel/i.test(errorStr) ||
           errorStr.includes('operation is manually canceled');
 
+        clearTimeout(requestTimeout);
         if (!res.writableEnded) {
           if (isCancelled) {
             res.write(`data: ${JSON.stringify({ type: 'done', text: '', cancelled: true })}\n\n`);

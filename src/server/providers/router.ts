@@ -15,6 +15,15 @@ import {
   getPublicModelCatalog
 } from './modelRegistry';
 import { ServerPrivacyGuard } from '../privacyGuard';
+import type {
+  IModelGateway,
+  ModelGatewayRequest,
+  ModelGatewayResponse,
+  ModelGatewayDelta,
+  ProviderHealthStatus,
+  IModelCatalog
+} from '../../shared/contracts/index';
+import { AuthoritativeModelCatalog } from '../../shared/contracts/index';
 
 export interface ModelRouteDefinition {
   provider: 'openai' | 'google';
@@ -24,7 +33,7 @@ export interface ModelRouteDefinition {
   upstreamModelId?: string;
 }
 
-export class ModelRouter {
+export class ModelRouter implements IModelGateway {
   private adapters: Map<string, AIProviderAdapter> = new Map();
 
   constructor() {
@@ -304,6 +313,118 @@ export class ModelRouter {
       onChunk(result.text);
     }
     return result;
+  }
+  getCatalog(): IModelCatalog {
+    return new AuthoritativeModelCatalog();
+  }
+
+  async checkHealth(providerId: string): Promise<ProviderHealthStatus> {
+    this.ensureAdaptersRegistered();
+    const adapter = this.adapters.get(providerId);
+    if (!adapter) {
+      return {
+        providerId,
+        operational: false,
+        latencyMs: 0,
+        error: `Provider "${providerId}" is not registered on the server.`,
+        timestamp: Date.now()
+      };
+    }
+    const start = Date.now();
+    try {
+      if (adapter.checkHealth) {
+        const res = await adapter.checkHealth();
+        return {
+          providerId,
+          operational: res.authenticated && res.modelAvailable,
+          latencyMs: Date.now() - start,
+          error: res.error,
+          timestamp: Date.now()
+        };
+      }
+      return {
+        providerId,
+        operational: adapter.isConfigured(),
+        latencyMs: Date.now() - start,
+        timestamp: Date.now()
+      };
+    } catch (err: any) {
+      return {
+        providerId,
+        operational: false,
+        latencyMs: Date.now() - start,
+        error: err?.message || String(err),
+        timestamp: Date.now()
+      };
+    }
+  }
+
+  async generate(request: ModelGatewayRequest, signal?: AbortSignal): Promise<ModelGatewayResponse> {
+    const start = Date.now();
+    const res = await this.generateContent({
+      model: request.modelId,
+      messages: request.messages.map(m => ({
+        role: m.role,
+        content: m.content
+      })),
+      systemInstruction: request.systemPrompt,
+      reasoningEffort: request.reasoningEffort,
+    });
+    return {
+      text: res.text,
+      modelId: request.modelId,
+      usage: {
+        inputTokens: res.usage?.inputTokens || 0,
+        outputTokens: res.usage?.outputTokens || 0,
+        totalTokens: (res.usage?.inputTokens || 0) + (res.usage?.outputTokens || 0),
+        durationMs: Date.now() - start
+      },
+      toolCalls: res.toolCalls?.map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        args: tc.arguments
+      })),
+      isSimulated: res.isSimulated
+    };
+  }
+
+  async generateStream(
+    request: ModelGatewayRequest,
+    onDelta: (delta: ModelGatewayDelta) => void,
+    signal?: AbortSignal
+  ): Promise<ModelGatewayResponse> {
+    const start = Date.now();
+    const res = await this.generateContentStream(
+      {
+        model: request.modelId,
+        messages: request.messages.map(m => ({
+          role: m.role,
+          content: m.content
+        })),
+        systemInstruction: request.systemPrompt,
+        reasoningEffort: request.reasoningEffort,
+      },
+      (chunk: string) => {
+        onDelta({ type: 'delta', content: chunk });
+      },
+      signal
+    );
+    return {
+      text: res.text,
+      modelId: request.modelId,
+      usage: {
+        inputTokens: res.usage?.inputTokens || 0,
+        outputTokens: res.usage?.outputTokens || 0,
+        totalTokens: (res.usage?.inputTokens || 0) + (res.usage?.outputTokens || 0),
+        durationMs: Date.now() - start
+      },
+      toolCalls: res.toolCalls?.map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        args: tc.arguments
+      })),
+      isSimulated: res.isSimulated
+    };
   }
 }
 
