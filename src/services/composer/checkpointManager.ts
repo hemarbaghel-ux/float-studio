@@ -7,15 +7,17 @@ import crypto from 'crypto';
 import {
   ICheckpointManager,
   ICheckpointRestoreResult,
+  ISerializedWorkspaceCheckpoint,
   IWorkspaceCheckpoint,
 } from '../../shared/contracts/checkpoints';
 import { IWorkspaceService } from '../../shared/contracts/workspace';
 
 /**
- * Workspace Checkpoint Manager (Phase 5)
+ * Workspace Checkpoint Manager (Phase 5 & 9)
  *
  * Captures point-in-time file snapshots of project workspaces before agent tool executions
- * and code proposal applications, providing automatic recovery and deterministic one-click rollback.
+ * and code proposal applications, providing automatic recovery, deterministic one-click rollback,
+ * and durable storage across server sessions and restarts.
  */
 export class WorkspaceCheckpointManager implements ICheckpointManager {
   private readonly checkpoints: Map<string, IWorkspaceCheckpoint> = new Map();
@@ -35,7 +37,15 @@ export class WorkspaceCheckpointManager implements ICheckpointManager {
       targetPaths = [...paths];
     } else {
       const allFiles = await this.workspace.listFiles({ recursive: true });
-      targetPaths = allFiles.filter(f => f.type === 'file').map(f => f.path);
+      targetPaths = allFiles
+        .filter(
+          f =>
+            f.type === 'file' &&
+            !f.path.startsWith('.float/') &&
+            !f.path.startsWith('.git/') &&
+            !f.path.startsWith('node_modules/')
+        )
+        .map(f => f.path);
     }
 
     for (const relPath of targetPaths) {
@@ -120,5 +130,156 @@ export class WorkspaceCheckpointManager implements ICheckpointManager {
 
   deleteCheckpoint(checkpointId: string): boolean {
     return this.checkpoints.delete(checkpointId);
+  }
+
+  /**
+   * Serializes a checkpoint into a portable JSON string with an SHA-256 integrity hash.
+   */
+  exportCheckpoint(checkpointId: string): string | undefined {
+    const checkpoint = this.checkpoints.get(checkpointId);
+    if (!checkpoint) return undefined;
+
+    const filesObj: Record<string, string> = {};
+    for (const [p, content] of checkpoint.fileSnapshots.entries()) {
+      filesObj[p] = content;
+    }
+
+    const serialized: ISerializedWorkspaceCheckpoint = {
+      id: checkpoint.id,
+      projectId: checkpoint.projectId,
+      description: checkpoint.description,
+      timestamp: checkpoint.timestamp,
+      proposalId: checkpoint.proposalId,
+      fileSnapshots: filesObj,
+      fileCount: Object.keys(filesObj).length,
+      sha256: crypto
+        .createHash('sha256')
+        .update(JSON.stringify(filesObj), 'utf8')
+        .digest('hex'),
+    };
+
+    return JSON.stringify(serialized, null, 2);
+  }
+
+  /**
+   * Imports and validates a previously exported checkpoint.
+   */
+  importCheckpoint(
+    serializedOrObj: string | ISerializedWorkspaceCheckpoint
+  ): IWorkspaceCheckpoint {
+    const data: ISerializedWorkspaceCheckpoint =
+      typeof serializedOrObj === 'string'
+        ? (JSON.parse(serializedOrObj) as ISerializedWorkspaceCheckpoint)
+        : serializedOrObj;
+
+    if (!data.id || !data.projectId || !data.fileSnapshots) {
+      throw new Error('Invalid serialized checkpoint structure');
+    }
+
+    if (data.sha256) {
+      const computedHash = crypto
+        .createHash('sha256')
+        .update(JSON.stringify(data.fileSnapshots), 'utf8')
+        .digest('hex');
+      if (computedHash !== data.sha256) {
+        throw new Error('Checkpoint integrity verification failed (SHA-256 mismatch)');
+      }
+    }
+
+    const fileSnapshots = new Map<string, string>();
+    for (const [p, content] of Object.entries(data.fileSnapshots)) {
+      fileSnapshots.set(p, content);
+    }
+
+    const checkpoint: IWorkspaceCheckpoint = {
+      id: data.id,
+      projectId: data.projectId,
+      description: data.description,
+      timestamp: data.timestamp,
+      proposalId: data.proposalId,
+      fileSnapshots,
+    };
+
+    this.checkpoints.set(checkpoint.id, checkpoint);
+    return checkpoint;
+  }
+
+  /**
+   * Persists a checkpoint to the local workspace disk under `.float/checkpoints/${checkpointId}.json`.
+   */
+  async persistToWorkspaceDisk(checkpointId: string): Promise<string> {
+    const exported = this.exportCheckpoint(checkpointId);
+    if (!exported) {
+      throw new Error(`Checkpoint "${checkpointId}" not found in memory to persist.`);
+    }
+
+    const diskPath = `.float/checkpoints/${checkpointId}.json`;
+    await this.workspace.writeFile(diskPath, exported);
+    return diskPath;
+  }
+
+  /**
+   * Loads a checkpoint from the local workspace disk under `.float/checkpoints/${checkpointId}.json`.
+   */
+  async loadFromWorkspaceDisk(checkpointId: string): Promise<IWorkspaceCheckpoint | null> {
+    const diskPath = `.float/checkpoints/${checkpointId}.json`;
+    const exists = await this.workspace.fileExists(diskPath);
+    if (!exists) return null;
+
+    const content = await this.workspace.readFile(diskPath);
+    return this.importCheckpoint(content);
+  }
+
+  /**
+   * Persists the checkpoint to durable cloud storage (Firestore / GCS) via `durableState`.
+   */
+  async saveToDurableStorage(
+    checkpointId: string,
+    ownerId: string,
+    ttlMs?: number
+  ): Promise<{ manifestId: string; backend: string } | null> {
+    const exported = this.exportCheckpoint(checkpointId);
+    if (!exported) return null;
+
+    const checkpoint = this.checkpoints.get(checkpointId)!;
+    const serializedObj: ISerializedWorkspaceCheckpoint = JSON.parse(exported);
+
+    const { saveLargePayloadDurable } = await import('../../server/durableState');
+    const manifest = await saveLargePayloadDurable({
+      collectionName: 'workspace_checkpoints',
+      docId: checkpointId,
+      ownerId,
+      projectId: checkpoint.projectId,
+      payload: serializedObj,
+      extraFields: {
+        description: checkpoint.description,
+        proposalId: checkpoint.proposalId,
+        fileCount: serializedObj.fileCount,
+      },
+      ttlMs,
+    });
+
+    return {
+      manifestId: manifest.id,
+      backend: manifest.storageBackend,
+    };
+  }
+
+  /**
+   * Rehydrates a checkpoint from durable cloud storage (Firestore / GCS) via `durableState`.
+   */
+  async loadFromDurableStorage(
+    checkpointId: string,
+    ownerId: string
+  ): Promise<IWorkspaceCheckpoint | null> {
+    const { loadLargePayloadDurable } = await import('../../server/durableState');
+    const result = await loadLargePayloadDurable<ISerializedWorkspaceCheckpoint>({
+      collectionName: 'workspace_checkpoints',
+      docId: checkpointId,
+      ownerId,
+    });
+
+    if (!result || !result.payload) return null;
+    return this.importCheckpoint(result.payload);
   }
 }
