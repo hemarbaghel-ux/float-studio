@@ -4,10 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Canonical Proposal & Diff Schemas (Phase 2)
+ * Canonical Proposal & Diff Schemas (Phase 2 & Phase 5)
  *
  * Defines the unified data structures for multi-file code proposals, unified diffs,
- * change operations, and review lifecycle states across web, server, and desktop workbenches.
+ * change operations, conflict detection, and review lifecycle states across web, server, and desktop workbenches.
  */
 
 import crypto from 'crypto';
@@ -37,6 +37,7 @@ export interface IProposalFileChange {
   readonly proposedHash?: string;
   readonly status: 'pending' | 'accepted' | 'rejected' | 'applied' | 'failed';
   readonly diffStats: DiffStats;
+  readonly unifiedDiff?: string;
 }
 
 export interface IProposal {
@@ -50,6 +51,23 @@ export interface IProposal {
   readonly files: readonly IProposalFileChange[];
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+export interface IProposalConflict {
+  readonly path: string;
+  readonly expectedHash: string;
+  readonly actualHash: string;
+  readonly reason: string;
+}
+
+export interface IProposalApplicationResult {
+  readonly success: boolean;
+  readonly proposalId: string;
+  readonly status: ProposalStatus;
+  readonly appliedFiles: readonly string[];
+  readonly checkpointId?: string;
+  readonly conflicts?: readonly IProposalConflict[];
+  readonly error?: string;
 }
 
 /**
@@ -91,4 +109,75 @@ export function computeDiffStats(original: string = '', proposed: string = ''): 
   const additions = Math.max(0, propLines.length - matched);
   const deletions = Math.max(0, origLines.length - matched);
   return { additions, deletions };
+}
+
+/**
+ * Generates a unified diff string for a file change.
+ */
+export function generateUnifiedDiff(filePath: string, original: string = '', proposed: string = ''): string {
+  const normOriginal = original.replace(/\r\n/g, '\n');
+  const normProposed = proposed.replace(/\r\n/g, '\n');
+
+  if (normOriginal === normProposed) {
+    return '';
+  }
+
+  const origLines = normOriginal ? normOriginal.split('\n') : [];
+  const propLines = normProposed ? normProposed.split('\n') : [];
+
+  const header = [
+    `--- a/${filePath}`,
+    `+++ b/${filePath}`,
+  ];
+
+  if (origLines.length === 0) {
+    const lines = [`@@ -0,0 +1,${propLines.length} @@`];
+    for (const l of propLines) lines.push(`+${l}`);
+    return [...header, ...lines].join('\n');
+  }
+
+  if (propLines.length === 0) {
+    const lines = [`@@ -1,${origLines.length} +0,0 @@`];
+    for (const l of origLines) lines.push(`-${l}`);
+    return [...header, ...lines].join('\n');
+  }
+
+  let start = 0;
+  while (start < origLines.length && start < propLines.length && origLines[start] === propLines[start]) {
+    start++;
+  }
+
+  let endOrig = origLines.length - 1;
+  let endProp = propLines.length - 1;
+  while (endOrig >= start && endProp >= start && origLines[endOrig] === propLines[endProp]) {
+    endOrig--;
+    endProp--;
+  }
+
+  const contextBefore = Math.max(0, start - 3);
+  const contextAfterOrig = Math.min(origLines.length, endOrig + 4);
+
+  const hunkOldStart = contextBefore + 1;
+  const hunkOldCount = contextAfterOrig - contextBefore;
+  const hunkNewStart = contextBefore + 1;
+  const hunkNewCount = (start - contextBefore) + (endProp - start + 1) + (contextAfterOrig - (endOrig + 1));
+
+  const lines: string[] = [
+    `@@ -${hunkOldStart},${hunkOldCount} +${hunkNewStart},${hunkNewCount} @@`
+  ];
+
+  for (let i = contextBefore; i < start; i++) {
+    lines.push(` ${origLines[i]}`);
+  }
+  for (let i = start; i <= endOrig; i++) {
+    lines.push(`-${origLines[i]}`);
+  }
+  for (let i = start; i <= endProp; i++) {
+    lines.push(`+${propLines[i]}`);
+  }
+  for (let i = endOrig + 1; i < contextAfterOrig; i++) {
+    lines.push(` ${origLines[i]}`);
+  }
+
+  return [...header, ...lines].join('\n');
 }
