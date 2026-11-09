@@ -192,6 +192,10 @@ export async function applyProposal(options: ApplyProposalOptions): Promise<IPro
       ? 'partially_applied'
       : 'partially_applied';
 
+  if (checkpointId && checkpointManager?.persistToWorkspaceDisk) {
+    await checkpointManager.persistToWorkspaceDisk(checkpointId).catch(() => undefined);
+  }
+
   return {
     success: true,
     proposalId: proposal.id,
