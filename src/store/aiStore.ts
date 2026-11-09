@@ -206,7 +206,7 @@ export const useAIStore = create<AIStore>((set) => ({
                 : (updatedProviders[pId]?.configured ?? false);
               return {
                 ...m,
-                status: isConfigured ? ('UNKNOWN' as const) : ('CONFIG_REQUIRED' as const),
+                status: isConfigured ? ('AVAILABLE' as const) : ('CONFIG_REQUIRED' as const),
                 availability: isConfigured
                   ? 'Server credential is configured; model access has not been verified.'
                   : 'Server credential is not configured.'
