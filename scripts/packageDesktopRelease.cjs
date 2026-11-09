@@ -294,7 +294,11 @@ async function packageWindows() {
   const zipOut = path.join(distReleaseDir, 'FLOAT-win32-x64.zip');
   console.log(`Creating portable ZIP: ${zipOut}...`);
   if (fs.existsSync(zipOut)) fs.unlinkSync(zipOut);
-  exec(`powershell -NoProfile -Command "Compress-Archive -Path '${winBuildDir}\\*' -DestinationPath '${zipOut}' -CompressionLevel Optimal"`);
+  try {
+    exec(`tar.exe -a -c -f "${zipOut}" -C "${winBuildDir}" .`);
+  } catch {
+    exec(`powershell -NoProfile -Command "Compress-Archive -Path '${winBuildDir}\\*' -DestinationPath '${zipOut}' -CompressionLevel Optimal"`);
+  }
 
   // 2. Download Microsoft Visual C++ 2015-2022 Redistributable
   const vcRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
@@ -303,9 +307,6 @@ async function packageWindows() {
 
   // 3. Build Inno Setup Installer
   const issFile = path.join(buildTmpDir, 'float_setup.iss');
-  const escapedWinBuildDir = winBuildDir.replace(/\\/g, '\\\\');
-  const escapedVcRedistPath = vcRedistPath.replace(/\\/g, '\\\\');
-  const escapedDistReleaseDir = distReleaseDir.replace(/\\/g, '\\\\');
 
   const issContent = `; Inno Setup Script for FLOAT Studio
 [Setup]
@@ -320,8 +321,8 @@ OutputDir=${distReleaseDir}
 OutputBaseFilename=FLOAT-Setup-x64
 Compression=lzma2/ultra64
 SolidCompression=yes
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 WizardStyle=modern
@@ -348,19 +349,12 @@ Filename: "{app}\\FLOAT.exe"; Description: "{cm:LaunchProgram,FLOAT Studio}"; Fl
   // Locate ISCC.exe
   let isccCmd = 'iscc';
   const candidatePaths = [
-    'iscc',
     'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe',
     'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
     'C:\\ProgramData\\chocolatey\\bin\\iscc.exe'
   ];
   for (const c of candidatePaths) {
-    if (c === 'iscc') {
-      try {
-        cp.execSync('iscc /?', { stdio: 'ignore' });
-        isccCmd = 'iscc';
-        break;
-      } catch {}
-    } else if (fs.existsSync(c)) {
+    if (fs.existsSync(c)) {
       isccCmd = `"${c}"`;
       break;
     }

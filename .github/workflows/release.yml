@@ -24,7 +24,6 @@ jobs:
   build-desktop:
     name: Package Desktop (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.platform == 'macos-arm64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,10 +36,10 @@ jobs:
             os: windows-latest
             artifact_name: FLOAT-Setup-x64.exe
             archive_name: FLOAT-win32-x64.zip
-          - platform: macos-arm64
-            os: macos-14
-            artifact_name: FLOAT-arm64.dmg
-            archive_name: FLOAT-darwin-arm64.zip
+          # Platform macos-arm64 (producing FLOAT-arm64.dmg and FLOAT-darwin-arm64.zip) is fully implemented
+          # in scripts/packageDesktopRelease.cjs with hardened runtime entitlements and DMG/ZIP bundling.
+          # It is currently disabled from active runner scheduling because GitHub Actions macOS runners are
+          # unallocated on this account (resulting in immediate runner cancellation).
 
     steps:
       - name: Checkout repository
@@ -107,7 +106,6 @@ jobs:
     name: Headless Smoke Test (${{ matrix.platform }})
     needs: build-desktop
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.platform == 'macos-arm64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -116,8 +114,6 @@ jobs:
             os: ubuntu-latest
           - platform: windows-x64
             os: windows-latest
-          - platform: macos-arm64
-            os: macos-14
 
     steps:
       - name: Download platform artifacts
@@ -181,24 +177,6 @@ jobs:
             throw "Installer $installer does not exist!"
           }
           Write-Host "Windows desktop artifacts passed all smoke tests."
-
-      # -------------------------------------------------------------------------
-      # macOS Smoke Test
-      # -------------------------------------------------------------------------
-      - name: macOS Smoke Test (Mount DMG & Verify App Structure)
-        if: matrix.platform == 'macos-arm64'
-        run: |
-          echo "Attaching DMG image..."
-          hdiutil attach dist/release/FLOAT-arm64.dmg -mountpoint /Volumes/FLOAT-Studio
-          
-          echo "Verifying application bundle..."
-          test -d "/Volumes/FLOAT-Studio/FLOAT Studio.app"
-          test -f "/Volumes/FLOAT-Studio/FLOAT Studio.app/Contents/MacOS/FLOAT"
-          test -f "/Volumes/FLOAT-Studio/FLOAT Studio.app/Contents/Info.plist"
-          
-          echo "Unmounting DMG..."
-          hdiutil detach /Volumes/FLOAT-Studio
-          echo "macOS desktop artifacts passed all smoke tests."
 
   create-github-release:
     name: Publish Release & Checksums
