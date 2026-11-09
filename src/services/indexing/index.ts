@@ -3,3 +3,4 @@ export * from './fileFilter';
 export * from './symbolExtractor';
 export * from './workspaceIndex';
 export * from './workspaceIndexManager';
+export * from './localWorkspaceService';
