@@ -1,6 +1,22 @@
 # FLOAT AI — Developer Platform & IDE
 
-FLOAT AI is an AI-powered software development environment combining a Monaco code editor, server-side OpenAI model routing, structured code-change review, Git workflows, and durable Firestore project state.
+FLOAT AI is an AI-powered software development environment providing:
+1. **Desktop IDE (Primary Product):** An Electron-based desktop application integrating Code-OSS workbench contributions (`desktop/src/vs/workbench/contrib/float/`) with a native Float daemon for local AST parsing, hybrid codebase indexing, inline diffs, and autonomous agent execution.
+2. **Web IDE & Companion Portal:** A Monaco-based React web application for browser access, cloud workspace editing, project management, and account settings.
+3. **Backend Services:** A Node.js/Express service providing multi-provider AI model routing (Anthropic Claude, OpenAI, Google Gemini), server-side Git/GitHub operations, Firebase authentication verification, and durable cloud state persistence.
+
+---
+
+## Engineering Documentation
+
+Authoritative engineering and architecture documentation is located in `docs/engineering/`:
+- [Current Architecture](docs/engineering/CURRENT_ARCHITECTURE.md) — System boundaries, data flows, and component breakdown.
+- [Current Truth Matrix](docs/engineering/CURRENT_TRUTH_MATRIX.md) — Exact audit status of every route, component, IPC channel, and subsystem.
+- [Service Ownership](docs/engineering/SERVICE_OWNERSHIP.md) — Service boundaries, dependencies, SLAs, and failure modes.
+- [Build and Release Guide](docs/engineering/BUILD_AND_RELEASE.md) — Toolchains, packaging steps, and CI/CD pipelines.
+- [Test Strategy](docs/engineering/TEST_STRATEGY.md) — Unit, integration, desktop, smoke, and benchmark test suites.
+- [Security Model](docs/engineering/SECURITY_MODEL.md) — Authentication, credential protection, container sandboxing, and tenant isolation.
+- [Feature Support Matrix](docs/engineering/FEATURE_SUPPORT_MATRIX.md) — Platform support across Web, Windows, macOS, and Linux.
 
 ---
 
@@ -23,18 +39,18 @@ FLOAT AI is an AI-powered software development environment combining a Monaco co
    ```bash
    cp .env.example .env
    ```
-   Configure `OPENAI_API_KEY` on the server for real model requests. Configure Firebase Admin credentials when using cloud persistence. Do not place provider credentials in browser code or commit them.
+   Configure `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` on the server for real model requests. Configure Firebase Admin credentials when using cloud persistence. Provider credentials must never be placed in browser bundles.
 
-3. **Start the development server:**
+3. **Start the development servers:**
    - **Recommended (Full Stack with Vite HMR + Express API):**
      ```bash
      npm run dev:all
      ```
      Spawns the Express API server (Port 3000) and the Vite frontend with Hot Module Replacement (Port 5173, reverse-proxying `/api` to Port 3000).
 
-   - **Integrated Dev Server (Single Port 3000):**
+   - **Frontend Only:**
      ```bash
-     npm run dev
+     npm run dev:web
      ```
 
    - **Backend API Server Only:**
@@ -46,13 +62,23 @@ FLOAT AI is an AI-powered software development environment combining a Monaco co
 
 ## Production Build & Execution
 
-Build the Vite frontend (`dist/`) and Express server bundles (`dist/server.cjs` and `dist/server.js`):
+- **Build all components (Web + Express Server):**
+  ```bash
+  npm run build
+  ```
+  Runs `npm run build:web` and `npm run build:server`.
 
-```bash
-npm run build
-```
+- **Build desktop extensions and Float daemon worker:**
+  ```bash
+  npm run build:desktop
+  ```
 
-- **Start the production web/API server:**
+- **Package desktop extension (.vsix):**
+  ```bash
+  npm run package:desktop
+  ```
+
+- **Start the production server:**
   ```bash
   npm start
   # Runs: node dist/server.cjs
@@ -85,11 +111,23 @@ FLOAT provides server-side Git and GitHub branch/commit/PR integration (`src/ser
 
 ## Verification & Testing
 
-- **Typecheck:**
+- **TypeScript Typecheck:**
   ```bash
   npm run lint
   ```
-- **Full verification suite (including all `scripts/testPhase*.ts` tests):**
+- **Unit Test Suite:**
+  ```bash
+  npm run test:unit
+  ```
+- **Integration Test Suite:**
+  ```bash
+  npm run test:integration
+  ```
+- **Desktop & Daemon Test Suite:**
+  ```bash
+  npm run test:desktop
+  ```
+- **Full Verification Suite:**
   ```bash
   npm test
   ```
