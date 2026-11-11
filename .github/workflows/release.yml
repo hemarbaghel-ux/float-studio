@@ -22,18 +22,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - platform: linux-x64
+            os: ubuntu-24.04
+            artifact_name: float-studio_amd64.deb
+            archive_name: FLOAT-linux-x64.tar.gz
           - platform: windows-x64
             os: windows-latest
             artifact_name: FLOAT-Setup-x64.exe
             archive_name: FLOAT-win32-x64.zip
-          - platform: macos-arm64
-            os: macos-14
-            artifact_name: FLOAT-arm64.dmg
-            archive_name: FLOAT-darwin-arm64.zip
-          - platform: linux-x64
-            os: ubuntu-latest
-            artifact_name: float-studio_amd64.deb
-            archive_name: FLOAT-linux-x64.tar.gz
 
     steps:
       - name: Checkout repository
@@ -46,29 +42,181 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
-      - name: Build Web & Core Assets
+      - name: Build Web & Core Server Assets
         run: npm run build
 
-      - name: Package Desktop Artifacts
-        shell: bash
-        run: |
-          mkdir -p dist/release
-          echo "Packaging desktop binaries for ${{ matrix.platform }}..."
-          echo "FLOAT Studio Desktop Release - ${{ matrix.platform }}" > "dist/release/${{ matrix.artifact_name }}"
-          echo "FLOAT Studio Portable Bundle - ${{ matrix.platform }}" > "dist/release/${{ matrix.archive_name }}"
+      - name: Install Linux build prerequisites
+        if: matrix.platform == 'linux-x64'
+        run: sudo apt-get update && sudo apt-get install -y unzip xvfb
 
-      - name: Upload Artifacts
+      - name: Install Inno Setup (Windows only)
+        if: matrix.platform == 'windows-x64'
+        run: choco install innosetup --no-progress -y
+
+      - name: Package Desktop Artifacts (${{ matrix.platform }})
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
+        run: node scripts/packageDesktopRelease.cjs --platform=${{ matrix.platform }}
+
+      - name: Validate Artifact Integrity & Minimum Sizes (>= 20 MB)
+        run: node scripts/validateReleaseArtifacts.cjs --platform=${{ matrix.platform }}
+
+      - name: Upload Platform Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}
           path: dist/release/
+          retention-days: 7
+
+  smoke-test-desktop:
+    name: Headless Smoke Test (${{ matrix.platform }})
+    needs: build-desktop
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-24.04
+          - platform: windows-x64
+            os: windows-latest
+
+    steps:
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/release
+
+      # -------------------------------------------------------------------------
+      # Linux Smoke Test: install .deb, verify AppArmor, launch under xvfb
+      # -------------------------------------------------------------------------
+      - name: Linux Smoke Test (Install .deb, Verify AppArmor & Self-Check)
+        if: matrix.platform == 'linux-x64'
+        run: |
+          echo "Installing system prerequisites..."
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libx11-xcb1 libsecret-1-0
+          sudo apt-get install -y libasound2t64 2>/dev/null || sudo apt-get install -y libasound2
+          
+          echo "Installing Debian package..."
+          sudo dpkg -i dist/release/float-studio_amd64.deb || sudo apt-get -f install -y
+          
+          test -f /usr/share/float-studio/float-studio
+          test -f /usr/share/applications/float-studio.desktop
+          test -f /etc/apparmor.d/float-studio
+          echo "Debian package install and AppArmor profile verified."
+
+          echo "Running headless startup self-check via installed launcher..."
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" /usr/share/float-studio/float-studio --smoke-test --no-sandbox
+          echo "Linux desktop smoke test passed cleanly."
+
+      # -------------------------------------------------------------------------
+      # Windows Smoke Test: silent install, verify files, launch --smoke-test, uninstall
+      # -------------------------------------------------------------------------
+      - name: Windows Smoke Test (Silent Install, Launch Self-Check, Uninstall)
+        if: matrix.platform == 'windows-x64'
+        shell: powershell
+        run: |
+          $installer = "dist/release/FLOAT-Setup-x64.exe"
+          if (-not (Test-Path $installer)) {
+            throw "Installer not found at $installer"
+          }
+
+          Write-Host "Step 1: Running silent installer..."
+          $installProc = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru -Wait
+          if ($installProc.ExitCode -ne 0) {
+            throw "Installer exited with failure code $($installProc.ExitCode)"
+          }
+
+          # Resolve installed path
+          $installCandidates = @(
+            "$env:LOCALAPPDATA\Programs\FLOAT Studio",
+            "C:\Program Files\FLOAT Studio",
+            "C:\Program Files (x86)\FLOAT Studio"
+          )
+          $installDir = $installCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $installDir) {
+            throw "Installed folder was not found! Checked: $($installCandidates -join ', ')"
+          }
+          Write-Host "Confirmed install directory: $installDir"
+
+          $installedExe = Join-Path $installDir "FLOAT.exe"
+          if (-not (Test-Path $installedExe)) {
+            throw "Installed executable not found at: $installedExe"
+          }
+          Write-Host "Confirmed installed FLOAT.exe exists."
+
+          Write-Host "Step 2: Launching installed FLOAT.exe with --smoke-test..."
+          $proc = Start-Process -FilePath $installedExe -ArgumentList "--smoke-test", "--no-sandbox" -PassThru
+          Write-Host "Launched process PID $($proc.Id). Monitoring for startup self-check..."
+          
+          $passedSelfCheck = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 1
+            if ($proc.HasExited) {
+              if ($proc.ExitCode -eq 0) {
+                Write-Host "FLOAT.exe completed startup self-check successfully with exit code 0 at second $i."
+                $passedSelfCheck = $true
+                break
+              } else {
+                throw "FLOAT.exe crashed or exited with error code $($proc.ExitCode) at second $i!"
+              }
+            }
+          }
+
+          if (-not $passedSelfCheck -and -not $proc.HasExited) {
+            Write-Host "Waiting for self-check clean exit..."
+            $proc.WaitForExit(15000)
+            if ($proc.ExitCode -eq 0) {
+              $passedSelfCheck = $true
+              Write-Host "FLOAT.exe completed startup self-check with exit code 0."
+            } else {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              throw "FLOAT.exe did not complete self-check with code 0 (ExitCode: $($proc.ExitCode))."
+            }
+          }
+
+          if (-not $passedSelfCheck) {
+            throw "Startup self-check did not complete successfully."
+          }
+          Write-Host "Installed application confirmed alive and successfully passed startup self-check."
+
+          Write-Host "Step 3: Running uninstaller and confirming cleanup..."
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path $uninstaller)) {
+            throw "Uninstaller not found at: $uninstaller"
+          }
+          $uninstProcess = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru -Wait
+          for ($j = 0; $j -lt 30; $j++) {
+            if (-not (Test-Path $installedExe)) { break }
+            Start-Sleep -Seconds 1
+          }
+
+          if (Test-Path $installedExe) {
+            throw "FLOAT.exe still exists after uninstall at: $installedExe"
+          }
+          Write-Host "Confirmed FLOAT.exe was removed by the uninstaller."
+
+          Write-Host "Step 4: Testing portable Windows ZIP unpack and --smoke-test..."
+          Expand-Archive -Path dist/release/FLOAT-win32-x64.zip -DestinationPath tmp-win -Force
+          $portableExe = "tmp-win/FLOAT.exe"
+          $portProc = Start-Process -FilePath $portableExe -ArgumentList "--smoke-test", "--no-sandbox" -PassThru
+          $portProc.WaitForExit(35000)
+          if ($portProc.ExitCode -ne 0) {
+            throw "Portable FLOAT.exe failed --smoke-test with exit code $($portProc.ExitCode)"
+          }
+          Write-Host "Portable ZIP confirmed passed startup self-check."
+          Write-Host "Windows desktop artifacts passed all installer, launcher, self-check, and uninstaller smoke tests."
 
   create-github-release:
     name: Publish Release & Checksums
-    needs: build-desktop
+    needs: [build-desktop, smoke-test-desktop]
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -78,14 +226,14 @@ jobs:
         with:
           path: release-assets
 
-      - name: Generate SHA256SUMS
+      - name: Generate SHA256SUMS.txt
         run: |
           cd release-assets
           find . -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
             release-assets/**/*
