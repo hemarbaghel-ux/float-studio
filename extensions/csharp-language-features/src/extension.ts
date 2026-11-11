@@ -39,17 +39,22 @@ export function activate(context: vscode.ExtensionContext): { service: CSharpLan
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('csharp.restore', () => {
-			vscode.window.showInformationMessage('C#: dotnet restore executed.');
+			const term = vscode.window.createTerminal({ name: 'C# Restore' });
+			term.show();
+			term.sendText('dotnet restore');
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('csharp.build', () => {
-			vscode.window.showInformationMessage('C#: dotnet build executed.');
+			const term = vscode.window.createTerminal({ name: 'C# Build' });
+			term.show();
+			term.sendText('dotnet build');
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('csharp.restartOmniSharp', () => {
-			vscode.window.showInformationMessage('C#: Restart Language Engine executed.');
+			_serviceInstance?.restart();
+			vscode.window.showInformationMessage('C# language engine restarted.');
 		})
 	);
 

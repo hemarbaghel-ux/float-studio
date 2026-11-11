@@ -243,7 +243,7 @@ export function IntegrationCard({
                                     const [owner, repoName] = repo.fullName.split('/');
                                     const result = await importGitHubRepository(owner || repo.name, repoName || repo.name, repo.defaultBranch);
                                     if (!result.success || !result.files) {
-                                      alert(result.error || 'Failed to import repository.');
+                                      setRepoError(result.error || 'Failed to import repository.');
                                       return;
                                     }
                                     const { setProject, saveProject } = useIDEStore.getState();
@@ -252,7 +252,7 @@ export function IntegrationCard({
                                     if (saveResult.status !== 'synced') throw new Error(saveResult.message);
                                     setShowManage(false);
                                   } catch (err: any) {
-                                    alert(err.message || 'Import failed.');
+                                    setRepoError(err.message || 'Import failed.');
                                   } finally {
                                     setImportingRepoId(null);
                                   }

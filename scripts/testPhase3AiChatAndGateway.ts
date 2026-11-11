@@ -58,11 +58,14 @@ async function runAllTests() {
     const autoRoute = modelRouter.resolveRoute('auto');
     assert.strictEqual(autoRoute.route.provider, 'openai');
     assert.strictEqual(autoRoute.route.apiModelId, 'gpt-6-astra');
+
+    const claudeRoute = modelRouter.resolveRoute('claude-3-5-sonnet');
+    assert.strictEqual(claudeRoute.route.provider, 'anthropic');
   });
 
   check('Rejects unsupported providers and retired models without silent fallbacks', () => {
     assert.throws(
-      () => modelRouter.resolveRoute('claude-3-5-sonnet'),
+      () => modelRouter.resolveRoute('claude-2'),
       /unsupported provider/i
     );
     assert.throws(

@@ -37,9 +37,22 @@ export function CheckoutPage() {
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [stripePromise, setStripePromise] = useState<Promise<Stripe | null> | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const checkoutContainerRef = useRef<HTMLDivElement>(null);
   const embeddedCheckoutRef = useRef<StripeEmbeddedCheckout | null>(null);
+
+  const handleRetry = () => {
+    setRetryNonce((prev) => prev + 1);
+  };
+
+  const handleSelectBillingCycle = (cycle: 'monthly' | 'yearly') => {
+    if (cycle === billingCycle) return;
+    setBillingCycle(cycle);
+    const params = new URLSearchParams(window.location.search);
+    params.set('billing', cycle);
+    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+  };
 
   // Parse plan and billing from query parameters
   useEffect(() => {
@@ -71,7 +84,7 @@ export function CheckoutPage() {
     }
   }, [publishableKey]);
 
-  // Create checkout session whenever selectedPlan or user changes
+  // Create checkout session whenever selectedPlan, billingCycle, user, or retryNonce changes
   useEffect(() => {
     if (!user || authLoading) return;
 
@@ -94,7 +107,13 @@ export function CheckoutPage() {
       checkoutContainerRef.current.innerHTML = '';
     }
 
-    createCheckoutSession(selectedPlan)
+    const idempotencyKey = `checkout_${user.uid}_${selectedPlan}_${billingCycle}_${retryNonce}`;
+
+    createCheckoutSession({
+      planId: selectedPlan,
+      billingCycle,
+      idempotencyKey
+    })
       .then((res) => {
         if (!isMounted) return;
         setClientSecret(res.clientSecret);
@@ -118,7 +137,7 @@ export function CheckoutPage() {
         embeddedCheckoutRef.current = null;
       }
     };
-  }, [user, authLoading, selectedPlan, createCheckoutSession]);
+  }, [user, authLoading, selectedPlan, billingCycle, retryNonce, createCheckoutSession]);
 
   // Mount Stripe Embedded Checkout when clientSecret & stripePromise are available
   useEffect(() => {
@@ -277,7 +296,7 @@ export function CheckoutPage() {
             <div className="mb-6 flex items-center justify-between p-1 bg-[#141414] rounded-xl border border-white/5">
               <button
                 type="button"
-                onClick={() => setBillingCycle('monthly')}
+                onClick={() => handleSelectBillingCycle('monthly')}
                 className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                   billingCycle === 'monthly'
                     ? 'bg-white text-black shadow-xs'
@@ -288,7 +307,7 @@ export function CheckoutPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setBillingCycle('yearly')}
+                onClick={() => handleSelectBillingCycle('yearly')}
                 className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                   billingCycle === 'yearly'
                     ? 'bg-white text-black shadow-xs'
@@ -446,7 +465,7 @@ export function CheckoutPage() {
                     <p className="mt-0.5 text-xs text-red-700">{sessionError}</p>
                     <button
                       type="button"
-                      onClick={() => handleSelectPlan(selectedPlan)}
+                      onClick={handleRetry}
                       className="mt-3 px-3 py-1 rounded bg-red-600 text-white text-xs font-medium hover:bg-red-700 cursor-pointer"
                     >
                       Try Again

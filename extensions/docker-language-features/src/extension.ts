@@ -39,12 +39,16 @@ export function activate(context: vscode.ExtensionContext): { service: DockerLan
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('docker.lintDockerfile', () => {
-			vscode.window.showInformationMessage('Docker: Lint Dockerfile executed.');
+			const term = vscode.window.createTerminal({ name: 'Docker Lint' });
+			term.show();
+			term.sendText('docker build --check .');
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('docker.buildImage', () => {
-			vscode.window.showInformationMessage('Docker: Build Image from Current File executed.');
+			const term = vscode.window.createTerminal({ name: 'Docker Build' });
+			term.show();
+			term.sendText('docker build -t float-app:latest .');
 		})
 	);
 

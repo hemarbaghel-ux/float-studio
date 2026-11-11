@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2026-11-11T16:01:59.813Z",
+  "baselineCommit": "7853e0f91e2609468f73b0462f12e237aaa43df7",
+  "subsystems": [
+    {
+      "path": "desktop",
+      "role": "Primary Desktop IDE Workbench (Code-OSS + Electron)",
+      "owners": [
+        "Desktop Team",
+        "Code-OSS Maintainers"
+      ],
+      "buildTarget": "desktop/out-build / Electron app binary",
+      "runtimeBoundary": "Electron Main / Isolated Renderer / Utility Process",
+      "testOwner": "scripts/testDesktop*.ts, scripts/verifyDesktop*.ts",
+      "status": "ACTIVE_CORE",
+      "notes": "Must never be deleted or replaced with React-only wrapper. Houses native Float workbench contributions."
+    },
+    {
+      "path": "src",
+      "role": "Web Companion Application (React 19 + Vite + Monaco)",
+      "owners": [
+        "Web Frontend Team"
+      ],
+      "buildTarget": "dist/ (Vite client bundle)",
+      "runtimeBoundary": "Browser DOM / Web Worker Sandbox",
+      "testOwner": "tests/core-flows.test.ts, scripts/testCursorIdeLayout.ts",
+      "status": "ACTIVE_CORE",
+      "notes": "Account, billing, remote chat, cloud workspace discovery. Restricted browser sandbox."
+    },
+    {
+      "path": "src/server",
+      "role": "Backend Platform & Gateway (Express 4.21 + Firebase Auth)",
+      "owners": [
+        "Backend Team",
+        "AI Platform Team"
+      ],
+      "buildTarget": "dist/server.cjs & dist/server.js (esbuild)",
+      "runtimeBoundary": "Node.js 22 LTS / Container",
+      "testOwner": "scripts/testProviderRoutingAndHealth.ts, scripts/testTenantIsolationSecurity.ts",
+      "status": "ACTIVE_CORE",
+      "notes": "Enforces Firebase auth tokens, provider routing (OpenAI, Gemini, Anthropic), rate limiting, and project persistence."
+    },
+    {
+      "path": "daemon",
+      "role": "Local Float Daemon Sidecar (AST parsing, indexing, retrieval)",
+      "owners": [
+        "Codebase Intelligence Team"
+      ],
+      "buildTarget": "daemon/dist/ (Tree-sitter WASM)",
+      "runtimeBoundary": "UtilityProcess / Local Daemon IPC",
+      "testOwner": "scripts/testFloatDaemon*.ts",
+      "status": "ACTIVE_CORE",
+      "notes": "Local sidecar for incremental indexing, symbol graph, and hybrid retrieval. Authenticated local IPC."
+    },
+    {
+      "path": "extensions",
+      "role": "Built-in Language Extensions & Language Services",
+      "owners": [
+        "Extensions Team"
+      ],
+      "buildTarget": "Individual VSCodium / Code-OSS extension bundles",
+      "runtimeBoundary": "Extension Host (Node.js)",
+      "testOwner": "scripts/testSprint5BuiltinLanguageExtensionsComplete.ts",
+      "status": "ACTIVE_STUB_REQUIRING_REPAIR",
+      "notes": "Python and Rust language features currently register informational message stubs without real LSP processes."
+    },
+    {
+      "path": "scripts",
+      "role": "Build, Release, Packaging, and Test Orchestration",
+      "owners": [
+        "DevOps / Quality Engineering"
+      ],
+      "buildTarget": "Node.js executable scripts",
+      "runtimeBoundary": "Build runner / Host CLI",
+      "testOwner": "npm test, CI workflows",
+      "status": "ACTIVE_NEEDS_CONSOLIDATION",
+      "notes": "Hosts multi-tier test scripts, packaging scripts, and release validators."
+    },
+    {
+      "path": "docs",
+      "role": "Architecture Specifications, Runbooks, and Engineering Reports",
+      "owners": [
+        "Architecture & Recovery Leads"
+      ],
+      "buildTarget": "Markdown / Documentation",
+      "runtimeBoundary": "N/A",
+      "testOwner": "N/A",
+      "status": "ACTIVE_DOCUMENTATION",
+      "notes": "Contains architecture definitions, service ownership, and baseline audit reports."
+    },
+    {
+      "path": ".github/workflows",
+      "role": "Continuous Integration & Automated Packaging Workflows",
+      "owners": [
+        "DevOps Team"
+      ],
+      "buildTarget": "GitHub Actions",
+      "runtimeBoundary": "Ubuntu / Windows / macOS Runners",
+      "testOwner": "GitHub Actions CI matrix",
+      "status": "ACTIVE_NEEDS_HARDENING",
+      "notes": "ci.yml runs typecheck, build, and tests. release.yml requires authentic packaging toolchain."
+    }
+  ]
+}

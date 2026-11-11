@@ -7,6 +7,11 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
 dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
 
+import { initSentry, captureException } from './src/services/telemetry/sentry';
+
+// Initialize Sentry error tracking if SENTRY_DSN is configured (zero overhead if unset)
+initSentry();
+
 /**
  * Checks whether an error is a known client request AbortError from an aborted HTTP/SSE stream.
  */
@@ -27,6 +32,7 @@ process.on('unhandledRejection', (reason: any) => {
     return;
   }
   console.error('[FLOAT Server] Unhandled Rejection:', reason);
+  captureException(reason, { source: 'process.unhandledRejection' });
 });
 
 process.on('uncaughtException', (err: any) => {
@@ -39,6 +45,7 @@ process.on('uncaughtException', (err: any) => {
     return;
   }
   console.error('[FLOAT Server] Uncaught Exception:', err);
+  captureException(err, { source: 'process.uncaughtException' });
 });
 
 let activeServer: any = null;

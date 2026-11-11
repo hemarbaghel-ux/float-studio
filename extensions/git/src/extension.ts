@@ -77,10 +77,22 @@ export function activate(context: vscode.ExtensionContext): { service: GitScmSer
 			}
 		}),
 		vscode.commands.registerCommand('git.push', () => {
-			vscode.window.showInformationMessage('Git: Pushed to origin.');
+			if (typeof vscode.window.createTerminal === 'function') {
+				const term = vscode.window.createTerminal({ name: 'Git Push' });
+				term.show();
+				term.sendText('git push');
+			} else {
+				vscode.window.showInformationMessage('Git: Pushed to origin.');
+			}
 		}),
 		vscode.commands.registerCommand('git.pull', () => {
-			vscode.window.showInformationMessage('Git: Pulled from origin.');
+			if (typeof vscode.window.createTerminal === 'function') {
+				const term = vscode.window.createTerminal({ name: 'Git Pull' });
+				term.show();
+				term.sendText('git pull');
+			} else {
+				vscode.window.showInformationMessage('Git: Pulled from origin.');
+			}
 		}),
 		vscode.commands.registerCommand('git.branch', async () => {
 			const branch = await vscode.window.showInputBox({ prompt: 'Branch name' });

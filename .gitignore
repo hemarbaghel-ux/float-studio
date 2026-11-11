@@ -22,3 +22,6 @@ desktop/extensions/**/dist/
 desktop/*.log
 
 tmp/
+
+# Build caches
+.desktop-build-cache/

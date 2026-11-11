@@ -38,18 +38,43 @@ export function activate(context: vscode.ExtensionContext): { service: CppLangua
 
 	
 	context.subscriptions.push(
-		vscode.commands.registerCommand('cpp.switchHeaderSource', () => {
-			vscode.window.showInformationMessage('C/C++: Switch Header/Source executed.');
+		vscode.commands.registerCommand('cpp.switchHeaderSource', async () => {
+			const active = vscode.window.activeTextEditor;
+			if (!active) {
+				vscode.window.showErrorMessage('No active C/C++ editor.');
+				return;
+			}
+			const current = active.document.fileName;
+			const isHeader = /\.(h|hpp|hxx)$/i.test(current);
+			const targetExts = isHeader ? ['.cpp', '.cc', '.cxx', '.c'] : ['.h', '.hpp', '.hxx'];
+			const base = current.replace(/\.[^.]+$/, '');
+			for (const ext of targetExts) {
+				const candidate = vscode.Uri.file(`${base}${ext}`);
+				try {
+					const doc = await vscode.workspace.openTextDocument(candidate);
+					await vscode.window.showTextDocument(doc);
+					return;
+				} catch {
+					// candidate does not exist, continue search
+				}
+			}
+			vscode.window.showWarningMessage(`Corresponding ${isHeader ? 'source' : 'header'} file not found for ${active.document.fileName}`);
 		})
 	);
 	context.subscriptions.push(
-		vscode.commands.registerCommand('cpp.rescanCompileCommands', () => {
-			vscode.window.showInformationMessage('C/C++: Rescan compile_commands.json executed.');
+		vscode.commands.registerCommand('cpp.rescanCompileCommands', async () => {
+			const files = await vscode.workspace.findFiles('**/compile_commands.json', undefined, 1);
+			if (files.length > 0) {
+				_serviceInstance?.restart();
+				vscode.window.showInformationMessage(`Loaded compilation database: ${files[0].fsPath}`);
+			} else {
+				vscode.window.showWarningMessage('No compile_commands.json found in workspace.');
+			}
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('cpp.formatDocument', () => {
-			vscode.window.showInformationMessage('C/C++: Format Document executed.');
+			vscode.commands.executeCommand('editor.action.formatDocument');
 		})
 	);
 

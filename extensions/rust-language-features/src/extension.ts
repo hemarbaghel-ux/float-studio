@@ -36,20 +36,27 @@ let _serviceInstance: RustLanguageService | null = null;
 export function activate(context: vscode.ExtensionContext): { service: RustLanguageService } {
 	_serviceInstance = new RustLanguageService();
 
-	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('rust.cargoBuild', () => {
-			vscode.window.showInformationMessage('Rust: Cargo Build executed.');
+			const terminal = vscode.window.createTerminal({ name: 'Cargo Build' });
+			terminal.show();
+			terminal.sendText('cargo build');
 		})
 	);
+
 	context.subscriptions.push(
 		vscode.commands.registerCommand('rust.cargoTest', () => {
-			vscode.window.showInformationMessage('Rust: Cargo Test executed.');
+			const terminal = vscode.window.createTerminal({ name: 'Cargo Test' });
+			terminal.show();
+			terminal.sendText('cargo test');
 		})
 	);
+
 	context.subscriptions.push(
 		vscode.commands.registerCommand('rust.cargoClippy', () => {
-			vscode.window.showInformationMessage('Rust: Cargo Clippy Diagnostics executed.');
+			const terminal = vscode.window.createTerminal({ name: 'Cargo Clippy' });
+			terminal.show();
+			terminal.sendText('cargo clippy');
 		})
 	);
 
