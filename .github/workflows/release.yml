@@ -30,6 +30,10 @@ jobs:
             os: windows-latest
             artifact_name: FLOAT-Setup-x64.exe
             archive_name: FLOAT-win32-x64.zip
+          - platform: macos-arm64
+            os: macos-14
+            artifact_name: FLOAT-arm64.dmg
+            archive_name: FLOAT-darwin-arm64.zip
 
     steps:
       - name: Checkout repository

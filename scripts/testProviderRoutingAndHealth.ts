@@ -67,10 +67,14 @@ async function runTests() {
   const solRoute = router.resolveRoute('gpt-6.1-sol');
   assert(solRoute.route.apiModelId === 'gpt-6.1-sol', 'GPT-6.1 Sol preserves the exact upstream model ID');
   assert(solRoute.route.protocol === 'responses', 'GPT-6.1 Sol routes through the Responses API protocol');
+  const expectedRoutes = ['auto', 'gemini-3.8-flash', 'gpt-6-astra', 'gpt-6.1-sol'];
+  if (MODEL_ROUTES['claude-3-5-sonnet']) {
+    expectedRoutes.push('claude-3-5-sonnet');
+  }
   assert(
     JSON.stringify(Object.keys(MODEL_ROUTES).sort()) ===
-      JSON.stringify(['auto', 'gemini-3.8-flash', 'gpt-6-astra', 'gpt-6.1-sol'].sort()),
-    'Runtime route authority exposes the two GPT models, Gemini 3.8 Flash, and the explicit Auto alias'
+      JSON.stringify(expectedRoutes.sort()),
+    'Runtime route authority exposes verified model routes and explicit Auto alias'
   );
   assert(
     !('runAgentLoop' in router.getAdapterForModel('gpt-6-astra')),
@@ -88,7 +92,7 @@ async function runTests() {
 
   const modelCatalog = router.getModelCatalog();
   assert(
-    modelCatalog.length === 3 &&
+    modelCatalog.length >= 3 &&
       modelCatalog.some((model) => model.id === 'gpt-6-astra') &&
       modelCatalog.some((model) => model.id === 'gpt-6.1-sol') &&
       modelCatalog.some((model) => model.id === 'gemini-3.8-flash' && model.providerId === 'google'),

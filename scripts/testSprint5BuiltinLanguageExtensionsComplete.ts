@@ -34,6 +34,9 @@ const mockVscode = {
 			if (handler) {
 				return handler(...args);
 			}
+			if (command.startsWith('editor.action.')) {
+				return true;
+			}
 			throw new Error(`Command not found: ${command}`);
 		}
 	},
@@ -52,6 +55,11 @@ const mockVscode = {
 		showInputBox: async (options?: any) => {
 			return 'mock-input';
 		},
+		createTerminal: (options?: any) => ({
+			show: () => {},
+			sendText: (text: string) => {},
+			dispose: () => {}
+		}),
 		activeTextEditor: undefined as any
 	},
 	workspace: {

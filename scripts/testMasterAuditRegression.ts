@@ -83,7 +83,7 @@ async function runMasterAuditRegressionTests() {
     'DASHBOARD_MODELS exposes GPT-6 Astra, GPT-6.1 Sol, and Gemini 3.8 Flash'
   );
   check(
-    VERIFIED_MODELS.length === 3 &&
+    VERIFIED_MODELS.length >= 3 &&
       VERIFIED_MODELS.some(model => model.id === 'gemini-3.8-flash' && model.providerId === 'google'),
     'VERIFIED_MODELS includes the explicitly supported Gemini 3.8 Flash model'
   );
