@@ -17,6 +17,8 @@
     "build:float-daemon-worker": "node scripts/buildFloatDaemonWorker.mjs",
     "package:desktop": "node scripts/packageVscodiumExtension.cjs",
     "package:extension": "node scripts/packageVscodiumExtension.cjs",
+    "package:release": "node scripts/packageDesktopRelease.cjs",
+    "validate:release": "node scripts/validateReleaseArtifacts.cjs",
     "preview": "vite preview",
     "clean": "node -e \"const fs = require('fs'); fs.rmSync('dist', { recursive: true, force: true });\"",
     "lint": "tsc --noEmit",
@@ -27,6 +29,7 @@
     "test:integration": "node node_modules/tsx/dist/cli.mjs scripts/testProjectCloudFiles.ts && node node_modules/tsx/dist/cli.mjs scripts/testOpenAIModelAccess.ts && node node_modules/tsx/dist/cli.mjs scripts/testPhaseASecurityRegression.ts && node node_modules/tsx/dist/cli.mjs scripts/testMasterAuditRegression.ts && node node_modules/tsx/dist/cli.mjs scripts/testCodebaseSearch.ts && node node_modules/tsx/dist/cli.mjs scripts/testProjectExecution.ts && node node_modules/tsx/dist/cli.mjs scripts/testPhase7FinalIntegration.ts && node node_modules/tsx/dist/cli.mjs scripts/testAutomationIsolation.ts && node node_modules/tsx/dist/cli.mjs scripts/testSecurityAudit.ts && node node_modules/tsx/dist/cli.mjs scripts/testProviderRoutingAndHealth.ts && node node_modules/tsx/dist/cli.mjs scripts/testTenantIsolationSecurity.ts && node node_modules/tsx/dist/cli.mjs scripts/testAuthPersistence.ts && node node_modules/tsx/dist/cli.mjs scripts/testUsageTelemetryIntegrity.ts && node node_modules/tsx/dist/cli.mjs scripts/testGitHubIntegration.ts && node node_modules/tsx/dist/cli.mjs scripts/testPhase6AgentLoopRegression.ts && node node_modules/tsx/dist/cli.mjs scripts/testPhase7IntegrationsAndCheckpoints.ts",
     "test:live": "node node_modules/tsx/dist/cli.mjs scripts/testLiveModelProvider.ts",
     "test:smoke": "node node_modules/tsx/dist/cli.mjs scripts/smokeTestVscodiumWorkbench.ts",
+    "test:smoke:desktop": "node scripts/smokeTestDesktopLaunch.cjs",
     "start": "node dist/server.cjs"
   },
   "dependencies": {

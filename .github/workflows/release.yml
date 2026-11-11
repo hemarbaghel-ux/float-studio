@@ -53,11 +53,23 @@ jobs:
 
       - name: Package Desktop Artifacts
         shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
-          mkdir -p dist/release
-          echo "Packaging desktop binaries for ${{ matrix.platform }}..."
-          echo "FLOAT Studio Desktop Release - ${{ matrix.platform }}" > "dist/release/${{ matrix.artifact_name }}"
-          echo "FLOAT Studio Portable Bundle - ${{ matrix.platform }}" > "dist/release/${{ matrix.archive_name }}"
+          echo "Packaging authentic desktop distribution for ${{ matrix.platform }}..."
+          node scripts/packageDesktopRelease.cjs --platform "${{ matrix.platform }}"
+
+      - name: Validate Release Artifacts (Size Gate >= 20 MB & Binary Headers)
+        shell: bash
+        run: |
+          echo "Enforcing strict 20 MB size gate and PE/Mach-O/ELF header validation..."
+          node scripts/validateReleaseArtifacts.cjs --platform "${{ matrix.platform }}"
+
+      - name: Headless Desktop Smoke Test (--smoke-test)
+        shell: bash
+        run: |
+          echo "Running headless launch self-check on clean runner..."
+          node scripts/smokeTestDesktopLaunch.cjs --platform "${{ matrix.platform }}"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -78,10 +90,24 @@ jobs:
         with:
           path: release-assets
 
+      - name: Verify All Artifact Sizes (Strict >= 20 MB Gate)
+        run: |
+          cd release-assets
+          for file in $(find . -type f); do
+            size=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
+            echo "Checking $file ($size bytes)..."
+            if [ "$size" -lt 20971520 ]; then
+              echo "CRITICAL DEFECT: $file is under 20 MB ($size bytes). Aborting release!"
+              exit 1
+            fi
+          done
+          echo "All release artifacts verified above 20 MB threshold."
+
       - name: Generate SHA256SUMS
         run: |
           cd release-assets
           find . -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
