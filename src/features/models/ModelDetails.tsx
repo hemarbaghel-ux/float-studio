@@ -224,33 +224,33 @@ export function ModelDetails({ model, onBack, onSelect }: ModelDetailsProps) {
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">
-            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities.coding ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
-              <Check size={14} className={model.capabilities.coding ? 'text-purple-400' : 'text-slate-600'} />
+            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities?.coding ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
+              <Check size={14} className={model.capabilities?.coding ? 'text-purple-400' : 'text-slate-600'} />
               <span>Code Generation</span>
             </div>
 
-            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities.reasoning ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
-              <Check size={14} className={model.capabilities.reasoning ? 'text-purple-400' : 'text-slate-600'} />
+            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities?.reasoning ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
+              <Check size={14} className={model.capabilities?.reasoning ? 'text-purple-400' : 'text-slate-600'} />
               <span>Multi-step Reasoning</span>
             </div>
 
-            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities.tools ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
-              <Check size={14} className={model.capabilities.tools ? 'text-purple-400' : 'text-slate-600'} />
+            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities?.tools ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
+              <Check size={14} className={model.capabilities?.tools ? 'text-purple-400' : 'text-slate-600'} />
               <span>Tool / Function Calling</span>
             </div>
 
-            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities.vision ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
-              <Check size={14} className={model.capabilities.vision ? 'text-purple-400' : 'text-slate-600'} />
+            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities?.vision ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
+              <Check size={14} className={model.capabilities?.vision ? 'text-purple-400' : 'text-slate-600'} />
               <span>Vision & Multimodal</span>
             </div>
 
-            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities.structuredOutput ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
-              <Check size={14} className={model.capabilities.structuredOutput ? 'text-purple-400' : 'text-slate-600'} />
+            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities?.structuredOutput ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
+              <Check size={14} className={model.capabilities?.structuredOutput ? 'text-purple-400' : 'text-slate-600'} />
               <span>Structured Outputs (JSON)</span>
             </div>
 
-            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities.streaming ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
-              <Check size={14} className={model.capabilities.streaming ? 'text-purple-400' : 'text-slate-600'} />
+            <div className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${model.capabilities?.streaming ? 'bg-[#0D1117] border-purple-800/40 text-slate-200' : 'bg-[#0D1117]/50 border-[#21262D] text-slate-500'}`}>
+              <Check size={14} className={model.capabilities?.streaming ? 'text-purple-400' : 'text-slate-600'} />
               <span>Server-Sent Streaming</span>
             </div>
           </div>

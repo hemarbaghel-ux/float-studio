@@ -211,11 +211,11 @@ export function ModelsFilteredPage({ providerId, title, description }: ModelsFil
                       </div>
                       <div>
                         <div className="text-xs text-slate-500 dark:text-[#A1A1AA] mb-1.5">Coding</div>
-                        <div className="text-sm font-medium text-slate-900 dark:text-white">{model.capabilities.coding ? 'Strong' : 'Basic'}</div>
+                        <div className="text-sm font-medium text-slate-900 dark:text-white">{model.capabilities?.coding ? 'Strong' : 'Basic'}</div>
                       </div>
                       <div>
                         <div className="text-xs text-slate-500 dark:text-[#A1A1AA] mb-1.5">Reasoning</div>
-                        <div className="text-sm font-medium text-slate-900 dark:text-white">{model.capabilities.reasoning ? 'Strong' : 'Basic'}</div>
+                        <div className="text-sm font-medium text-slate-900 dark:text-white">{model.capabilities?.reasoning ? 'Strong' : 'Basic'}</div>
                       </div>
                     </div>
                     

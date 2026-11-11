@@ -80,7 +80,7 @@ export function ModelSelector({
   const currentModel = activeModels.find(m => m.id === currentSelectedId) || activeModels[0];
 
   const getModelCapabilityLabel = (model: AIModel): string =>
-    model.capabilities.reasoning ? 'Reasoning' : 'Standard';
+    model.capabilities?.reasoning ? 'Reasoning' : 'Standard';
 
   // Filter models based on search term
   const filteredModels = useMemo(() => {

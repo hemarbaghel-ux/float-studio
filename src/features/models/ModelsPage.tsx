@@ -103,10 +103,10 @@ export function ModelsPage() {
 
       // Capability filter
       if (filterCapability !== 'All') {
-        if (filterCapability === 'Coding' && !m.capabilities.coding) return false;
-        if (filterCapability === 'Reasoning' && !m.capabilities.reasoning) return false;
-        if (filterCapability === 'Tool Calling' && !m.capabilities.tools) return false;
-        if (filterCapability === 'Vision' && !m.capabilities.vision) return false;
+        if (filterCapability === 'Coding' && !m.capabilities?.coding) return false;
+        if (filterCapability === 'Reasoning' && !m.capabilities?.reasoning) return false;
+        if (filterCapability === 'Tool Calling' && !m.capabilities?.tools) return false;
+        if (filterCapability === 'Vision' && !m.capabilities?.vision) return false;
         if (filterCapability === 'Fast' && m.speed !== 'fast') return false;
       }
 
@@ -469,22 +469,22 @@ export function ModelsPage() {
 
                           {/* Capability Pills */}
                           <div className="flex flex-wrap gap-1.5 mb-6">
-                            {model.capabilities.coding && (
+                            {model.capabilities?.coding && (
                               <span className="px-2 py-0.5 rounded bg-[#161B22] border border-[#30363D] text-[10px] text-purple-300 font-medium">
                                 Coding
                               </span>
                             )}
-                            {model.capabilities.reasoning && (
+                            {model.capabilities?.reasoning && (
                               <span className="px-2 py-0.5 rounded bg-[#161B22] border border-[#30363D] text-[10px] text-purple-300 font-medium">
                                 Reasoning
                               </span>
                             )}
-                            {model.capabilities.tools && (
+                            {model.capabilities?.tools && (
                               <span className="px-2 py-0.5 rounded bg-[#161B22] border border-[#30363D] text-[10px] text-purple-300 font-medium">
                                 Tools
                               </span>
                             )}
-                            {model.capabilities.vision && (
+                            {model.capabilities?.vision && (
                               <span className="px-2 py-0.5 rounded bg-[#161B22] border border-[#30363D] text-[10px] text-slate-400 font-medium">
                                 Vision
                               </span>

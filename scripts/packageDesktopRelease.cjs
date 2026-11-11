@@ -181,7 +181,20 @@ if (isSmokeTest) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         success: true,
-        models: [{ id: 'gpt-6-astra', displayName: 'GPT-6 Astra', providerId: 'openai', status: 'AVAILABLE' }]
+        models: [{
+          id: 'gpt-6-astra',
+          displayName: 'GPT-6 Astra',
+          providerId: 'openai',
+          status: 'AVAILABLE',
+          capabilities: {
+            coding: true,
+            reasoning: true,
+            tools: true,
+            vision: true,
+            streaming: true,
+            structuredOutput: true
+          }
+        }]
       }));
     }
 
@@ -287,10 +300,21 @@ if (isSmokeTest) {
                               document.querySelector('#ai-panel-submit-btn');
 
               if (aiInput && sendBtn) {
-                aiInput.value = 'Hello smoke test AI model';
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+                if (nativeSetter) {
+                  nativeSetter.call(aiInput, 'Hello smoke test AI model');
+                } else {
+                  aiInput.value = 'Hello smoke test AI model';
+                }
                 aiInput.dispatchEvent(new Event('input', { bubbles: true }));
                 aiInput.dispatchEvent(new Event('change', { bubbles: true }));
-                sendBtn.click();
+                setTimeout(() => {
+                  const btn = document.querySelector('[data-testid="ai-send-button"]') ||
+                              document.querySelector('#ai-panel-submit-btn');
+                  if (btn && !btn.disabled) {
+                    btn.click();
+                  }
+                }, 50);
                 window.__smoke_msg_sent__ = true;
                 messageSent = true;
               }

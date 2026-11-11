@@ -251,7 +251,14 @@ export const useAIStore = create<AIStore>((set) => ({
             shortName: model.displayName,
             family: model.providerId,
             description: model.description,
-            capabilities: model.capabilities,
+            capabilities: model.capabilities || {
+              coding: true,
+              reasoning: true,
+              vision: false,
+              tools: true,
+              streaming: true,
+              structuredOutput: true
+            },
             capabilitiesList: Object.entries(model.capabilities || {}).filter(([, enabled]) => enabled).map(([name]) => name),
             contextWindow: model.contextWindow || 0,
             status: model.status,
@@ -266,10 +273,10 @@ export const useAIStore = create<AIStore>((set) => ({
               effectiveDate: model.pricing.effectiveDate
             } : undefined,
             pricingUrl: model.pricing?.sourceUrl,
-            supportsStreaming: model.capabilities?.streaming === true,
-            supportsTools: model.capabilities?.tools === true,
-            supportsVision: model.capabilities?.vision === true,
-            supportsReasoning: model.capabilities?.reasoning === true
+            supportsStreaming: Boolean(model.capabilities?.streaming),
+            supportsTools: Boolean(model.capabilities?.tools),
+            supportsVision: Boolean(model.capabilities?.vision),
+            supportsReasoning: Boolean(model.capabilities?.reasoning)
           }));
           if (serverModels.length > 0) set({ models: serverModels });
         }

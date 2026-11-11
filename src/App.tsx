@@ -107,6 +107,7 @@ export default function App() {
     
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
       document.removeEventListener('click', handleAnchorClick);
     };
   }, []);
@@ -271,7 +272,13 @@ export default function App() {
   }
 
   // Dedicated Code Editor / IDE Workspace routes
-  if (currentPath === '/workspace' || currentPath === '/ide' || currentPath.startsWith('/workspace/')) {
+  if (
+    currentPath === '/workspace' ||
+    currentPath === '/ide' ||
+    currentPath.startsWith('/workspace/') ||
+    (typeof window !== 'undefined' && window.location.hash && window.location.hash.includes('workspace')) ||
+    hasStarted
+  ) {
     return <IDEWorkspace />;
   }
 
