@@ -7,7 +7,8 @@ import {
   createCheckoutSession,
   retrieveCheckoutSession,
   verifyWebhookSignature,
-  handleWebhookEvent
+  handleWebhookEvent,
+  BillingCycle
 } from './stripeService';
 import {
   SubscriptionPlanId,
@@ -116,7 +117,7 @@ subscriptionRouter.post('/create-checkout-session', requireAuth, async (req: any
       return res.status(401).json({ error: 'Authentication required. Please sign in.' });
     }
 
-    const { planId } = req.body || {};
+    const { planId, billingCycle, idempotencyKey } = req.body || {};
     if (!planId || typeof planId !== 'string') {
       return res.status(400).json({ error: 'Missing required field: "planId".' });
     }
@@ -126,6 +127,20 @@ subscriptionRouter.post('/create-checkout-session', requireAuth, async (req: any
       return res.status(400).json({
         error: `Invalid planId "${planId}". Available paid subscription tiers: pro, business, ultimate.`
       });
+    }
+
+    let normalizedCycle: BillingCycle = 'monthly';
+    if (billingCycle !== undefined && billingCycle !== null) {
+      if (typeof billingCycle !== 'string' || !['monthly', 'yearly'].includes(billingCycle.toLowerCase().trim())) {
+        return res.status(400).json({
+          error: `Invalid billingCycle "${billingCycle}". Must be 'monthly' or 'yearly'.`
+        });
+      }
+      normalizedCycle = billingCycle.toLowerCase().trim() as BillingCycle;
+    }
+
+    if (idempotencyKey !== undefined && idempotencyKey !== null && typeof idempotencyKey !== 'string') {
+      return res.status(400).json({ error: 'Invalid idempotencyKey. Must be a string.' });
     }
 
     if (!isStripeConfigured()) {
@@ -144,13 +159,16 @@ subscriptionRouter.post('/create-checkout-session', requireAuth, async (req: any
       userId,
       email,
       planId: normalizedPlanId,
+      billingCycle: normalizedCycle,
+      idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey : undefined,
       origin
     });
 
     res.json({
       clientSecret: sessionData.clientSecret,
       sessionId: sessionData.sessionId,
-      planId: normalizedPlanId
+      planId: normalizedPlanId,
+      billingCycle: normalizedCycle
     });
   } catch (err: any) {
     console.error('Error creating checkout session:', err);

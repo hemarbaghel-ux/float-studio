@@ -10,12 +10,16 @@ import {
 } from './subscriptionPersistence';
 
 export type { SubscriptionPlanId };
+export type BillingCycle = 'monthly' | 'yearly';
 
 export interface PlanConfig {
   id: SubscriptionPlanId;
   name: string;
   badge?: string;
   monthlyPrice: number;
+  yearlyPrice: number;
+  yearlyAnnualTotal: number;
+  yearlyDiscountPercent: number;
   currency: 'USD';
   description: string;
   features: string[];
@@ -26,6 +30,9 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
     id: 'free',
     name: 'FLOAT Free',
     monthlyPrice: 0,
+    yearlyPrice: 0,
+    yearlyAnnualTotal: 0,
+    yearlyDiscountPercent: 0,
     currency: 'USD',
     description: 'Essential developer tools for building and exploring code.',
     features: [
@@ -41,6 +48,9 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
     name: 'FLOAT Pro',
     badge: 'Most Popular',
     monthlyPrice: 20,
+    yearlyPrice: 16, // $16/mo billed annually ($192/yr) -> save 20%
+    yearlyAnnualTotal: 192,
+    yearlyDiscountPercent: 20,
     currency: 'USD',
     description: 'For individual developers building with AI chat and reviewable code proposals.',
     features: [
@@ -57,6 +67,9 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
     name: 'FLOAT Business',
     badge: 'Teams',
     monthlyPrice: 40,
+    yearlyPrice: 32, // $32/user/mo billed annually ($384/yr) -> save 20%
+    yearlyAnnualTotal: 384,
+    yearlyDiscountPercent: 20,
     currency: 'USD',
     description: 'For teams building, reviewing, and shipping software together.',
     features: [
@@ -73,6 +86,9 @@ export const FLOAT_PLANS: Record<SubscriptionPlanId, PlanConfig> = {
     name: 'FLOAT Ultimate',
     badge: 'Maximum Power',
     monthlyPrice: 100,
+    yearlyPrice: 80, // $80/user/mo billed annually ($960/yr) -> save 20%
+    yearlyAnnualTotal: 960,
+    yearlyDiscountPercent: 20,
     currency: 'USD',
     description: 'For power users and teams with higher AI usage needs.',
     features: [
@@ -143,7 +159,7 @@ export function validateStripeEnv(): {
   };
 }
 
-export function getServerPriceId(planId: SubscriptionPlanId): string {
+export function getServerPriceId(planId: SubscriptionPlanId, billingCycle: BillingCycle = 'monthly'): string {
   if (planId === 'free') {
     throw new Error('Free plan does not require a Stripe checkout session.');
   }
@@ -152,19 +168,29 @@ export function getServerPriceId(planId: SubscriptionPlanId): string {
     throw new Error(`Invalid plan identifier "${planId}". Valid subscription plans are pro, business, and ultimate.`);
   }
 
+  if (billingCycle !== 'monthly' && billingCycle !== 'yearly') {
+    throw new Error(`Invalid billing cycle "${billingCycle}". Must be 'monthly' or 'yearly'.`);
+  }
+
   let priceId = '';
   if (planId === 'pro') {
-    priceId = process.env.STRIPE_PRICE_ID_PRO || '';
+    priceId = billingCycle === 'yearly'
+      ? (process.env.STRIPE_PRICE_ID_PRO_YEARLY || '')
+      : (process.env.STRIPE_PRICE_ID_PRO_MONTHLY || process.env.STRIPE_PRICE_ID_PRO || '');
   } else if (planId === 'business') {
-    priceId = process.env.STRIPE_PRICE_ID_BUSINESS || '';
+    priceId = billingCycle === 'yearly'
+      ? (process.env.STRIPE_PRICE_ID_BUSINESS_YEARLY || '')
+      : (process.env.STRIPE_PRICE_ID_BUSINESS_MONTHLY || process.env.STRIPE_PRICE_ID_BUSINESS || '');
   } else if (planId === 'ultimate') {
-    priceId = process.env.STRIPE_PRICE_ID_ULTIMATE || '';
+    priceId = billingCycle === 'yearly'
+      ? (process.env.STRIPE_PRICE_ID_ULTIMATE_YEARLY || '')
+      : (process.env.STRIPE_PRICE_ID_ULTIMATE_MONTHLY || process.env.STRIPE_PRICE_ID_ULTIMATE || '');
   }
 
   if (!priceId) {
     // Provide a recognizable fallback identifier if not set in environment
     // to allow validation or test mocking without crashing
-    priceId = `price_float_${planId}_monthly`;
+    priceId = `price_float_${planId}_${billingCycle}`;
   }
 
   return priceId;
@@ -174,9 +200,13 @@ export async function createCheckoutSession(params: {
   userId: string;
   email?: string;
   planId: SubscriptionPlanId;
+  billingCycle?: BillingCycle;
+  idempotencyKey?: string;
   origin: string;
 }): Promise<{ clientSecret: string; sessionId: string; url?: string }> {
   const { userId, email, planId, origin } = params;
+  const billingCycle: BillingCycle = params.billingCycle === 'yearly' ? 'yearly' : 'monthly';
+  const idempotencyKey = params.idempotencyKey;
 
   if (!userId || typeof userId !== 'string') {
     throw new Error('Valid Firebase authenticated user ID is required.');
@@ -191,7 +221,7 @@ export async function createCheckoutSession(params: {
     throw new Error('Stripe is not configured on this FLOAT deployment. Server administrator must set STRIPE_SECRET_KEY.');
   }
 
-  const priceId = getServerPriceId(planId);
+  const priceId = getServerPriceId(planId, billingCycle);
   const cleanOrigin = origin.replace(/\/+$/, '');
   const returnUrl = `${cleanOrigin}/checkout/return?session_id={CHECKOUT_SESSION_ID}`;
 
@@ -208,18 +238,21 @@ export async function createCheckoutSession(params: {
     client_reference_id: userId,
     metadata: {
       userId,
-      planId
+      planId,
+      billingCycle
     },
     subscription_data: {
       metadata: {
         userId,
-        planId
+        planId,
+        billingCycle
       }
     },
     return_url: returnUrl
   };
 
-  const session = await stripe.checkout.sessions.create(sessionConfig);
+  const requestOptions = idempotencyKey ? { idempotencyKey } : undefined;
+  const session = await stripe.checkout.sessions.create(sessionConfig, requestOptions);
 
   if (!session.client_secret) {
     throw new Error('Stripe failed to generate a client_secret for the embedded checkout session.');

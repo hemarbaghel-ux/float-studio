@@ -108,6 +108,12 @@ export interface UserSubscriptionInfo {
   updatedAt: number;
 }
 
+export interface CreateCheckoutSessionParams {
+  planId: string;
+  billingCycle?: 'monthly' | 'yearly';
+  idempotencyKey?: string;
+}
+
 interface SubscriptionState {
   subscription: UserSubscriptionInfo | null;
   publishableKey: string;
@@ -117,7 +123,7 @@ interface SubscriptionState {
   error: string | null;
   fetchConfig: () => Promise<void>;
   fetchSubscriptionStatus: () => Promise<UserSubscriptionInfo | null>;
-  createCheckoutSession: (planId: string) => Promise<{ clientSecret: string; sessionId: string }>;
+  createCheckoutSession: (params: string | CreateCheckoutSessionParams) => Promise<{ clientSecret: string; sessionId: string; planId?: string; billingCycle?: string }>;
   checkSessionStatus: (sessionId: string) => Promise<{ status: string; paymentStatus: string; customerEmail?: string; planId?: string }>;
 }
 
@@ -175,11 +181,19 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
     }
   },
 
-  createCheckoutSession: async (planId: string) => {
+  createCheckoutSession: async (params: string | CreateCheckoutSessionParams) => {
     const user = auth.currentUser;
     if (!user) {
       throw new Error('You must be signed in to start a subscription.');
     }
+
+    const payload: CreateCheckoutSessionParams = typeof params === 'string'
+      ? { planId: params, billingCycle: 'monthly' }
+      : {
+          planId: params.planId,
+          billingCycle: params.billingCycle || 'monthly',
+          idempotencyKey: params.idempotencyKey
+        };
 
     const token = await user.getIdToken();
     const res = await fetch('/api/subscription/create-checkout-session', {
@@ -188,7 +202,7 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`
       },
-      body: JSON.stringify({ planId })
+      body: JSON.stringify(payload)
     });
 
     const data = await res.json();
@@ -198,7 +212,9 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
 
     return {
       clientSecret: data.clientSecret,
-      sessionId: data.sessionId
+      sessionId: data.sessionId,
+      planId: data.planId,
+      billingCycle: data.billingCycle
     };
   },
 

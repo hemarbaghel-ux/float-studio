@@ -1,10 +1,24 @@
 /**
- * Float browser worker: executes JavaScript from the virtual codebase inside an isolated
- * Web Worker with a CommonJS loader, a Jest-compatible test runner, and a small POSIX-ish shell.
+ * FLOAT Browser Preview Worker: executes client-side JavaScript from the virtual codebase
+ * inside a Web Worker with a CommonJS loader, a Jest-compatible test runner, and a virtual POSIX shell.
+ *
+ * NOTE: This is a virtual in-memory preview interpreter for rapid scratch evaluation,
+ * NOT a secure OS-level or container sandbox for untrusted hostile code. Network and
+ * ambient storage globals (fetch, WebSocket, indexedDB) are disabled inside the worker thread.
+ * Host commands, package installations, and native process executions require an authorized terminal runner.
  */
 import { normalizePath } from './projectIO';
 
 const WORKER_SRC = String.raw`
+// Restrict ambient worker network/storage globals to enforce preview boundaries
+try {
+  self.fetch = undefined;
+  self.XMLHttpRequest = undefined;
+  self.WebSocket = undefined;
+  self.EventSource = undefined;
+  self.indexedDB = undefined;
+} catch {}
+
 const out = [];
 const log = (...a) => out.push(a.map(fmt).join(' '));
 function fmt(v){ if(typeof v==='string') return v; try{ return JSON.stringify(v,null,0);}catch(e){ return String(v);} }
@@ -185,10 +199,12 @@ export interface ShellFs {
   remove: (p: string) => void;
 }
 
-const HELP = `FLOAT browser worker — supported commands:
+const HELP = `FLOAT browser preview worker (virtual in-memory interpreter) — supported commands:
   ls [dir]  tree  cat <file>  head/tail <file>  wc -l <file>  grep <pattern> [path]
   echo <text> [> file]  touch <file>  rm <file>  mkdir <dir>  pwd  clear
-  node <file.js>  npm test | npm run test | npx jest | npx vitest run  npm run <script>`;
+  node <file.js>  npm test | npm run test | npx jest | npx vitest run  npm run <script>
+
+  [NOTE: This preview interpreter runs inside your browser. Native system commands, compilers, and package installations require a connected terminal runner.]`;
 
 export async function runShell(command: string, fs: ShellFs): Promise<{ output: string; code: number }> {
   const segments = command.split(/\s*&&\s*/).filter(Boolean);

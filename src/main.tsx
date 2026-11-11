@@ -2,7 +2,11 @@ import {StrictMode, Suspense, lazy} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { LanguageProvider } from './components/LanguageProvider';
+import { initSentry } from './lib/sentry';
 import './index.css';
+
+// Initialize Sentry error tracking if VITE_SENTRY_DSN is configured
+initSentry();
 
 // Remove credentials left behind by the retired browser-local BYOK settings.
 if (typeof window !== 'undefined') {
