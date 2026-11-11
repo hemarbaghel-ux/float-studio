@@ -126,11 +126,6 @@ export default function App() {
     return () => unsubscribe();
   }, [setUser, hasStarted, startSession]);
 
-  // Immediate short-circuit for desktop/CI startup self-check
-  if (isSmokeTest) {
-    return <IDEWorkspace />;
-  }
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-[#0A0A08] flex flex-col items-center justify-center gap-4 select-none">
@@ -276,7 +271,7 @@ export default function App() {
   }
 
   // Dedicated Code Editor / IDE Workspace routes
-  if (isSmokeTest || currentPath === '/workspace' || currentPath === '/ide' || currentPath.startsWith('/workspace/')) {
+  if (currentPath === '/workspace' || currentPath === '/ide' || currentPath.startsWith('/workspace/')) {
     return <IDEWorkspace />;
   }
 

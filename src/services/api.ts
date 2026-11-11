@@ -1,4 +1,5 @@
 import { auth } from '../lib/firebase';
+import { resolveApiUrl } from '../lib/apiConfig';
 
 /** Attach a fresh Firebase ID token to requests for authenticated server APIs. */
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
@@ -9,5 +10,6 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
 
-  return fetch(input, { ...init, headers });
+  const resolvedInput = typeof input === 'string' && input.startsWith('/') ? resolveApiUrl(input) : input;
+  return fetch(resolvedInput, { ...init, headers });
 }

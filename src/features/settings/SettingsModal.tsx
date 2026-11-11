@@ -6,6 +6,7 @@ import { FloatLogo } from '../../components/FloatLogo';
 import { cn } from '../../lib/utils';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { useConsentStore } from '../../store/consentStore';
+import { resolveApiUrl, getBackendBaseUrl, setBackendBaseUrl } from '../../lib/apiConfig';
 
 export function SettingsModal({ onClose, initialSection }: { onClose: () => void; initialSection?: 'profile' | 'appearance' | 'editor' | 'models' | 'integrations' | 'privacy' }) {
   const { settings, updateSettings } = useIDEStore();
@@ -16,12 +17,14 @@ export function SettingsModal({ onClose, initialSection }: { onClose: () => void
   const [consentSuccessMsg, setConsentSuccessMsg] = useState<string | null>(null);
   const [isTestingAi, setIsTestingAi] = useState(false);
   const [aiHealthResult, setAiHealthResult] = useState<{ status: 'idle' | 'success' | 'unconfigured' | 'error'; message: string; details?: any } | null>(null);
+  const [backendUrlInput, setBackendUrlInput] = useState(() => getBackendBaseUrl());
+  const [backendSaveSuccess, setBackendSaveSuccess] = useState(false);
 
   const testAiConnection = async () => {
     setIsTestingAi(true);
     setAiHealthResult(null);
     try {
-      const res = await fetch('/api/ai/health');
+      const res = await fetch(resolveApiUrl('/api/ai/health'));
       const data = await res.json();
       if (!res.ok) {
         setAiHealthResult({ status: 'error', message: data.error || 'Connection failed' });
@@ -497,6 +500,63 @@ export function SettingsModal({ onClose, initialSection }: { onClose: () => void
                 <p className="text-xs text-slate-500 dark:text-[#8B949E] mb-4">
                   FLOAT uses server-side configured AI model providers. Live credentials and upstream access are verified on the server.
                 </p>
+              </div>
+
+              {/* Backend Service URL Card */}
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-[#2A2A2A] bg-slate-50/50 dark:bg-[#141414] space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-white">Backend Service URL</div>
+                    <div className="text-xs text-slate-500 dark:text-[#8B949E]">
+                      Configure the HTTP/SSE backend endpoint for AI inference and server features.
+                    </div>
+                  </div>
+                  {backendSaveSuccess && (
+                    <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                      <Check size={12} /> Saved
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={backendUrlInput}
+                    onChange={(e) => {
+                      setBackendUrlInput(e.target.value);
+                      setBackendSaveSuccess(false);
+                    }}
+                    placeholder="http://127.0.0.1:3000 (empty for relative /api)"
+                    className="flex-1 px-3 py-1.5 text-xs bg-white dark:bg-[#0A0A0A] border border-slate-200 dark:border-[#2A2A2A] rounded-lg text-slate-900 dark:text-[#E6EDF3] placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBackendBaseUrl(backendUrlInput);
+                      setBackendSaveSuccess(true);
+                      setTimeout(() => setBackendSaveSuccess(false), 2500);
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Save URL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const defaultUrl = window.location.protocol === 'file:' ? 'http://127.0.0.1:3000' : '';
+                      setBackendUrlInput(defaultUrl);
+                      setBackendBaseUrl(defaultUrl);
+                      setBackendSaveSuccess(true);
+                      setTimeout(() => setBackendSaveSuccess(false), 2500);
+                    }}
+                    className="px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-[#8B949E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#2A2A2A] rounded-lg transition-colors cursor-pointer"
+                    title="Reset to environment default"
+                  >
+                    Reset
+                  </button>
+                </div>
+                <div className="text-[11px] text-slate-400 dark:text-[#7D8590]">
+                  Effective Endpoint: <span className="font-mono text-purple-600 dark:text-purple-400">{resolveApiUrl('/api/ai/chat')}</span>
+                </div>
               </div>
 
               {/* Provider Status Card */}

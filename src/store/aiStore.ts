@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { AIModel, ModelPreference, ProviderStatus } from '../types/ai';
 import { INITIAL_MODELS } from '../features/ai/registry';
+import { resolveApiUrl } from '../lib/apiConfig';
 
 export type ReasoningEffortLevel = 'low' | 'medium' | 'high';
 
@@ -189,7 +190,7 @@ export const useAIStore = create<AIStore>((set) => ({
   })),
   syncProviderStatus: async () => {
     try {
-      const res = await fetch('/api/ai/models/status', {
+      const res = await fetch(resolveApiUrl('/api/ai/models/status'), {
         headers: { Accept: 'application/json' },
       });
       if (res.ok) {
@@ -236,7 +237,7 @@ export const useAIStore = create<AIStore>((set) => ({
         }
       }
 
-      const catalogRes = await fetch('/api/ai/models', { headers: { Accept: 'application/json' } });
+      const catalogRes = await fetch(resolveApiUrl('/api/ai/models'), { headers: { Accept: 'application/json' } });
       if (catalogRes.ok && (catalogRes.headers.get('content-type') || '').includes('application/json')) {
         const catalog = await catalogRes.json();
         if (Array.isArray(catalog?.models)) {

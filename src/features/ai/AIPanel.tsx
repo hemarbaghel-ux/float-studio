@@ -29,6 +29,7 @@ import { ContextPicker } from './ContextPicker';
 import { ChatFeedbackButtons } from '../float/ChatFeedbackButtons';
 import { CODING_ASSISTANT_SYSTEM_PROMPT } from '../float/chatParsing';
 import { createAssistantProposal, prepareAssistantProposal } from '../proposals/proposalWorkflow';
+import { resolveApiUrl, formatBackendConnectionError } from '../../lib/apiConfig';
 import { v4 as uuidv4 } from 'uuid';
 
 function CodeBlock({ node, inline, className, children, ...props }: any) {
@@ -670,7 +671,8 @@ export function AIPanel() {
         effectiveSystemInstruction = "You are operating in DEBUG MODE. Follow the systematic 4-step diagnostic protocol:\n1. Inspect the reported error, stack trace, and any active compiler/runtime diagnostics.\n2. Trace the relevant symbol definitions, call sites, and recent git changes.\n3. Identify the underlying root cause with concrete evidence from the files (do NOT fabricate findings).\n4. Propose a targeted, minimal fix with exact before/after code blocks and verification instructions.";
       }
 
-      const response = await fetch('/api/ai/chat', {
+      const endpointUrl = resolveApiUrl('/api/ai/chat');
+      const response = await fetch(endpointUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -880,7 +882,12 @@ export function AIPanel() {
       } else {
         let errMsg = error.message || 'Could not connect to model provider.';
         let errTitle = 'Provider Error';
-        if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
+        const isNetworkFailure = /failed to fetch|networkerror|econnrefused|connection refused|load failed|net::err/i.test(errMsg);
+
+        if (isNetworkFailure) {
+          errTitle = 'AI Backend Unreachable';
+          errMsg = formatBackendConnectionError(resolveApiUrl('/api/ai/chat'), error);
+        } else if (/resource_exhausted|quota|429|rate[- ]?limit/i.test(errMsg)) {
           errTitle = 'Rate Limit / Quota Exceeded';
         } else if (/auth|unauthorized|api_key|not configured|missing/i.test(errMsg)) {
           errTitle = 'Authentication / Configuration Error';
@@ -1780,6 +1787,7 @@ export function AIPanel() {
 
           {/* Multiline auto-resizing textarea */}
           <textarea
+            data-testid="ai-input"
             ref={textareaRef}
             rows={1}
             value={input}
@@ -1973,6 +1981,7 @@ export function AIPanel() {
             ) : (
               <button
                 id="ai-panel-submit-btn"
+                data-testid="ai-send-button"
                 type="button"
                 onClick={() => handleSubmit()}
                 disabled={!input.trim()}

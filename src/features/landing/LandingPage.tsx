@@ -17,6 +17,12 @@ export function LandingPage() {
   const { t } = useTranslation();
   const [brandHovered, setBrandHovered] = React.useState(false);
 
+  const handleOpenWorkspace = () => {
+    useIDEStore.getState().startSession();
+    window.history.pushState({}, '', '/workspace');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
   const handleStart = (mode: 'signup' | 'signin' | React.MouseEvent = 'signup') => {
     const finalMode = typeof mode === 'string' && mode === 'signin' ? 'signin' : 'signup';
     const targetPath = finalMode === 'signin' ? '/sign-in' : '/sign-up';
@@ -25,7 +31,7 @@ export function LandingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#0F0F0B] text-slate-900 dark:text-[#EDEDED] font-sans overflow-x-hidden selection:bg-[#7C3AED]/20 dark:selection:bg-[#EDEDED] dark:selection:text-[#0F0F0B] transition-colors">
+    <div data-testid="landing-page" className="min-h-screen bg-slate-50 dark:bg-[#0F0F0B] text-slate-900 dark:text-[#EDEDED] font-sans overflow-x-hidden selection:bg-[#7C3AED]/20 dark:selection:bg-[#EDEDED] dark:selection:text-[#0F0F0B] transition-colors">
       {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 bg-white/80 dark:bg-[#0F0F0B]/80 backdrop-blur-md transition-colors">
         <div className="flex items-center gap-8">
@@ -116,7 +122,8 @@ export function LandingPage() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-14 w-full">
           <button
-            onClick={() => handleStart('signup')}
+            data-testid="landing-open-workspace"
+            onClick={handleOpenWorkspace}
             className="group px-7 py-3.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-opacity font-semibold flex items-center justify-center gap-2 shadow-lg w-full sm:w-auto cursor-pointer text-sm"
           >
             <span>Open FLOAT Free</span> <ArrowRight size={16} />
