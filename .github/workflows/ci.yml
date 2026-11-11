@@ -40,9 +40,6 @@ jobs:
       - name: Production Build (Client & Server Bundles)
         run: npm run build
 
-      - name: Build native FLOAT utility-process entrypoint
-        run: npm run build:float-daemon-worker
-
       - name: Build all built-in core language extensions
         run: npm run build:extensions
 

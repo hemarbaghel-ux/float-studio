@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { ensureUserProfile } from './userProfile';
 
 /**
  * Accepted Firebase ID Token Claims Policy:
@@ -41,6 +42,16 @@ let testCertificatesOverride: Record<string, string> | null = null;
 let simulateCertFetchOutageForTests = false;
 let testCertRefreshHandler: (() => Promise<Record<string, string>> | Record<string, string>) | null = null;
 let testCertRefreshCount = 0;
+let testAuthTokenOverride: string | null = null;
+let testAuthUserOverride: { uid: string; email?: string } | null = null;
+
+export function setTestAuthTokenForTests(
+  token: string | null,
+  user?: { uid: string; email?: string } | null
+): void {
+  testAuthTokenOverride = token;
+  testAuthUserOverride = user ?? (token ? { uid: 'test-smoke-user', email: 'smoke-test@floatstudio.dev' } : null);
+}
 
 export interface GooglePublicKeyTestOptions {
   simulateOutage?: boolean;
@@ -170,6 +181,11 @@ function verifySignature(token: string, cert: string): boolean {
  * - If trusted token verification infrastructure is unavailable, throws so callers fail closed (503).
  */
 export async function verifyFirebaseIdToken(token: string): Promise<{ uid: string; email?: string } | null> {
+  // Test-only designated token support for deterministic unit & smoke testing without network calls
+  if (testAuthTokenOverride && token === testAuthTokenOverride) {
+    return testAuthUserOverride || { uid: 'test-smoke-user', email: 'smoke-test@floatstudio.dev' };
+  }
+
   const decoded = parseJwt(token);
   if (!decoded) return null;
 
@@ -228,11 +244,11 @@ export function isFirebaseTokenTimeValid(exp: unknown, iat: unknown, nowInSecond
 
 export async function requireAuth(req: any, res: Response, next: NextFunction) {
   const authHeader = req.headers?.authorization;
-  if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+  if (!authHeader || typeof authHeader !== 'string' || (!authHeader.startsWith('Bearer ') && authHeader !== 'Bearer')) {
     return res.status(401).json({ error: 'Authentication required. Missing Bearer token.' });
   }
 
-  const token = authHeader.substring(7).trim();
+  const token = authHeader.replace(/^Bearer\s*/i, '').trim();
   if (!token) {
     return res.status(401).json({ error: 'Authentication required. Token is empty.' });
   }
@@ -250,5 +266,6 @@ export async function requireAuth(req: any, res: Response, next: NextFunction) {
   }
 
   req.user = user;
+  void ensureUserProfile(user).catch(() => {});
   return next();
 }

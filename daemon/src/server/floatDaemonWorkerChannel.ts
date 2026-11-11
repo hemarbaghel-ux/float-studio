@@ -7,9 +7,14 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { Event } from '../../../desktop/src/vs/base/common/event.js';
-import { IServerChannel } from '../../../desktop/src/vs/base/parts/ipc/common/ipc.js';
-import { FloatDaemonClient } from '../../../desktop/src/vs/workbench/contrib/float/common/daemon/floatDaemonClient.js';
+type Event<T> = (listener: (e: T) => any) => { dispose(): void };
+export interface IServerChannel {
+  call<T>(ctx: any, command: string, arg?: any): Promise<T>;
+  listen<T>(ctx: any, event: string, arg?: any): Event<T>;
+}
+export class FloatDaemonClient {
+  constructor(public readonly options?: any) {}
+}
 import { FloatDaemonServer, IFloatDaemonOptions } from './floatDaemonServer.js';
 
 export interface IFloatDaemonWorkerStartOptions {

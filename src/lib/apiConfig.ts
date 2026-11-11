@@ -1,8 +1,19 @@
 /**
  * API configuration and endpoint resolution helper for FLOAT Studio.
  * Handles environment variables, user settings, and automatic protocol adaptation
- * between web (relative URLs with proxy) and desktop (configurable localhost or remote URL).
+ * between web (relative URLs with proxy) and desktop (hosted backend by default with settings override).
  */
+
+export const DEFAULT_HOSTED_BACKEND_URL = 'https://api.floatstudio.dev';
+
+export function isDesktopApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.location.protocol === 'file:' ||
+    (typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron')) ||
+    Boolean((window as any).process?.versions?.electron)
+  );
+}
 
 export function getBackendBaseUrl(): string {
   if (typeof window !== 'undefined') {
@@ -27,12 +38,9 @@ export function getBackendBaseUrl(): string {
     return envUrl.replace(/\/+$/, '');
   }
 
-  // 4. Desktop / Electron environment running over file:// protocol
-  if (
-    typeof window !== 'undefined' &&
-    (window.location.protocol === 'file:' || (typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron')))
-  ) {
-    return 'http://127.0.0.1:3000';
+  // 4. Desktop / Electron environment running over file:// protocol defaults to hosted backend
+  if (isDesktopApp()) {
+    return DEFAULT_HOSTED_BACKEND_URL;
   }
 
   // 5. Standard web browser environment: relative URLs use current origin / Vite proxy

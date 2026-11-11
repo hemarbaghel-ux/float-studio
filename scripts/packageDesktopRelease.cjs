@@ -27,6 +27,16 @@ function exec(cmd, opts = {}) {
 }
 
 function downloadFile(url, destPath) {
+  const fileName = path.basename(destPath);
+  const cachePath = path.join(repoRoot, '.desktop-build-cache', fileName);
+  if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 1000000) {
+    if (!fs.existsSync(destPath) || fs.statSync(destPath).size !== fs.statSync(cachePath).size) {
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.copyFileSync(cachePath, destPath);
+    }
+    console.log(`[Cache Hit] ${destPath} restored from cache (${(fs.statSync(destPath).size / 1024 / 1024).toFixed(1)} MB)`);
+    return destPath;
+  }
   if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000000) {
     console.log(`[Cache Hit] ${destPath} already exists (${(fs.statSync(destPath).size / 1024 / 1024).toFixed(1)} MB)`);
     return destPath;
@@ -37,6 +47,10 @@ function downloadFile(url, destPath) {
   exec(`${curlCmd} -f -sSL --retry 5 --retry-delay 3 --connect-timeout 30 -o "${destPath}" "${url}"`);
   const size = fs.statSync(destPath).size;
   console.log(`Downloaded ${(size / 1024 / 1024).toFixed(1)} MB.`);
+  try {
+    fs.mkdirSync(path.join(repoRoot, '.desktop-build-cache'), { recursive: true });
+    fs.copyFileSync(destPath, cachePath);
+  } catch (e) {}
   return destPath;
 }
 
@@ -88,14 +102,7 @@ function assembleAppPayload(targetAppDir) {
     fs.writeFileSync(targetIndexHtml, html, 'utf8');
   }
 
-  // 3. Copy desktop compiled out & main entrypoints if present
-  const desktopOut = path.join(repoRoot, 'desktop', 'out');
-  const targetOut = path.join(targetAppDir, 'out');
-  if (fs.existsSync(desktopOut)) {
-    fs.cpSync(desktopOut, targetOut, { recursive: true });
-  }
-
-  // 4. Copy desktop main wrapper with startup self-check and mock model server
+  // 3. Copy desktop main wrapper with startup self-check and mock model server
   const sourceEntrypoint = path.join(__dirname, 'desktopEntrypoint.cjs');
   const targetEntrypoint = path.join(targetAppDir, 'index.cjs');
   fs.copyFileSync(sourceEntrypoint, targetEntrypoint);
@@ -253,17 +260,11 @@ async function packageWindows() {
   fs.rmSync(winBuildDir, { recursive: true, force: true });
   fs.mkdirSync(winBuildDir, { recursive: true });
 
-  // Use local desktop/.build/electron if available, else download official Electron
-  const localElectronDir = path.join(repoRoot, 'desktop', '.build', 'electron');
-  if (fs.existsSync(path.join(localElectronDir, 'FLOAT.exe')) || fs.existsSync(path.join(localElectronDir, 'electron.exe'))) {
-    console.log(`Copying local prebuilt Electron from ${localElectronDir}...`);
-    fs.cpSync(localElectronDir, winBuildDir, { recursive: true });
-  } else {
-    const electronZipUrl = `https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-win32-x64.zip`;
-    const cachedZip = path.join(buildTmpDir, `electron-v${ELECTRON_VERSION}-win32-x64.zip`);
-    downloadFile(electronZipUrl, cachedZip);
-    extractZip(cachedZip, winBuildDir);
-  }
+  // Download and extract official Electron runtime
+  const electronZipUrl = `https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-win32-x64.zip`;
+  const cachedZip = path.join(buildTmpDir, `electron-v${ELECTRON_VERSION}-win32-x64.zip`);
+  downloadFile(electronZipUrl, cachedZip);
+  extractZip(cachedZip, winBuildDir);
 
   // Ensure binary is named FLOAT.exe
   const rawExe = path.join(winBuildDir, 'electron.exe');
@@ -339,13 +340,26 @@ Filename: "{app}\\FLOAT.exe"; Description: "{cm:LaunchProgram,FLOAT Studio}"; Fl
     'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
     'C:\\ProgramData\\chocolatey\\bin\\iscc.exe'
   ];
+  let foundIscc = false;
   for (const c of candidatePaths) {
     if (fs.existsSync(c)) {
       isccCmd = `"${c}"`;
+      foundIscc = true;
       break;
     }
   }
-  exec(`${isccCmd} "${issFile}"`);
+
+  try {
+    exec(`${isccCmd} "${issFile}"`);
+    return { builtInstaller: true };
+  } catch (err) {
+    if (process.env.CI) {
+      throw err;
+    } else {
+      console.warn(`[WARN] Inno Setup (ISCC) is not available on this local machine. Portable ZIP was built successfully at: ${path.join(distReleaseDir, 'FLOAT-win32-x64.zip')}`);
+      return { builtInstaller: false };
+    }
+  }
 }
 
 async function packageMacOS() {
@@ -489,8 +503,11 @@ async function main() {
     expectedFiles = ['float-studio_amd64.deb', 'FLOAT-linux-x64.tar.gz'];
     await packageLinux();
   } else if (platform === 'win32' || platform === 'windows-x64') {
-    expectedFiles = ['FLOAT-Setup-x64.exe', 'FLOAT-win32-x64.zip'];
-    await packageWindows();
+    const res = await packageWindows();
+    expectedFiles = ['FLOAT-win32-x64.zip'];
+    if (res?.builtInstaller || process.env.CI) {
+      expectedFiles.unshift('FLOAT-Setup-x64.exe');
+    }
   } else if (platform === 'darwin' || platform === 'macos-arm64') {
     expectedFiles = ['FLOAT-arm64.dmg', 'FLOAT-darwin-arm64.zip'];
     await packageMacOS();

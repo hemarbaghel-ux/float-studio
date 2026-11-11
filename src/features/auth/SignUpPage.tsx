@@ -25,6 +25,7 @@ import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
 import { FloatAuthHeroEmblem } from './FloatAuthHeroEmblem';
 import { FloatTaskFlowPreview } from './FloatTaskFlowPreview';
 import { FloatPrinciplesCarousel } from './FloatPrinciplesCarousel';
+import { isDesktopApp } from '../../lib/apiConfig';
 
 export interface SignUpPageProps {
   initialMode?: 'signup' | 'signin' | 'reset';
@@ -91,9 +92,58 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false, r
       setLoading(true);
       setError('');
       setSuccessMsg('');
+
+      // Desktop Electron environment: Use Google-compliant system browser flow
+      const isDesktop = isDesktopApp();
+      if (isDesktop && provider === googleProvider) {
+        setSuccessMsg('Opening your default web browser for Google Sign-In...');
+        let electronIpc: any;
+        try {
+          const electron = (window as any).require ? (window as any).require('electron') : null;
+          electronIpc = electron?.ipcRenderer;
+        } catch {}
+
+        if (!electronIpc && (window as any).ipcRenderer) {
+          electronIpc = (window as any).ipcRenderer;
+        }
+
+        if (electronIpc) {
+          const res = await electronIpc.invoke('desktop:google-auth');
+          if (res && res.token && res.uid) {
+            useAuthStore.getState().setUser({
+              uid: res.uid,
+              email: res.email || '',
+              displayName: res.email ? res.email.split('@')[0] : 'FLOAT Developer',
+              getIdToken: async () => res.token,
+              token: res.token
+            });
+            setAuthSuccess(true);
+            startSession();
+            setTimeout(() => {
+              if (onClose) onClose();
+              else navigateAfterAuth();
+            }, 150);
+            return;
+          }
+        }
+      }
+
+      // Standard web browser flow: Firebase popup sign-in
       const cred = await signInWithPopup(auth, provider);
       if (cred?.user) {
         useAuthStore.getState().setUser(cred.user);
+
+        // Redirect callback if web session was spawned by desktop application
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search);
+          const callbackPort = params.get('callbackPort');
+          if (params.get('flow') === 'desktop' && callbackPort) {
+            const token = await cred.user.getIdToken();
+            const callbackUrl = `http://127.0.0.1:${callbackPort}/auth/callback?token=${encodeURIComponent(token)}&email=${encodeURIComponent(cred.user.email || '')}&uid=${encodeURIComponent(cred.user.uid)}`;
+            window.location.href = callbackUrl;
+            return;
+          }
+        }
       }
       setAuthSuccess(true);
       startSession();
@@ -175,6 +225,18 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false, r
       
       if (cred?.user) {
         useAuthStore.getState().setUser(cred.user);
+
+        // Redirect callback if web session was spawned by desktop application
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search);
+          const callbackPort = params.get('callbackPort');
+          if (params.get('flow') === 'desktop' && callbackPort) {
+            const token = await cred.user.getIdToken();
+            const callbackUrl = `http://127.0.0.1:${callbackPort}/auth/callback?token=${encodeURIComponent(token)}&email=${encodeURIComponent(cred.user.email || '')}&uid=${encodeURIComponent(cred.user.uid)}`;
+            window.location.href = callbackUrl;
+            return;
+          }
+        }
       }
       setAuthSuccess(true);
       startSession();

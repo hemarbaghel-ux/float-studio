@@ -35,6 +35,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { Loader2 } from 'lucide-react';
 import { FloatLogo } from './components/FloatLogo';
+import { isDesktopApp } from './lib/apiConfig';
 
 export default function App() {
   const { projectName, hasStarted, startSession, settings } = useIDEStore();
@@ -291,6 +292,18 @@ export default function App() {
 
   if (currentPath === '/models' || currentPath.startsWith('/models')) {
     return <ModelsPage />;
+  }
+
+  // Desktop first launch: Unauthenticated desktop sessions default to the login screen
+  const isDesktop = isDesktopApp();
+  if (isDesktop && !user && !isSmokeTest) {
+    if (currentPath === '/sign-up' || currentPath === '/signup') {
+      return <SignUpPage initialMode="signup" />;
+    }
+    if (currentPath === '/forgot-password' || currentPath === '/reset-password') {
+      return <SignUpPage initialMode="reset" />;
+    }
+    return <SignUpPage initialMode="signin" />;
   }
 
   // 1. First time visitors or unauthenticated users see the landing page, unless visiting login / dashboard

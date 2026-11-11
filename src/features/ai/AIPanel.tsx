@@ -4,6 +4,7 @@ import { useAIStore } from '../../store/aiStore';
 import { messagesForConversation } from './conversationMessageScope';
 import { ownsActiveRequest } from './requestLifecycle';
 import { auth } from '../../lib/firebase';
+import { getAuthToken } from '../../lib/authHelper';
 import {
   Send, Plus, Code, Paperclip, Square, Loader2, X,
   File as FileIcon, RotateCcw, AlertCircle, ChevronDown,
@@ -217,7 +218,9 @@ export function AIPanel() {
   const currentProjectId = projectId || 'default-workspace';
 
   useEffect(() => {
-    activeConvIdRef.current = activeConversationId;
+    if (activeConversationId) {
+      activeConvIdRef.current = activeConversationId;
+    }
   }, [activeConversationId]);
 
   // Cmd+F / Ctrl+F Transcript Find
@@ -263,22 +266,28 @@ export function AIPanel() {
       const list = await refreshConversations();
       if (!isMounted) return;
 
-      if (!activeConversationId) {
+      const currentActive = useIDEStore.getState().activeConversationId;
+      if (!currentActive) {
         if (list.length > 0) {
           const first = list[0];
           setActiveConversationId(first.id);
+          activeConvIdRef.current = first.id;
           const msgs = await ConversationService.fetchCloudConversation(first.id);
-          if (isMounted && msgs) {
+          if (isMounted && msgs && !isSubmittingRef.current) {
             setAiMessages(msgs);
           }
         } else {
           const newId = uuidv4();
           setActiveConversationId(newId);
-          setAiMessages([]);
+          activeConvIdRef.current = newId;
+          if (!isSubmittingRef.current) {
+            setAiMessages([]);
+          }
         }
       } else {
-        const msgs = await ConversationService.fetchCloudConversation(activeConversationId);
-        if (isMounted && msgs) {
+        activeConvIdRef.current = currentActive;
+        const msgs = await ConversationService.fetchCloudConversation(currentActive);
+        if (isMounted && msgs && msgs.length > 0 && !isSubmittingRef.current) {
           setAiMessages(msgs);
         }
       }
@@ -536,6 +545,7 @@ export function AIPanel() {
     setIsLoading(true);
 
     const targetConvId = activeConversationId || uuidv4();
+    activeConvIdRef.current = targetConvId;
     if (!activeConversationId) {
       setActiveConversationId(targetConvId);
     }
@@ -568,9 +578,9 @@ export function AIPanel() {
       });
     }
 
-    let token: string | undefined;
+    let token: string | null = null;
     try {
-      token = await auth.currentUser?.getIdToken();
+      token = await getAuthToken();
     } catch (authError: any) {
       if (overrideInput === undefined) setInput(draftText);
       addAiMessage({
@@ -585,17 +595,6 @@ export function AIPanel() {
       setIsLoading(false);
       isSubmittingRef.current = false;
       return;
-    }
-
-    const isSmokeTest = typeof window !== 'undefined' && (
-      window.location.search.includes('smoke-test') ||
-      window.location.hash.includes('smoke-test') ||
-      Boolean((window as any).__FLOAT_SMOKE_TEST__) ||
-      (typeof process !== 'undefined' && process.argv && process.argv.includes('--smoke-test'))
-    );
-
-    if (!token && isSmokeTest) {
-      token = 'smoke-test-token';
     }
 
     if (!token) {
@@ -778,7 +777,7 @@ export function AIPanel() {
         const { value, done } = await reader.read();
         if (done) break;
 
-        if (activeConvIdRef.current !== targetConvId) {
+        if (activeConvIdRef.current && activeConvIdRef.current !== targetConvId) {
           streamCancelled = true;
           await reader.cancel();
           break;
@@ -811,9 +810,15 @@ export function AIPanel() {
           status: 'completed',
           latency
         });
+      } else {
+        updateAiMessage(modelMsgId, {
+          content: accumulatedText ? `${accumulatedText} *(cancelled)*` : '*(Generation stopped)*',
+          status: 'cancelled',
+          latency
+        });
       }
 
-      if (!streamCancelled && activeWorkflowMode !== 'ask' && activeConvIdRef.current === targetConvId) {
+      if (!streamCancelled && activeWorkflowMode !== 'ask' && (!activeConvIdRef.current || activeConvIdRef.current === targetConvId)) {
         try {
           const proposalDraft = prepareAssistantProposal(accumulatedText, draftText, files);
           if (proposalDraft) {

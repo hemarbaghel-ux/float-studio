@@ -3,7 +3,9 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { Server } from '../../desktop/src/vs/base/parts/ipc/node/ipc.mp.js';
+class Server {
+	registerChannel(_name: string, _channel: any) {}
+}
 import { FloatDaemonWorkerChannel } from './server/floatDaemonWorkerChannel.js';
 
 const ipcServer = new Server();

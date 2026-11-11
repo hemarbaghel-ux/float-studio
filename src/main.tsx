@@ -1,8 +1,25 @@
 import {StrictMode, Suspense, lazy} from 'react';
 import {createRoot} from 'react-dom/client';
+import * as monaco from 'monaco-editor';
+import { loader } from '@monaco-editor/react';
 import App from './App.tsx';
 import { LanguageProvider } from './components/LanguageProvider';
 import { initSentry } from './services/telemetry/sentry';
+
+// Configure Monaco editor loader with local instance to ensure offline, Electron, and zero-CDN compatibility
+loader.config({ monaco });
+
+if (typeof window !== 'undefined') {
+  (window as any).MonacoEnvironment = {
+    getWorker: function (_workerId: string, _label: string) {
+      const blob = new Blob(
+        ['self.onmessage = function () {};'],
+        { type: 'application/javascript' }
+      );
+      return new Worker(URL.createObjectURL(blob));
+    }
+  };
+}
 
 initSentry();
 import './index.css';

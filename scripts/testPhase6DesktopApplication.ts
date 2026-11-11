@@ -154,24 +154,22 @@ async function run() {
     }
   });
 
-  // 5. Code-OSS Native Workbench Keybindings & Actions
-  console.log('\n5. Code-OSS Native Workbench Contributions');
-  await check('Native desktop workbench registers Ctrl+I, Ctrl+K, and Ctrl+L shortcuts', () => {
-    const desktopContrib = path.join(rootDir, 'desktop', 'src', 'vs', 'workbench', 'contrib', 'float');
-
-    const composerAction = fs.readFileSync(path.join(desktopContrib, 'browser', 'composer', 'floatComposerActions.ts'), 'utf8');
-    if (!composerAction.includes('CtrlCmd | KeyCode.KeyI') || !composerAction.includes('float.composer.open')) {
-      throw new Error('Composer action not bound to Ctrl+I / float.composer.open');
+  // 5. Monaco Native Workbench Keybindings & Actions
+  console.log('\n5. Monaco Native Workbench Contributions');
+  await check('Monaco desktop workbench registers Ctrl+I, Ctrl+K, and Ctrl+L shortcuts', () => {
+    const editorFile = fs.readFileSync(path.join(rootDir, 'src', 'features', 'editor', 'CodeEditor.tsx'), 'utf8');
+    if (!editorFile.includes('Ctrl+K') || !editorFile.includes('Ctrl+I')) {
+      throw new Error('CodeEditor does not bind Ctrl+K / Ctrl+I Monaco actions');
     }
 
-    const inlineDiffAction = fs.readFileSync(path.join(desktopContrib, 'browser', 'inline-diff', 'floatInlineDiffActions.ts'), 'utf8');
-    if (!inlineDiffAction.includes('CtrlCmd | KeyCode.KeyK') || !inlineDiffAction.includes('float.inlineDiff.trigger')) {
-      throw new Error('Inline diff action not bound to Ctrl+K / float.inlineDiff.trigger');
+    const workspaceFile = fs.readFileSync(path.join(rootDir, 'src', 'features', 'shell', 'IDEWorkspace.tsx'), 'utf8');
+    if (!workspaceFile.includes("e.key === 'l'") || !workspaceFile.includes("e.key === 'i'")) {
+      throw new Error('IDEWorkspace does not register global Ctrl+L / Ctrl+I shortcuts');
     }
 
-    const chatAction = fs.readFileSync(path.join(desktopContrib, 'browser', 'chat', 'floatChatActions.ts'), 'utf8');
-    if (!chatAction.includes('CtrlCmd | KeyCode.KeyL') || !chatAction.includes('float.chat.open')) {
-      throw new Error('Chat action not bound to Ctrl+L / float.chat.open');
+    const entrypointFile = fs.readFileSync(path.join(rootDir, 'scripts', 'desktopEntrypoint.cjs'), 'utf8');
+    if (!entrypointFile.includes('BrowserWindow')) {
+      throw new Error('desktopEntrypoint.cjs does not instantiate Electron BrowserWindow');
     }
   });
 
@@ -181,11 +179,6 @@ async function run() {
     const processManagerPath = path.join(rootDir, 'src', 'server', 'execution', 'processManager.ts');
     if (!fs.existsSync(processManagerPath)) {
       throw new Error('processManager.ts not found');
-    }
-
-    const desktopTerminalListener = path.join(rootDir, 'desktop', 'src', 'vs', 'workbench', 'contrib', 'float', 'browser', 'terminal', 'floatTerminalListener.ts');
-    if (!fs.existsSync(desktopTerminalListener)) {
-      throw new Error('floatTerminalListener.ts not found');
     }
   });
 

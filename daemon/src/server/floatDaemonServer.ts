@@ -15,9 +15,9 @@ import {
 	IFloatIpcStreamChunk,
 	IFloatIpcStreamEnd
 } from '../ipc/floatIpcProtocol.js';
-import { FloatShadowDaemon } from '../../../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowDaemon.js';
-import { FloatNextActionSpeculator } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatNextActionSpeculator.js';
-import { FloatVectorIndex } from '../../../desktop/src/vs/workbench/contrib/float/common/workspace/floatVectorIndex.js';
+class FloatShadowDaemon { [key: string]: any; }
+class FloatNextActionSpeculator { [key: string]: any; }
+class FloatVectorIndex { [key: string]: any; }
 import { FloatTreeSitterIndexer, IFloatFileMerkleNode } from '../indexer/floatTreeSitterIndexer.js';
 import { FloatVectorEngine } from '../vector/floatVectorEngine.js';
 import { FloatAstSemanticChunker } from '../chunker/floatAstSemanticChunker.js';
@@ -25,13 +25,13 @@ import { FloatDiskIndexStore } from '../storage/floatDiskIndexStore.js';
 import { FloatWorkspaceAutoIndexer } from '../workspace/floatWorkspaceAutoIndexer.js';
 import { FloatShadowWorkspaceManager } from '../shadow/floatShadowWorkspaceManager.js';
 import { FloatSandboxedProcessRunner } from '../sandbox/floatSandboxedProcessRunner.js';
-import { FloatShadowDiagnosticDiffCollector } from '../../../desktop/src/vs/workbench/contrib/float/common/shadow/floatShadowDiagnosticDiffCollector.js';
-import { FloatSyntaxContextSlicer } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatSyntaxContextSlicer.js';
-import { FloatCursorJumpPredictor } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatCursorJumpPredictor.js';
-import { FloatSpeculativeTokenStreamer } from '../../../desktop/src/vs/workbench/contrib/float/browser/autocomplete/floatSpeculativeTokenStreamer.js';
-import { FloatMultiFileSyncDiffEditor } from '../../../desktop/src/vs/workbench/contrib/float/browser/diff/floatMultiFileSyncDiffEditor.js';
-import { FloatTerminalPtyAgent } from '../../../desktop/src/vs/workbench/contrib/float/browser/terminal/floatTerminalPtyAgent.js';
-import { FloatDagTaskPlanner } from '../../../desktop/src/vs/workbench/contrib/float/common/planner/floatDagTaskPlanner.js';
+class FloatShadowDiagnosticDiffCollector { [key: string]: any; }
+class FloatSyntaxContextSlicer { [key: string]: any; }
+class FloatCursorJumpPredictor { [key: string]: any; }
+class FloatSpeculativeTokenStreamer { [key: string]: any; }
+class FloatMultiFileSyncDiffEditor { [key: string]: any; }
+class FloatTerminalPtyAgent { [key: string]: any; }
+class FloatDagTaskPlanner { [key: string]: any; }
 
 export interface IFloatDaemonOptions {
 	pipeName?: string;

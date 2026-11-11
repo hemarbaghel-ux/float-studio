@@ -2,7 +2,7 @@
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, shell, ipcMain } = require('electron');
 
 const isSmokeTest = process.argv.includes('--smoke-test');
 const isHeadless = process.argv.includes('--headless');
@@ -22,6 +22,97 @@ process.on('unhandledRejection', (reason) => {
   console.error('[FLOAT Main] Unhandled Rejection:', reason);
   process.exit(1);
 });
+
+// Setup Electron-safe Google Sign-In loopback handler (RFC 8252 compliant system browser flow)
+let activeLoopbackServer = null;
+
+if (ipcMain) {
+  ipcMain.handle('desktop:google-auth', async () => {
+    return new Promise((resolve, reject) => {
+      if (activeLoopbackServer) {
+        try { activeLoopbackServer.close(); } catch (e) {}
+        activeLoopbackServer = null;
+      }
+
+      const loopback = http.createServer((req, res) => {
+        try {
+          const reqUrl = new URL(req.url, 'http://127.0.0.1');
+          if (reqUrl.pathname === '/auth/callback') {
+            const token = reqUrl.searchParams.get('token');
+            const email = reqUrl.searchParams.get('email') || '';
+            const uid = reqUrl.searchParams.get('uid') || '';
+
+            res.writeHead(200, {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Connection': 'close'
+            });
+            res.end(`
+              <!DOCTYPE html>
+              <html lang="en">
+                <head>
+                  <meta charset="utf-8">
+                  <title>FLOAT Studio - Sign In Successful</title>
+                  <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0A0A08; color: #E6EDF3; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+                    .card { background: #161B22; border: 1px solid #30363D; border-radius: 12px; padding: 2.5rem; text-align: center; max-width: 420px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+                    h1 { color: #3FB950; font-size: 1.5rem; margin-bottom: 0.5rem; }
+                    p { color: #8B949E; font-size: 0.95rem; line-height: 1.5; }
+                  </style>
+                </head>
+                <body>
+                  <div class="card">
+                    <h1>✓ Signed In to FLOAT Studio</h1>
+                    <p>Authentication complete. You can safely close this browser tab and return to the FLOAT Studio desktop application.</p>
+                  </div>
+                </body>
+              </html>
+            `);
+
+            try { loopback.close(); } catch (e) {}
+            activeLoopbackServer = null;
+
+            if (token && uid) {
+              resolve({ success: true, token, email, uid });
+            } else {
+              reject(new Error('Authentication callback did not provide valid credentials'));
+            }
+            return;
+          }
+
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not found');
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      loopback.listen(0, '127.0.0.1', () => {
+        const port = loopback.address().port;
+        activeLoopbackServer = loopback;
+        const hostedBase = process.env.FLOAT_HOSTED_APP_URL || 'https://floatstudio.dev';
+        const authUrl = `${hostedBase}/sign-in?flow=desktop&callbackPort=${port}`;
+        console.log(`[FLOAT Desktop] Opening system browser for Google OAuth: ${authUrl}`);
+        if (shell && shell.openExternal) {
+          shell.openExternal(authUrl);
+        }
+
+        // 3 minute timeout
+        setTimeout(() => {
+          if (activeLoopbackServer === loopback) {
+            try { loopback.close(); } catch (e) {}
+            activeLoopbackServer = null;
+            reject(new Error('Google sign-in timed out. Please try again.'));
+          }
+        }, 180000);
+      });
+
+      loopback.on('error', (err) => {
+        console.error('[FLOAT Desktop] Loopback server error:', err);
+        reject(err);
+      });
+    });
+  });
+}
 
 if (isSmokeTest) {
   try {
@@ -47,6 +138,12 @@ if (isSmokeTest) {
 
     const url = req.url || '';
     if (url.startsWith('/api/ai/chat') && req.method === 'POST') {
+      const authHeader = req.headers['authorization'] || '';
+      if (!authHeader.startsWith('Bearer ') || authHeader.slice(7).trim() !== 'smoke-test-token') {
+        console.error('[FLOAT MockServer] Rejecting unauthenticated /api/ai/chat call. Authorization:', authHeader);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Unauthorized: Missing or invalid authentication token' }));
+      }
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
@@ -129,8 +226,8 @@ if (isSmokeTest) {
       }
     });
 
-    win.webContents.on('console-message', (event, level, message) => {
-      console.log('[Renderer Console]', message);
+    win.webContents.on('console-message', (...args) => {
+      console.log('[Renderer Console]', ...args);
     });
 
     win.webContents.on('render-process-gone', (event, details) => {
@@ -143,6 +240,13 @@ if (isSmokeTest) {
         window.__FLOAT_SMOKE_TEST__ = true;
         window.__FLOAT_BACKEND_URL__ = 'http://127.0.0.1:${mockPort}';
         try { localStorage.setItem('float_backend_url', 'http://127.0.0.1:${mockPort}'); } catch (e) {}
+        if (window.__FLOAT_AUTH_STORE__) {
+          window.__FLOAT_AUTH_STORE__.getState().setUser({
+            uid: 'test-smoke-user',
+            email: 'smoke-test@floatstudio.dev',
+            getIdToken: async () => 'smoke-test-token'
+          });
+        }
       `).catch(() => {});
     });
 
@@ -164,12 +268,22 @@ if (isSmokeTest) {
       }
     }, 45000);
 
+    let pollCount = 0;
     const pollInterval = setInterval(async () => {
       try {
         if (win.isDestroyed() || !win.webContents) return;
 
         const res = await win.webContents.executeJavaScript(`
           (function() {
+            // Ensure authenticated test session in smoke-test harness
+            if (window.__FLOAT_AUTH_STORE__ && !window.__FLOAT_AUTH_STORE__.getState().user) {
+              window.__FLOAT_AUTH_STORE__.getState().setUser({
+                uid: 'test-smoke-user',
+                email: 'smoke-test@floatstudio.dev',
+                getIdToken: async () => 'smoke-test-token'
+              });
+            }
+
             // Step 1: Detect landing page
             const landing = document.querySelector('[data-testid="landing-page"]');
             const openBtn = document.querySelector('[data-testid="landing-open-workspace"]') ||
@@ -225,8 +339,11 @@ if (isSmokeTest) {
 
             // Step 5: Check if mock AI response rendered in the AI panel
             const panelText = aiPanel ? (aiPanel.innerText || aiPanel.textContent || '') : '';
+            const bodyText = document.body ? (document.body.innerText || document.body.textContent || '') : '';
             const aiResponseReceived = panelText.includes('Hello from FLOAT AI Mock Model!') ||
-                                       panelText.includes('AI round-trip test successful');
+                                       panelText.includes('AI round-trip test successful') ||
+                                       bodyText.includes('Hello from FLOAT AI Mock Model!') ||
+                                       bodyText.includes('AI round-trip test successful');
 
             return {
               landingMounted: !!landing,
@@ -236,10 +353,22 @@ if (isSmokeTest) {
               aiMessageSent: messageSent,
               aiResponseReceived: aiResponseReceived,
               title: document.title,
+              panelSample: panelText.slice(0, 150),
               url: window.location.href
             };
           })()
         `);
+
+        if (pollCount++ % 5 === 0) {
+          console.log('[FLOAT SmokeTest Diagnostic]', JSON.stringify({
+            workspace: res?.workspaceMounted,
+            editor: res?.editorMounted,
+            aiPanel: res?.aiPanelMounted,
+            msgSent: res?.aiMessageSent,
+            aiResp: res?.aiResponseReceived,
+            sample: res?.panelSample
+          }));
+        }
 
         if (res && res.workspaceMounted && res.editorMounted && res.aiPanelMounted && res.aiResponseReceived) {
           verified = true;

@@ -3,12 +3,13 @@ import { User, signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { useIDEStore } from './index';
 import { useOnboardingStore } from './onboardingStore';
+import { syncUserProfileWithBackend } from '../lib/authHelper';
 
-interface AuthState {
-  user: User | null;
+export interface AuthState {
+  user: User | any | null;
   loading: boolean;
   isInitialized: boolean;
-  setUser: (user: User | null) => void;
+  setUser: (user: User | any | null) => void;
   setLoading: (loading: boolean) => void;
   logout: () => Promise<void>;
 }
@@ -23,6 +24,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (previousUser?.uid !== user?.uid) {
       useIDEStore.getState().switchAccount(user?.uid ?? null);
       useOnboardingStore.getState().syncOnboardingForUser(user?.uid ?? null);
+    }
+    if (user) {
+      void syncUserProfileWithBackend();
     }
   },
   setLoading: (loading) => set({ loading }),
@@ -70,4 +74,5 @@ export const initAuthListener = () => {
 // Start listener immediately upon bundle evaluation
 if (typeof window !== 'undefined') {
   initAuthListener();
+  (window as any).__FLOAT_AUTH_STORE__ = useAuthStore;
 }

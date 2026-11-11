@@ -13,6 +13,7 @@ import fs from 'fs';
 import { ModelRouter } from './providers/router';
 import { ServerPrivacyGuard } from './privacyGuard';
 import { requireAuth } from './authMiddleware';
+import { ensureUserProfile, getUserProfile } from './userProfile';
 import { asyncRoute } from './asyncRoute';
 import { adminDb, hasAdminCredentials, isPermissionDeniedError, markAdminCredentialsUnavailable } from './adminFirebase';
 import { ContextBuilder } from './contextBuilder';
@@ -42,15 +43,123 @@ function resolvePort(): number {
     }
   }
 
-  // 2. In AI Studio / Cloud Run deployment, Nginx is the public front listening on 8080 and reverse-proxies to 3000.
-  // Port 8080 is reserved for Nginx; Node.js must bind to port 3000 to avoid EADDRINUSE crash.
-  if (process.env.PORT && process.env.PORT !== '8080') {
+  // 2. Production host environment variable ($PORT on Cloud Run or Render)
+  if (process.env.PORT) {
     const p = parseInt(process.env.PORT, 10);
     if (!Number.isNaN(p) && p > 0) return p;
   }
 
-  // 3. Standard application port
+  // 3. Standard fallback port
   return 3000;
+}
+
+// IP-based Rate Limiter for Public & AI Endpoints
+const ipRateLimitStore = new Map<string, { count: number; resetTime: number }>();
+const MAX_IP_STORE_SIZE = 20_000;
+
+export function ipRateLimiter(maxRequests = 120, windowMs = 60_000) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    // Health checks and CORS preflights bypass rate limiting
+    if (req.method === 'OPTIONS' || req.path === '/health' || req.path === '/api/health') {
+      return next();
+    }
+
+    const clientIp =
+      (typeof req.headers['x-forwarded-for'] === 'string'
+        ? req.headers['x-forwarded-for'].split(',')[0].trim()
+        : null) ||
+      req.socket.remoteAddress ||
+      'unknown-ip';
+
+    const now = Date.now();
+    const record = ipRateLimitStore.get(clientIp);
+
+    if (!record || now > record.resetTime) {
+      if (ipRateLimitStore.size >= MAX_IP_STORE_SIZE) {
+        const oldestKey = ipRateLimitStore.keys().next().value;
+        if (oldestKey) ipRateLimitStore.delete(oldestKey);
+      }
+      ipRateLimitStore.set(clientIp, { count: 1, resetTime: now + windowMs });
+      return next();
+    }
+
+    if (record.count >= maxRequests) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((record.resetTime - now) / 1000));
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({
+        error: 'Too many requests from this IP address. Please slow down.',
+        code: 'RATE_LIMIT_EXCEEDED'
+      });
+    }
+
+    record.count++;
+    return next();
+  };
+}
+
+export function resetIpRateLimitsForTests(): void {
+  ipRateLimitStore.clear();
+}
+
+// Strict CORS Middleware: Allows only verified web origins and packaged desktop applications
+export function strictCorsMiddleware(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const origin = req.headers.origin;
+
+  const envOrigins = (process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const allowedWebOrigins = new Set([
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:3000',
+    'https://floatstudio.dev',
+    'https://www.floatstudio.dev',
+    'https://float-studio.web.app',
+    'https://float-studio.firebaseapp.com',
+    ...envOrigins
+  ]);
+
+  // Desktop applications (Electron, file://, null origin, custom float:// protocol, or local sockets)
+  const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
+  const isDesktopOrDirect =
+    !origin ||
+    origin === 'null' ||
+    origin === 'file://' ||
+    origin.startsWith('float://') ||
+    origin.startsWith('vscode-file://') ||
+    userAgent.includes('Electron');
+
+  if (isDesktopOrDirect) {
+    res.setHeader('Access-Control-Allow-Origin', origin && origin !== 'null' ? origin : '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Float-Data-Sharing');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    return next();
+  }
+
+  // Web browser requests strictly verified against allowed origins
+  if (origin && allowedWebOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Float-Data-Sharing');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    return next();
+  }
+
+  // Unauthorized origin
+  if (req.method === 'OPTIONS') {
+    return res.status(403).json({ error: 'CORS origin not allowed' });
+  }
+  return res.status(403).json({ error: `Origin '${origin}' is not authorized by CORS policy.` });
 }
 
 const endpointRateLimits = new Map<string, number[]>();
@@ -93,28 +202,54 @@ export async function createApp(options: CreateAppOptions = {}) {
   // All model-backed endpoints in one app instance share a single routing authority.
   const modelRouter = options.modelRouterOverride || new ModelRouter();
 
-  // Keep ordinary JSON endpoints small. Authenticated AI routes install a larger
-  // parser after authentication because repository context can be several MB.
+  // 1. Strict CORS Middleware (Allows only verified web origins and packaged desktop apps)
+  app.use(strictCorsMiddleware);
+
+  // 2. IP-based rate limiting on all public & AI endpoints
+  app.use(ipRateLimiter(120, 60_000));
+
+  // 3. Health check endpoints for Google Cloud Run, Render, Docker, and monitoring
+  const healthHandler = (_req: express.Request, res: express.Response) => {
+    res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+  };
+  app.get('/health', healthHandler);
+  app.get('/api/health', healthHandler);
+
+  // 4. User Profile endpoints (auto-provisions user document on first sign-in)
+  app.get('/api/auth/profile', requireAuth, async (req: any, res: any) => {
+    try {
+      const profile = await ensureUserProfile(req.user);
+      res.status(200).json(profile);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve user profile.' });
+    }
+  });
+  app.post('/api/auth/profile', requireAuth, async (req: any, res: any) => {
+    try {
+      const profile = await ensureUserProfile(req.user);
+      res.status(200).json(profile);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to update user profile.' });
+    }
+  });
+
+  // Keep ordinary JSON endpoints bounded to 10MB. Authenticated AI chat installs a larger
+  // parser (24MB) because repository context can be several MB.
   // Stripe webhooks require pristine raw buffer for cryptographic signature verification.
   app.use((req, res, next) => {
     if (req.path === '/api/subscription/webhook') return next();
     if (req.path === '/api/ai/chat') return next();
-    return express.json({ limit: '12mb' })(req, res, next);
+    return express.json({ limit: '10mb' })(req, res, next);
   });
 
   // Stripe Webhook Endpoint (requires raw body buffer)
-  app.post('/api/subscription/webhook', express.raw({ type: 'application/json' }), asyncRoute(handleStripeWebhook));
+  app.post('/api/subscription/webhook', express.raw({ type: 'application/json', limit: '2mb' }), asyncRoute(handleStripeWebhook));
 
   // Subscription & Checkout Routes
   app.use('/api/subscription', subscriptionRouter);
 
   // Data Analyst routes use the same registry/router as chat and agents.
   app.use('/api/analyst', createAnalystRouter(modelRouter));
-
-  // Health check endpoint for Cloud Run and monitoring
-  app.get('/api/health', (_req, res) => {
-    res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
-  });
 
   app.use('/api/session', requireAuth, (_req: any, res: any) => res.status(410).json({
     error: 'Cloud agent sessions are unavailable.',
@@ -221,8 +356,8 @@ export async function createApp(options: CreateAppOptions = {}) {
     res.redirect(`/api/integrations/${provider}/callback?${query}`);
   });
 
-  // Model Intelligence & Availability Routes
-  app.get(['/api/ai/models', '/api/ai/models/'], (_req, res) => {
+  // Model Intelligence & Availability Routes (Authenticated)
+  app.get(['/api/ai/models', '/api/ai/models/'], requireAuth, (_req, res) => {
     try {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.json({ success: true, models: modelRouter.getModelCatalog(), timestamp: Date.now() });
@@ -231,7 +366,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     }
   });
 
-  app.get(['/api/ai/models/status', '/api/ai/models/status/'], (_req, res) => {
+  app.get(['/api/ai/models/status', '/api/ai/models/status/'], requireAuth, (_req, res) => {
     try {
       const providerStatus = modelRouter.getProviderStatus();
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -245,9 +380,8 @@ export async function createApp(options: CreateAppOptions = {}) {
     }
   });
 
-  // Provider Health Check endpoint: verifies whether each configured provider can authenticate
-  // and whether its configured models are actually usable
-  app.get(['/api/ai/health', '/api/ai/providers/health'], async (_req, res) => {
+  // Provider Health Check endpoint (Authenticated)
+  app.get(['/api/ai/health', '/api/ai/providers/health'], requireAuth, async (_req, res) => {
     try {
       const health = await modelRouter.checkAllProvidersHealth();
       res.json({

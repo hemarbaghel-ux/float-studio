@@ -1,6 +1,20 @@
 # FLOAT AI — Developer Platform & IDE
 
-FLOAT AI is an AI-powered software development environment combining a Monaco code editor, server-side OpenAI model routing, structured code-change review, Git workflows, and durable Firestore project state.
+FLOAT AI is a modern AI-powered software development environment built on the **Monaco code editor** (`@monaco-editor/react`), React 19, server-side model gateway routing, structured multi-file code review, Git workflows, and durable Firestore project state.
+
+FLOAT provides both a web platform and a packaged cross-platform desktop application (Electron wrapper) designed around AI-assisted developer workflows. FLOAT does not maintain a Code-OSS fork and makes no claims of VS Code or Code-OSS parity; instead, it provides a streamlined Monaco-based editing experience with integrated AI capabilities.
+
+---
+
+## Architecture & Subsystems
+
+1. **Editor**: Monaco Editor (`@monaco-editor/react`) with syntax highlighting, language diagnostics, and custom keybindings:
+   - `Ctrl+K` / `Cmd+K`: Monaco Inline AI Assistant with diff preview and accept/reject.
+   - `Ctrl+I` / `Cmd+I`: Multi-file Composer with DAG task planning and change proposals.
+   - `Ctrl+L` / `Cmd+L`: Global AI Chat panel toggle with codebase context retrieval.
+2. **Desktop Runtime**: Packaged Electron application bundling the client SPA (`dist/`) and entrypoint (`scripts/desktopEntrypoint.cjs`) for Windows (Inno Setup installer + portable ZIP), Linux (.deb + .tar.gz), and macOS (.dmg + .app).
+3. **Backend Service**: Production Express server (`src/server/app.ts`) providing model routing, Firebase ID token verification, project execution, and Firestore persistence.
+4. **VSCodium Extension**: A standalone VSIX extension (`dist/float-vscodium-poc-1.0.0.vsix`) providing FLOAT AI capabilities inside existing VS Code / VSCodium workbenches.
 
 ---
 
