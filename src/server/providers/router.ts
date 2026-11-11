@@ -7,6 +7,7 @@ import {
 } from './base';
 import { OpenAIAdapter } from './openai';
 import { GoogleGeminiAdapter } from './gemini';
+import { AnthropicAdapter } from './anthropic';
 import {
   MODEL_REGISTRY,
   MODEL_ROUTES,
@@ -26,7 +27,7 @@ import type {
 import { AuthoritativeModelCatalog } from '../../shared/contracts/index';
 
 export interface ModelRouteDefinition {
-  provider: 'openai' | 'google';
+  provider: 'openai' | 'google' | 'anthropic';
   apiModelId: string;
   protocol?: ModelProtocol;
   isInternalAlias?: boolean;
@@ -47,6 +48,9 @@ export class ModelRouter implements IModelGateway {
       }
       if (!this.adapters.has('google') && typeof GoogleGeminiAdapter === 'function') {
         this.registerAdapter(new GoogleGeminiAdapter());
+      }
+      if (!this.adapters.has('anthropic') && typeof AnthropicAdapter === 'function') {
+        this.registerAdapter(new AnthropicAdapter());
       }
     } catch {}
   }

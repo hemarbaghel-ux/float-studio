@@ -2,7 +2,7 @@ import { VERIFIED_MODELS } from '../../data/verifiedModels';
 import type { ModelRouteDefinition } from './router';
 
 export type ModelProtocol = 'responses' | 'chat_completions';
-export type RoutedProvider = 'openai' | 'google';
+export type RoutedProvider = 'openai' | 'google' | 'anthropic';
 
 export interface ServerModelDescriptor {
   id: string;
@@ -28,7 +28,7 @@ export interface ServerModelDescriptor {
 
 /** Runtime descriptors are derived from the shared, source-verified model catalog. */
 export const MODEL_REGISTRY: readonly ServerModelDescriptor[] = VERIFIED_MODELS
-  .filter((model) => model.deprecationStatus !== 'retired' && (model.providerId === 'openai' || model.providerId === 'google'))
+  .filter((model) => model.deprecationStatus !== 'retired' && (model.providerId === 'openai' || model.providerId === 'google' || model.providerId === 'anthropic'))
   .map((model) => ({
     id: model.id,
     displayName: model.displayName,
@@ -36,7 +36,7 @@ export const MODEL_REGISTRY: readonly ServerModelDescriptor[] = VERIFIED_MODELS
     apiModelId: model.upstreamModelId || model.exactModelId,
     protocol: model.apiProtocol || 'chat_completions',
     selectable: model.deprecationStatus !== 'deprecated',
-    requiredEnvironmentVariable: model.requiredEnvironmentVariable || (model.providerId === 'google' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'),
+    requiredEnvironmentVariable: model.requiredEnvironmentVariable || (model.providerId === 'google' ? 'GEMINI_API_KEY' : model.providerId === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'),
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxOutputTokens,
     description: model.description,

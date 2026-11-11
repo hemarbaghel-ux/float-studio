@@ -173,6 +173,37 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     configRequirement: 'GEMINI_API_KEY',
     deprecationStatus: 'active',
     requiredEnvironmentVariable: 'GEMINI_API_KEY'
+  },
+  {
+    id: 'claude-3-5-sonnet',
+    exactModelId: 'claude-3-5-sonnet-20241022',
+    upstreamModelId: 'claude-3-5-sonnet-20241022',
+    isInternalAlias: false,
+    displayName: 'Claude 3.5 Sonnet',
+    providerId: 'anthropic',
+    family: 'claude-3-5',
+    category: 'flagship_coding',
+    snapshotVersion: '20241022',
+    docUrl: 'https://docs.anthropic.com/en/docs/about-claude/models',
+    description: 'Anthropic flagship model for coding, reasoning, and multi-step tool use.',
+    contextWindow: 200000,
+    maxOutputTokens: 8192,
+    modalities: ['text', 'code', 'vision'],
+    capabilities: { coding: true, reasoning: true, tools: true, vision: true, structuredOutput: true, streaming: true, longContext: true },
+    pricing: { inputCostPer1M: 3.00, outputCostPer1M: 15.00, cachedInputCostPer1M: 0.30, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2024-10-22', sourceUrl: 'https://www.anthropic.com/pricing' },
+    limitations: [
+      'A configured API key does not guarantee model availability.',
+      'Subject to Anthropic API concurrency and rate limits.'
+    ],
+    intendedUseCases: [
+      'Autonomous coding, multi-file changes, and architectural reasoning',
+      'Refactoring and test generation'
+    ],
+    speed: 'fast',
+    availabilityStatus: 'UNKNOWN',
+    availabilityDetails: 'Model access is unverified until a real generation request succeeds.',
+    deprecationStatus: 'active',
+    requiredEnvironmentVariable: 'ANTHROPIC_API_KEY'
   }
 ];
 
