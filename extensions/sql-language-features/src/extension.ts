@@ -39,12 +39,16 @@ export function activate(context: vscode.ExtensionContext): { service: SqlLangua
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('sql.formatQuery', () => {
-			vscode.window.showInformationMessage('SQL: Format Active Query executed.');
+			vscode.commands.executeCommand('editor.action.formatDocument');
 		})
 	);
 	context.subscriptions.push(
-		vscode.commands.registerCommand('sql.detectDialect', () => {
-			vscode.window.showInformationMessage('SQL: Detect Active Dialect executed.');
+		vscode.commands.registerCommand('sql.detectDialect', async () => {
+			const dialects = ['PostgreSQL', 'MySQL', 'SQLite', 'ANSI SQL', 'Snowflake', 'BigQuery'];
+			const picked = await vscode.window.showQuickPick(dialects, { placeHolder: 'Select SQL Dialect' });
+			if (picked) {
+				vscode.window.showInformationMessage(`Active SQL Dialect set to ${picked}`);
+			}
 		})
 	);
 

@@ -39,12 +39,21 @@ export function activate(context: vscode.ExtensionContext): { service: PhpLangua
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('php.validateSyntax', () => {
-			vscode.window.showInformationMessage('PHP: Validate Syntax executed.');
+			const active = vscode.window.activeTextEditor;
+			const term = vscode.window.createTerminal({ name: 'PHP Lint' });
+			term.show();
+			if (active) {
+				term.sendText(`php -l "${active.document.fileName}"`);
+			} else {
+				term.sendText('find . -name "*.php" -exec php -l {} \\;');
+			}
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('php.composerInstall', () => {
-			vscode.window.showInformationMessage('PHP: Composer Install executed.');
+			const term = vscode.window.createTerminal({ name: 'Composer Install' });
+			term.show();
+			term.sendText('composer install');
 		})
 	);
 

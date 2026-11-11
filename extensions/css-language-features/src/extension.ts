@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext): { service: CssLangua
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('css.formatDocument', () => {
-			vscode.window.showInformationMessage('CSS Stylesheet formatted.');
+			vscode.commands.executeCommand('editor.action.formatDocument');
 		})
 	);
 

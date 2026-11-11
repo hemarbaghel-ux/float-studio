@@ -39,17 +39,22 @@ export function activate(context: vscode.ExtensionContext): { service: GoLanguag
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('go.runTests', () => {
-			vscode.window.showInformationMessage('Go: Run Package Tests executed.');
+			const term = vscode.window.createTerminal({ name: 'Go Tests' });
+			term.show();
+			term.sendText('go test ./...');
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('go.vet', () => {
-			vscode.window.showInformationMessage('Go: Vet Current Package executed.');
+			const term = vscode.window.createTerminal({ name: 'Go Vet' });
+			term.show();
+			term.sendText('go vet ./...');
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('go.restartGopls', () => {
-			vscode.window.showInformationMessage('Go: Restart Gopls Language Server executed.');
+			_serviceInstance?.restart();
+			vscode.window.showInformationMessage('Go language server (gopls) restarted.');
 		})
 	);
 

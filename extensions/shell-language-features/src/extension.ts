@@ -39,12 +39,23 @@ export function activate(context: vscode.ExtensionContext): { service: ShellLang
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('shell.runScript', () => {
-			vscode.window.showInformationMessage('Shell: Run Script in Integrated Terminal executed.');
+			const active = vscode.window.activeTextEditor;
+			if (!active) {
+				vscode.window.showWarningMessage('Open a shell script to run.');
+				return;
+			}
+			const term = vscode.window.createTerminal({ name: 'Shell Run' });
+			term.show();
+			term.sendText(`bash "${active.document.fileName}"`);
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('shell.lintScript', () => {
-			vscode.window.showInformationMessage('Shell: Lint with ShellCheck executed.');
+			const active = vscode.window.activeTextEditor;
+			const target = active ? `"${active.document.fileName}"` : '*.sh';
+			const term = vscode.window.createTerminal({ name: 'ShellCheck' });
+			term.show();
+			term.sendText(`shellcheck ${target}`);
 		})
 	);
 

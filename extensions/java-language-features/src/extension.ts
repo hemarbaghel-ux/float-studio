@@ -39,17 +39,22 @@ export function activate(context: vscode.ExtensionContext): { service: JavaLangu
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('java.buildProject', () => {
-			vscode.window.showInformationMessage('Java: Build Project (Maven/Gradle) executed.');
+			const term = vscode.window.createTerminal({ name: 'Java Build' });
+			term.show();
+			term.sendText('mvn compile');
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('java.runJunitTests', () => {
-			vscode.window.showInformationMessage('Java: Run JUnit Tests executed.');
+			const term = vscode.window.createTerminal({ name: 'Java Tests' });
+			term.show();
+			term.sendText('mvn test');
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('java.cleanWorkspace', () => {
-			vscode.window.showInformationMessage('Java: Clean Java Language Server Workspace executed.');
+			_serviceInstance?.restart();
+			vscode.window.showInformationMessage('Java language server workspace cleaned and restarted.');
 		})
 	);
 

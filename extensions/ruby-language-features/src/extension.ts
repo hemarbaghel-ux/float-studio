@@ -39,12 +39,16 @@ export function activate(context: vscode.ExtensionContext): { service: RubyLangu
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('ruby.bundleInstall', () => {
-			vscode.window.showInformationMessage('Ruby: Bundle Install executed.');
+			const term = vscode.window.createTerminal({ name: 'Bundle Install' });
+			term.show();
+			term.sendText('bundle install');
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('ruby.runRubocop', () => {
-			vscode.window.showInformationMessage('Ruby: Run RuboCop Linter executed.');
+			const term = vscode.window.createTerminal({ name: 'RuboCop' });
+			term.show();
+			term.sendText('bundle exec rubocop');
 		})
 	);
 

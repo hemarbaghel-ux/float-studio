@@ -39,12 +39,31 @@ export function activate(context: vscode.ExtensionContext): { service: YamlLangu
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand('yaml.validateSchema', () => {
-			vscode.window.showInformationMessage('YAML: Validate Against Active Schema executed.');
+			const active = vscode.window.activeTextEditor;
+			if (!active) {
+				vscode.window.showWarningMessage('Open a YAML file to validate.');
+				return;
+			}
+			const text = active.document.getText();
+			// Check for tab indentation which is strictly invalid in YAML
+			const lines = text.split(/\r?\n/);
+			let tabLine = -1;
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i].startsWith('\t') || lines[i].includes(':\t')) {
+					tabLine = i + 1;
+					break;
+				}
+			}
+			if (tabLine > 0) {
+				vscode.window.showErrorMessage(`YAML validation error: Tab indentation detected at line ${tabLine}. YAML requires spaces.`);
+			} else {
+				vscode.window.showInformationMessage('YAML document indentation structure is valid.');
+			}
 		})
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('yaml.formatDocument', () => {
-			vscode.window.showInformationMessage('YAML: Format Document executed.');
+			vscode.commands.executeCommand('editor.action.formatDocument');
 		})
 	);
 
