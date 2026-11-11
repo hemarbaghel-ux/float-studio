@@ -225,10 +225,10 @@ if (isSmokeTest) {
     });
 
     win.webContents.on('did-finish-load', () => {
-      win.webContents.executeJavaScript(`
-        window.__FLOAT_BACKEND_URL__ = 'http://127.0.0.1:${mockPort}';
-        try { localStorage.setItem('float_backend_url', 'http://127.0.0.1:${mockPort}'); } catch (e) {}
-      `).catch(() => {});
+      win.webContents.executeJavaScript(\`
+        window.__FLOAT_BACKEND_URL__ = 'http://127.0.0.1:\${mockPort}';
+        try { localStorage.setItem('float_backend_url', 'http://127.0.0.1:\${mockPort}'); } catch (e) {}
+      \`).catch(() => {});
     });
 
     const htmlPath = path.join(__dirname, 'dist', 'index.html');
