@@ -45,19 +45,26 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+      - name: Install dependencies (strict lockfile verification)
+        run: npm ci --no-audit --no-fund
 
       - name: Build Web & Core Assets
         run: npm run build
 
-      - name: Package Desktop Artifacts
+      - name: Build native FLOAT utility-process entrypoint
+        run: npm run build:float-daemon-worker
+
+      - name: Build all built-in core language extensions
+        run: npm run build:extensions
+
+      - name: Block Incomplete Native Desktop Packaging
         shell: bash
         run: |
-          mkdir -p dist/release
-          echo "Packaging desktop binaries for ${{ matrix.platform }}..."
-          echo "FLOAT Studio Desktop Release - ${{ matrix.platform }}" > "dist/release/${{ matrix.artifact_name }}"
-          echo "FLOAT Studio Portable Bundle - ${{ matrix.platform }}" > "dist/release/${{ matrix.archive_name }}"
+          echo "::error::Production desktop release is blocked: Native Code-OSS packaging is not ready."
+          echo "FLOAT Studio requires compilation of the genuine Code-OSS desktop workbench and native installer packaging (Windows Inno Setup with VC++ runtime, macOS .app/.dmg with hardened runtime entitlements, Linux .deb with AppArmor profile)."
+          echo "Packaging the React web bundle in a generic Electron shell is prohibited for production releases."
+          echo "Genuine Code-OSS compilation and installer packaging are scheduled for Prompt 2."
+          exit 1
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
