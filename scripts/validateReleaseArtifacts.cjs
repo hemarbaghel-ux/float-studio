@@ -8,13 +8,18 @@
  * Release Artifact Quality and Binary Format Validator
  *
  * Enforces:
- * 1. Minimum File Size Gate: >= 20 MB (20,971,520 bytes)
+ * 1. Minimum File Size Gate: >= 20 MB (20,971,520 bytes) to reject dummy/empty files
  * 2. Binary Magic Header Validation:
  *    - Windows (.exe): MZ signature (0x4D, 0x5A)
  *    - Portable (.zip): PK signature (0x50, 0x4B, 0x03, 0x04)
  *    - Linux (.deb): Debian ar archive signature (!<arch>\n)
  *    - Linux (.tar.gz): Gzip magic bytes (0x1F, 0x8B)
  *    - macOS (.dmg): DMG compressed disk container format
+ *
+ * NOTE: Envelope validation (file size and magic-byte signatures) validates binary
+ * container integrity only. It does NOT prove functional installation, code signing,
+ * notarization, or Code-OSS workbench runtime health. Authentic installer verification
+ * requires OS installer execution smoke tests (Prompt 2).
  */
 
 const fs = require('fs');

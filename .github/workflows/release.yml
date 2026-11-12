@@ -57,17 +57,14 @@ jobs:
       - name: Build all built-in core language extensions
         run: npm run build:extensions
 
-      - name: Package Desktop Artifacts
+      - name: Block Incomplete Native Desktop Packaging
         shell: bash
         run: |
-          mkdir -p dist/release
-          echo "Packaging desktop binaries for ${{ matrix.platform }}..."
-          node scripts/packageDesktopRelease.cjs --platform ${{ matrix.platform }} || {
-            echo "::error::Desktop native installer generation failed for ${{ matrix.platform }}."
-            echo "Placeholder or dummy artifacts are strictly prohibited."
-            exit 1
-          }
-          node scripts/validateReleaseArtifacts.cjs --platform ${{ matrix.platform }}
+          echo "::error::Production desktop release is blocked: Native Code-OSS packaging is not ready."
+          echo "FLOAT Studio requires compilation of the genuine Code-OSS desktop workbench and native installer packaging (Windows Inno Setup with VC++ runtime, macOS .app/.dmg with hardened runtime entitlements, Linux .deb with AppArmor profile)."
+          echo "Packaging the React web bundle in a generic Electron shell is prohibited for production releases."
+          echo "Genuine Code-OSS compilation and installer packaging are scheduled for Prompt 2."
+          exit 1
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
