@@ -16,6 +16,7 @@ import { IFloatCommandApprovalHandler } from '../../common/composer/floatCompose
 import { getFloatComposerWorkspaceRoot } from './floatComposerWorkspaceRoot.js';
 import { FloatComposer } from './floatComposer.js';
 import { FloatFloatingComposerWidget } from './floatFloatingComposerWidget.js';
+import { IFloatTurnCheckpoint } from '../../common/checkpoints/floatCheckpointService.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 
@@ -143,8 +144,8 @@ export class OpenFloatComposerAction extends Action2 {
 						widget!.setStatus('Generating multi-file proposal...');
 						const proposal = await composer.generateComposerProposal(e.prompt, activeEditor.getModel()?.uri.path);
 						if (proposal && proposal.files.length > 0) {
-							const additions = proposal.files.reduce((sum, f) => sum + (f.diff.match(/^\+[^+]/gm) || []).length, 0);
-							const deletions = proposal.files.reduce((sum, f) => sum + (f.diff.match(/^-[^-]/gm) || []).length, 0);
+							const additions = proposal.files.reduce((sum, f) => sum + ((f.diff || f.proposedContent).match(/^\+[^+]/gm) || []).length, 0);
+							const deletions = proposal.files.reduce((sum, f) => sum + ((f.diff || f.originalContent).match(/^-[^-]/gm) || []).length, 0);
 							widget!.setProposalReady(proposal.files.length, additions, deletions);
 						} else {
 							widget!.setStatus('Completed: No code edits proposed.');
@@ -245,7 +246,7 @@ export class OpenFloatComposerAction extends Action2 {
 
 			if (proposal && proposal.files.length > 0) {
 				const choice = await quickInputService.pick([
-					{ id: 'apply', label: `$(check) Apply Proposal (${proposal.files.length} files modified)`, description: proposal.summary },
+					{ id: 'apply', label: `$(check) Apply Proposal (${proposal.files.length} files modified)`, description: proposal.summary || proposal.explanation },
 					{ id: 'reject', label: '$(x) Reject Proposal', description: 'Discard all proposed file changes' }
 				], {
 					placeHolder: `Proposal generated: ${proposal.files.length} file changes. Select action:`
@@ -323,7 +324,7 @@ export class OpenFloatSnapshotTimelineAction extends Action2 {
 			return;
 		}
 
-		const picks = checkpoints.map((cp, idx) => ({
+		const picks = checkpoints.map((cp: IFloatTurnCheckpoint, idx: number) => ({
 			id: cp.id,
 			label: `$(history) #${idx + 1}: ${cp.description}`,
 			description: `${new Date(cp.timestamp).toLocaleTimeString()} • ${Object.keys(cp.files).length} files`
@@ -333,7 +334,7 @@ export class OpenFloatSnapshotTimelineAction extends Action2 {
 			placeHolder: 'Scrub to snapshot: select checkpoint to restore (0ms rollback)'
 		});
 
-		if (selected) {
+		if (selected && selected.id) {
 			const res = await floatService.getCheckpointService().restoreCheckpoint(selected.id);
 			if (res.success) {
 				notificationService.info(`Restored snapshot #${selected.id}: ${res.restoredFiles.length} file(s) rolled back.`);

@@ -14,7 +14,6 @@ export interface IInlineDiffSubmitEvent {
 }
 
 export class FloatInlineDiffZoneWidget extends ZoneWidget {
-	private _container: HTMLElement | null = null;
 	private _inputElement: HTMLInputElement | null = null;
 	private _statusElement: HTMLElement | null = null;
 	private _actionButtons: HTMLElement | null = null;

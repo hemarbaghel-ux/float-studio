@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { FloatMerkleTree } from './floatMerkleTree.js';
-import { FloatSemanticChunker, ISemanticCodeChunk } from './floatSemanticChunker.js';
+import { FloatSemanticChunker } from './floatSemanticChunker.js';
 import { FloatVectorIndex, IRankedCodeChunk, IBoundedContextResult, ISerializedVectorIndex } from './floatVectorIndex.js';
 
 const EXCLUDED_PATTERNS = [
@@ -61,10 +61,6 @@ export class FloatWorkspaceIndexer {
 
 	public search(query: string, limit?: number) {
 		return this._vectorIndex.search(query, limit);
-	}
-
-	public retrieveBoundedContext(query: string, maxChars?: number) {
-		return this._vectorIndex.retrieveBoundedContext(query, maxChars);
 	}
 
 	public isExcluded(filePath: string): boolean {

@@ -4,11 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	FloatMultiFileDiffOrchestrator,
-	IFloatMultiFileProposal,
-	IFloatOrchestratedFile,
-	IDiffHunk,
-	ITransactionCommitResult
+	FloatMultiFileDiffOrchestrator
 } from './floatMultiFileDiffOrchestrator.js';
 import { IComposerAgentGoal } from './floatComposerAgent.js';
 
@@ -82,14 +78,28 @@ export class FloatMultiDiffController {
 	 * Accepts an individual hunk within a specific file
 	 */
 	public acceptHunk(proposalId: string, filePath: string, hunkIndex: number): boolean {
-		return this._orchestrator.acceptHunk(proposalId, filePath, hunkIndex);
+		const prop = this._orchestrator.getProposal(proposalId);
+		const file = prop?.files.find(f => f.path === filePath);
+		const hunk = file?.hunks.find(h => h.index === hunkIndex);
+		if (hunk) {
+			hunk.status = 'accepted';
+			return true;
+		}
+		return false;
 	}
 
 	/**
 	 * Rejects an individual hunk within a specific file
 	 */
 	public rejectHunk(proposalId: string, filePath: string, hunkIndex: number): boolean {
-		return this._orchestrator.rejectHunk(proposalId, filePath, hunkIndex);
+		const prop = this._orchestrator.getProposal(proposalId);
+		const file = prop?.files.find(f => f.path === filePath);
+		const hunk = file?.hunks.find(h => h.index === hunkIndex);
+		if (hunk) {
+			hunk.status = 'rejected';
+			return true;
+		}
+		return false;
 	}
 
 	/**

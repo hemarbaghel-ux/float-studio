@@ -86,6 +86,10 @@ export class FloatCheckpointService {
 		return [...this._checkpoints];
 	}
 
+	public listCheckpoints(): IFloatTurnCheckpoint[] {
+		return this.getAllCheckpoints();
+	}
+
 	public popLatestCheckpoint(): IFloatTurnCheckpoint | undefined {
 		return this._checkpoints.pop();
 	}

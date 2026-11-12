@@ -330,13 +330,13 @@ export class FloatDaemonClient extends Disposable {
 	}
 
 	private _rejectAllPending(err: Error): void {
-		for (const [id, pending] of this._pendingRequests.entries()) {
+		for (const pending of this._pendingRequests.values()) {
 			clearTimeout(pending.timer);
 			pending.reject(err);
 		}
 		this._pendingRequests.clear();
 
-		for (const [id, stream] of this._streamingListeners.entries()) {
+		for (const stream of this._streamingListeners.values()) {
 			clearTimeout(stream.timer);
 			stream.onError(err);
 		}

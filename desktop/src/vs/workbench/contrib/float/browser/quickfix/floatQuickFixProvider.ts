@@ -5,17 +5,16 @@
 
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
-import { Range, IRange } from '../../../../../editor/common/core/range.js';
+import { Range } from '../../../../../editor/common/core/range.js';
 import { Selection } from '../../../../../editor/common/core/selection.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import {
 	CodeActionProvider,
 	CodeActionContext,
 	CodeActionList,
-	CodeAction,
-	IMarkerData
+	CodeAction
 } from '../../../../../editor/common/languages.js';
-import { IMarkerService, MarkerSeverity } from '../../../../../platform/markers/common/markers.js';
+import { IMarkerService, MarkerSeverity, IMarkerData } from '../../../../../platform/markers/common/markers.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
 
 export class FloatQuickFixProvider extends Disposable implements CodeActionProvider {

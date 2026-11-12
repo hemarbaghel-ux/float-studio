@@ -140,7 +140,7 @@ export class FloatComposer extends Disposable {
 
 			this._activeMultiFileProposal = this._orchestrator.createProposal(
 				this._activeProposal.title,
-				this._activeProposal.summary,
+				this._activeProposal.summary || this._activeProposal.explanation,
 				changes
 			);
 

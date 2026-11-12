@@ -16,7 +16,6 @@ import { FloatAuthService, IFloatAuthService } from './auth/floatAuthService.js'
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IFloatWorkspaceContextService, FloatWorkspaceContextService } from './context/floatWorkspaceContextService.js';
-import * as path from 'path';
 
 export const IFloatService = createDecorator<IFloatService>('floatService');
 
