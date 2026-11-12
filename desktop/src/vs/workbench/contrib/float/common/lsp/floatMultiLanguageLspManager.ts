@@ -3,9 +3,9 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { IMarkerData, IMarkerService, MarkerSeverity } from '../../../../../platform/markers/common/markers.js';
+import { IMarkerService, MarkerSeverity } from '../../../../../platform/markers/common/markers.js';
 
 export interface IFloatLanguageToolchainConfig {
 	languageId: string;

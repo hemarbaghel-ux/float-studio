@@ -32,11 +32,11 @@ export class FloatDaemonContextResolver {
   private readonly _maxChars = 24_000;
 
   constructor(
-    private readonly _floatService: IFloatService,
+    floatService: IFloatService,
     private readonly _runtimeService?: IFloatDaemonRuntimeService,
     private readonly _workspaceContextService?: IWorkspaceContextService
   ) {
-    this._fallback = new FloatContextProvider(_floatService);
+    this._fallback = new FloatContextProvider(floatService);
   }
 
   public async resolveContext(prompt: string, activeFilePath?: string): Promise<IFloatResolvedContext> {

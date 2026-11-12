@@ -44,7 +44,7 @@ export class FloatDagTaskPlanner {
 		while (remaining.size > 0) {
 			const readyBatch: IFloatTaskNode[] = [];
 
-			for (const [id, task] of remaining.entries()) {
+			for (const task of remaining.values()) {
 				const allDepsMet = task.dependencies.every(d => completedIds.has(d));
 				if (allDepsMet) {
 					readyBatch.push(task);

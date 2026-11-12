@@ -1,5 +1,5 @@
 node_modules/
-build/
+/build/
 dist/
 coverage/
 .DS_Store
@@ -11,6 +11,7 @@ tools/
 
 # Desktop Code-OSS build artifacts and caches
 desktop/node_modules/
+desktop/build/node_modules/
 desktop/out/
 desktop/out-build/
 desktop/out-vscode/

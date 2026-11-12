@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { exec, ChildProcess } from 'node:child_process';
-import { IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
+import { exec } from 'node:child_process';
+import { IShadowDiagnostic } from './floatShadowTypes.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 

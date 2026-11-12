@@ -69,9 +69,9 @@ export class FloatDaemonWorkspaceIndexContribution extends Disposable implements
       this._logService.info('[FLOAT] Activating daemon indexing for', roots.length, 'workspace folder(s) using Code-OSS file providers.');
     }
 
-    void this._synchronizer.setWorkspaceRoots(roots).then(() => {
+    void this._synchronizer.setWorkspaceRoots(roots).then(async () => {
       if (roots.length > 0 && this._runtimeService.state === 'running') {
-        return this._synchronizer.scanWorkspace();
+        await this._synchronizer.scanWorkspace();
       }
     }).catch(error => this._logService.warn('[FLOAT] Failed to activate daemon workspace indexing:', error));
   }

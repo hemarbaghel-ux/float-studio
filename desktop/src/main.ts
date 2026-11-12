@@ -40,19 +40,16 @@ const args = parseCLIArgs();
 // Configure static command line arguments
 const argvConfig = configureCommandlineSwitchesSync(args);
 // Enable sandbox globally unless
-// 1) disabled via command line using either
-//    `--no-sandbox` or `--disable-chromium-sandbox` argument.
-// 2) argv.json contains `disable-chromium-sandbox: true`.
-if (args['sandbox'] &&
+// 1) explicitly disabled via command line using `--no-sandbox` or `--disable-chromium-sandbox`
+// 2) argv.json contains `disable-chromium-sandbox: true`
+if (!args['no-sandbox'] &&
 	!args['disable-chromium-sandbox'] &&
-	!argvConfig['disable-chromium-sandbox']) {
+	!argvConfig['disable-chromium-sandbox'] &&
+	!app.commandLine.hasSwitch('no-sandbox')) {
 	app.enableSandbox();
 } else if (app.commandLine.hasSwitch('no-sandbox') &&
 	!app.commandLine.hasSwitch('disable-gpu-sandbox')) {
-	// Disable GPU sandbox whenever --no-sandbox is used.
-	app.commandLine.appendSwitch('disable-gpu-sandbox');
-} else {
-	app.commandLine.appendSwitch('no-sandbox');
+	// Disable GPU sandbox whenever --no-sandbox is explicitly passed.
 	app.commandLine.appendSwitch('disable-gpu-sandbox');
 }
 

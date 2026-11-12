@@ -112,7 +112,7 @@ export class FloatFloatingComposerWidget extends Disposable implements IOverlayW
 			this._shadowBadge.style.border = '1px solid rgba(78, 201, 176, 0.4)';
 		} else {
 			this._shadowBadge.textContent = `⚠ Shadow Validation: ${errorsCount} error(s), ${warningsCount} warning(s)`;
-			this._shadowBadge.backgroundColor = 'rgba(244, 135, 113, 0.2)';
+			this._shadowBadge.style.backgroundColor = 'rgba(244, 135, 113, 0.2)';
 			this._shadowBadge.style.color = '#f48771';
 			this._shadowBadge.style.border = '1px solid rgba(244, 135, 113, 0.4)';
 		}

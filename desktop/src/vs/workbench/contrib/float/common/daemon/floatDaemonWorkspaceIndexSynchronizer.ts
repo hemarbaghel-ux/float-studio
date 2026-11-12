@@ -337,7 +337,7 @@ export class FloatDaemonWorkspaceIndexSynchronizer {
       return;
     }
 
-    let stat: IFileStat;
+    let stat: Awaited<ReturnType<IFileService['stat']>>;
     try {
       stat = await this._fileService.stat(resource);
     } catch (error) {
