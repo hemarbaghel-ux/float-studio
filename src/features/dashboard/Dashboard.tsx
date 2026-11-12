@@ -58,7 +58,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
     const match = window.location.pathname.match(/^\/chat\/([^/]+)/);
     return match ? match[1] : null;
   });
-  const [prompt, setPrompt] = useState('Build a React counter component');
+  const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -107,6 +107,25 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [initialTab]);
+
+  // Global shortcut: ⌘N / Ctrl+N opens New Chat
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N') && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setActiveChatId(null);
+        setActiveTab('new-chat');
+        setPrompt('');
+        window.history.pushState({}, '', '/');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+        setTimeout(() => {
+          if (textareaRef.current) textareaRef.current.focus();
+        }, 50);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
 
   useEffect(() => {
@@ -185,7 +204,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       if (projectToDelete === projectId) setProjectToDelete(null);
       if (activeChatId === projectId) {
         setActiveChatId(null);
-        window.history.pushState({}, '', '/dashboard');
+        window.history.pushState({}, '', '/');
         window.dispatchEvent(new PopStateEvent('popstate'));
       }
     } catch (err) {
@@ -263,7 +282,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 setActiveChatId(null);
                 setActiveTab('new-chat');
                 setPrompt('');
-                window.history.pushState({}, '', '/dashboard');
+                window.history.pushState({}, '', '/');
                 window.dispatchEvent(new PopStateEvent('popstate'));
               }}
               className="flex items-center hover:opacity-85 transition-opacity"
@@ -306,8 +325,11 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               setActiveChatId(null);
               setActiveTab('new-chat');
               setPrompt('');
+              window.history.pushState({}, '', '/');
               window.dispatchEvent(new PopStateEvent('popstate'));
-              if (textareaRef.current) textareaRef.current.focus();
+              setTimeout(() => {
+                if (textareaRef.current) textareaRef.current.focus();
+              }, 50);
             }}
             title="New Chat"
             className={`w-full flex items-center ${
