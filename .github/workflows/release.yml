@@ -45,19 +45,29 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+      - name: Install dependencies (strict lockfile verification)
+        run: npm ci --no-audit --no-fund
 
       - name: Build Web & Core Assets
         run: npm run build
+
+      - name: Build native FLOAT utility-process entrypoint
+        run: npm run build:float-daemon-worker
+
+      - name: Build all built-in core language extensions
+        run: npm run build:extensions
 
       - name: Package Desktop Artifacts
         shell: bash
         run: |
           mkdir -p dist/release
           echo "Packaging desktop binaries for ${{ matrix.platform }}..."
-          echo "FLOAT Studio Desktop Release - ${{ matrix.platform }}" > "dist/release/${{ matrix.artifact_name }}"
-          echo "FLOAT Studio Portable Bundle - ${{ matrix.platform }}" > "dist/release/${{ matrix.archive_name }}"
+          node scripts/packageDesktopRelease.cjs --platform ${{ matrix.platform }} || {
+            echo "::error::Desktop native installer generation failed for ${{ matrix.platform }}."
+            echo "Placeholder or dummy artifacts are strictly prohibited."
+            exit 1
+          }
+          node scripts/validateReleaseArtifacts.cjs --platform ${{ matrix.platform }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
