@@ -136,7 +136,8 @@ if (isSmokeTest) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        webSecurity: true
+        webSecurity: true,
+      sandbox: true
       }
     });
 
@@ -228,7 +229,8 @@ if (isSmokeTest) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        webSecurity: true
+        webSecurity: true,
+      sandbox: true
       }
     });
     if (isHeadless) {
