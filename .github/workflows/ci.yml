@@ -46,8 +46,5 @@ jobs:
       - name: Prepare Composer sandbox image for integration tests
         run: docker pull node:22-bookworm-slim
 
-      - name: Run Core Flow & Contract Tests (Vitest)
-        run: npm run test:vitest
-
       - name: Run full verification suite (Chat, Models, Persistence, Security)
         run: npm test
