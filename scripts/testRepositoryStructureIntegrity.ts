@@ -147,11 +147,11 @@ async function runRepositoryStructureIntegrityTests() {
 	console.log(`  ✓ ${grammarFiles.length} standard library and AST grammar catalogs verified`);
 
 	console.log('\n================================================================');
-	console.log('  [ALL CURSOR 7.5M LOC SCALE TESTS PASSED] 3/3 checks passed');
+	console.log('  [REPOSITORY STRUCTURE CHECKS PASSED] 3/3 checks passed');
 	console.log('================================================================\n');
 }
 
 runRepositoryStructureIntegrityTests().catch(err => {
-	console.error('\n[FAIL] Scale parity test failed:', err);
+	console.error('\n[FAIL] Repository structure test failed:', err);
 	process.exit(1);
 });
