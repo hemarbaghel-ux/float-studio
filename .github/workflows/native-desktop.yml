@@ -60,6 +60,24 @@ jobs:
       - name: Install Desktop Dependencies
         run: npm --prefix desktop ci --ignore-scripts
 
+      - name: Set up Python for native module builds
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prepare node-pty source layout
+        run: node -e "require('fs').mkdirSync('desktop/lib', {recursive:true})"
+
+      - name: Rebuild Electron native runtime modules
+        env:
+          npm_config_runtime: electron
+          npm_config_target: '34.3.2'
+          npm_config_disturl: https://artifacts.electronjs.org/headers/dist
+          npm_config_msvs_version: '2022'
+          GYP_MSVS_VERSION: '2022'
+        run: npm --prefix desktop rebuild --runtime=electron --target=34.3.2 --dist-url=https://artifacts.electronjs.org/headers/dist @vscode/spdlog @vscode/sqlite3 node-pty
+
       - name: Unpack Ripgrep Binary
         run: node ./lib/postinstall.js
         working-directory: desktop/node_modules/@vscode/ripgrep
@@ -91,6 +109,15 @@ jobs:
             node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testNativeDesktopSmoke.ts
           fi
 
+      - name: Verify Native IDE Workflows (Stage 1)
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" node node_modules/tsx/dist/cli.mjs scripts/testNativeIdeWorkflow.ts
+          else
+            node node_modules/tsx/dist/cli.mjs scripts/testNativeIdeWorkflow.ts
+          fi
+
       - name: Upload Compiled Desktop Workbench Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -101,4 +128,4 @@ jobs:
             desktop/.build/electron/
             *.log
             tmp/
-          if-no-files-found: warn
+          if-no-files-found: error

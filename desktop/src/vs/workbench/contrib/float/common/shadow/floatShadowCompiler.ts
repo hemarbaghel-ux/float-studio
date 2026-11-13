@@ -10,21 +10,21 @@ import { IShadowDiagnostic, IShadowValidationOptions } from './floatShadowTypes.
 let _tsModule: typeof tsType | null | undefined = undefined;
 function getTs(): typeof tsType | null {
 	if (_tsModule !== undefined) {
-		return _tsModule;
+		return _tsModule ?? null;
 	}
 	try {
 		if (typeof process !== 'undefined' && (process as any).versions?.node) {
 			const req = (globalThis as any).require;
 			if (typeof req === 'function') {
 				_tsModule = req('typescript');
-				return _tsModule;
+				return _tsModule ?? null;
 			}
 		}
 	} catch {
 		// Browser sandbox
 	}
 	_tsModule = null;
-	return _tsModule;
+	return _tsModule ?? null;
 }
 
 function getNodeFs(): any | null {
@@ -322,7 +322,7 @@ export class FloatShadowCompiler {
 				writeFile: () => {},
 				getCurrentDirectory: () => baseWorkspace || '/',
 				getDirectories: () => [],
-				getCanonicalFileName: fileName => fileName.replace(/\\/g, '/'),
+				getCanonicalFileName: (fileName: string) => fileName.replace(/\\/g, '/'),
 				useCaseSensitiveFileNames: () => false,
 				getNewLine: () => '\n',
 				fileExists: (fileName: string) => {

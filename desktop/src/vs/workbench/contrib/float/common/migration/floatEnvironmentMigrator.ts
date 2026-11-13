@@ -83,6 +83,8 @@ export class FloatEnvironmentMigrator {
 
 	public resolveSourcePaths(source: FloatMigrationSource): { userConfigPath: string; extensionsPath: string } {
 		const platform = process.platform;
+		const runtimeOs = getNodeRuntime()?.os;
+		const defaultHome = runtimeOs?.homedir ? runtimeOs.homedir() : this._homedir;
 		let configSubdir = 'Code';
 		let extSubdir = '.vscode';
 
@@ -96,13 +98,13 @@ export class FloatEnvironmentMigrator {
 
 		let userConfigPath = '';
 		if (platform === 'win32') {
-			const isDefaultHome = this._homedir === os.homedir();
+			const isDefaultHome = this._homedir === defaultHome;
 			const appData = (isDefaultHome && process.env['APPDATA']) ? process.env['APPDATA'] : path.join(this._homedir, 'AppData', 'Roaming');
 			userConfigPath = path.join(appData, configSubdir, 'User');
 		} else if (platform === 'darwin') {
 			userConfigPath = path.join(this._homedir, 'Library', 'Application Support', configSubdir, 'User');
 		} else {
-			const isDefaultHome = this._homedir === os.homedir();
+			const isDefaultHome = this._homedir === defaultHome;
 			const configHome = (isDefaultHome && process.env['XDG_CONFIG_HOME']) ? process.env['XDG_CONFIG_HOME'] : path.join(this._homedir, '.config');
 			userConfigPath = path.join(configHome, configSubdir, 'User');
 		}
@@ -131,7 +133,7 @@ export class FloatEnvironmentMigrator {
 			if (fs.existsSync(extensionsPath)) {
 				try {
 					const items = fs.readdirSync(extensionsPath);
-					extensionCount = items.filter(i => !i.startsWith('.')).length;
+					extensionCount = items.filter((i: string) => !i.startsWith('.')).length;
 				} catch {}
 			}
 

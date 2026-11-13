@@ -147,7 +147,7 @@ export class FloatDaemonClient extends Disposable {
 				this._rejectAllPending(new Error('Connection to FLOAT Daemon closed'));
 			});
 
-			socket.on('error', (err) => {
+			socket.on('error', (err: Error) => {
 				clearTimeout(timer);
 				this._isConnected = false;
 				this._onDidChangeConnected.fire(false);
@@ -262,7 +262,7 @@ export class FloatDaemonClient extends Disposable {
 		this._streamingListeners.set(id, { ...callbacks, timer });
 
 		try {
-			this._socket.write(FloatIpcFramer.encode(request), error => {
+			this._socket.write(FloatIpcFramer.encode(request), (error?: Error | null) => {
 				if (!error) {
 					return;
 				}
