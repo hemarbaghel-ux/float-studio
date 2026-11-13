@@ -52,6 +52,20 @@ export class FloatMerkleTree {
 		return true;
 	}
 
+	/**
+	 * Restores a previously verified content hash from an index metadata snapshot.
+	 * The stored hash is a cache fingerprint; callers must validate the snapshot schema.
+	 */
+	public restoreFileHash(filePath: string, hash: string): boolean {
+		const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+		if (!norm || norm.split('/').some(segment => segment === '..') || !/^[a-f0-9]{40}$/i.test(hash)) {
+			return false;
+		}
+		this._fileHashes.set(norm, hash.toLowerCase());
+		this._recalculateRoot();
+		return true;
+	}
+
 	public removeFile(filePath: string): boolean {
 		const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
 		if (this._fileHashes.delete(norm)) {
