@@ -527,6 +527,10 @@ export class FloatComposer extends Disposable {
 				}
 				return false;
 			}
+			if (this._activeRemoteProposal?.proposalId) {
+				const synced = await this._finalizeRemoteProposal(proposalId);
+				if (!synced) return false;
+			}
 		} else if (proposal) {
 			for (const file of proposal.files) {
 				this._floatService.getProposalSession().applyFileChange(proposalId, file.path);
@@ -591,6 +595,18 @@ export class FloatComposer extends Disposable {
 
 		if (multiProp) {
 			this._orchestrator.rejectAll(proposalId);
+		}
+
+		if (this._activeRemoteProposal) {
+			const remote = this._activeRemoteProposal;
+			const token = this._floatService.getAuthService().getAuthToken();
+			if (token) {
+				void fetch(
+					`${this._remoteComposerBaseUrl()}/api/projects/${encodeURIComponent(remote.projectId)}/proposals/${encodeURIComponent(remote.proposalId)}/reject`,
+						{ method: 'POST', headers: { 'Authorization': `Bearer ${token}` } }
+					).catch(() => undefined);
+			}
+			this._activeRemoteProposal = null;
 		}
 
 		this._activeProposal = null;
