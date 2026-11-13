@@ -168,7 +168,7 @@ export class FloatComposer extends Disposable {
 
 	private _remoteComposerBaseUrl(): string {
 		const endpoint = this._floatService.getModelClient().getEndpoint();
-		const base = endpoint.replace(/\\/api\\/ai\\/chat\\/?$/, '');
+		const base = endpoint.replace(/\/api\/ai\/chat\/?$/, '');
 		if (!base || base === endpoint) {
 			throw new Error('FLOAT Composer API endpoint is not configured. Expected an endpoint ending in /api/ai/chat.');
 		}
@@ -185,7 +185,7 @@ export class FloatComposer extends Disposable {
 		const snapshot: Array<{ path: string; content: string }> = [];
 		let totalBytes = 0;
 		for (const rawPath of entries) {
-			const filePath = rawPath.replace(/\\/g, '/').replace(/^\\.\\//, '');
+			const filePath = rawPath.replace(/\\/g, '/').replace(/^\.\//, '');
 			if (!filePath || filePath === '.') continue;
 
 			let content: string;
@@ -198,7 +198,7 @@ export class FloatComposer extends Disposable {
 				throw new Error(`Could not read workspace file "${filePath}": ${error?.message || String(error)}`);
 			}
 
-			if (content.includes('\\0')) continue; // binary data is not sent as text context
+			if (content.includes(String.fromCharCode(0))) continue; // binary data is not sent as text context
 			const bytes = new TextEncoder().encode(content).byteLength;
 			if (bytes > 500 * 1024) {
 				throw new Error(`Workspace file "${filePath}" exceeds the 500 KB Composer context limit.`);
@@ -321,10 +321,10 @@ export class FloatComposer extends Disposable {
 		let remoteExecution: any = null;
 		const decoder = new TextDecoder();
 		const processFrame = (frame: string) => {
-			const data = frame.split(/\\r?\\n/)
+			const data = frame.split(/\r?\n/)
 				.filter(line => line.startsWith('data:'))
 				.map(line => line.slice(5).trimStart())
-				.join('\\n');
+				.join('\n');
 			if (!data) return;
 			let payload: any;
 			try { payload = JSON.parse(data); } catch { return; }
@@ -356,12 +356,12 @@ export class FloatComposer extends Disposable {
 			while (true) {
 				const { value, done } = await reader.read();
 				if (done) break;
-				streamBuffer += decoder.decode(value, { stream: true }).replace(/\\r\\n/g, '\\n');
-				let boundary = streamBuffer.indexOf('\\n\\n');
+				streamBuffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+				let boundary = streamBuffer.indexOf('\n\n');
 				while (boundary >= 0) {
 					processFrame(streamBuffer.slice(0, boundary));
 					streamBuffer = streamBuffer.slice(boundary + 2);
-					boundary = streamBuffer.indexOf('\\n\\n');
+					boundary = streamBuffer.indexOf('\n\n');
 				}
 			}
 			streamBuffer += decoder.decode();
