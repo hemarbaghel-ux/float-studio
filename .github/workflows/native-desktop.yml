@@ -98,6 +98,9 @@ jobs:
       - name: Verify Structured Composer Request Protocol
         run: npm run test:agent-step-protocol
 
+      - name: Verify Structured Provider Tool Calls
+        run: npm run test:structured-provider-toolcalls
+
       - name: Unpack Ripgrep Binary
         run: node ./lib/postinstall.js
         working-directory: desktop/node_modules/@vscode/ripgrep
