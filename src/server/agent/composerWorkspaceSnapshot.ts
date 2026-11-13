@@ -95,3 +95,78 @@ export function normalizeComposerWorkspaceSnapshot(input: unknown): ComposerWork
 
   return { files: root, fileCount: seenFiles.size, totalBytes };
 }
+
+
+export interface ComposerProposalChangeInput {
+  path: string;
+  operation: 'create' | 'modify' | 'delete' | 'rename';
+  originalContent?: string;
+  proposedContent?: string;
+}
+
+/**
+ * Merge only explicitly approved proposal paths into the latest persisted
+ * project tree. Unrelated local edits are not implicitly uploaded, and an
+ * affected cloud file must still match the proposal's original baseline.
+ */
+export function mergeApprovedComposerChanges(
+  savedWorkspace: FileNode[],
+  submittedWorkspace: FileNode[],
+  changes: ComposerProposalChangeInput[],
+  approvedPaths: string[]
+): ComposerWorkspaceSnapshot {
+  if (!Array.isArray(approvedPaths) || approvedPaths.length === 0 ||
+      new Set(approvedPaths).size !== approvedPaths.length) {
+    throw new Error('Select at least one unique path to apply.');
+  }
+
+  const flatten = (nodes: FileNode[], prefix = '', output = new Map<string, string>()): Map<string, string> => {
+    for (const node of nodes) {
+      const filePath = prefix ? `${prefix}/${node.name}` : node.name;
+      if (node.type === 'file') {
+        output.set(filePath, node.content || '');
+      } else if (node.type === 'folder') {
+        flatten(Array.isArray(node.children) ? node.children : [], filePath, output);
+      }
+    }
+    return output;
+  };
+
+  const saved = flatten(savedWorkspace);
+  const submitted = flatten(submittedWorkspace);
+  const byPath = new Map(changes.map(change => [change.path, change]));
+  const merged = new Map(saved);
+
+  for (const rawPath of approvedPaths) {
+    const sanitized = sanitizeProposalPath(rawPath);
+    if (sanitized.error || !sanitized.safePath) {
+      throw new Error(`Approved proposal path rejected: ${sanitized.error || 'invalid path'}`);
+    }
+    const filePath = sanitized.safePath;
+    const change = byPath.get(filePath);
+    if (!change) throw new Error(`Path "${filePath}" is not part of this proposal.`);
+    if (change.operation !== 'create' && change.operation !== 'modify') {
+      throw new Error(`Composer cannot automatically apply "${change.operation}" operations.`);
+    }
+
+    const existsInCloud = saved.has(filePath);
+    const originalContent = change.originalContent || '';
+    if (change.operation === 'create') {
+      if (existsInCloud) {
+        throw new Error(`File "${filePath}" was created elsewhere after this proposal was generated.`);
+      }
+    } else if (!existsInCloud || saved.get(filePath) !== originalContent) {
+      throw new Error(`File "${filePath}" changed in cloud storage since this proposal was generated. Reload and review it again.`);
+    }
+
+    const proposedContent = change.proposedContent || '';
+    if (!submitted.has(filePath) || submitted.get(filePath) !== proposedContent) {
+      throw new Error(`The local workspace does not contain the proposed content for "${filePath}".`);
+    }
+    merged.set(filePath, proposedContent);
+  }
+
+  return normalizeComposerWorkspaceSnapshot(
+    Array.from(merged, ([filePath, content]) => ({ path: filePath, content }))
+  );
+}
