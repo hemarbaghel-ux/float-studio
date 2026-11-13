@@ -80,7 +80,14 @@ async function run(): Promise<void> {
           toolCalls: [{ id: 'call-list', name: 'list_project_files', arguments: {} }]
         };
       }
-      assert.ok(request.messages.some(message => JSON.stringify(message).includes('index.ts')));
+      const assistantToolMessage = request.messages.find(message =>
+        message.role === 'assistant' && Array.isArray(message.toolCalls)
+      );
+      assert.equal(assistantToolMessage?.toolCalls?.[0]?.id, 'call-list');
+      const toolResultMessage = request.messages.find(message =>
+        message.role === 'tool' && message.toolCallId === 'call-list'
+      );
+      assert.ok(toolResultMessage?.content.includes('index.ts'));
       return { text: 'The project has one source file exporting answer = 42.' };
     }));
     assert.equal(agent.status, 'completed');
