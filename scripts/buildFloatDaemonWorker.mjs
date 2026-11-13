@@ -1,5 +1,6 @@
 import { build } from 'esbuild';
 import { mkdir } from 'node:fs/promises';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,4 +23,21 @@ await build({
   sourcemap: true,
   logLevel: 'info'
 });
+
+// Ensure default NLS metadata files exist in desktop/out for dev startup
+const outDir = path.join(repositoryRoot, 'desktop', 'out');
+for (const nlsFile of ['nls.messages.json', 'nls.keys.json', 'nls.metadata.json']) {
+  const filePath = path.join(outDir, nlsFile);
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, '{}', 'utf8');
+  }
+}
+
+// Ensure WASM files are copied to the daemon worker bundle directory
+const daemonWasm = path.join(repositoryRoot, 'daemon', 'wasm');
+const targetWasm = path.join(path.dirname(outputFile), 'wasm');
+if (fs.existsSync(daemonWasm)) {
+  await fs.promises.cp(daemonWasm, targetWasm, { recursive: true });
+}
+
 console.log('[FLOAT] Built Electron daemon worker:', outputFile);

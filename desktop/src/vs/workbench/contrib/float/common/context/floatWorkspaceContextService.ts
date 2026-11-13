@@ -3,14 +3,27 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as path from '../../../../../base/common/path.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
+
+function getNodeFs(): any | null {
+	try {
+		if (typeof process !== 'undefined') {
+			if (typeof (process as any).getBuiltinModule === 'function') {
+				return (process as any).getBuiltinModule('fs');
+			}
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				return req('fs');
+			}
+		}
+	} catch {}
+	return null;
+}
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { FloatDaemonClient } from '../daemon/floatDaemonClient.js';
 import { FloatDaemonLifecycleManager } from '../daemon/floatDaemonLifecycleManager.js';
-import { FloatWorkspaceAutoIndexer } from '../../../../../../../../daemon/src/workspace/floatWorkspaceAutoIndexer.js';
+import { FloatWorkspaceIndexer } from '../workspace/floatWorkspaceIndexer.js';
 
 export const IFloatWorkspaceContextService = createDecorator<IFloatWorkspaceContextService>('floatWorkspaceContextService');
 
@@ -77,7 +90,7 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 
 	private readonly _daemonLifecycle: FloatDaemonLifecycleManager;
 	private _activeWorkspaceRoot: string | null = null;
-	private _localAutoIndexer: FloatWorkspaceAutoIndexer | null = null;
+	private _localAutoIndexer: FloatWorkspaceIndexer | null = null;
 
 	private readonly _onDidUpdateIndex = this._register(new Emitter<{ totalFiles: number; totalChunks: number }>());
 	public readonly onDidUpdateIndex: Event<{ totalFiles: number; totalChunks: number }> = this._onDidUpdateIndex.event;
@@ -109,25 +122,55 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 		}
 
 		// 2. Local in-process auto-indexer fallback
-		this._localAutoIndexer = new FloatWorkspaceAutoIndexer({
-			workspaceRoot: this._activeWorkspaceRoot,
-			storageDirectory: path.join(this._activeWorkspaceRoot, '.float', 'index')
-		});
+		this._localAutoIndexer = new FloatWorkspaceIndexer();
+		await this._indexDirectoryRecursively(this._activeWorkspaceRoot);
+		const stats = this._localAutoIndexer.getStats();
+		this._onDidUpdateIndex.fire({ totalFiles: stats.fileCount, totalChunks: stats.chunkCount });
+		return { totalIndexed: stats.fileCount, durationMs: 0 };
+	}
 
-		const summary = await this._localAutoIndexer.startInitialIndex();
-		this._onDidUpdateIndex.fire({ totalFiles: summary.totalIndexed, totalChunks: this._localAutoIndexer.vectorEngine.totalChunks });
-		return summary;
+	private async _indexDirectoryRecursively(dir: string, depth = 0): Promise<void> {
+		if (depth > 10 || !this._localAutoIndexer) {
+			return;
+		}
+		const nodeFs = getNodeFs();
+		if (!nodeFs) {
+			return;
+		}
+		try {
+			const entries = await nodeFs.promises.readdir(dir, { withFileTypes: true });
+			for (const entry of entries) {
+				const fullPath = path.join(dir, entry.name);
+				if (this._localAutoIndexer.isExcluded(fullPath)) {
+					continue;
+				}
+				if (entry.isDirectory()) {
+					await this._indexDirectoryRecursively(fullPath, depth + 1);
+				} else if (entry.isFile()) {
+					try {
+						const content = await nodeFs.promises.readFile(fullPath, 'utf8');
+						const rel = this._activeWorkspaceRoot ? path.relative(this._activeWorkspaceRoot, fullPath) : fullPath;
+						this._localAutoIndexer.indexFile(rel, content);
+					} catch {}
+				}
+			}
+		} catch {}
 	}
 
 	public async refreshIndex(filePath?: string): Promise<void> {
+		const nodeFs = getNodeFs();
 		if (filePath) {
-			if (this._localAutoIndexer) {
-				this._localAutoIndexer.onFileChanged(filePath);
+			if (this._localAutoIndexer && nodeFs?.existsSync(filePath)) {
+				try {
+					const content = await nodeFs.promises.readFile(filePath, 'utf8');
+					const rel = this._activeWorkspaceRoot ? path.relative(this._activeWorkspaceRoot, filePath) : filePath;
+					this._localAutoIndexer.indexFile(rel, content);
+				} catch {}
 			}
 			if (this._daemonLifecycle.client.isConnected()) {
 				try {
-					if (fs.existsSync(filePath)) {
-						const content = await fs.promises.readFile(filePath, 'utf8');
+					if (nodeFs?.existsSync(filePath)) {
+						const content = await nodeFs.promises.readFile(filePath, 'utf8');
 						await this._daemonLifecycle.client.call('semantic_index_file', { filePath, content });
 					}
 				} catch {}
@@ -161,11 +204,7 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 
 		// 2. Search via local engine if daemon returned nothing or was not connected
 		if (rawMatches.length === 0 && this._localAutoIndexer) {
-			const localResults = await this._localAutoIndexer.vectorEngine.searchHybrid(query, {
-				topK,
-				activeFile: options.activeFile,
-				signal: options.signal
-			});
+			const localResults = this._localAutoIndexer.searchCodebase(query, topK);
 			rawMatches = localResults.map(r => ({
 				filePath: r.chunk.filePath,
 				startLine: r.chunk.startLine,
@@ -174,7 +213,7 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 				symbolKind: r.chunk.symbolKind,
 				snippet: r.chunk.content,
 				score: r.score,
-				matchType: r.matchType
+				matchType: 'sparse_vector'
 			}));
 		}
 
@@ -253,16 +292,14 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 				return res.symbols || [];
 			} catch {}
 		}
-		if (this._localAutoIndexer) {
-			return this._localAutoIndexer.indexer.findSymbolsByName(query);
-		}
 		return [];
 	}
 
 	public async getFileContext(filePath: string): Promise<string | null> {
 		try {
-			if (fs.existsSync(filePath)) {
-				return await fs.promises.readFile(filePath, 'utf8');
+			const nodeFs = getNodeFs();
+			if (nodeFs?.existsSync(filePath)) {
+				return await nodeFs.promises.readFile(filePath, 'utf8');
 			}
 		} catch {}
 		return null;
@@ -320,7 +357,7 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 
 	public override dispose(): void {
 		if (this._localAutoIndexer) {
-			this._localAutoIndexer.cancel();
+			this._localAutoIndexer.clear();
 			this._localAutoIndexer = null;
 		}
 		super.dispose();

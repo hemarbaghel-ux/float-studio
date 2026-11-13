@@ -30,6 +30,8 @@ export class FloatMultiFileDiffEditor implements IDisposable {
 	private readonly _entries = new Map<string, IFloatFileDiffEntry>();
 	private _activeFileIndex: number = 0;
 	private _activeHunkIndex: number = 0;
+	public get activeFileIndex(): number { return this._activeFileIndex; }
+	public get activeHunkIndex(): number { return this._activeHunkIndex; }
 
 	public loadDiff(filePath: string, originalContent: string, proposedContent: string): IFloatFileDiffEntry {
 		const hunks = this._calculateHunks(originalContent, proposedContent);

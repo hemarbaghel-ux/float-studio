@@ -5,7 +5,7 @@
 
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { IDebugService, State, IStackFrame, IThread, IDebugSession } from '../../../debug/common/debug.js';
+import { IDebugService, State } from '../../../debug/common/debug.js';
 import type { FloatDebugAutoRepairService } from './floatDebugAutoRepairService.js';
 
 export interface IFloatDebugStackFrame {

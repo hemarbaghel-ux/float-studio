@@ -3,15 +3,27 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
+import * as path from '../../../../../base/common/path.js';
 import { FloatDockerSandboxRunner } from './floatDockerSandboxRunner.js';
 import { copyComposerWorkspace, isComposerSandboxExcludedDirectory, isComposerSandboxSensitivePath } from './floatSandboxWorkspaceCopy.js';
 import { IComposerFileSystem, IComposerCommandRunner, IFloatCommandApprovalHandler, IFloatCommandApprovalRequest } from './floatComposerTools.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
+
+function getNodeRuntime(): { fs: any; fsp: any; os: any } | null {
+	try {
+		if (typeof process !== 'undefined' && (process as any).versions?.node) {
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				const nFs = req('fs');
+				return { fs: nFs, fsp: nFs.promises || req('fs/promises'), os: req('os') };
+			}
+		}
+	} catch {
+		// Sandboxed browser environment
+	}
+	return null;
+}
 
 /**
  * Resolve a proposal-relative path beneath a workspace while rejecting
@@ -43,8 +55,9 @@ export function resolveComposerWorkspacePath(workspaceRoot: string, relPath: str
 	if (isComposerSandboxSensitivePath(relPath)) {
 		throw new Error('[SECURITY] Access to excluded workspace path denied: ' + relPath);
 	}
+	const node = getNodeRuntime();
 	const clean = relPath === '.' || relPath === '' ? '.' : sanitizeProposalPath(relPath);
-	const rootResolved = fs.realpathSync(workspaceRoot);
+	const rootResolved = node ? node.fs.realpathSync(workspaceRoot) : path.resolve(workspaceRoot);
 	const resolved = path.resolve(rootResolved, clean);
 	const relative = path.relative(rootResolved, resolved);
 	if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
@@ -55,22 +68,24 @@ export function resolveComposerWorkspacePath(workspaceRoot: string, relPath: str
 	const segments = relative ? relative.split(path.sep).filter(Boolean) : [];
 	for (let index = 0; index < segments.length; index++) {
 		current = path.join(current, segments[index]);
-		try {
-			const stat = fs.lstatSync(current);
-			if (stat.isSymbolicLink()) {
-				throw new Error('[SECURITY] Symlink traversal blocked: ' + relPath);
+		if (node) {
+			try {
+				const stat = node.fs.lstatSync(current);
+				if (stat.isSymbolicLink()) {
+					throw new Error('[SECURITY] Symlink traversal blocked: ' + relPath);
+				}
+				if (index < segments.length - 1 && !stat.isDirectory()) {
+					throw new Error('[SECURITY] Non-directory path component blocked: ' + relPath);
+				}
+				if (index === segments.length - 1 && stat.isFile() && stat.nlink > 1) {
+					throw new Error('[SECURITY] Hard-linked workspace file blocked: ' + relPath);
+				}
+			} catch (error) {
+				if ((error as any).code === 'ENOENT') {
+					break;
+				}
+				throw error;
 			}
-			if (index < segments.length - 1 && !stat.isDirectory()) {
-				throw new Error('[SECURITY] Non-directory path component blocked: ' + relPath);
-			}
-			if (index === segments.length - 1 && stat.isFile() && stat.nlink > 1) {
-				throw new Error('[SECURITY] Hard-linked workspace file blocked: ' + relPath);
-			}
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-				break;
-			}
-			throw error;
 		}
 	}
 	return resolved;
@@ -95,21 +110,29 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 		if (this.isSensitiveFile(relPath)) {
 			throw new Error(`[SECURITY] Access denied to sensitive file: ${relPath}`);
 		}
+		const node = getNodeRuntime();
+		if (!node) {
+			throw new Error('[SANDBOX] Direct filesystem read is not permitted in browser sandbox.');
+		}
 		const full = this._resolve(relPath);
-		return await fsp.readFile(full, 'utf8');
+		return await node.fsp.readFile(full, 'utf8');
 	}
 
 	public async writeFile(relPath: string, content: string): Promise<void> {
 		if (this.isSensitiveFile(relPath)) {
 			throw new Error('[SECURITY] Writing to sensitive file prohibited: ' + relPath);
 		}
+		const node = getNodeRuntime();
+		if (!node) {
+			throw new Error('[SANDBOX] Direct filesystem write is not permitted in browser sandbox.');
+		}
 		const full = this._resolve(relPath);
-		await fsp.mkdir(path.dirname(full), { recursive: true });
+		await node.fsp.mkdir(path.dirname(full), { recursive: true });
 		const safeFull = this._resolve(relPath);
-		const noFollow = (fs.constants as any).O_NOFOLLOW || 0;
-		const handle = await fsp.open(
+		const noFollow = (node.fs.constants as any)?.O_NOFOLLOW || 0;
+		const handle = await node.fsp.open(
 			safeFull,
-			fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+			(node.fs.constants?.O_WRONLY || 1) | (node.fs.constants?.O_CREAT || 0o100) | (node.fs.constants?.O_TRUNC || 0o1000) | noFollow,
 			0o666
 		);
 		try {
@@ -123,9 +146,13 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 		if (this.isSensitiveFile(relPath)) {
 			return false;
 		}
+		const node = getNodeRuntime();
+		if (!node) {
+			return false;
+		}
 		try {
 			const full = this._resolve(relPath);
-			return fs.existsSync(full);
+			return node.fs.existsSync(full);
 		} catch {
 			return false;
 		}
@@ -133,14 +160,16 @@ export class ProductionComposerFileSystem implements IComposerFileSystem {
 
 	public async listDirectory(relPath: string, recursive: boolean = false): Promise<string[]> {
 		if (isComposerSandboxSensitivePath(relPath)) return [];
+		const node = getNodeRuntime();
+		if (!node) return [];
 		const targetDir = this._resolve(relPath);
-		if (!fs.existsSync(targetDir)) {
+		if (!node.fs.existsSync(targetDir)) {
 			return [];
 		}
 
 		const results: string[] = [];
 		const scan = async (dir: string, base: string) => {
-			const entries = await fsp.readdir(dir, { withFileTypes: true });
+			const entries = await node.fsp.readdir(dir, { withFileTypes: true });
 			for (const entry of entries) {
 				if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
 					continue;
@@ -317,7 +346,11 @@ export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 		if (!approved) {
 			return { exitCode: 126, stdout: '', stderr: '[COMMAND BLOCKED] User approval is required before Composer can run a command. No command was executed.' };
 		}
-		const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'float-composer-command-'));
+		const node = getNodeRuntime();
+		if (!node) {
+			return { exitCode: 1, stdout: '', stderr: '[SANDBOX PREPARATION FAILED] Node.js runtime not available in sandbox.' };
+		}
+		const scratchRoot = node.fs.mkdtempSync(path.join(node.os.tmpdir(), 'float-composer-command-'));
 		const scratchWorkspace = path.join(scratchRoot, 'workspace');
 
 		try {
@@ -336,7 +369,7 @@ export class ProductionComposerCommandRunner implements IComposerCommandRunner {
 			};
 		} finally {
 			try {
-				fs.rmSync(scratchRoot, { recursive: true, force: true });
+				node.fs.rmSync(scratchRoot, { recursive: true, force: true });
 			} catch {
 				// Best-effort cleanup; no command is run against the original workspace.
 			}
@@ -363,8 +396,10 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 		private readonly _timeoutMs: number = 30000,
 		private readonly _approvalHandler?: IFloatCommandApprovalHandler
 	) {
+		const node = getNodeRuntime();
+		const tmp = node ? node.os.tmpdir() : '/tmp';
 		this._shadowDir = path.join(
-			os.tmpdir(),
+			tmp,
 			'float-shadow-cmd-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7)
 		);
 		this._initShadowWorkspace(speculativeOverlays);
@@ -384,24 +419,26 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 	}
 
 	private _initShadowWorkspace(overlays?: Map<string, string>): void {
-		fs.mkdirSync(this._shadowDir, { recursive: true });
+		const node = getNodeRuntime();
+		if (!node) return;
+		node.fs.mkdirSync(this._shadowDir, { recursive: true });
 		copyComposerWorkspace(this._originalWorkspaceRoot, this._shadowDir);
 
 		if (overlays) {
 			for (const [relPath, content] of overlays.entries()) {
 				const target = resolveComposerWorkspacePath(this._shadowDir, relPath);
-				fs.mkdirSync(path.dirname(target), { recursive: true });
+				node.fs.mkdirSync(path.dirname(target), { recursive: true });
 				const safeTarget = resolveComposerWorkspacePath(this._shadowDir, relPath);
-				const noFollow = (fs.constants as any).O_NOFOLLOW || 0;
-				const descriptor = fs.openSync(
+				const noFollow = (node.fs.constants as any)?.O_NOFOLLOW || 0;
+				const descriptor = node.fs.openSync(
 					safeTarget,
-					fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+					(node.fs.constants?.O_WRONLY || 1) | (node.fs.constants?.O_CREAT || 0o100) | (node.fs.constants?.O_TRUNC || 0o1000) | noFollow,
 					0o666
 				);
 				try {
-					fs.writeFileSync(descriptor, content, 'utf8');
+					node.fs.writeFileSync(descriptor, content, 'utf8');
 				} finally {
-					fs.closeSync(descriptor);
+					node.fs.closeSync(descriptor);
 				}
 			}
 		}
@@ -409,20 +446,22 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 
 	public updateOverlay(relPath: string, content: string): void {
 		if (this._disposed) return;
+		const node = getNodeRuntime();
+		if (!node) return;
 		const target = resolveComposerWorkspacePath(this._shadowDir, relPath);
-		fs.mkdirSync(path.dirname(target), { recursive: true });
+		node.fs.mkdirSync(path.dirname(target), { recursive: true });
 		// Re-resolve after creating parent directories and refuse a final symlink.
 		const safeTarget = resolveComposerWorkspacePath(this._shadowDir, relPath);
-		const noFollow = (fs.constants as any).O_NOFOLLOW || 0;
-		const descriptor = fs.openSync(
+		const noFollow = (node.fs.constants as any)?.O_NOFOLLOW || 0;
+		const descriptor = node.fs.openSync(
 			safeTarget,
-			fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+			(node.fs.constants?.O_WRONLY || 1) | (node.fs.constants?.O_CREAT || 0o100) | (node.fs.constants?.O_TRUNC || 0o1000) | noFollow,
 			0o666
 		);
 		try {
-			fs.writeFileSync(descriptor, content, 'utf8');
+			node.fs.writeFileSync(descriptor, content, 'utf8');
 		} finally {
-			fs.closeSync(descriptor);
+			node.fs.closeSync(descriptor);
 		}
 	}
 
@@ -468,9 +507,11 @@ export class IsolatedShadowWorkspaceCommandRunner implements IComposerCommandRun
 	public dispose(): void {
 		this.abort();
 		this._disposed = true;
+		const node = getNodeRuntime();
+		if (!node) return;
 		try {
-			if (fs.existsSync(this._shadowDir)) {
-				fs.rmSync(this._shadowDir, { recursive: true, force: true });
+			if (node.fs.existsSync(this._shadowDir)) {
+				node.fs.rmSync(this._shadowDir, { recursive: true, force: true });
 			}
 		} catch {
 			// Best-effort cleanup of the disposable shadow directory.

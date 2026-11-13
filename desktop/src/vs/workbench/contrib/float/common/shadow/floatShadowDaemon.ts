@@ -3,14 +3,30 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
-import { exec, ChildProcess } from 'node:child_process';
-import { IShadowDiagnostic, IShadowValidationResult } from './floatShadowTypes.js';
+import * as path from '../../../../../base/common/path.js';
+import { IShadowDiagnostic } from './floatShadowTypes.js';
 import { FloatSecurityGuard } from '../../electron-sandbox/security/floatSecurityGuard.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
+
+function getNodeRuntime(): { fs: any; fsp: any; os: any; exec: any } | null {
+	try {
+		if (typeof process !== 'undefined' && (process as any).versions?.node) {
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				const nFs = req('fs');
+				return {
+					fs: nFs,
+					fsp: nFs.promises || req('fs/promises'),
+					os: req('os'),
+					exec: req('child_process').exec
+				};
+			}
+		}
+	} catch {
+		// Browser sandbox
+	}
+	return null;
+}
 
 export interface IShadowExecutionResult {
 	exitCode: number;
@@ -46,8 +62,13 @@ export class FloatShadowDaemon {
 	private readonly _activeSandboxes = new Map<string, string>(); // sessionId -> shadowDirPath
 
 	constructor(customRootDir?: string) {
-		this._shadowRootDir = customRootDir || path.join(os.tmpdir(), `float-shadow-daemon-${process.pid}`);
-		fs.mkdirSync(this._shadowRootDir, { recursive: true });
+		const node = getNodeRuntime();
+		const tmp = node ? node.os.tmpdir() : '/tmp';
+		const pid = typeof process !== 'undefined' ? process.pid : 0;
+		this._shadowRootDir = customRootDir || path.join(tmp, `float-shadow-daemon-${pid}`);
+		if (node) {
+			node.fs.mkdirSync(this._shadowRootDir, { recursive: true });
+		}
 	}
 
 	public get shadowRootDir(): string {
@@ -64,24 +85,30 @@ export class FloatShadowDaemon {
 		speculativeOverlays: Map<string, string> = new Map(),
 		deletedFiles: Set<string> = new Set()
 	): Promise<string> {
+		const node = getNodeRuntime();
 		const sandboxDir = path.join(this._shadowRootDir, `sandbox-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
-		if (fs.existsSync(sandboxDir)) {
-			await fsp.rm(sandboxDir, { recursive: true, force: true });
+		if (!node) {
+			this._activeSandboxes.set(sessionId, sandboxDir);
+			return sandboxDir;
 		}
-		fs.mkdirSync(sandboxDir, { recursive: true });
+
+		if (node.fs.existsSync(sandboxDir)) {
+			await node.fsp.rm(sandboxDir, { recursive: true, force: true });
+		}
+		node.fs.mkdirSync(sandboxDir, { recursive: true });
 
 		// 1. Mirror unchanged workspace files using hardlinks or fast copies
-		if (fs.existsSync(workspaceRoot)) {
+		if (node.fs.existsSync(workspaceRoot)) {
 			await this._mirrorDirectory(workspaceRoot, sandboxDir, deletedFiles);
 		}
 
 		// 2. Link node_modules and dependencies directly so toolchains resolve cleanly
 		const nodeModulesSrc = path.join(workspaceRoot, 'node_modules');
 		const nodeModulesDest = path.join(sandboxDir, 'node_modules');
-		if (fs.existsSync(nodeModulesSrc) && !fs.existsSync(nodeModulesDest)) {
+		if (node.fs.existsSync(nodeModulesSrc) && !node.fs.existsSync(nodeModulesDest)) {
 			try {
 				// Create junction on Windows or symlink on POSIX
-				fs.symlinkSync(nodeModulesSrc, nodeModulesDest, 'junction');
+				node.fs.symlinkSync(nodeModulesSrc, nodeModulesDest, 'junction');
 			} catch {
 				// If symlink permission denied, continue
 			}
@@ -93,12 +120,12 @@ export class FloatShadowDaemon {
 			if (deletedFiles.has(norm)) continue;
 
 			const destFile = path.join(sandboxDir, norm);
-			fs.mkdirSync(path.dirname(destFile), { recursive: true });
+			node.fs.mkdirSync(path.dirname(destFile), { recursive: true });
 			// Break hardlink before writing to ensure complete isolation
-			if (fs.existsSync(destFile)) {
-				try { fs.unlinkSync(destFile); } catch {}
+			if (node.fs.existsSync(destFile)) {
+				try { node.fs.unlinkSync(destFile); } catch {}
 			}
-			fs.writeFileSync(destFile, content, 'utf8');
+			node.fs.writeFileSync(destFile, content, 'utf8');
 		}
 
 		this._activeSandboxes.set(sessionId, sandboxDir);
@@ -109,7 +136,9 @@ export class FloatShadowDaemon {
 	 * Recursively mirrors directory structure and hardlinks unchanged project files
 	 */
 	private async _mirrorDirectory(srcDir: string, destDir: string, deletedFiles: Set<string>, relPrefix: string = ''): Promise<void> {
-		const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+		const node = getNodeRuntime();
+		if (!node) return;
+		const entries = node.fs.readdirSync(srcDir, { withFileTypes: true });
 
 		for (const entry of entries) {
 			const entryRelPath = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
@@ -123,16 +152,16 @@ export class FloatShadowDaemon {
 			const destPath = path.join(destDir, entry.name);
 
 			if (entry.isDirectory()) {
-				fs.mkdirSync(destPath, { recursive: true });
+				node.fs.mkdirSync(destPath, { recursive: true });
 				await this._mirrorDirectory(srcPath, destPath, deletedFiles, normRel);
 			} else if (entry.isFile()) {
 				try {
 					// Use hardlink for instant zero-copy mirroring
-					fs.linkSync(srcPath, destPath);
+					node.fs.linkSync(srcPath, destPath);
 				} catch {
 					// Fallback to copy if cross-device or permission restricted
 					try {
-						fs.copyFileSync(srcPath, destPath);
+						node.fs.copyFileSync(srcPath, destPath);
 					} catch {}
 				}
 			}
@@ -147,8 +176,9 @@ export class FloatShadowDaemon {
 		command: string,
 		timeoutMs: number = 45000
 	): Promise<IShadowExecutionResult> {
+		const node = getNodeRuntime();
 		const sandboxDir = this._activeSandboxes.get(sessionId);
-		if (!sandboxDir || !fs.existsSync(sandboxDir)) {
+		if (!node || !sandboxDir || !node.fs.existsSync(sandboxDir)) {
 			throw new Error(`Shadow sandbox for session "${sessionId}" does not exist`);
 		}
 
@@ -173,7 +203,7 @@ export class FloatShadowDaemon {
 		}
 
 		const startTime = Date.now();
-		const safeEnv: Record<string, string | undefined> = { ...process.env };
+		const safeEnv: Record<string, string | undefined> = typeof process !== 'undefined' ? { ...process.env } : {};
 		delete safeEnv['AIzaSy_KEY'];
 		delete safeEnv['OPENAI_API_KEY'];
 		delete safeEnv['ANTHROPIC_API_KEY'];
@@ -181,12 +211,12 @@ export class FloatShadowDaemon {
 		delete safeEnv['GEMINI_API_KEY'];
 
 		return new Promise<IShadowExecutionResult>((resolve) => {
-			exec(command, {
+			node.exec(command, {
 				cwd: sandboxDir,
 				timeout: timeoutMs,
 				maxBuffer: 8 * 1024 * 1024,
 				env: safeEnv
-			}, (error, stdoutBuf, stderrBuf) => {
+			}, (error: any, stdoutBuf: any, stderrBuf: any) => {
 				const durationMs = Date.now() - startTime;
 				const stdout = stdoutBuf ? stdoutBuf.toString() : '';
 				const stderr = stderrBuf ? stderrBuf.toString() : (error ? error.message : '');
@@ -274,10 +304,11 @@ export class FloatShadowDaemon {
 	 * Destroys and cleans up the sandbox for a session
 	 */
 	public async destroyShadowSandbox(sessionId: string): Promise<void> {
+		const node = getNodeRuntime();
 		const sandboxDir = this._activeSandboxes.get(sessionId);
-		if (sandboxDir && fs.existsSync(sandboxDir)) {
+		if (node && sandboxDir && node.fs.existsSync(sandboxDir)) {
 			try {
-				await fsp.rm(sandboxDir, { recursive: true, force: true });
+				await node.fsp.rm(sandboxDir, { recursive: true, force: true });
 			} catch {}
 			this._activeSandboxes.delete(sessionId);
 		}
@@ -287,9 +318,11 @@ export class FloatShadowDaemon {
 		for (const id of Array.from(this._activeSandboxes.keys())) {
 			await this.destroyShadowSandbox(id);
 		}
+		const node = getNodeRuntime();
+		if (!node) return;
 		try {
-			if (fs.existsSync(this._shadowRootDir)) {
-				await fsp.rm(this._shadowRootDir, { recursive: true, force: true });
+			if (node.fs.existsSync(this._shadowRootDir)) {
+				await node.fsp.rm(this._shadowRootDir, { recursive: true, force: true });
 			}
 		} catch {}
 	}

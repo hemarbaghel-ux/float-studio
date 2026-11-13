@@ -3,7 +3,7 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import crypto from 'node:crypto';
+import { StringSHA1 } from '../../../../../base/common/hash.js';
 
 export interface IMerkleNode {
 	path: string;
@@ -13,9 +13,9 @@ export interface IMerkleNode {
 }
 
 export function calculateFileHash(content: string): string {
-	const hash = crypto.createHash('sha256');
-	hash.update(content);
-	return hash.digest('hex');
+	const sha = new StringSHA1();
+	sha.update(content);
+	return sha.digest();
 }
 
 export class FloatMerkleTree {
@@ -87,6 +87,6 @@ export class FloatMerkleTree {
 
 		const sortedEntries = Array.from(this._fileHashes.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 		const combined = sortedEntries.map(([p, h]) => `${p}:${h}`).join('\n');
-		this._rootHash = crypto.createHash('sha256').update(combined).digest('hex');
+		this._rootHash = calculateFileHash(combined);
 	}
 }

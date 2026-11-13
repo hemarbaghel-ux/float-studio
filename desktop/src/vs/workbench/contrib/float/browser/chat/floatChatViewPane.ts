@@ -5,7 +5,8 @@
 
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { IFloatService, IFloatMessage } from '../../common/floatService.js';
+import { IFloatService } from '../../common/floatService.js';
+import { IFloatChatMessage } from '../../common/protocols/floatProtocol.js';
 
 export interface IFloatChatContextChip {
 	type: 'codebase' | 'file' | 'folder' | 'symbol' | 'terminal' | 'git' | 'docs';
@@ -20,7 +21,8 @@ export interface IFloatCodeBlock {
 	targetPath?: string;
 }
 
-export interface IFloatChatViewMessage extends IFloatMessage {
+export interface IFloatChatViewMessage extends Omit<IFloatChatMessage, 'content'> {
+	content: string;
 	contextChips?: IFloatChatContextChip[];
 	codeBlocks?: IFloatCodeBlock[];
 	streaming?: boolean;
