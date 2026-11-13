@@ -424,6 +424,9 @@ export class WorkspaceIndex {
       let symbolScore = 0;
 
       for (const sym of doc.symbols) {
+        // A kind filter removes disallowed symbols from ranking entirely; it
+        // must not still boost a document and leak through a content result.
+        if (options.filterSymbolKinds && !options.filterSymbolKinds.includes(sym.kind)) continue;
         const symNameLower = sym.name.toLowerCase();
         let currentSymBoost = 0;
 
