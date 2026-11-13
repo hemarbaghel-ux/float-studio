@@ -89,7 +89,7 @@ async function waitForEditorText(page: any, expected: string): Promise<void> {
 
 async function openCommandPaletteCommand(page: any, command: string): Promise<void> {
   await page.keyboard.press(MODIFIER + '+Shift+P');
-  const input = page.locator('.quick-input-widget input').first();
+  const input = page.locator('.quick-input-widget .quick-input-box input').first();
   await input.waitFor({ state: 'visible', timeout: 10_000 });
   await input.fill(command);
   await page.keyboard.press('Enter');
@@ -97,7 +97,7 @@ async function openCommandPaletteCommand(page: any, command: string): Promise<vo
 
 async function openQuickOpenFile(page: any, fileName: string): Promise<void> {
   await page.keyboard.press(MODIFIER + '+P');
-  const input = page.locator('.quick-input-widget input').first();
+  const input = page.locator('.quick-input-widget .quick-input-box input').first();
   await input.waitFor({ state: 'visible', timeout: 10_000 });
   await input.fill(fileName);
   await page.keyboard.press('Enter');
