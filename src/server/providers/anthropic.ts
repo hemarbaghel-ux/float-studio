@@ -155,21 +155,54 @@ export class AnthropicAdapter implements AIProviderAdapter {
     const formatted: Array<Anthropic.MessageParam> = [];
 
     if (Array.isArray(messages)) {
-      for (const msg of messages) {
+      for (let index = 0; index < messages.length; index += 1) {
+        const msg = messages[index];
         if (typeof msg === 'string') {
           formatted.push({ role: 'user', content: msg });
-        } else if (msg && typeof msg === 'object') {
-          const role = msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user';
-          let content = '';
-          if (typeof msg.content === 'string') {
-            content = msg.content;
-          } else if (Array.isArray(msg.parts)) {
-            content = msg.parts.map((p: any) => p.text || '').join('');
-          } else if (msg.text) {
-            content = msg.text;
-          }
-          formatted.push({ role, content });
+          continue;
         }
+        if (!msg || typeof msg !== 'object') continue;
+
+        const content = typeof msg.content === 'string'
+          ? msg.content
+          : Array.isArray(msg.parts)
+            ? msg.parts.map((part: any) => part.text || '').join('')
+            : typeof msg.text === 'string' ? msg.text : '';
+
+        if (msg.role === 'tool') {
+          const toolResults: any[] = [];
+          while (index < messages.length && messages[index]?.role === 'tool') {
+            const toolMessage = messages[index];
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: String(toolMessage.toolCallId || toolMessage.tool_call_id || toolMessage.id || ''),
+              content: typeof toolMessage.content === 'string' ? toolMessage.content : JSON.stringify(toolMessage.content ?? ''),
+              ...(toolMessage.isError === true ? { is_error: true } : {})
+            });
+            index += 1;
+          }
+          index -= 1;
+          formatted.push({ role: 'user', content: toolResults } as any);
+          continue;
+        }
+
+        const role = msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user';
+        if (role === 'assistant' && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
+          const blocks: any[] = [];
+          if (content) blocks.push({ type: 'text', text: content });
+          for (const call of msg.toolCalls) {
+            blocks.push({
+              type: 'tool_use',
+              id: String(call.id || ''),
+              name: String(call.name || ''),
+              input: call.arguments && typeof call.arguments === 'object' ? call.arguments : {}
+            });
+          }
+          formatted.push({ role: 'assistant', content: blocks } as any);
+          continue;
+        }
+
+        formatted.push({ role, content });
       }
     }
 
