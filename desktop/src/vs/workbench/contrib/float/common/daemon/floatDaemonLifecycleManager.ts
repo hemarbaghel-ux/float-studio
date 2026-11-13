@@ -150,11 +150,11 @@ export class FloatDaemonLifecycleManager extends Disposable {
 			}
 		});
 
-		proc.on('error', (err) => {
+		proc.on('error', (err: Error) => {
 			console.error('[FloatDaemonLifecycleManager] Daemon process spawn error:', err);
 		});
 
-		proc.on('exit', (code, signal) => {
+		proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
 			console.warn(`[FloatDaemonLifecycleManager] Daemon process exited with code ${code}, signal ${signal}`);
 			this._daemonProcess = null;
 			this._updateHealth(false);
