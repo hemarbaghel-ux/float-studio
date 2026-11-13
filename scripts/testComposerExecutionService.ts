@@ -135,7 +135,7 @@ async function run(): Promise<void> {
     assert.equal(rejected.steps[0].success, false);
     assert.match(rejected.steps[0].error || '', /not available/);
 
-    console.log('Composer execution service: 6 scenarios passed.');
+    console.log('Composer execution service: 7 scenarios passed.');
   } finally {
     setProjectLookupForTests(null);
     resetEphemeralWorkspacesForTests();
