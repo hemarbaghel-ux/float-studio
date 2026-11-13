@@ -177,9 +177,12 @@ export class FloatComposerAgent {
 				execution.status = 'cancelled';
 				return execution;
 			}
+			const structuredCallSummary = structuredToolCalls
+				.map(call => `Requested workspace tool: ${call.name}(${JSON.stringify(call.arguments)})`)
+				.join('\\n');
 			conversationHistory.push({
 				role: 'assistant',
-				content: assistantResponse || (structuredToolCalls.length ? 'I requested workspace tools.' : '')
+				content: assistantResponse || structuredCallSummary
 			});
 
 			if (structuredToolCalls.length > 0) {
