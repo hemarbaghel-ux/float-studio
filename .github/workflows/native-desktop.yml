@@ -67,7 +67,7 @@ jobs:
           python-version: '3.12'
 
       - name: Prepare node-pty source layout
-        run: node -e "require('fs').mkdirSync('desktop/lib', { recursive: true })"
+        run: node -e "require('fs').mkdirSync('desktop/lib', {recursive:true})"
 
       - name: Rebuild Electron native runtime modules
         env:
