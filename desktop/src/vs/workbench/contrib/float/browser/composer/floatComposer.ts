@@ -164,7 +164,17 @@ export class FloatComposer extends Disposable {
 		return null;
 	}
 
-	private _activeRemoteProposal: { proposalId: string; projectId: string; approvedPaths: string[]; absolutePathByRelative: Map<string, string> } | null = null;
+	private _activeRemoteProposal: { proposalId: string; projectId: string; approvedPaths: string[]; pathByRelative: Map<string, string> } | null = null;
+
+	private _workspaceFileUri(filePath: string): URI {
+		const isAbsolute = filePath.startsWith('/') ||
+			(filePath.length > 2 && filePath[1] === ':' && (filePath[2] === '\\' || filePath[2] === '/'));
+		if (isAbsolute) return URI.file(filePath);
+		const workspaceRoot = (this._toolRegistry.fileSystem as any).workspaceRoot || process.cwd();
+		const normalized = filePath.split(String.fromCharCode(92)).join('/');
+		const segments = normalized.split('/').filter(Boolean);
+		return URI.joinPath(URI.file(workspaceRoot), ...segments);
+	}
 
 	private _remoteComposerBaseUrl(): string {
 		const endpoint = this._floatService.getModelClient().getEndpoint();
@@ -228,7 +238,7 @@ export class FloatComposer extends Disposable {
 		const acceptedPaths = localProposal.files
 			.filter(file => file.status === 'accepted')
 			.map(file => {
-				for (const [relative, absolute] of remote.absolutePathByRelative.entries()) {
+				for (const [relative, absolute] of remote.pathByRelative.entries()) {
 					if (absolute === file.path) return relative;
 				}
 				return undefined;
@@ -422,17 +432,15 @@ export class FloatComposer extends Disposable {
 				throw new Error('Composer returned an invalid proposal record.');
 			}
 
-			const workspaceRoot = (this._toolRegistry.fileSystem as any).workspaceRoot || process.cwd();
 			const pathMap = new Map<string, string>();
 			const changes = remoteProposal.changes.map((change: any) => {
 				if (change.operation !== 'create' && change.operation !== 'modify') {
 					throw new Error(`Composer proposed unsupported operation "${change.operation}" for ${change.path}.`);
 				}
 				const relativePath = String(change.path || '');
-				const absolutePath = URI.joinPath(URI.file(workspaceRoot), ...relativePath.split('/')).fsPath;
-				pathMap.set(relativePath, absolutePath);
+				pathMap.set(relativePath, relativePath);
 				return {
-					path: absolutePath,
+					path: relativePath,
 					originalContent: String(change.originalContent || ''),
 					proposedContent: String(change.proposedContent || '')
 				};
@@ -511,7 +519,7 @@ export class FloatComposer extends Disposable {
 		// Apply via orchestrator with concurrent edit conflict verification
 		const diskReader = async (p: string) => {
 			try {
-				const res = await this._textFileService.read(URI.file(p));
+				const res = await this._textFileService.read(this._workspaceFileUri(p));
 				return res.value;
 			} catch {
 				return undefined;
@@ -519,7 +527,7 @@ export class FloatComposer extends Disposable {
 		};
 
 		const diskWriter = async (p: string, content: string) => {
-			await this._textFileService.write(URI.file(p), content);
+			await this._textFileService.write(this._workspaceFileUri(p), content);
 		};
 
 		if (multiProp) {
@@ -540,7 +548,7 @@ export class FloatComposer extends Disposable {
 			for (const file of proposal.files) {
 				this._floatService.getProposalSession().applyFileChange(proposalId, file.path);
 				try {
-					await this._textFileService.write(URI.file(file.path), file.proposedContent);
+					await this._textFileService.write(this._workspaceFileUri(file.path), file.proposedContent);
 				} catch (e: any) {
 					this._notificationService.error(`Failed to write file ${file.path}: ${e.message}`);
 				}
@@ -627,7 +635,7 @@ export class FloatComposer extends Disposable {
 			for (const action of result.actions) {
 				if (action.action === 'modified_restored' || action.action === 'deleted_recreated') {
 					if (action.content !== undefined) {
-						await this._textFileService.write(URI.file(action.path), action.content);
+						await this._textFileService.write(this._workspaceFileUri(action.path), action.content);
 					}
 				}
 			}
