@@ -322,7 +322,7 @@ export class FloatShadowCompiler {
 				writeFile: () => {},
 				getCurrentDirectory: () => baseWorkspace || '/',
 				getDirectories: () => [],
-				getCanonicalFileName: fileName => fileName.replace(/\\/g, '/'),
+				getCanonicalFileName: (fileName: string) => fileName.replace(/\\/g, '/'),
 				useCaseSensitiveFileNames: () => false,
 				getNewLine: () => '\n',
 				fileExists: (fileName: string) => {
