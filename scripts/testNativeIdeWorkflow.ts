@@ -229,6 +229,7 @@ async function run(): Promise<void> {
     const editorGroups = page.locator('.editor-group-container');
     await page.waitForFunction(
       () => document.querySelectorAll('.editor-group-container').length >= 2,
+      undefined,
       { timeout: TIMEOUT_MS }
     );
     assert.ok(await editorGroups.count() >= 2, 'Split editor must create at least two editor groups');
@@ -264,8 +265,10 @@ async function run(): Promise<void> {
     if (app) {
       try {
         const page = await app.firstWindow();
-        await page.screenshot({ path: path.join(tempRoot, 'stage1-failure.png'), fullPage: true });
-        console.error('[DIAGNOSTIC] Screenshot: ' + path.join(tempRoot, 'stage1-failure.png'));
+        const screenshotPath = path.join(REPO_ROOT, 'tmp', 'stage1-failure-' + process.platform + '.png');
+        await fsp.mkdir(path.dirname(screenshotPath), { recursive: true });
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        console.error('[DIAGNOSTIC] Screenshot: ' + screenshotPath);
         console.error('[DIAGNOSTIC] Workbench text: ' + (await page.locator('.monaco-workbench').innerText().catch(() => 'unavailable')));
       } catch {
         // Preserve the original failure if diagnostics cannot be captured.
