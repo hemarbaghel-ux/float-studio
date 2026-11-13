@@ -105,7 +105,7 @@ class WorkflowTestModelGateway implements IModelGateway {
 }
 
 async function runEndToEndCursorWorkflow() {
-  console.log('=== FLOAT Recovery Phase 10: Definitive End-to-End Cursor Workflow Test ===\n');
+  console.log('=== FLOAT Recovery Phase 10: Deterministic Orchestration Contract Test (Mocked Model Gateway + In-Memory Git) ===\n');
   let passed = 0;
   const totalSteps = 13;
 

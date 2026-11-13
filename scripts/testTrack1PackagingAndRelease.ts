@@ -29,6 +29,9 @@ async function runTests() {
 	assert(yamlContent.includes('float-studio_amd64.deb'), 'Must target Linux Debian package');
 	assert(yamlContent.includes('SHA256SUMS.txt'), 'Must compute SHA256 checksums');
 	assert(yamlContent.includes('action-gh-release'), 'Must publish release assets to GitHub');
+	assert(yamlContent.includes('scripts/packageDesktopRelease.cjs'), 'Workflow must invoke scripts/packageDesktopRelease.cjs');
+	assert(yamlContent.includes('scripts/validateReleaseArtifacts.cjs'), 'Workflow must invoke scripts/validateReleaseArtifacts.cjs');
+	assert(!yamlContent.includes('echo "FLOAT Studio Desktop Release'), 'Workflow must never write text placeholders into installer filenames');
 	console.log('  ✓ Multi-platform GitHub Actions release matrix validated (Windows, macOS, Linux).');
 
 	// =========================================================================

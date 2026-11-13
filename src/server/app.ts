@@ -262,13 +262,25 @@ export async function createApp(options: CreateAppOptions = {}) {
 
   // Privacy & Governance Disclosure Route
   app.get('/api/privacy/policy', (_req, res) => {
+    const launchBlockerChecklist = {
+      controllerAndContact: Boolean(process.env.FLOAT_PRIVACY_CONTROLLER_NAME && process.env.FLOAT_PRIVACY_CONTACT_EMAIL),
+      retentionAndDeletion: Boolean(process.env.FLOAT_PRIVACY_RETENTION_DAYS),
+      subprocessorsAndRegions: Boolean(process.env.FLOAT_PRIVACY_SUBPROCESSORS),
+      jurisdictionsAndUserRights: Boolean(process.env.FLOAT_PRIVACY_JURISDICTIONS && process.env.FLOAT_PRIVACY_RIGHTS_URL),
+      dataFlowConsistency: process.env.FLOAT_PRIVACY_APPROVED === 'true'
+    };
+    const allComplete = Object.values(launchBlockerChecklist).every(Boolean);
     res.json({
-      status: 'draft',
-      policyVersion: 'draft',
+      status: allComplete ? 'approved' : 'draft',
+      policyVersion: allComplete ? '1.0' : 'draft',
+      productionLaunchBlocked: !allComplete,
       defaultsToOff: true,
-      optionalAnalyticsCollectorConfigured: false,
-      notice: 'This endpoint describes an incomplete preview notice, not a complete legal privacy policy.',
-      requiredBeforePublicLaunch: ['data controller and contact', 'retention and deletion schedule', 'subprocessors and hosting regions', 'jurisdictions and user rights process']
+      optionalAnalyticsCollectorConfigured: Boolean(process.env.SENTRY_DSN),
+      notice: allComplete
+        ? 'Approved privacy policy configuration is active.'
+        : 'This endpoint describes an incomplete preview notice, not a complete legal privacy policy. Broad public launch is blocked until all launchBlockerChecklist items are configured and approved.',
+      requiredBeforePublicLaunch: ['data controller and contact', 'retention and deletion schedule', 'subprocessors and hosting regions', 'jurisdictions and user rights process'],
+      launchBlockerChecklist
     });
   });
 
