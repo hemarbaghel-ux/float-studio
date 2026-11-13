@@ -258,7 +258,7 @@ export async function runComposerTask(options: RunComposerTaskOptions): Promise<
   const availableTools = toolsForMode(options.mode);
   const steps: ComposerToolStep[] = [];
   const proposalsGenerated: string[] = [];
-  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+  const messages: Array<Record<string, any>> = [
     { role: 'user', content: options.prompt }
   ];
 
@@ -346,17 +346,19 @@ export async function runComposerTask(options: RunComposerTaskOptions): Promise<
         return finish('completed');
       }
 
-      // Preserve the assistant's explanation and a concise structured-call summary.
+      // Preserve provider-native tool-call IDs and arguments so the next turn can
+      // pair each result with the exact call across OpenAI, Anthropic and Gemini.
       messages.push({
         role: 'assistant',
-        content: [
-          response.text || 'I am using the supplied workspace tools.',
-          'Structured tool requests: ' + toolCalls.map(call => call.name).join(', ')
-        ].join('\n')
+        content: response.text || '',
+        toolCalls: toolCalls.map(call => ({
+          id: String(call.id || ''),
+          name: String(call.name || ''),
+          arguments: call.arguments || {}
+        }))
       });
 
       let stopForApproval = false;
-      const observations: string[] = [];
 
       for (const call of toolCalls) {
         if (options.signal?.aborted) return finish('cancelled', 'Task cancelled by the user.');
@@ -421,16 +423,17 @@ export async function runComposerTask(options: RunComposerTaskOptions): Promise<
             data: outcome.data
           }
         });
-        observations.push(serializeToolObservation(outcome));
+        messages.push({
+          role: 'tool',
+          toolCallId,
+          toolName,
+          content: serializeToolObservation(outcome),
+          isError: !outcome.success
+        });
         await persistExecution(result, options.userId);
 
         if (stopForApproval) break;
       }
-
-      messages.push({
-        role: 'user',
-        content: 'Tool execution observations (JSON):\n' + observations.join('\n')
-      });
 
       if (stopForApproval) {
         return finish('approval_required', 'Execution paused because one or more requested operations require human approval.');
