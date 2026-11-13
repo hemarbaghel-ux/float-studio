@@ -31,6 +31,8 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === '--platform' && args[i + 1]) {
     targetPlatform = args[i + 1];
     i++;
+  } else if (args[i].startsWith('--platform=')) {
+    targetPlatform = args[i].split('=')[1];
   }
 }
 

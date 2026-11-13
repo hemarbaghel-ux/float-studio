@@ -182,7 +182,8 @@ export function AIPanel() {
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const [editingTitleConvId, setEditingTitleConvId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
-  const [activeWorkflowMode, setActiveWorkflowMode] = useState<'chat' | 'ask' | 'debug'>('chat');
+  const [activeWorkflowMode, setActiveWorkflowMode] = useState<'chat' | 'ask' | 'plan' | 'agent' | 'debug'>('chat');
+  const [composerTaskEvents, setComposerTaskEvents] = useState<any[]>([]);
 
   // Phase 3 Context Modals & Menu State
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
@@ -199,7 +200,7 @@ export function AIPanel() {
     id: string;
     text: string;
     context: AIContextItem[];
-    mode: 'chat' | 'ask' | 'debug';
+    mode: 'chat' | 'ask' | 'plan' | 'agent' | 'debug';
     projectId: string;
     timestamp: number;
   }[]>([]);
@@ -670,7 +671,13 @@ export function AIPanel() {
         effectiveSystemInstruction = "You are operating in DEBUG MODE. Follow the systematic 4-step diagnostic protocol:\n1. Inspect the reported error, stack trace, and any active compiler/runtime diagnostics.\n2. Trace the relevant symbol definitions, call sites, and recent git changes.\n3. Identify the underlying root cause with concrete evidence from the files (do NOT fabricate findings).\n4. Propose a targeted, minimal fix with exact before/after code blocks and verification instructions.";
       }
 
-      const response = await fetch('/api/ai/chat', {
+      const isComposerMode = activeWorkflowMode === 'agent' || activeWorkflowMode === 'plan';
+      const endpointUrl = isComposerMode
+        ? `/api/projects/${encodeURIComponent(currentProjectId)}/composer/run`
+        : '/api/ai/chat';
+      setComposerTaskEvents([]);
+
+      const response = await fetch(endpointUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -678,17 +685,27 @@ export function AIPanel() {
           'X-Float-Data-Sharing': ConsentService.isSharingAllowed() ? 'true' : 'false'
         },
         signal: requestController.signal,
-        body: JSON.stringify({
-          messages: requestMessages,
-          model: selectedModel,
-          reasoningEffort: useAIStore.getState().selectedEffort,
-          systemInstruction: effectiveSystemInstruction,
-          contextItems: finalContext,
-          activeEditor: activeEd,
-          projectName: projectName || 'Project Workspace',
-          projectId: currentProjectId,
-          stream: true
-        })
+        body: JSON.stringify(
+          isComposerMode
+            ? {
+                task: draftText,
+                mode: activeWorkflowMode,
+                model: selectedModel,
+                files: flatFiles.filter(f => f.type === 'file').map(f => ({ path: f.path || f.name, content: f.content || '' })),
+                stream: true
+              }
+            : {
+                messages: requestMessages,
+                model: selectedModel,
+                reasoningEffort: useAIStore.getState().selectedEffort,
+                systemInstruction: effectiveSystemInstruction,
+                contextItems: finalContext,
+                activeEditor: activeEd,
+                projectName: projectName || 'Project Workspace',
+                projectId: currentProjectId,
+                stream: true
+              }
+        )
       });
 
       if (!response.ok) {
@@ -754,8 +771,53 @@ export function AIPanel() {
               contextExplanation: finalExplanation
             });
           }
+        } else if (
+          data.type === 'started' ||
+          data.type === 'plan' ||
+          data.type === 'context_retrieval' ||
+          data.type === 'iteration_start' ||
+          data.type === 'thinking' ||
+          data.type === 'tool_call' ||
+          data.type === 'tool_result' ||
+          data.type === 'proposal_created' ||
+          data.type === 'approval_requested' ||
+          data.type === 'patch_applied' ||
+          data.type === 'command_started' ||
+          data.type === 'command_output' ||
+          data.type === 'command_completed' ||
+          data.type === 'test_result' ||
+          data.type === 'repair_proposal' ||
+          data.type === 'completed' ||
+          data.type === 'cancelled'
+        ) {
+          setComposerTaskEvents(prev => [...prev, data]);
+          if (data.type === 'thinking' && typeof data.content === 'string') {
+            accumulatedText = data.content;
+            updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
+          } else if (data.type === 'proposal_created' && data.proposal) {
+            const prop = data.proposal;
+            updateAiMessage(modelMsgId, {
+              changeSet: {
+                id: prop.id,
+                proposalId: prop.id,
+                description: prop.title || 'Composer Proposal',
+                status: prop.status || 'pending_review',
+                timestamp: prop.createdAt || Date.now(),
+                changes: (prop.files || []).map((f: any) => ({
+                  id: `${prop.id}_${f.path}`,
+                  path: f.path,
+                  operation: f.operation,
+                  originalContent: f.originalContent,
+                  proposedContent: f.proposedContent,
+                  status: f.status || 'pending',
+                  diffStats: f.diffStats,
+                  unifiedDiff: f.unifiedDiff,
+                })),
+              } as any
+            });
+          }
         } else if (data.type === 'error') {
-          throw new Error(typeof data.error === 'string' ? data.error : 'AI generation failed.');
+          throw new Error(typeof data.error === 'string' ? data.error : (typeof data.message === 'string' ? data.message : 'AI generation failed.'));
         } else {
           throw new Error(`The AI server returned an unknown streaming event: ${String(data.type || 'missing type')}.`);
         }
@@ -1198,8 +1260,34 @@ export function AIPanel() {
           </div>
         </div>
 
-        {/* Workflow Mode Switcher: Chat / Ask / Debug */}
-        <div className="flex items-center bg-slate-100 dark:bg-[#141414] p-0.5 rounded-lg border border-slate-200/80 dark:border-[#222]">
+        {/* Workflow Mode Switcher: Chat / Ask / Plan / Agent / Debug */}
+        <div className="flex items-center bg-slate-100 dark:bg-[#141414] p-0.5 rounded-lg border border-slate-200/80 dark:border-[#222]" data-testid="composer-mode-switcher">
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('agent')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'agent'
+                ? "bg-white dark:bg-[#202020] text-blue-600 dark:text-blue-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+            title="Autonomous multi-file Composer agent with proposal review and test verification"
+          >
+            Agent
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowMode('plan')}
+            className={cn(
+              "flex-1 py-1 rounded-md text-[11px] font-medium transition-all text-center cursor-pointer",
+              activeWorkflowMode === 'plan'
+                ? "bg-white dark:bg-[#202020] text-purple-600 dark:text-purple-400 font-semibold shadow-xs"
+                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            )}
+            title="Read-only exploration and step-by-step plan requiring approval"
+          >
+            Plan
+          </button>
           <button
             type="button"
             onClick={() => setActiveWorkflowMode('chat')}

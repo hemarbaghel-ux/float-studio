@@ -19,6 +19,7 @@ export interface ToolExecutionContext {
   readonly signal?: AbortSignal;
   readonly maxReadBytes?: number;
   readonly allowedCommands?: readonly string[];
+  readonly mode?: 'ask' | 'plan' | 'agent' | 'debug';
 }
 
 export interface ToolExecutionResult {
@@ -84,6 +85,41 @@ export const CANONICAL_TOOL_SCHEMAS = {
     },
     required: ['symbol'],
   },
+  retrieve_context: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Task or question to retrieve relevant codebase context for' },
+      maxChars: { type: 'number', description: 'Maximum total character budget for retrieved snippets' },
+    },
+    required: ['query'],
+  },
+  inspect_diagnostics: {
+    type: 'object',
+    properties: {
+      paths: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional list of relative file paths to inspect for syntax and compiler diagnostics',
+      },
+    },
+    required: [],
+  },
+  inspect_git: {
+    type: 'object',
+    properties: {
+      includeDiff: { type: 'boolean', description: 'Whether to include unified diff of uncommitted changes' },
+    },
+    required: [],
+  },
+  request_approval: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', description: 'Privileged action requiring explicit human approval' },
+      reason: { type: 'string', description: 'Justification for requesting approval' },
+      target: { type: 'string', description: 'Target file, command, or branch' },
+    },
+    required: ['action', 'reason'],
+  },
   propose_changes: {
     type: 'object',
     properties: {
@@ -113,6 +149,16 @@ export const CANONICAL_TOOL_SCHEMAS = {
     required: ['command'],
   },
 } as const;
+
+export const READ_ONLY_CANONICAL_TOOLS = new Set<string>([
+  'list_dir',
+  'read_file',
+  'search_codebase',
+  'inspect_symbol',
+  'retrieve_context',
+  'inspect_diagnostics',
+  'inspect_git',
+]);
 
 /**
  * Canonical Tool Registry Implementation
@@ -154,6 +200,16 @@ export class CanonicalToolRegistry implements IToolRegistry {
         toolName: name,
         success: false,
         error: 'Execution cancelled via AbortSignal.',
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    }
+
+    if ((context.mode === 'ask' || context.mode === 'plan') && !READ_ONLY_CANONICAL_TOOLS.has(name)) {
+      return {
+        toolName: name,
+        success: false,
+        error: `Tool "${name}" is not permitted in read-only "${context.mode}" mode.`,
         durationMs: Date.now() - start,
         timestamp: start,
       };

@@ -45,25 +45,48 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+      - name: Install dependencies (strict lockfile verification)
+        run: npm ci --no-audit --no-fund
 
-      - name: Build Web & Core Assets
-        run: npm run build
+      - name: TypeScript static check (lint)
+        run: npm run lint
 
-      - name: Package Desktop Artifacts
+      - name: Build Web, Server, Daemon Worker & Built-in Extensions
+        run: |
+          npm run build
+          npm run build:float-daemon-worker
+          npm run build:extensions
+
+      - name: Package Real Desktop Installers & Portable Bundles
         shell: bash
         run: |
-          mkdir -p dist/release
-          echo "Packaging desktop binaries for ${{ matrix.platform }}..."
-          echo "FLOAT Studio Desktop Release - ${{ matrix.platform }}" > "dist/release/${{ matrix.artifact_name }}"
-          echo "FLOAT Studio Portable Bundle - ${{ matrix.platform }}" > "dist/release/${{ matrix.archive_name }}"
+          node scripts/packageDesktopRelease.cjs --platform=${{ matrix.platform }}
 
-      - name: Upload Artifacts
+      - name: Validate Binary Magic Headers & Minimum Artifact Sizes (>= 20 MB)
+        shell: bash
+        run: |
+          node scripts/validateReleaseArtifacts.cjs --platform=${{ matrix.platform }}
+
+      - name: Smoke-Test Packaged Desktop Binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "linux-x64" ]; then
+            test -x dist/build-desktop-tmp/linux-unpacked/float-studio
+            xvfb-run -a dist/build-desktop-tmp/linux-unpacked/float-studio --headless --no-sandbox
+          elif [ "${{ matrix.platform }}" = "windows-x64" ]; then
+            test -f dist/build-desktop-tmp/win-unpacked/FLOAT.exe
+            ./dist/build-desktop-tmp/win-unpacked/FLOAT.exe --headless
+          elif [ "${{ matrix.platform }}" = "macos-arm64" ]; then
+            test -d "dist/build-desktop-tmp/mac-unpacked/FLOAT Studio.app"
+            "dist/build-desktop-tmp/mac-unpacked/FLOAT Studio.app/Contents/MacOS/Electron" --headless
+          fi
+
+      - name: Upload Validated Release Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}
           path: dist/release/
+          if-no-files-found: error
 
   create-github-release:
     name: Publish Release & Checksums
@@ -78,9 +101,16 @@ jobs:
         with:
           path: release-assets
 
-      - name: Generate SHA256SUMS
+      - name: Verify Downloaded Artifacts & Generate SHA256SUMS
         run: |
           cd release-assets
+          for f in $(find . -type f ! -name "SHA256SUMS.txt"); do
+            size=$(wc -c < "$f")
+            if [ "$size" -lt 20971520 ]; then
+              echo "ERROR: Release artifact $f is smaller than 20 MB ($size bytes). Refusing placeholder release."
+              exit 1
+            fi
+          done
           find . -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + > SHA256SUMS.txt
 
       - name: Create GitHub Release

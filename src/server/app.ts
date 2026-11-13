@@ -27,6 +27,10 @@ import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
 import { brainRouter } from './brain';
 import { createAnalystRouter } from './analystRouter';
+import { createComposerRouter } from './composer/composerRouter';
+import { runTerminalSetupDoctor } from './terminal/terminalDoctor';
+import { defaultTabCoordinator } from '../services/completion/tabCompletionService';
+import { defaultCloudAgentOrchestrator } from './cloudAgent/cloudAgentOrchestrator';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -141,9 +145,54 @@ export async function createApp(options: CreateAppOptions = {}) {
     code: 'AGENTS_UNAVAILABLE'
   }));
 
+  // Stage 3: Tab Completion Telemetry & Policy Endpoint
+  app.get('/api/ai/complete/telemetry', requireAuth, (_req: any, res: any) => {
+    res.json({
+      policy: defaultTabCoordinator.getPolicy(),
+      metrics: defaultTabCoordinator.getMetrics(),
+    });
+  });
+
+  app.post('/api/ai/complete/policy', requireAuth, express.json(), (req: any, res: any) => {
+    const updated = defaultTabCoordinator.setPolicy(req.body || {});
+    res.json({ policy: updated });
+  });
+
+  // Stage 4: Isolated Terminal & Docker Execution Setup Doctor
+  app.get('/api/terminal/doctor', requireAuth, (_req: any, res: any) => {
+    res.json(runTerminalSetupDoctor(process.env));
+  });
+
+  // Stage 7: Cloud / Background Multi-Agent Orchestrator Endpoints
+  app.post('/api/projects/:projectId/cloud-agent/runs', requireAuth, express.json(), async (req: any, res: any) => {
+    const { projectId } = req.params;
+    const userId = req.user.uid;
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status).json({ error: ownership.error });
+    }
+    const { goal, subtasks = [], proposalsBySubtask } = req.body || {};
+    if (!goal || !Array.isArray(subtasks) || subtasks.length === 0) {
+      return res.status(400).json({ error: 'goal and non-empty subtasks array are required.' });
+    }
+    try {
+      const record = defaultCloudAgentOrchestrator.startRun({
+        userId,
+        projectId,
+        goal: String(goal),
+        subtasks,
+        proposalsBySubtask,
+      });
+      return res.status(record.status === 'conflict_blocked' ? 409 : 200).json(record);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || 'Failed to start cloud-agent run.' });
+    }
+  });
+
   // Integrations Routes
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/projects/:projectId/git', gitRouter);
+  app.use('/api/projects/:projectId/composer', createComposerRouter(modelRouter));
   app.use('/api', milestone9Router);
   app.use('/api', brainRouter);
 
@@ -262,13 +311,25 @@ export async function createApp(options: CreateAppOptions = {}) {
 
   // Privacy & Governance Disclosure Route
   app.get('/api/privacy/policy', (_req, res) => {
+    const launchBlockerChecklist = {
+      controllerAndContact: Boolean(process.env.FLOAT_PRIVACY_CONTROLLER_NAME && process.env.FLOAT_PRIVACY_CONTACT_EMAIL),
+      retentionAndDeletion: Boolean(process.env.FLOAT_PRIVACY_RETENTION_DAYS),
+      subprocessorsAndRegions: Boolean(process.env.FLOAT_PRIVACY_SUBPROCESSORS),
+      jurisdictionsAndUserRights: Boolean(process.env.FLOAT_PRIVACY_JURISDICTIONS && process.env.FLOAT_PRIVACY_RIGHTS_URL),
+      dataFlowConsistency: process.env.FLOAT_PRIVACY_APPROVED === 'true'
+    };
+    const allComplete = Object.values(launchBlockerChecklist).every(Boolean);
     res.json({
-      status: 'draft',
-      policyVersion: 'draft',
+      status: allComplete ? 'approved' : 'draft',
+      policyVersion: allComplete ? '1.0' : 'draft',
+      productionLaunchBlocked: !allComplete,
       defaultsToOff: true,
-      optionalAnalyticsCollectorConfigured: false,
-      notice: 'This endpoint describes an incomplete preview notice, not a complete legal privacy policy.',
-      requiredBeforePublicLaunch: ['data controller and contact', 'retention and deletion schedule', 'subprocessors and hosting regions', 'jurisdictions and user rights process']
+      optionalAnalyticsCollectorConfigured: Boolean(process.env.SENTRY_DSN),
+      notice: allComplete
+        ? 'Approved privacy policy configuration is active.'
+        : 'This endpoint describes an incomplete preview notice, not a complete legal privacy policy. Broad public launch is blocked until all launchBlockerChecklist items are configured and approved.',
+      requiredBeforePublicLaunch: ['data controller and contact', 'retention and deletion schedule', 'subprocessors and hosting regions', 'jurisdictions and user rights process'],
+      launchBlockerChecklist
     });
   });
 

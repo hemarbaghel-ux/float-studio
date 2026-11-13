@@ -5,3 +5,4 @@
 
 export * from './secretScanner';
 export * from './gitService';
+export * from './nativeLocalGitService';
