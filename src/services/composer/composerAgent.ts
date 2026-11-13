@@ -393,7 +393,7 @@ Rules:
         if (call.name === 'retrieve_context' && outcome.success && Array.isArray(outcome.data?.snippets)) {
           options.onProgress?.({
             type: 'context_retrieval',
-            files: outcome.data.snippets.map((s: any) => s.path),
+            files: outcome.data.snippets.map((s: { path: string }) => s.path),
             totalChars: outcome.data.totalChars || 0,
             timestamp: Date.now(),
           });
@@ -450,7 +450,7 @@ Rules:
             options.onProgress?.({
               type: 'patch_applied',
               proposalId: createdProposal.id,
-              appliedFiles: applyRes.appliedFiles,
+              appliedFiles: [...applyRes.appliedFiles],
               checkpointId: appliedCheckpointId,
               timestamp: Date.now(),
             });
@@ -523,6 +523,13 @@ Rules:
                         force: true,
                       });
                       if (repairApply.success) {
+                        options.onProgress?.({
+                          type: 'patch_applied',
+                          proposalId: repairProposal.id,
+                          appliedFiles: [...repairApply.appliedFiles],
+                          checkpointId: repairApply.checkpointId,
+                          timestamp: Date.now(),
+                        });
                         const rerunOutcome = await this.toolRegistry.execute(
                           'run_command',
                           { command: verifyCmd },

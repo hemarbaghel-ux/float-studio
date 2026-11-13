@@ -332,6 +332,13 @@ async function runTests() {
       });
       const repairBody: any = await repairRes.json();
       check(repairBody.status === 'verified', 'Debug/Agent self-repair loop ran failing check, applied repair proposal, and re-verified to green');
+      const patchAppliedEvents = repairBody.events.filter((e: any) => e.type === 'patch_applied');
+      check(
+        patchAppliedEvents.length >= 1 &&
+          Array.isArray(patchAppliedEvents[0].appliedFiles) &&
+          patchAppliedEvents[0].appliedFiles.includes('src/math.ts'),
+        'patch_applied event contains mutable appliedFiles array with exact applied file paths'
+      );
       check(repairBody.events.some((e: any) => e.type === 'repair_proposal'), 'Emitted repair_proposal event after initial verification failure');
       const finalDiskMath = fs.readFileSync(path.join(tempDir, 'src/math.ts'), 'utf8');
       check(finalDiskMath.includes('return a * b;'), 'Repaired code is persisted on disk and passes verification');
