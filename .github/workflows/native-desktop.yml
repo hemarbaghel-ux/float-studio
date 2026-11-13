@@ -89,6 +89,9 @@ jobs:
           npm_config_disturl: https://artifacts.electronjs.org/headers/dist
         run: npm --prefix desktop rebuild --runtime=electron --target=34.3.2 --dist-url=https://artifacts.electronjs.org/headers/dist native-keymap @vscode/spdlog @vscode/sqlite3 node-pty
 
+      - name: Verify Headless Keyboard Metadata Fallback
+        run: npm run test:native-keyboard-layout
+
       - name: Unpack Ripgrep Binary
         run: node ./lib/postinstall.js
         working-directory: desktop/node_modules/@vscode/ripgrep
