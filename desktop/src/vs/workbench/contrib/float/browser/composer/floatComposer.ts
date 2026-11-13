@@ -461,7 +461,7 @@ export class FloatComposer extends Disposable {
 				proposalId: remoteProposal.id,
 				projectId,
 				approvedPaths: remoteProposal.affectedFiles || remoteProposal.changes.map((change: any) => change.path),
-				absolutePathByRelative: pathMap
+				pathByRelative: pathMap
 			};
 
 			try {
@@ -562,7 +562,7 @@ export class FloatComposer extends Disposable {
 	public async acceptFile(proposalId: string, filePath: string): Promise<boolean> {
 		const diskReader = async (p: string) => {
 			try {
-				const res = await this._textFileService.read(URI.file(p));
+				const res = await this._textFileService.read(this._workspaceFileUri(p));
 				return res.value;
 			} catch {
 				return undefined;
@@ -570,7 +570,7 @@ export class FloatComposer extends Disposable {
 		};
 
 		const diskWriter = async (p: string, content: string) => {
-			await this._textFileService.write(URI.file(p), content);
+			await this._textFileService.write(this._workspaceFileUri(p), content);
 		};
 
 		const success = await this._orchestrator.acceptFile(proposalId, filePath, diskWriter, diskReader);
