@@ -207,21 +207,46 @@ export class OpenAIAdapter implements AIProviderAdapter {
     return getModelProtocol(model) === 'responses';
   }
 
-  private formatResponsesInput(request: AIProviderRequest): Array<{ role: string; content: string }> {
-    const messages: Array<{ role: string; content: string }> = [];
+  private formatResponsesInput(request: AIProviderRequest): Array<Record<string, unknown>> {
+    const messages: Array<Record<string, unknown>> = [];
     if (Array.isArray(request.messages)) {
       for (const msg of request.messages) {
         if (typeof msg === 'string') {
           messages.push({ role: 'user', content: msg });
-        } else if (msg && typeof msg === 'object') {
-          const role = msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user';
-          const content = typeof msg.content === 'string'
-            ? msg.content
-            : Array.isArray(msg.parts)
-              ? msg.parts.map((part: any) => part.text || '').join('')
-              : typeof msg.text === 'string' ? msg.text : '';
-          messages.push({ role, content });
+          continue;
         }
+        if (!msg || typeof msg !== 'object') continue;
+
+        const role = msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user';
+        const content = typeof msg.content === 'string'
+          ? msg.content
+          : Array.isArray(msg.parts)
+            ? msg.parts.map((part: any) => part.text || '').join('')
+            : typeof msg.text === 'string' ? msg.text : '';
+
+        if (msg.role === 'tool') {
+          messages.push({
+            type: 'function_call_output',
+            call_id: String(msg.toolCallId || msg.tool_call_id || msg.id || ''),
+            output: content
+          });
+          continue;
+        }
+
+        if (role === 'assistant' && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
+          if (content) messages.push({ role: 'assistant', content });
+          for (const call of msg.toolCalls) {
+            messages.push({
+              type: 'function_call',
+              call_id: String(call.id || ''),
+              name: String(call.name || ''),
+              arguments: JSON.stringify(call.arguments || {})
+            });
+          }
+          continue;
+        }
+
+        messages.push({ role, content });
       }
     }
     if (messages.length === 0) messages.push({ role: 'user', content: 'Hello' });
@@ -288,6 +313,32 @@ export class OpenAIAdapter implements AIProviderAdapter {
           } else if (msg.text) {
             content = msg.text;
           }
+
+          if (msg.role === 'tool') {
+            messages.push({
+              role: 'tool',
+              tool_call_id: String(msg.toolCallId || msg.tool_call_id || msg.id || ''),
+              content
+            } as any);
+            continue;
+          }
+
+          if (role === 'assistant' && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
+            messages.push({
+              role: 'assistant',
+              content: content || null,
+              tool_calls: msg.toolCalls.map((call: any) => ({
+                id: String(call.id || ''),
+                type: 'function',
+                function: {
+                  name: String(call.name || ''),
+                  arguments: JSON.stringify(call.arguments || {})
+                }
+              }))
+            } as any);
+            continue;
+          }
+
           messages.push({ role, content } as any);
         }
       }
