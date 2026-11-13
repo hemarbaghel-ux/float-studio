@@ -60,6 +60,9 @@ jobs:
       - name: Install Desktop Dependencies
         run: npm --prefix desktop ci --ignore-scripts
 
+      - name: Rebuild Native Desktop Runtime Modules
+        run: npm --prefix desktop rebuild @vscode/spdlog @vscode/sqlite3 node-pty @parcel/watcher native-keymap native-watchdog native-is-elevated
+
       - name: Unpack Ripgrep Binary
         run: node ./lib/postinstall.js
         working-directory: desktop/node_modules/@vscode/ripgrep
