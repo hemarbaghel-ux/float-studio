@@ -115,7 +115,7 @@ export class OpenFloatComposerAction extends Action2 {
 					if (e.mode === 'agent') {
 						widget!.setStatus('Agent executing tools and verifying with shadow daemon...');
 						try {
-							const execution = await composer.executeAutonomousGoal({
+							execution = await composer.executeAutonomousGoal({
 								prompt: e.prompt,
 								activeFilePath: activeEditor.getModel()?.uri.path
 							}, step => {
