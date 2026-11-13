@@ -164,21 +164,323 @@ export class FloatComposer extends Disposable {
 		return null;
 	}
 
+	private _activeRemoteProposal: { proposalId: string; projectId: string; approvedPaths: string[]; absolutePathByRelative: Map<string, string> } | null = null;
+
+	private _remoteComposerBaseUrl(): string {
+		const endpoint = this._floatService.getModelClient().getEndpoint();
+		const base = endpoint.replace(/\\/api\\/ai\\/chat\\/?$/, '');
+		if (!base || base === endpoint) {
+			throw new Error('FLOAT Composer API endpoint is not configured. Expected an endpoint ending in /api/ai/chat.');
+		}
+		return base;
+	}
+
+	private async _collectWorkspaceSnapshot(): Promise<Array<{ path: string; content: string }>> {
+		const fsAdapter = this._toolRegistry.fileSystem;
+		const entries = await fsAdapter.listDirectory('.', true);
+		if (entries.length > 4000) {
+			throw new Error('Workspace contains too many entries for one Composer request. Exclude generated folders and retry.');
+		}
+
+		const snapshot: Array<{ path: string; content: string }> = [];
+		let totalBytes = 0;
+		for (const rawPath of entries) {
+			const filePath = rawPath.replace(/\\/g, '/').replace(/^\\.\\//, '');
+			if (!filePath || filePath === '.') continue;
+
+			let content: string;
+			try {
+				content = await fsAdapter.readFile(filePath);
+			} catch (error: any) {
+				// listDirectory intentionally includes directory entries. readFile on
+				// those entries returns EISDIR; every other read failure is material.
+				if (error?.code === 'EISDIR' || error?.code === 'ENOENT') continue;
+				throw new Error(`Could not read workspace file "${filePath}": ${error?.message || String(error)}`);
+			}
+
+			if (content.includes('\\0')) continue; // binary data is not sent as text context
+			const bytes = new TextEncoder().encode(content).byteLength;
+			if (bytes > 500 * 1024) {
+				throw new Error(`Workspace file "${filePath}" exceeds the 500 KB Composer context limit.`);
+			}
+			totalBytes += bytes;
+			if (totalBytes > 10 * 1024 * 1024) {
+				throw new Error('Workspace text exceeds the 10 MB Composer context limit. Exclude large files and retry.');
+			}
+			snapshot.push({ path: filePath, content });
+			if (snapshot.length > 500) {
+				throw new Error('Workspace contains more than 500 text files. Exclude generated folders and retry.');
+			}
+		}
+
+		if (snapshot.length === 0) {
+			throw new Error('No readable text files were found in the local workspace.');
+		}
+		return snapshot;
+	}
+
+	private async _finalizeRemoteProposal(proposalId: string): Promise<boolean> {
+		const remote = this._activeRemoteProposal;
+		if (!remote || remote.proposalId !== proposalId) return true;
+
+		const localProposal = this._orchestrator.getProposal(proposalId);
+		if (!localProposal) return false;
+		const acceptedPaths = localProposal.files
+			.filter(file => file.status === 'accepted')
+			.map(file => {
+				for (const [relative, absolute] of remote.absolutePathByRelative.entries()) {
+					if (absolute === file.path) return relative;
+				}
+				return undefined;
+			})
+			.filter((value): value is string => typeof value === 'string');
+
+		if (acceptedPaths.length === 0) return true;
+
+		try {
+			const token = this._floatService.getAuthService().getAuthToken();
+			if (!token) throw new Error('Your FLOAT session expired before the proposal could sync to cloud storage.');
+			const workspaceFiles = await this._collectWorkspaceSnapshot();
+			const response = await fetch(
+				`${this._remoteComposerBaseUrl()}/api/projects/${encodeURIComponent(remote.projectId)}/proposals/${encodeURIComponent(remote.proposalId)}/apply`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${token}`
+					},
+					body: JSON.stringify({ approvedPaths: acceptedPaths, workspaceFiles })
+				}
+			);
+			if (!response.ok) {
+				const body = await response.json().catch(() => ({}));
+				throw new Error(body?.error || `Cloud proposal sync failed (HTTP ${response.status}).`);
+			}
+			this._activeRemoteProposal = null;
+			this._notificationService.info('FLOAT Composer: approved changes and proposal state are synced to your cloud project.');
+			return true;
+		} catch (error: any) {
+			this._notificationService.error(
+				`Changes are saved locally, but cloud proposal sync did not complete: ${error?.message || String(error)}. The cloud proposal remains pending review.`
+			);
+			return false;
+		}
+	}
+
 	public async executeAutonomousGoal(
 		goal: IComposerAgentGoal,
 		onStep?: (step: IComposerAgentStep) => void,
 		signal?: AbortSignal
 	): Promise<IComposerAgentExecution> {
-		this._notificationService.info(`FLOAT Autonomous Composer starting goal: "${goal.prompt}"...`);
-		const isolatedGoal: IComposerAgentGoal = {
-			...goal,
-			isolateWorkspaceMutations: true
-		};
-		const execution = await this._agent.executeGoal(isolatedGoal, onStep, signal);
-		if (execution.proposal) {
-			this._activeMultiFileProposal = execution.proposal;
+		this._notificationService.info('FLOAT Composer: preparing a bounded local workspace snapshot for the server-side agent...');
+		const goalWithIsolation: IComposerAgentGoal = { ...goal, isolateWorkspaceMutations: true };
+		const projectId = this._floatService.getAuthService().getActiveProjectId();
+		const token = this._floatService.getAuthService().getAuthToken();
+
+		if (!this._floatService.getAuthService().isAuthenticated() || !token) {
+			throw new Error('Sign in to FLOAT before using server-side Composer Agent mode.');
 		}
-		return execution;
+		if (!projectId || projectId === 'default-project') {
+			throw new Error('Save this workspace as a FLOAT cloud project and select it before using Composer Agent mode.');
+		}
+
+		const workspaceFiles = await this._collectWorkspaceSnapshot();
+		const controller = new AbortController();
+		const abortFromCaller = () => controller.abort();
+		if (signal?.aborted) controller.abort();
+		else signal?.addEventListener('abort', abortFromCaller, { once: true });
+
+		const baseUrl = this._remoteComposerBaseUrl();
+		const response = await fetch(
+			`${baseUrl}/api/projects/${encodeURIComponent(projectId)}/composer/run`,
+			{
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Accept': 'text/event-stream',
+					'Authorization': `Bearer ${token}`
+				},
+				body: JSON.stringify({
+					prompt: goal.prompt,
+					mode: 'agent',
+					model: this._floatService.getActiveModel().id,
+					maxIterations: goal.maxSteps,
+					workspaceFiles
+				}),
+				signal: controller.signal
+			}
+		);
+
+		if (!response.ok) {
+			const body = await response.json().catch(() => ({}));
+			throw new Error(body?.error || `Composer API request failed (HTTP ${response.status}).`);
+		}
+		if (!response.body) throw new Error('Composer API did not return an event stream.');
+
+		let streamBuffer = '';
+		let remoteExecution: any = null;
+		const decoder = new TextDecoder();
+		const processFrame = (frame: string) => {
+			const data = frame.split(/\\r?\\n/)
+				.filter(line => line.startsWith('data:'))
+				.map(line => line.slice(5).trimStart())
+				.join('\\n');
+			if (!data) return;
+			let payload: any;
+			try { payload = JSON.parse(data); } catch { return; }
+			if (payload?.execution) remoteExecution = payload.execution;
+			if (payload?.type === 'tool_result') {
+				const step: IComposerAgentStep = {
+					stepIndex: payload.iteration || 0,
+					thought: payload.result?.summary || payload.result?.error || `Executed ${payload.toolName || 'tool'}`,
+					toolCall: {
+						id: `remote-${payload.iteration || 0}-${payload.toolName || 'tool'}`,
+						name: payload.toolName || 'unknown',
+						parameters: {}
+					},
+					toolResult: {
+						callId: `remote-${payload.iteration || 0}-${payload.toolName || 'tool'}`,
+						toolName: payload.toolName || 'unknown',
+						success: payload.result?.success === true,
+						output: payload.result?.summary || '',
+						error: payload.result?.error
+					},
+					timestamp: Date.now()
+				};
+				onStep?.(step);
+			}
+		};
+
+		const reader = response.body.getReader();
+		try {
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				streamBuffer += decoder.decode(value, { stream: true }).replace(/\\r\\n/g, '\\n');
+				let boundary = streamBuffer.indexOf('\\n\\n');
+				while (boundary >= 0) {
+					processFrame(streamBuffer.slice(0, boundary));
+					streamBuffer = streamBuffer.slice(boundary + 2);
+					boundary = streamBuffer.indexOf('\\n\\n');
+				}
+			}
+			streamBuffer += decoder.decode();
+			if (streamBuffer.trim()) processFrame(streamBuffer);
+		} finally {
+			reader.releaseLock();
+			signal?.removeEventListener('abort', abortFromCaller);
+		}
+
+		if (!remoteExecution) {
+			if (controller.signal.aborted) {
+				return { id: 'cancelled', goal: goalWithIsolation, steps: [], status: 'cancelled', error: 'Composer task was cancelled.' };
+			}
+			throw new Error('Composer event stream ended without a final execution result.');
+		}
+
+		const steps: IComposerAgentStep[] = (remoteExecution.steps || []).map((step: any) => ({
+			stepIndex: step.iteration || 0,
+			thought: step.summary || '',
+			toolCall: {
+				id: step.toolCallId || '',
+				name: step.toolName || 'unknown',
+				parameters: {}
+			},
+			toolResult: {
+				callId: step.toolCallId || '',
+				toolName: step.toolName || 'unknown',
+				success: step.success === true,
+				output: step.summary || '',
+				error: step.error
+			},
+			timestamp: step.timestamp || Date.now()
+		}));
+		for (const step of steps) onStep?.(step);
+
+		let proposal: IFloatMultiFileProposal | undefined;
+		let checkpointId: string | undefined;
+		const remoteProposalId = Array.isArray(remoteExecution.proposalsGenerated)
+			? remoteExecution.proposalsGenerated[0]
+			: undefined;
+		if (remoteProposalId) {
+			const proposalResponse = await fetch(
+				`${baseUrl}/api/projects/${encodeURIComponent(projectId)}/proposals/${encodeURIComponent(remoteProposalId)}`,
+				{ headers: { 'Authorization': `Bearer ${token}` } }
+			);
+			if (!proposalResponse.ok) {
+				const body = await proposalResponse.json().catch(() => ({}));
+				throw new Error(body?.error || 'Composer created a proposal but the review details could not be loaded.');
+			}
+			const payload = await proposalResponse.json();
+			const remoteProposal = payload?.proposal;
+			if (!remoteProposal || !Array.isArray(remoteProposal.changes)) {
+				throw new Error('Composer returned an invalid proposal record.');
+			}
+
+			const workspaceRoot = (this._toolRegistry.fileSystem as any).workspaceRoot || process.cwd();
+			const pathMap = new Map<string, string>();
+			const changes = remoteProposal.changes.map((change: any) => {
+				if (change.operation !== 'create' && change.operation !== 'modify') {
+					throw new Error(`Composer proposed unsupported operation "${change.operation}" for ${change.path}.`);
+				}
+				const relativePath = String(change.path || '');
+				const absolutePath = URI.joinPath(URI.file(workspaceRoot), ...relativePath.split('/')).fsPath;
+				pathMap.set(relativePath, absolutePath);
+				return {
+					path: absolutePath,
+					originalContent: String(change.originalContent || ''),
+					proposedContent: String(change.proposedContent || '')
+				};
+			});
+			const checkpointContents = Object.fromEntries(changes.map((change: any) => [change.path, change.originalContent]));
+			checkpointId = this._floatService.getCheckpointService().createCheckpoint(
+				`Remote Composer: ${remoteProposal.description || goal.prompt.slice(0, 40)}`,
+					checkpointContents
+			).id;
+			proposal = this._orchestrator.createProposal(
+				remoteProposal.description || 'FLOAT Composer proposal',
+				`Server-side structured-tool proposal ${remoteProposal.id}.`,
+				changes,
+				checkpointId
+			);
+			this._activeMultiFileProposal = proposal;
+			this._activeRemoteProposal = {
+				proposalId: remoteProposal.id,
+				projectId,
+				approvedPaths: remoteProposal.affectedFiles || remoteProposal.changes.map((change: any) => change.path),
+				absolutePathByRelative: pathMap
+			};
+
+			try {
+				const shadowSession = this._shadowWorkspace.createSession({
+					sessionId: `remote-composer-${remoteProposal.id}`,
+					baseFiles: Object.fromEntries(changes.map((change: any) => [change.path, change.originalContent]))
+				});
+				for (const change of changes) this._shadowWorkspace.setFileOverlay(shadowSession.id, change.path, change.proposedContent);
+				const validation = await this._shadowWorkspace.validateSession(shadowSession.id);
+				this._shadowWorkspace.disposeSession(shadowSession.id);
+				this._orchestrator.attachValidationResult(proposal.id, validation);
+			} catch {
+				// The native diff remains reviewable when the optional shadow compiler is unavailable.
+			}
+		}
+
+		const status = remoteExecution.status === 'completed'
+			? 'completed'
+			: remoteExecution.status === 'cancelled'
+				? 'cancelled'
+				: 'failed';
+		return {
+			id: remoteExecution.taskId || 'remote-composer',
+			goal: goalWithIsolation,
+			steps,
+			status,
+			proposal,
+			checkpointId,
+			error: status === 'completed'
+				? undefined
+				: remoteExecution.error || `Composer stopped with status ${remoteExecution.status}.`
+		};
 	}
 
 	public async applyProposal(proposalId: string): Promise<boolean> {
