@@ -6,6 +6,7 @@ import {
 } from '../src/server/agent/composerExecutionService';
 import { setProjectLookupForTests, resetEphemeralWorkspacesForTests } from '../src/server/projectOwnership';
 import { ExecutionPolicyManager } from '../src/server/policy/executionPolicy';
+import { ProposalService } from '../src/server/proposals/proposalService';
 import type { AIProviderRequest, AIProviderResponse } from '../src/server/providers/base';
 import type { FileNode } from '../src/types';
 
@@ -116,6 +117,35 @@ async function run(): Promise<void> {
     assert.equal(bounded.iterations, 1);
     assert.equal(bounded.steps.length, 1);
 
+    // In sandboxed mode, the agent may stage a durable proposal, but the
+    // proposal remains pending review and never edits the project snapshot.
+    ExecutionPolicyManager.setPolicyMode(USER_ID, 'sandboxed');
+    const proposalRun = await runComposerTask(options('agent', async request => {
+      assert.ok(request.tools?.some(tool => tool.name === 'propose_changes'));
+      return {
+        text: 'I prepared a small change for review.',
+        toolCalls: [{
+          id: 'call-propose',
+          name: 'propose_changes',
+          arguments: {
+            description: 'Update the answer constant',
+            changes: [{
+              path: 'src/index.ts',
+              operation: 'modify',
+              proposedContent: 'export const answer = 43;\\n'
+            }]
+          }
+        }]
+      };
+    }, { maxIterations: 1 }));
+    assert.equal(proposalRun.steps[0].success, true);
+    assert.equal(proposalRun.proposalsGenerated.length, 1);
+    const stagedProposal = ProposalService.getProposal(proposalRun.proposalsGenerated[0]);
+    assert.ok(stagedProposal);
+    assert.equal(stagedProposal?.status, 'pending_review');
+    assert.equal(stagedProposal?.changes[0].originalContent, 'export const answer = 42;\\n');
+    assert.equal(stagedProposal?.changes[0].proposedContent, 'export const answer = 43;\\n');
+
     // A pre-cancelled task does not call the model or execute tools.
     const abort = new AbortController();
     abort.abort();
@@ -135,10 +165,11 @@ async function run(): Promise<void> {
     assert.equal(rejected.steps[0].success, false);
     assert.match(rejected.steps[0].error || '', /not available/);
 
-    console.log('Composer execution service: 7 scenarios passed.');
+    console.log('Composer execution service: 8 scenarios passed.');
   } finally {
     setProjectLookupForTests(null);
     resetEphemeralWorkspacesForTests();
+    ProposalService.clearForTests?.();
     ExecutionPolicyManager.clearCacheForTests();
   }
 }
