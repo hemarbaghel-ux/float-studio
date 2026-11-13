@@ -247,8 +247,14 @@ function isRecord(value: unknown): value is Record<string, any> {
 export async function runComposerTask(options: RunComposerTaskOptions): Promise<ComposerExecutionResult> {
   const startedAt = Date.now();
   const taskId = options.taskId || randomUUID();
-  const maxIterations = Math.max(1, Math.min(Math.floor(options.maxIterations || 8), 8));
-  const maxRuntimeMs = Math.max(10_000, Math.min(Math.floor(options.maxRuntimeMs || 120_000), 120_000));
+  const requestedIterations = typeof options.maxIterations === 'number' && Number.isFinite(options.maxIterations)
+    ? Math.floor(options.maxIterations)
+    : 8;
+  const requestedRuntimeMs = typeof options.maxRuntimeMs === 'number' && Number.isFinite(options.maxRuntimeMs)
+    ? Math.floor(options.maxRuntimeMs)
+    : 120_000;
+  const maxIterations = Math.max(1, Math.min(requestedIterations, 8));
+  const maxRuntimeMs = Math.max(10_000, Math.min(requestedRuntimeMs, 120_000));
   const availableTools = toolsForMode(options.mode);
   const steps: ComposerToolStep[] = [];
   const proposalsGenerated: string[] = [];
