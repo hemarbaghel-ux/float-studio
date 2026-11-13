@@ -319,6 +319,7 @@ export class FloatComposer extends Disposable {
 
 		let streamBuffer = '';
 		let remoteExecution: any = null;
+		const streamedStepKeys = new Set<string>();
 		const decoder = new TextDecoder();
 		const processFrame = (frame: string) => {
 			const data = frame.split(/\r?\n/)
@@ -330,6 +331,7 @@ export class FloatComposer extends Disposable {
 			try { payload = JSON.parse(data); } catch { return; }
 			if (payload?.execution) remoteExecution = payload.execution;
 			if (payload?.type === 'tool_result') {
+				streamedStepKeys.add(`${payload.iteration || 0}:${payload.toolName || 'unknown'}`);
 				const step: IComposerAgentStep = {
 					stepIndex: payload.iteration || 0,
 					thought: payload.result?.summary || payload.result?.error || `Executed ${payload.toolName || 'tool'}`,
@@ -395,7 +397,10 @@ export class FloatComposer extends Disposable {
 			},
 			timestamp: step.timestamp || Date.now()
 		}));
-		for (const step of steps) onStep?.(step);
+		for (const step of steps) {
+			const key = `${step.stepIndex}:${step.toolCall?.name || 'unknown'}`;
+			if (!streamedStepKeys.has(key)) onStep?.(step);
+		}
 
 		let proposal: IFloatMultiFileProposal | undefined;
 		let checkpointId: string | undefined;
