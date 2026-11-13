@@ -10,6 +10,7 @@ import type { AIProviderRequest, AIProviderResponse, ToolCallDefinition } from '
 import { BoundedToolExecutor, type BoundedToolName, type ToolExecutionOutcome } from './boundedToolExecutor';
 import { ExecutionPolicyManager } from '../policy/executionPolicy';
 import { DEFAULT_TTL_MS, saveServerDocDurable } from '../durableState';
+import type { FileNode } from '../../types';
 
 export type ComposerMode = 'ask' | 'plan' | 'agent' | 'manual';
 export type ComposerExecutionStatus =
@@ -75,6 +76,7 @@ export interface RunComposerTaskOptions {
   maxIterations?: number;
   maxRuntimeMs?: number;
   dataSharingAllowed?: boolean;
+  workspaceFiles?: FileNode[];
   signal?: AbortSignal;
   generate: (request: AIProviderRequest) => Promise<AIProviderResponse>;
   onEvent?: (event: ComposerExecutionEvent) => void;
@@ -388,7 +390,7 @@ export async function runComposerTask(options: RunComposerTaskOptions): Promise<
         } else {
           outcome = await BoundedToolExecutor.executeTool(
             { toolName: toolName as BoundedToolName, args: call.arguments },
-            { userId: options.userId, projectId: options.projectId, signal: options.signal }
+            { userId: options.userId, projectId: options.projectId, files: options.workspaceFiles, signal: options.signal }
           );
           if (outcome.requiresHumanApproval) stopForApproval = true;
           if (toolName === 'propose_changes' && outcome.success && outcome.data?.proposalId) {
