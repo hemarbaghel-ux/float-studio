@@ -186,7 +186,10 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       const contents = this.normalizeMessages(request.messages);
       const apiModel = this.resolveApiModel(request.apiModelId || request.model);
 
-      const config = this.buildGenerationConfig(request, apiModel);
+      const config = {
+        ...this.buildGenerationConfig(request, apiModel),
+        ...(request.signal ? { abortSignal: request.signal } : {})
+      };
 
       const response = await ai.models.generateContent({
         model: apiModel,
