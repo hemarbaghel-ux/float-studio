@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import {
   normalizeComposerWorkspaceSnapshot,
   MAX_COMPOSER_WORKSPACE_FILE_BYTES,
-  MAX_COMPOSER_WORKSPACE_FILES
+  MAX_COMPOSER_WORKSPACE_FILES,
+  mergeApprovedComposerChanges
 } from '../src/server/agent/composerWorkspaceSnapshot';
 
 const normal = normalizeComposerWorkspaceSnapshot([
@@ -54,4 +55,75 @@ assert.throws(
   /limited to 500 files/i
 );
 
-console.log('Composer workspace snapshot validation: 7 scenarios passed.');
+const savedCloud = normalizeComposerWorkspaceSnapshot([
+  { path: 'src/index.ts', content: 'export const answer = 42;\n' },
+  { path: 'README.md', content: '# Saved cloud version\n' }
+]);
+const submittedAfterApply = normalizeComposerWorkspaceSnapshot([
+  { path: 'src/index.ts', content: 'export const answer = 43;\n' },
+  { path: 'README.md', content: '# Unsynced local edit\n' },
+  { path: 'src/new.ts', content: 'export const created = true;\n' }
+]);
+const merged = mergeApprovedComposerChanges(
+  savedCloud.files,
+  submittedAfterApply.files,
+  [
+    {
+      path: 'src/index.ts',
+      operation: 'modify',
+      originalContent: 'export const answer = 42;\n',
+      proposedContent: 'export const answer = 43;\n'
+    },
+    {
+      path: 'src/new.ts',
+      operation: 'create',
+      originalContent: '',
+      proposedContent: 'export const created = true;\n'
+    }
+  ],
+  ['src/index.ts', 'src/new.ts']
+);
+const mergedFiles = new Map<string, string>();
+const flatten = (nodes: any[], prefix = '') => {
+  for (const node of nodes) {
+    const fullPath = prefix ? prefix + '/' + node.name : node.name;
+    if (node.type === 'file') mergedFiles.set(fullPath, node.content || '');
+    else flatten(node.children || [], fullPath);
+  }
+};
+flatten(merged.files);
+assert.equal(mergedFiles.get('src/index.ts'), 'export const answer = 43;\n');
+assert.equal(mergedFiles.get('src/new.ts'), 'export const created = true;\n');
+// An unrelated local edit is not silently uploaded by proposal application.
+assert.equal(mergedFiles.get('README.md'), '# Saved cloud version\n');
+
+assert.throws(
+  () => mergeApprovedComposerChanges(
+    savedCloud.files,
+    submittedAfterApply.files,
+    [{
+      path: 'src/index.ts',
+      operation: 'modify',
+      originalContent: 'stale version',
+      proposedContent: 'export const answer = 43;\n'
+    }],
+    ['src/index.ts']
+  ),
+  /changed in cloud storage/i
+);
+assert.throws(
+  () => mergeApprovedComposerChanges(
+    savedCloud.files,
+    submittedAfterApply.files,
+    [{
+      path: 'src/index.ts',
+      operation: 'delete',
+      originalContent: 'export const answer = 42;\n',
+      proposedContent: ''
+    }],
+    ['src/index.ts']
+  ),
+  /cannot automatically apply/i
+);
+
+console.log('Composer workspace snapshot validation: 10 scenarios passed.');
