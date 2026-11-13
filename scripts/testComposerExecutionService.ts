@@ -161,6 +161,24 @@ async function run(): Promise<void> {
     assert.equal(cancelled.status, 'cancelled');
     assert.equal(calledAfterAbort, false);
 
+    // Cancellation aborts a provider request that is already in flight.
+    const inFlightController = new AbortController();
+    let signalSeenResolve!: () => void;
+    const signalSeen = new Promise<void>(resolve => { signalSeenResolve = resolve; });
+    const inFlightTask = runComposerTask(options('agent', async request => {
+      assert.equal(request.signal, inFlightController.signal);
+      signalSeenResolve();
+      return await new Promise<AIProviderResponse>((_resolve, reject) => {
+        const abort = () => reject(Object.assign(new Error('Provider request aborted.'), { name: 'AbortError' }));
+        if (request.signal?.aborted) abort();
+        else request.signal?.addEventListener('abort', abort, { once: true });
+      });
+    }, { signal: inFlightController.signal }));
+    await signalSeen;
+    inFlightController.abort();
+    const cancelledDuringRequest = await inFlightTask;
+    assert.equal(cancelledDuringRequest.status, 'cancelled');
+
     // Unavailable or malformed tool calls are rejected rather than dispatched.
     const rejected = await runComposerTask(options('agent', async () => ({
       text: 'Trying an unsupported tool.',
@@ -169,7 +187,7 @@ async function run(): Promise<void> {
     assert.equal(rejected.steps[0].success, false);
     assert.match(rejected.steps[0].error || '', /not available/);
 
-    console.log('Composer execution service: 8 scenarios passed.');
+    console.log('Composer execution service: 9 scenarios passed.');
   } finally {
     setProjectLookupForTests(null);
     resetEphemeralWorkspacesForTests();
