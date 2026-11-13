@@ -51,6 +51,8 @@ The Playwright test launches the real Electron application and verifies:
 
 The test must run after native compilation and Electron runtime preparation. A missing executable, missing UI surface, failed file save or renderer startup failure is a test failure.
 
-## Known boundary
+## Remaining Stage 1 work
 
-Stage 1 validates local native IDE workflows. Remote workspaces, cloud execution, full AI Agent parity, MCP, cloud agents and automated PR review belong to later stages. Do not claim those capabilities based on the existence of upstream remote APIs or FLOAT placeholder UI.
+This first Stage 1 increment verifies local native IDE workflows only. Remote development providers (for example SSH, development containers and WSL) remain unimplemented or unverified in FLOAT's supported product configuration. Do not count upstream remote APIs alone as support.
+
+Cloud execution, full AI Agent parity, MCP, cloud agents and automated PR review belong to later stages. Do not claim those capabilities based on placeholder UI or unused service interfaces.
