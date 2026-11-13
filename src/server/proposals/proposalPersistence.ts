@@ -1,3 +1,4 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '../adminFirebase';
 import type { CodeProposal } from '../../types/proposal';
 
@@ -13,10 +14,17 @@ export async function saveCodeProposal(proposal: CodeProposal): Promise<void> {
 }
 
 /** Persist Apply status only if the project snapshot and proposal revision are unchanged. */
+export interface AppliedProjectSnapshotManifest {
+  fileGeneration: string;
+  fileChunkCount: number;
+  fileBytes: number;
+}
+
 export async function saveAppliedCodeProposalForProjectRevision(
   proposal: CodeProposal,
   expectedProjectData: Record<string, unknown>,
-  expectedProposal: CodeProposal
+  expectedProposal: CodeProposal,
+  nextProjectSnapshot?: AppliedProjectSnapshotManifest
 ): Promise<void> {
   const serialized = JSON.stringify(proposal);
   if (Buffer.byteLength(serialized, 'utf8') > MAX_PROPOSAL_BYTES) {
@@ -63,6 +71,18 @@ export async function saveAppliedCodeProposalForProjectRevision(
       const conflict = new Error('Workspace changed while Apply was being recorded. Reload the project and review the proposal again.') as Error & { code: string };
       conflict.code = 'aborted';
       throw conflict;
+    }
+
+    if (nextProjectSnapshot) {
+      transaction.update(projectRef, {
+        fileStorageVersion: 2,
+        fileGeneration: nextProjectSnapshot.fileGeneration,
+        fileChunkCount: nextProjectSnapshot.fileChunkCount,
+        fileBytes: nextProjectSnapshot.fileBytes,
+        fileSnapshotComplete: true,
+        files: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
     }
 
     transaction.set(proposalRef, JSON.parse(serialized));
