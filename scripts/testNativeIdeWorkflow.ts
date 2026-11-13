@@ -89,7 +89,7 @@ async function waitForEditorText(page: any, expected: string): Promise<void> {
 
 async function openCommandPaletteCommand(page: any, command: string): Promise<void> {
   await page.keyboard.press(MODIFIER + '+Shift+P');
-  const input = page.locator('.quick-input-widget input').first();
+  const input = page.locator('.quick-input-widget .quick-input-box input').first();
   await input.waitFor({ state: 'visible', timeout: 10_000 });
   await input.fill(command);
   await page.keyboard.press('Enter');
@@ -97,7 +97,7 @@ async function openCommandPaletteCommand(page: any, command: string): Promise<vo
 
 async function openQuickOpenFile(page: any, fileName: string): Promise<void> {
   await page.keyboard.press(MODIFIER + '+P');
-  const input = page.locator('.quick-input-widget input').first();
+  const input = page.locator('.quick-input-widget .quick-input-box input').first();
   await input.waitFor({ state: 'visible', timeout: 10_000 });
   await input.fill(fileName);
   await page.keyboard.press('Enter');
@@ -209,10 +209,14 @@ async function run(): Promise<void> {
 
     // Verify a real edit/save round-trip against the temporary filesystem.
     const saveMarker = '// FLOAT_STAGE1_SAVE_ROUNDTRIP';
-    await page.locator('.monaco-editor').first().click();
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
+    const editorInput = page.locator('.monaco-editor textarea.inputarea').first();
+    await editorInput.waitFor({ state: 'attached', timeout: TIMEOUT_MS });
+    // Monaco routes keyboard input through its hidden textarea. Focus that
+    // element explicitly instead of relying on a click landing in the editor.
+    await editorInput.evaluate((element: HTMLTextAreaElement) => element.focus());
+    await page.keyboard.press(MODIFIER + '+End');
     await page.keyboard.press('Enter');
-    await page.keyboard.insertText(saveMarker);
+    await page.keyboard.type(saveMarker);
     // Invoke the workbench command explicitly instead of relying on host shortcut routing.
     // This makes the test assert the actual Save command and on-disk write, not just editor input.
     await openCommandPaletteCommand(page, 'File: Save');

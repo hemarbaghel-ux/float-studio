@@ -33,7 +33,8 @@
     "build:float-daemon-worker": "node scripts/buildFloatDaemonWorker.mjs",
     "build:extensions": "node scripts/buildAllBuiltinExtensions.cjs",
     "start": "node dist/server.cjs",
-    "test:native-ide": "node node_modules/tsx/dist/cli.mjs scripts/testNativeIdeWorkflow.ts"
+    "test:native-ide": "node node_modules/tsx/dist/cli.mjs scripts/testNativeIdeWorkflow.ts",
+    "test:native-keyboard-layout": "node node_modules/tsx/dist/cli.mjs scripts/testNativeKeyboardLayoutFallback.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
