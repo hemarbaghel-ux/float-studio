@@ -262,7 +262,11 @@ export class FloatWorkspaceIndexer {
 
 			for (const file of payload.files) {
 				const normPath = file.relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
-				if (!normPath || this.isExcluded(normPath)) {
+				if (!normPath || normPath.startsWith('/') || /^[a-z]:/i.test(normPath) || normPath.includes('\\0') || normPath.split('/').some(segment => segment === '..')) {
+					this.clear();
+					return false;
+				}
+				if (this.isExcluded(normPath)) {
 					continue;
 				}
 				this._files.set(normPath, { ...file, relativePath: normPath });
@@ -274,8 +278,16 @@ export class FloatWorkspaceIndexer {
 				}
 			}
 
+			if (this._files.size !== payload.stats.fileCount || this._merkleTree.rootHash !== payload.stats.rootHash) {
+				this.clear();
+				return false;
+			}
 			if (payload.vectorIndex) {
 				this._vectorIndex.deserialize(payload.vectorIndex);
+			}
+			if (this._vectorIndex.chunkCount !== payload.stats.chunkCount) {
+				this.clear();
+				return false;
 			}
 			return true;
 		} catch {
