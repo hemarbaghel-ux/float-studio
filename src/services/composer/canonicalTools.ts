@@ -21,10 +21,20 @@ import {
   generateUnifiedDiff,
 } from '../../shared/contracts/proposals';
 import { validateSafeWorkspacePath } from '../../shared/contracts/workspace';
+import { TerminalExecutionPolicy } from '../terminal';
 
 const DEFAULT_MAX_READ_BYTES = 50_000;
 const DEFAULT_MAX_SEARCH_RESULTS = 25;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
+
+export function sanitizeToolOutputText(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/sk-(?:proj-)?[a-zA-Z0-9_\-]{12,}/g, '[REDACTED_SECRET]')
+    .replace(/gh[pousr]_[a-zA-Z0-9]{16,}/g, '[REDACTED_SECRET]')
+    .replace(/AIzaSy[A-Za-z0-9_\-]{25,}/g, '[REDACTED_SECRET]')
+    .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED_SECRET]');
+}
 
 /**
  * Validates tool arguments against canonical parameter schemas.
@@ -126,7 +136,7 @@ export const readFileTool: IToolDefinition = {
         };
       }
 
-      let content = await context.workspace.readFile(safePath);
+      let content = sanitizeToolOutputText(await context.workspace.readFile(safePath));
       const totalChars = content.length;
       let truncated = false;
 
@@ -187,14 +197,15 @@ export const searchCodebaseTool: IToolDefinition = {
       const query = String(args.query).trim();
       const limit = typeof args.limit === 'number' ? Math.min(Math.max(1, args.limit), 50) : DEFAULT_MAX_SEARCH_RESULTS;
 
-      // If workspace has an AST/BM25 index (e.g. LocalFileSystemWorkspaceService), use it
       const anyWorkspace = context.workspace as any;
       if (anyWorkspace.index && typeof anyWorkspace.index.search === 'function') {
         const indexResults = anyWorkspace.index.search(query, { maxResults: limit });
         const matches = indexResults.map((r: any) => ({
           path: r.path,
           score: r.score,
-          preview: r.preview || (r.symbols && r.symbols.length > 0 ? `Symbols: ${r.symbols.map((s: any) => s.name).join(', ')}` : ''),
+          preview: sanitizeToolOutputText(
+            r.preview || (r.symbols && r.symbols.length > 0 ? `Symbols: ${r.symbols.map((s: any) => s.name).join(', ')}` : '')
+          ),
           line: r.symbols && r.symbols[0] ? r.symbols[0].line : 1,
         }));
 
@@ -207,7 +218,6 @@ export const searchCodebaseTool: IToolDefinition = {
         };
       }
 
-      // Fallback: search listed workspace files line by line
       const files = await context.workspace.listFiles({ recursive: true, maxFiles: 100 });
       const matches: Array<{ path: string; line: number; preview: string }> = [];
       const lowerQuery = query.toLowerCase();
@@ -222,7 +232,7 @@ export const searchCodebaseTool: IToolDefinition = {
               matches.push({
                 path: file.path,
                 line: i + 1,
-                preview: lines[i].trim().slice(0, 150),
+                preview: sanitizeToolOutputText(lines[i].trim().slice(0, 150)),
               });
               if (matches.length >= limit) break;
             }
@@ -292,7 +302,7 @@ export const inspectSymbolTool: IToolDefinition = {
             references: references.map((r: any) => ({
               path: r.path,
               line: r.line,
-              preview: r.preview,
+              preview: sanitizeToolOutputText(r.preview || ''),
             })),
           },
           durationMs: Date.now() - start,
@@ -320,7 +330,250 @@ export const inspectSymbolTool: IToolDefinition = {
 };
 
 /**
- * 5. propose_changes tool: Generates a multi-file unified diff proposal.
+ * 5. retrieve_context tool: Bounded codebase context assembly with file/line provenance.
+ */
+export const retrieveContextTool: IToolDefinition = {
+  name: 'retrieve_context',
+  description: 'Retrieves bounded codebase snippets with file and line provenance for a task or question.',
+  parametersSchema: CANONICAL_TOOL_SCHEMAS.retrieve_context,
+  requiresApproval: false,
+  async execute(args: any, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    const start = Date.now();
+    const validationError = validateToolArgs('retrieve_context', args);
+    if (validationError) {
+      return { toolName: 'retrieve_context', success: false, error: validationError, durationMs: Date.now() - start, timestamp: start };
+    }
+
+    try {
+      const query = String(args.query).trim();
+      const maxChars = typeof args.maxChars === 'number' ? Math.min(Math.max(500, args.maxChars), 32_000) : 12_000;
+      const files = await context.workspace.listFiles({ recursive: true, maxFiles: 100 });
+      const terms = query.toLowerCase().split(/\W+/).filter(t => t.length >= 2);
+      const snippets: Array<{ path: string; startLine: number; endLine: number; score: number; excerpt: string }> = [];
+      let usedChars = 0;
+
+      for (const file of files) {
+        if (file.type !== 'file') continue;
+        try {
+          const raw = await context.workspace.readFile(file.path);
+          const lower = raw.toLowerCase();
+          let score = 0;
+          for (const term of terms) {
+            if (file.path.toLowerCase().includes(term)) score += 3;
+            if (lower.includes(term)) score += 1;
+          }
+          if (score > 0 || snippets.length < 3) {
+            const lines = raw.split('\n');
+            const excerpt = sanitizeToolOutputText(lines.slice(0, 60).join('\n'));
+            if (usedChars + excerpt.length <= maxChars) {
+              usedChars += excerpt.length;
+              snippets.push({
+                path: file.path,
+                startLine: 1,
+                endLine: Math.min(lines.length, 60),
+                score,
+                excerpt,
+              });
+            }
+          }
+        } catch {
+          // Skip unreadable files
+        }
+      }
+
+      snippets.sort((a, b) => b.score - a.score);
+      return {
+        toolName: 'retrieve_context',
+        success: true,
+        data: {
+          query,
+          snippets: snippets.slice(0, 8),
+          totalChars: usedChars,
+          maxChars,
+        },
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    } catch (err: any) {
+      return {
+        toolName: 'retrieve_context',
+        success: false,
+        error: err?.message || String(err),
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    }
+  },
+};
+
+/**
+ * 6. inspect_diagnostics tool: Runs syntax and static diagnostic checks on workspace files.
+ */
+export const inspectDiagnosticsTool: IToolDefinition = {
+  name: 'inspect_diagnostics',
+  description: 'Inspects workspace files for TypeScript, JavaScript, Python, and JSON syntax/compiler diagnostics.',
+  parametersSchema: CANONICAL_TOOL_SCHEMAS.inspect_diagnostics,
+  requiresApproval: false,
+  async execute(args: any, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    const start = Date.now();
+    const validationError = validateToolArgs('inspect_diagnostics', args);
+    if (validationError) {
+      return { toolName: 'inspect_diagnostics', success: false, error: validationError, durationMs: Date.now() - start, timestamp: start };
+    }
+
+    try {
+      const requestedPaths: string[] = Array.isArray(args.paths) ? args.paths : [];
+      const targetFiles: Array<{ path: string; content: string }> = [];
+
+      if (requestedPaths.length > 0) {
+        for (const p of requestedPaths) {
+          const safePath = validateSafeWorkspacePath(p);
+          if (await context.workspace.fileExists(safePath)) {
+            targetFiles.push({ path: safePath, content: await context.workspace.readFile(safePath) });
+          }
+        }
+      } else {
+        const listed = await context.workspace.listFiles({ recursive: true, maxFiles: 100 });
+        for (const f of listed) {
+          if (f.type === 'file') {
+            try {
+              targetFiles.push({ path: f.path, content: await context.workspace.readFile(f.path) });
+            } catch {}
+          }
+        }
+      }
+
+      const { ValidationService } = await import('../../server/validation/validationService');
+      const checkResult = ValidationService.validateSyntax(targetFiles);
+      return {
+        toolName: 'inspect_diagnostics',
+        success: true,
+        data: {
+          status: checkResult.status,
+          filesChecked: targetFiles.length,
+          diagnostics: checkResult.diagnostics,
+          message: checkResult.message,
+        },
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    } catch (err: any) {
+      return {
+        toolName: 'inspect_diagnostics',
+        success: false,
+        error: err?.message || String(err),
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    }
+  },
+};
+
+/**
+ * 7. inspect_git tool: Inspects workspace Git status and unified diffs.
+ */
+export const inspectGitTool: IToolDefinition = {
+  name: 'inspect_git',
+  description: 'Inspects current Git branch, working tree status, and unified diff.',
+  parametersSchema: CANONICAL_TOOL_SCHEMAS.inspect_git,
+  requiresApproval: false,
+  async execute(args: any, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    const start = Date.now();
+    const validationError = validateToolArgs('inspect_git', args);
+    if (validationError) {
+      return { toolName: 'inspect_git', success: false, error: validationError, durationMs: Date.now() - start, timestamp: start };
+    }
+
+    try {
+      const rootUri = context.workspace.getRootUri();
+      if (rootUri.startsWith('file://')) {
+        const fsPath = rootUri.replace(/^file:\/\//, '');
+        const { NativeLocalGitService } = await import('../git/nativeLocalGitService');
+        const git = new NativeLocalGitService(fsPath);
+        if (await git.isGitRepository()) {
+          const status = await git.getStatus();
+          const diff = args.includeDiff !== false ? await git.getDiff() : '';
+          return {
+            toolName: 'inspect_git',
+            success: true,
+            data: {
+              mode: 'native_git',
+              branch: status.branch,
+              clean: status.clean,
+              entries: status.entries,
+              diff: sanitizeToolOutputText(diff.slice(0, 24_000)),
+            },
+            durationMs: Date.now() - start,
+            timestamp: start,
+          };
+        }
+      }
+
+      const files = await context.workspace.listFiles({ recursive: true, maxFiles: 100 });
+      return {
+        toolName: 'inspect_git',
+        success: true,
+        data: {
+          mode: 'workspace_snapshot',
+          branch: 'main',
+          clean: true,
+          trackedFileCount: files.filter(f => f.type === 'file').length,
+          diff: '',
+        },
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    } catch (err: any) {
+      return {
+        toolName: 'inspect_git',
+        success: false,
+        error: err?.message || String(err),
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    }
+  },
+};
+
+/**
+ * 8. request_approval tool: Requests explicit human approval for privileged actions.
+ */
+export const requestApprovalTool: IToolDefinition = {
+  name: 'request_approval',
+  description: 'Requests explicit human approval before executing privileged commands, Git pushes, or mutations.',
+  parametersSchema: CANONICAL_TOOL_SCHEMAS.request_approval,
+  requiresApproval: true,
+  async execute(args: any, _context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    const start = Date.now();
+    const validationError = validateToolArgs('request_approval', args);
+    if (validationError) {
+      return { toolName: 'request_approval', success: false, error: validationError, durationMs: Date.now() - start, timestamp: start };
+    }
+
+    const action = String(args.action).trim();
+    const reason = String(args.reason).trim();
+    const target = args.target ? String(args.target).trim() : undefined;
+
+    return {
+      toolName: 'request_approval',
+      success: true,
+      requiresApproval: true,
+      approvalReason: `${action}: ${reason}`,
+      data: {
+        approvalId: `appr_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+        action,
+        reason,
+        target,
+        status: 'pending_user_approval',
+      },
+      durationMs: Date.now() - start,
+      timestamp: start,
+    };
+  },
+};
+
+/**
+ * 9. propose_changes tool: Generates a multi-file unified diff proposal.
  *
  * CRITICAL SAFETY INVARIANT:
  * Does NOT modify files on disk! Packages the change set into an IProposal
@@ -428,7 +681,7 @@ export const proposeChangesTool: IToolDefinition = {
 };
 
 /**
- * 6. run_command tool: Runs approved verification commands.
+ * 10. run_command tool: Runs approved verification commands.
  */
 export const runCommandTool: IToolDefinition = {
   name: 'run_command',
@@ -445,7 +698,17 @@ export const runCommandTool: IToolDefinition = {
     const command = String(args.command).trim();
     const timeoutMs = typeof args.timeoutMs === 'number' ? Math.min(args.timeoutMs, 60_000) : DEFAULT_COMMAND_TIMEOUT_MS;
 
-    // Verify command against allowed list if configured
+    const policy = TerminalExecutionPolicy.evaluateCommand(command);
+    if (!policy.permitted || policy.isDangerous) {
+      return {
+        toolName: 'run_command',
+        success: false,
+        error: `Command "${command}" is blocked by TerminalExecutionPolicy: ${policy.reason}`,
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    }
+
     if (context.allowedCommands && context.allowedCommands.length > 0) {
       const allowed = context.allowedCommands.some(cmd => command.startsWith(cmd));
       if (!allowed) {
@@ -466,9 +729,9 @@ export const runCommandTool: IToolDefinition = {
             reject(error);
           } else {
             resolve({
-              stdout: stdout ? stdout.toString() : '',
-              stderr: stderr ? stderr.toString() : '',
-              exitCode: error?.code ?? 0,
+              stdout: sanitizeToolOutputText(stdout ? stdout.toString() : '').slice(0, 50_000),
+              stderr: sanitizeToolOutputText(stderr ? stderr.toString() : '').slice(0, 50_000),
+              exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
             });
           }
         });
@@ -514,6 +777,10 @@ export function createStandardToolRegistry(): IToolRegistry {
   registry.register(readFileTool);
   registry.register(searchCodebaseTool);
   registry.register(inspectSymbolTool);
+  registry.register(retrieveContextTool);
+  registry.register(inspectDiagnosticsTool);
+  registry.register(inspectGitTool);
+  registry.register(requestApprovalTool);
   registry.register(proposeChangesTool);
   registry.register(runCommandTool);
   return registry;

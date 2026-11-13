@@ -4,6 +4,13 @@ import type { ModelRouteDefinition } from './router';
 export type ModelProtocol = 'responses' | 'chat_completions';
 export type RoutedProvider = 'openai' | 'google' | 'anthropic';
 
+export interface ModelVerificationMatrix {
+  readonly credentialConfigured: boolean;
+  readonly authVerified: boolean;
+  readonly modelListed: boolean;
+  readonly generationVerified: boolean;
+}
+
 export interface ServerModelDescriptor {
   id: string;
   displayName: string;
@@ -84,17 +91,34 @@ export function getModelProtocol(modelId: string): ModelProtocol {
   return MODEL_ROUTES[modelId]?.protocol || 'chat_completions';
 }
 
-export function getPublicModelCatalog(providerConfigured: Readonly<Record<string, boolean>>) {
+export function getPublicModelCatalog(
+  providerConfigured: Readonly<Record<string, boolean>>,
+  verificationOverrides?: Readonly<Record<string, Partial<ModelVerificationMatrix>>>
+) {
   return MODEL_REGISTRY.filter((model) => model.selectable).map((model) => {
     const configured = providerConfigured[model.providerId] === true;
+    const overrides = verificationOverrides?.[model.id] || {};
+    const verification: ModelVerificationMatrix = {
+      credentialConfigured: configured,
+      authVerified: Boolean(overrides.authVerified),
+      modelListed: Boolean(overrides.modelListed),
+      generationVerified: Boolean(overrides.generationVerified),
+    };
     return {
       ...model,
       providerConfigured: configured,
-      modelAvailability: 'unverified' as const,
-      status: configured ? 'UNKNOWN' as const : 'CONFIG_REQUIRED' as const,
-      availabilityDetails: configured
-        ? 'Server credential is configured; access to this model has not been verified.'
-        : `${model.requiredEnvironmentVariable} is not configured on the server.`
+      verification,
+      modelAvailability: verification.generationVerified ? 'verified' as const : 'unverified' as const,
+      status: verification.generationVerified
+        ? 'AVAILABLE' as const
+        : configured
+          ? 'UNKNOWN' as const
+          : 'CONFIG_REQUIRED' as const,
+      availabilityDetails: verification.generationVerified
+        ? 'Live model generation has been verified on this server.'
+        : configured
+          ? 'Server credential is configured; access to this model has not been verified.'
+          : `${model.requiredEnvironmentVariable} is not configured on the server.`
     };
   });
 }

@@ -27,6 +27,7 @@ import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
 import { brainRouter } from './brain';
 import { createAnalystRouter } from './analystRouter';
+import { createComposerRouter } from './composer/composerRouter';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -144,6 +145,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   // Integrations Routes
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/projects/:projectId/git', gitRouter);
+  app.use('/api/projects/:projectId/composer', createComposerRouter(modelRouter));
   app.use('/api', milestone9Router);
   app.use('/api', brainRouter);
 

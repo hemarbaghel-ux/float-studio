@@ -4,12 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Authoritative Model Catalog & Capabilities Contracts (Phase 2)
+ * Authoritative Model Catalog & Capabilities Contracts (Phase 2 & Stage 2)
  *
  * Establishes a single authoritative source of truth for model capability schemas,
  * provider routing aliases, context window limits, and availability states across
  * backend services, web frontend, and desktop workbenches.
+ * Derived directly from `src/data/verifiedModels.ts` (`VERIFIED_MODELS`).
  */
+
+import { VERIFIED_MODELS } from '../../data/verifiedModels';
 
 export type RoutedProvider = 'openai' | 'google' | 'anthropic' | 'custom';
 export type ModelProtocol = 'responses' | 'chat_completions';
@@ -68,114 +71,56 @@ export interface IModelCatalog {
   /** Returns the default recommended model */
   getDefaultModel(): IModelDescriptor;
 
-  /** Evaluates whether a model is genuinely operational given configured provider credentials */
+  /** Evaluates whether a model's provider credential is configured */
   isModelAvailable(id: string, configuredProviders: Record<string, boolean>): boolean;
 }
 
 /**
  * Canonical verified models shared across the entire FLOAT architecture.
- * Derived strictly from verified models to guarantee zero conflicting sources of truth.
+ * Derived strictly from `VERIFIED_MODELS` in `src/data/verifiedModels.ts`.
  */
 export const CANONICAL_FLOAT_MODELS: readonly IModelDescriptor[] = [
-  {
-    id: 'gpt-6.1-sol',
-    displayName: 'GPT-6.1 Sol',
-    providerId: 'openai',
-    apiModelId: 'gpt-6.1-sol',
-    protocol: 'chat_completions',
-    selectable: true,
-    isDefault: true,
-    contextWindow: 1050000,
-    maxOutputTokens: 65536,
-    description: 'Flagship frontier reasoning and coding model with verified high-speed synthesis.',
+  ...VERIFIED_MODELS.filter(m => m.deprecationStatus !== 'retired').map(m => ({
+    id: m.id,
+    displayName: m.displayName,
+    providerId: m.providerId as RoutedProvider,
+    apiModelId: m.upstreamModelId || m.exactModelId,
+    protocol: (m.apiProtocol || 'chat_completions') as ModelProtocol,
+    selectable: m.deprecationStatus !== 'deprecated',
+    isDefault: m.id === 'gpt-6.1-sol',
+    contextWindow: m.contextWindow,
+    maxOutputTokens: m.maxOutputTokens,
+    description: m.description,
     capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: true,
-      tools: true,
-      structuredOutput: true,
-      streaming: true,
-      longContext: true,
+      coding: m.capabilities.coding,
+      reasoning: m.capabilities.reasoning,
+      vision: m.capabilities.vision,
+      tools: m.capabilities.tools,
+      structuredOutput: m.capabilities.structuredOutput,
+      streaming: m.capabilities.streaming,
+      longContext: m.capabilities.longContext,
     },
     pricing: {
-      inputCostPer1M: 3.0,
-      outputCostPer1M: 15.0,
-      cachedInputCostPer1M: 1.5,
-      currency: 'USD',
-      effectiveDate: '2026-11-01',
-      sourceUrl: 'https://openai.com/pricing',
+      inputCostPer1M: m.pricing.inputCostPer1M,
+      outputCostPer1M: m.pricing.outputCostPer1M,
+      cachedInputCostPer1M: m.pricing.cachedInputCostPer1M,
+      currency: m.pricing.currency,
+      effectiveDate: m.pricing.effectiveDate,
+      sourceUrl: m.pricing.sourceUrl,
     },
-    deprecationStatus: 'active',
-  },
-  {
-    id: 'gpt-6-astra',
-    displayName: 'GPT-6 Astra',
-    providerId: 'openai',
-    apiModelId: 'gpt-6-astra',
-    protocol: 'chat_completions',
-    selectable: true,
-    contextWindow: 1050000,
-    maxOutputTokens: 32768,
-    description: 'Autonomous coding specialist with real-time multi-file editing capabilities.',
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: true,
-      tools: true,
-      structuredOutput: true,
-      streaming: true,
-      longContext: true,
-    },
-    pricing: {
-      inputCostPer1M: 2.5,
-      outputCostPer1M: 10.0,
-      cachedInputCostPer1M: 1.25,
-      currency: 'USD',
-      effectiveDate: '2026-11-01',
-      sourceUrl: 'https://openai.com/pricing',
-    },
-    deprecationStatus: 'active',
-  },
-  {
-    id: 'gemini-3.8-flash',
-    displayName: 'Gemini 3.8 Flash',
-    providerId: 'google',
-    apiModelId: 'gemini-3.8-flash',
-    protocol: 'chat_completions',
-    selectable: true,
-    contextWindow: 1048576,
-    maxOutputTokens: 8192,
-    description: 'High-frequency multimodal model engineered for low-latency speculative edits.',
-    capabilities: {
-      coding: true,
-      reasoning: true,
-      vision: true,
-      tools: true,
-      structuredOutput: true,
-      streaming: true,
-      longContext: true,
-    },
-    pricing: {
-      inputCostPer1M: 0.15,
-      outputCostPer1M: 0.6,
-      cachedInputCostPer1M: 0.0375,
-      currency: 'USD',
-      effectiveDate: '2026-11-01',
-      sourceUrl: 'https://ai.google.dev/pricing',
-    },
-    deprecationStatus: 'active',
-  },
+    deprecationStatus: (m.deprecationStatus || 'active') as ModelDeprecationStatus,
+  })),
   {
     id: 'auto',
     displayName: 'Auto (GPT-6 Astra)',
     providerId: 'openai',
     apiModelId: 'gpt-6-astra',
-    protocol: 'chat_completions',
+    protocol: 'responses',
     selectable: true,
     isRoutingAlias: true,
     contextWindow: 1050000,
-    maxOutputTokens: 32768,
-    description: 'Smart routing alias dynamically delegating to the optimal coding model.',
+    maxOutputTokens: 128000,
+    description: 'Explicit routing alias resolving to GPT-6 Astra.',
     capabilities: {
       coding: true,
       reasoning: true,
@@ -199,7 +144,7 @@ export class AuthoritativeModelCatalog implements IModelCatalog {
   constructor(customModels: readonly IModelDescriptor[] = CANONICAL_FLOAT_MODELS) {
     for (const m of customModels) {
       this.models.set(m.id, m);
-      if (m.apiModelId && m.apiModelId !== m.id) {
+      if (m.apiModelId && m.apiModelId !== m.id && !m.isRoutingAlias) {
         this.models.set(m.apiModelId, m);
       }
     }
