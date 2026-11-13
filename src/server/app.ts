@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 // Load environment variables early
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
@@ -19,9 +20,12 @@ import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './proposals/proposalService';
 import { BoundedToolExecutor } from './agent/boundedToolExecutor';
+import { cancelComposerTask, registerComposerTask, runComposerTask, unregisterComposerTask } from './agent/composerExecutionService';
+import { mergeApprovedComposerChanges, normalizeComposerWorkspaceSnapshot } from './agent/composerWorkspaceSnapshot';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
-import { loadProjectFileTreeAdmin } from './projectContent';
+import { deleteProjectContentGenerationAdmin, loadProjectFileTreeAdmin, writeProjectFileTreeAdmin } from './projectContent';
+import { serializeProjectFileTree } from '../services/projectCloudFiles';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
@@ -213,6 +217,113 @@ export async function createApp(options: CreateAppOptions = {}) {
       res.status(500).json({ error: error.message || 'Could not cancel project execution.' });
     }
   });
+
+  // Native structured-tool Composer API. Project ownership is checked before a task
+  // starts; each individual tool call repeats server-side ownership and policy checks.
+  app.post('/api/projects/:projectId/composer/run', requireAuth, async (req: any, res: any) => {
+    const { projectId } = req.params;
+    const userId = req.user.uid;
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    const mode = req.body?.mode || 'agent';
+    const requestedModel = typeof req.body?.model === 'string' ? req.body.model.trim() : 'auto';
+    let workspaceSnapshot;
+    try {
+      workspaceSnapshot = normalizeComposerWorkspaceSnapshot(req.body?.workspaceFiles);
+    } catch (error: any) {
+      return res.status(400).json({ error: error?.message || 'A valid local workspace snapshot is required.' });
+    }
+
+    if (!checkEndpointRateLimit('composer', userId, 6, 60_000)) {
+      return res.status(429).json({ error: 'Composer task limit reached. Wait before starting another task.' });
+    }
+    if (!prompt || prompt.length > 20_000) {
+      return res.status(400).json({ error: 'A task prompt between 1 and 20,000 characters is required.' });
+    }
+    if (!['ask', 'plan', 'agent', 'manual'].includes(mode)) {
+      return res.status(400).json({ error: 'Composer mode must be ask, plan, agent, or manual.' });
+    }
+    if (!requestedModel || requestedModel.length > 128) {
+      return res.status(400).json({ error: 'A valid model identifier is required.' });
+    }
+
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: false });
+    if (!ownership.allowed) {
+      return res.status(ownership.status).json({ error: ownership.error || 'Project access forbidden.' });
+    }
+
+    try {
+      // Resolve the model before switching to SSE so unknown/unsupported models receive
+      // a normal HTTP error instead of a broken stream.
+      modelRouter.resolveRoute(requestedModel);
+    } catch (error: any) {
+      return res.status(error?.statusCode || 400).json({
+        error: error?.message || 'The selected model is not available.',
+        code: error?.code || 'MODEL_NOT_FOUND'
+      });
+    }
+
+    const { taskId, controller } = registerComposerTask(userId, projectId);
+    const requestTimeout = setTimeout(() => controller.abort(new Error('Composer task timed out.')), 120_000);
+    requestTimeout.unref?.();
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.flushHeaders?.();
+
+    const send = (event: any) => {
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      }
+    };
+
+    res.on('close', () => {
+      if (!res.writableEnded) controller.abort(new Error('Client disconnected.'));
+    });
+
+    try {
+      const result = await runComposerTask({
+        taskId,
+        userId,
+        projectId,
+        model: requestedModel,
+        prompt,
+        mode,
+        maxIterations: req.body?.maxIterations,
+        maxRuntimeMs: req.body?.maxRuntimeMs,
+        dataSharingAllowed: ServerPrivacyGuard.evaluateConsent(req),
+        workspaceFiles: workspaceSnapshot.files,
+        signal: controller.signal,
+        generate: (request) => modelRouter.generateContent(request),
+        onEvent: send
+      });
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: result\ndata: ${JSON.stringify({ taskId, execution: result })}\n\n`);
+        res.end();
+      }
+    } catch (error: any) {
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: error\ndata: ${JSON.stringify({ taskId, error: error?.message || 'Composer execution failed.' })}\n\n`);
+        res.end();
+      }
+    } finally {
+      clearTimeout(requestTimeout);
+      unregisterComposerTask(taskId);
+    }
+  });
+
+  app.post('/api/projects/:projectId/composer/tasks/:taskId/cancel', requireAuth, asyncRoute(async (req: any, res: any) => {
+    const { projectId, taskId } = req.params;
+    const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
+    if (!ownership.allowed) {
+      return res.status(ownership.status).json({ error: ownership.error || 'Project access forbidden.' });
+    }
+    const cancelled = cancelComposerTask(taskId, req.user.uid, projectId);
+    return res.json({ taskId, cancelled });
+  }));
 
   // Root /auth/callback alias redirect to provider callback
   app.get(['/auth/callback', '/auth/callback/'], (req, res) => {
@@ -794,9 +905,12 @@ ${selectedCode || fullCode}
 
   // 4. Apply proposal (with concurrency protection and stale conflict detection)
   app.post('/api/projects/:projectId/proposals/:proposalId/apply', requireAuth, async (req: any, res: any) => {
+    const cleanupProjectId = String(req.params.projectId || '');
+    let stagedGeneration: string | undefined;
+    let snapshotCommitted = false;
     try {
       const { projectId, proposalId } = req.params;
-      const { approvedPaths } = req.body || {};
+      const { approvedPaths, workspaceFiles } = req.body || {};
 
       const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
       if (!ownership.allowed) {
@@ -808,7 +922,10 @@ ${selectedCode || fullCode}
       if (!ownership.projectData) return res.status(503).json({ error: 'The saved project snapshot could not be verified.' });
 
       const savedFiles = await loadProjectFileTreeAdmin(projectId, ownership.projectData);
-      const currentFiles: Array<{ path: string; content: string }> = [];
+      let finalTree = savedFiles;
+      let currentFiles: Array<{ path: string; content: string }> = [];
+      let projectSnapshotManifest: { fileGeneration: string; fileChunkCount: number; fileBytes: number } | undefined;
+
       const collectFiles = (nodes: any[], parentPath = '') => {
         for (const node of nodes) {
           const filePath = parentPath ? `${parentPath}/${node.name}` : node.name;
@@ -816,14 +933,45 @@ ${selectedCode || fullCode}
           else if (node.type === 'folder' && Array.isArray(node.children)) collectFiles(node.children, filePath);
         }
       };
-      collectFiles(savedFiles);
+
+      if (workspaceFiles !== undefined) {
+        const submitted = normalizeComposerWorkspaceSnapshot(workspaceFiles);
+        const merged = mergeApprovedComposerChanges(
+          savedFiles,
+          submitted.files,
+          proposal.changes.map(change => ({
+            path: change.path,
+            operation: change.operation,
+            originalContent: change.originalContent,
+            proposedContent: change.proposedContent
+          })),
+          approvedPaths
+        );
+        finalTree = merged.files;
+        collectFiles(finalTree);
+
+        const serialized = serializeProjectFileTree(finalTree);
+        if (serialized.ok === false) {
+          return res.status(422).json({ error: 'The approved workspace snapshot could not be serialized safely.' });
+        }
+        stagedGeneration = randomUUID();
+        await writeProjectFileTreeAdmin(projectId, req.user.uid, stagedGeneration, serialized.chunks);
+        projectSnapshotManifest = {
+          fileGeneration: stagedGeneration,
+          fileChunkCount: serialized.chunks.length,
+          fileBytes: serialized.byteLength
+        };
+      } else {
+        collectFiles(savedFiles);
+      }
 
       const result = await ProposalService.finalizeProposalDurable(proposalId, {
         ownerId: req.user.uid,
         projectId,
         approvedPaths,
         currentFiles,
-        projectData: ownership.projectData
+        projectData: ownership.projectData,
+        projectSnapshotManifest
       });
 
       if (!result.success) {
@@ -831,10 +979,25 @@ ${selectedCode || fullCode}
         return res.status(statusCode).json(result);
       }
 
-      res.json(result);
+      snapshotCommitted = Boolean(stagedGeneration);
+      const previousGeneration = ownership.projectData.fileStorageVersion === 2 &&
+        typeof ownership.projectData.fileGeneration === 'string'
+        ? ownership.projectData.fileGeneration
+        : undefined;
+      if (snapshotCommitted && previousGeneration && previousGeneration !== stagedGeneration) {
+        await deleteProjectContentGenerationAdmin(projectId, previousGeneration).catch((error) => {
+          console.warn('A previous project content generation could not be cleaned up after Composer Apply:', error);
+        });
+      }
+
+      return res.json(result);
     } catch (error: any) {
       console.error('Apply Proposal Error:', error);
-      res.status(500).json({ error: error.message || 'Failed to apply proposal' });
+      return res.status(error?.statusCode || 500).json({ error: error.message || 'Failed to apply proposal' });
+    } finally {
+      if (stagedGeneration && !snapshotCommitted) {
+        await deleteProjectContentGenerationAdmin(cleanupProjectId, stagedGeneration).catch(() => {});
+      }
     }
   });
 

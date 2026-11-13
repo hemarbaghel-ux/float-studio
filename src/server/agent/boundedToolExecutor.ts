@@ -316,7 +316,7 @@ export class BoundedToolExecutor {
             virtualFilesMap.set(normalizeWorkspacePath(f.path), { content: f.content || '' });
           }
 
-          const proposalResult = ProposalService.createProposal({
+          const proposalResult = await ProposalService.createProposalDurable({
             ownerId: ctx.userId,
             projectId: ctx.projectId,
             description,

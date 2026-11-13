@@ -186,7 +186,10 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
       const contents = this.normalizeMessages(request.messages);
       const apiModel = this.resolveApiModel(request.apiModelId || request.model);
 
-      const config = this.buildGenerationConfig(request, apiModel);
+      const config = {
+        ...this.buildGenerationConfig(request, apiModel),
+        ...(request.signal ? { abortSignal: request.signal } : {})
+      };
 
       const response = await ai.models.generateContent({
         model: apiModel,
@@ -291,20 +294,58 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
           return { role: 'user', parts: [{ text: msg }] };
         }
         if (msg && typeof msg === 'object') {
+          const content = typeof msg.content === 'string'
+            ? msg.content
+            : Array.isArray(msg.parts)
+              ? msg.parts.map((part: any) => part.text || '').join('')
+              : typeof msg.text === 'string' ? msg.text : '';
+
+          if (msg.role === 'tool') {
+            let response: Record<string, any>;
+            try {
+              const parsed = JSON.parse(content);
+              response = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                ? parsed
+                : { result: parsed };
+            } catch {
+              response = { result: content };
+            }
+            return {
+              role: 'user',
+              parts: [{
+                functionResponse: {
+                  id: String(msg.toolCallId || msg.tool_call_id || msg.id || ''),
+                  name: String(msg.toolName || msg.name || ''),
+                  response
+                }
+              }]
+            };
+          }
+
+          const role = msg.role === 'assistant' || msg.role === 'model' ? 'model' : 'user';
+          if (role === 'model' && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
+            const parts: any[] = [];
+            if (content) parts.push({ text: content });
+            for (const call of msg.toolCalls) {
+              parts.push({
+                functionCall: {
+                  id: String(call.id || ''),
+                  name: String(call.name || ''),
+                  args: call.arguments && typeof call.arguments === 'object' ? call.arguments : {}
+                }
+              });
+            }
+            return { role: 'model', parts };
+          }
+
           if (msg.parts) {
-            return msg;
+            return { role, parts: msg.parts };
           }
           if (msg.content) {
-            return {
-              role: msg.role === 'assistant' || msg.role === 'model' ? 'model' : 'user',
-              parts: [{ text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) }]
-            };
+            return { role, parts: [{ text: content }] };
           }
           if (msg.text) {
-            return {
-              role: msg.role === 'assistant' || msg.role === 'model' ? 'model' : 'user',
-              parts: [{ text: msg.text }]
-            };
+            return { role, parts: [{ text: msg.text }] };
           }
         }
         return msg;

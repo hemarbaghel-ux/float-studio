@@ -51,6 +51,8 @@ export interface AIProviderRequest {
   dataSharingAllowed?: boolean;
   allowFallback?: boolean;
   demoMode?: boolean;
+  /** Cancellation signal for in-flight provider requests. */
+  signal?: AbortSignal;
 }
 
 export interface AIProviderResponse {

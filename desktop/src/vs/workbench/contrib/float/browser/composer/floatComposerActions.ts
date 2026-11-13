@@ -114,31 +114,37 @@ export class OpenFloatComposerAction extends Action2 {
 				widget.onSubmit(async e => {
 					if (e.mode === 'agent') {
 						widget!.setStatus('Agent executing tools and verifying with shadow daemon...');
-						const execution = await composer.executeAutonomousGoal({
-							prompt: e.prompt,
-							activeFilePath: activeEditor.getModel()?.uri.path
-						}, step => {
-							if (step.toolCall) {
-								widget!.setStatus(`Tool: ${step.toolCall.name}...`);
+						try {
+							execution = await composer.executeAutonomousGoal({
+								prompt: e.prompt,
+								activeFilePath: activeEditor.getModel()?.uri.path
+							}, step => {
+								if (step.toolCall) {
+									widget!.setStatus(`Tool: ${step.toolCall.name}...`);
+								}
+							});
+	
+							if (execution.validationResult) {
+								widget!.setShadowValidation(
+									execution.validationResult.status === 'clean',
+									execution.validationResult.errorCount,
+									execution.validationResult.warningCount
+								);
 							}
-						});
-
-						if (execution.validationResult) {
-							widget!.setShadowValidation(
-								execution.validationResult.status === 'clean',
-								execution.validationResult.errorCount,
-								execution.validationResult.warningCount
-							);
-						}
-
-						if (execution.proposal && execution.proposal.files.length > 0) {
-							widget!.setProposalReady(
-								execution.proposal.files.length,
-								execution.proposal.stats.totalAdditions,
-								execution.proposal.stats.totalDeletions
-							);
-						} else {
-							widget!.setStatus(execution.status === 'completed' ? 'Agent finished: no file changes needed.' : `Agent error: ${execution.error || 'Failed'}`);
+	
+							if (execution.proposal && execution.proposal.files.length > 0) {
+								widget!.setProposalReady(
+									execution.proposal.files.length,
+									execution.proposal.stats.totalAdditions,
+									execution.proposal.stats.totalDeletions
+								);
+							} else {
+								widget!.setStatus(execution.status === 'completed' ? 'Agent finished: no file changes needed.' : `Agent error: ${execution.error || 'Failed'}`);
+							}
+						} catch (error: any) {
+							const message = error?.message || String(error);
+							widget!.setStatus(`Agent error: ${message}`);
+							notificationService.error(`FLOAT Composer Agent failed: ${message}`);
 						}
 					} else {
 						widget!.setStatus('Generating multi-file proposal...');
@@ -155,10 +161,8 @@ export class OpenFloatComposerAction extends Action2 {
 
 				widget.onAccept(async () => {
 					if (composer.activeMultiFileProposal) {
-						await composer.orchestrator.acceptAll(composer.activeMultiFileProposal.id, async (p, content) => {
-							await composer.acceptFile(composer.activeMultiFileProposal!.id, p);
-						});
-						notificationService.info(`FLOAT Composer: Changes accepted and saved to disk.`);
+						const applied = await composer.applyProposal(composer.activeMultiFileProposal.id);
+						if (applied) notificationService.info('FLOAT Composer: Changes accepted and saved to disk.');
 					} else if (composer.activeProposal) {
 						await composer.applyProposal(composer.activeProposal.id);
 					}
@@ -166,7 +170,7 @@ export class OpenFloatComposerAction extends Action2 {
 
 				widget.onReject(() => {
 					if (composer.activeMultiFileProposal) {
-						composer.orchestrator.rejectAll(composer.activeMultiFileProposal.id);
+						composer.rejectProposal(composer.activeMultiFileProposal.id);
 					} else if (composer.activeProposal) {
 						composer.rejectProposal(composer.activeProposal.id);
 					}
@@ -206,14 +210,21 @@ export class OpenFloatComposerAction extends Action2 {
 
 		if (modeChoice.id === 'agent') {
 			notificationService.info(`FLOAT Autonomous Composer running: "${prompt.trim()}"...`);
-			const execution = await composer.executeAutonomousGoal({
-				prompt: prompt.trim()
-			}, step => {
-				if (step.toolCall) {
-					notificationService.info(`Agent executing tool: ${step.toolCall.name}...`);
-				}
-			});
-
+			let execution: Awaited<ReturnType<FloatComposer['executeAutonomousGoal']>>;
+			try {
+				const execution = await composer.executeAutonomousGoal({
+					prompt: prompt.trim()
+				}, step => {
+					if (step.toolCall) {
+						notificationService.info(`Agent executing tool: ${step.toolCall.name}...`);
+					}
+				});
+	
+			} catch (error: any) {
+				const message = error?.message || String(error);
+				notificationService.error(`FLOAT Composer Agent failed: ${message}`);
+				return;
+			}
 			if (execution.proposal && execution.proposal.files.length > 0) {
 				const prop = execution.proposal;
 				const actionChoice = await quickInputService.pick([
@@ -226,12 +237,10 @@ export class OpenFloatComposerAction extends Action2 {
 				});
 
 				if (actionChoice?.id === 'applyAll') {
-					await composer.orchestrator.acceptAll(prop.id, async (p, content) => {
-						await composer.acceptFile(prop.id, p);
-					});
-					notificationService.info(`FLOAT Composer: All ${prop.files.length} files accepted and written to disk.`);
+					const applied = await composer.applyProposal(prop.id);
+					if (applied) notificationService.info(`FLOAT Composer: All ${prop.files.length} files accepted and written to disk.`);
 				} else if (actionChoice?.id === 'rejectAll') {
-					composer.orchestrator.rejectAll(prop.id);
+					composer.rejectProposal(prop.id);
 					notificationService.info('FLOAT Composer: All proposals rejected.');
 				} else if (actionChoice?.id === 'rollback' && execution.checkpointId) {
 					await composer.rollbackTurn(execution.checkpointId);

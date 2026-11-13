@@ -82,6 +82,11 @@ export interface ProposalFinalizationInput {
   approvedPaths: string[];
   currentFiles: Array<{ path: string; content?: string }>;
   projectData: Record<string, unknown>;
+  projectSnapshotManifest?: {
+    fileGeneration: string;
+    fileChunkCount: number;
+    fileBytes: number;
+  };
 }
 
 export function prepareProposalFinalization(
@@ -315,7 +320,8 @@ export class ProposalService {
         await saveAppliedCodeProposalForProjectRevision(
           prepared.proposal,
           input.projectData,
-          currentProposal
+          currentProposal,
+          input.projectSnapshotManifest
         );
       } catch (error: any) {
         if (isPermissionDeniedError(error)) markAdminCredentialsUnavailable(error);
