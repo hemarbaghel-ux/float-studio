@@ -19,6 +19,7 @@ import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './proposals/proposalService';
 import { BoundedToolExecutor } from './agent/boundedToolExecutor';
+import { cancelComposerTask, registerComposerTask, runComposerTask, unregisterComposerTask } from './agent/composerExecutionService';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
 import { loadProjectFileTreeAdmin } from './projectContent';
@@ -213,6 +214,106 @@ export async function createApp(options: CreateAppOptions = {}) {
       res.status(500).json({ error: error.message || 'Could not cancel project execution.' });
     }
   });
+
+  // Native structured-tool Composer API. Project ownership is checked before a task
+  // starts; each individual tool call repeats server-side ownership and policy checks.
+  app.post('/api/projects/:projectId/composer/run', requireAuth, async (req: any, res: any) => {
+    const { projectId } = req.params;
+    const userId = req.user.uid;
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    const mode = req.body?.mode || 'agent';
+    const requestedModel = typeof req.body?.model === 'string' ? req.body.model.trim() : 'auto';
+
+    if (!checkEndpointRateLimit('composer', userId, 6, 60_000)) {
+      return res.status(429).json({ error: 'Composer task limit reached. Wait before starting another task.' });
+    }
+    if (!prompt || prompt.length > 20_000) {
+      return res.status(400).json({ error: 'A task prompt between 1 and 20,000 characters is required.' });
+    }
+    if (!['ask', 'plan', 'agent', 'manual'].includes(mode)) {
+      return res.status(400).json({ error: 'Composer mode must be ask, plan, agent, or manual.' });
+    }
+    if (!requestedModel || requestedModel.length > 128) {
+      return res.status(400).json({ error: 'A valid model identifier is required.' });
+    }
+
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: false });
+    if (!ownership.allowed) {
+      return res.status(ownership.status).json({ error: ownership.error || 'Project access forbidden.' });
+    }
+
+    try {
+      // Resolve the model before switching to SSE so unknown/unsupported models receive
+      // a normal HTTP error instead of a broken stream.
+      modelRouter.resolveRoute(requestedModel);
+    } catch (error: any) {
+      return res.status(error?.statusCode || 400).json({
+        error: error?.message || 'The selected model is not available.',
+        code: error?.code || 'MODEL_NOT_FOUND'
+      });
+    }
+
+    const { taskId, controller } = registerComposerTask(userId, projectId);
+    const requestTimeout = setTimeout(() => controller.abort(new Error('Composer task timed out.')), 120_000);
+    requestTimeout.unref?.();
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.flushHeaders?.();
+
+    const send = (event: any) => {
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      }
+    };
+
+    res.on('close', () => {
+      if (!res.writableEnded) controller.abort(new Error('Client disconnected.'));
+    });
+
+    try {
+      const result = await runComposerTask({
+        taskId,
+        userId,
+        projectId,
+        model: requestedModel,
+        prompt,
+        mode,
+        maxIterations: req.body?.maxIterations,
+        maxRuntimeMs: req.body?.maxRuntimeMs,
+        dataSharingAllowed: ServerPrivacyGuard.evaluateConsent(req),
+        signal: controller.signal,
+        generate: (request) => modelRouter.generateContent(request),
+        onEvent: send
+      });
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: result\ndata: ${JSON.stringify({ taskId, execution: result })}\n\n`);
+        res.end();
+      }
+    } catch (error: any) {
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: error\ndata: ${JSON.stringify({ taskId, error: error?.message || 'Composer execution failed.' })}\n\n`);
+        res.end();
+      }
+    } finally {
+      clearTimeout(requestTimeout);
+      unregisterComposerTask(taskId);
+    }
+  });
+
+  app.post('/api/projects/:projectId/composer/tasks/:taskId/cancel', requireAuth, asyncRoute(async (req: any, res: any) => {
+    const { projectId, taskId } = req.params;
+    const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
+    if (!ownership.allowed) {
+      return res.status(ownership.status).json({ error: ownership.error || 'Project access forbidden.' });
+    }
+    const cancelled = cancelComposerTask(taskId, req.user.uid, projectId);
+    return res.json({ taskId, cancelled });
+  }));
 
   // Root /auth/callback alias redirect to provider callback
   app.get(['/auth/callback', '/auth/callback/'], (req, res) => {
