@@ -216,7 +216,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
         };
       }
 
-      const response = await client.messages.create(params);
+      const response = await client.messages.create(params, request.signal ? { signal: request.signal } : undefined);
       let text = '';
       const executedTools: any[] = [];
 
