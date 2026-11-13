@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IFloatService } from '../floatService.js';
-import { FloatComposerToolRegistry, IComposerToolCall, IComposerToolResult } from './floatComposerTools.js';
+import { FloatComposerToolRegistry, IComposerToolCall, IComposerToolResult, IComposerToolDefinition } from './floatComposerTools.js';
 import { FloatMultiFileDiffOrchestrator, IFloatMultiFileProposal } from './floatMultiFileDiffOrchestrator.js';
 import { parseModelProposals } from '../proposals/floatProposalValidator.js';
 import { FloatShadowWorkspaceService } from '../shadow/floatShadowWorkspaceService.js';
@@ -38,6 +38,32 @@ export interface IComposerAgentExecution {
 	checkpointId?: string;
 	validationResult?: IShadowValidationResult;
 	error?: string;
+}
+
+function validateComposerToolArguments(
+	definition: IComposerToolDefinition | undefined,
+	parameters: Record<string, any>
+): string | undefined {
+	if (!definition) return 'The model requested a tool that is not registered in this workspace.';
+	if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) return 'Tool arguments must be a JSON object.';
+	const properties = definition.parameters.properties;
+	for (const required of definition.parameters.required) {
+		if (!Object.prototype.hasOwnProperty.call(parameters, required)) return `Missing required argument "${required}" for tool ${definition.name}.`;
+	}
+	for (const [key, value] of Object.entries(parameters)) {
+		const property = properties[key];
+		if (!property) return `Unexpected argument "${key}" for tool ${definition.name}.`;
+		const matchesType = property.type === 'string' ? typeof value === 'string'
+			: property.type === 'number' ? typeof value === 'number' && Number.isFinite(value)
+			: property.type === 'integer' ? Number.isSafeInteger(value)
+			: property.type === 'boolean' ? typeof value === 'boolean'
+			: property.type === 'array' ? Array.isArray(value)
+			: property.type === 'object' ? typeof value === 'object' && value !== null && !Array.isArray(value)
+			: false;
+		if (!matchesType) return `Argument "${key}" for tool ${definition.name} must be ${property.type}.`;
+		if (property.enum && !property.enum.includes(value)) return `Argument "${key}" for tool ${definition.name} is not allowed.`;
+	}
+	return undefined;
 }
 
 export class FloatComposerAgent {
@@ -110,62 +136,36 @@ export class FloatComposerAgent {
 			checkpointId: checkpoint.id
 		};
 
-		// Format initial conversation messages
-		const toolListStr = scopedRegistry.definitions
-			.map(t => `- ${t.name}: ${t.description} (params: ${t.parameters.required.join(', ')})`)
-			.join('\n');
-
+		const toolDefinitions = scopedRegistry.definitions;
 		const systemInstructions = [
 			'You are FLOAT Autonomous Composer Agent with Speculative Shadow Validation.',
-			'You have access to the following workspace tools:',
-			toolListStr,
-			'',
-			'To execute a tool call, respond strictly with a tool_call fenced block:',
-			'```tool_call',
-			'{ "name": "tool_name", "parameters": { "param1": "value1" } }',
-			'```',
-			'When you have verified all changes and tests pass, summarize your completed work with standard code blocks.'
-		].join('\n');
-
+			'Use the supplied native function tools to inspect or modify the workspace.',
+			'Never claim a tool ran unless the workbench reports its result.',
+			'Prefer small, reviewable file changes. Verify work with the terminal tool before concluding.',
+			'When complete, provide a concise summary and include file paths changed.'
+		].join(' ');
 		const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [
-			{ role: 'user', content: `${systemInstructions}\n\nTask Goal: ${goal.prompt}` }
+			{ role: 'user', content: `Task Goal: ${goal.prompt}` }
 		];
-
 		const touchedFiles = new Map<string, { original: string; proposed: string }>();
 
-		// 2. Autonomous Loop
 		let stepCount = 0;
 		while (stepCount < maxSteps) {
 			if (signal?.aborted) {
 				execution.status = 'cancelled';
 				return execution;
 			}
-
 			stepCount++;
 			let assistantResponse = '';
-
-			// Call model
+			let structuredToolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> = [];
 			try {
-				await this._floatService.streamChat(
-					conversationHistory.map((m, idx) => ({
-						id: `conv-${idx}`,
-						role: m.role,
-						content: m.content,
-						timestamp: Date.now()
-					})),
-					{
-						onChunk: chunk => { assistantResponse += chunk; },
-						onError: err => { throw err; },
-						onComplete: () => {}
-					},
-					undefined,
-					undefined,
-					undefined,
-					id,
-					signal
+				const modelStep = await this._floatService.generateAgentStep(
+					conversationHistory, toolDefinitions, systemInstructions, signal
 				);
+				assistantResponse = modelStep.text;
+				structuredToolCalls = modelStep.toolCalls;
 			} catch (err: any) {
-				if (signal?.aborted) {
+				if (signal?.aborted || err?.name === 'AbortError') {
 					execution.status = 'cancelled';
 					return execution;
 				}
@@ -173,124 +173,85 @@ export class FloatComposerAgent {
 				execution.error = err.message || String(err);
 				return execution;
 			}
-
 			if (signal?.aborted) {
 				execution.status = 'cancelled';
 				return execution;
 			}
+			const structuredCallSummary = structuredToolCalls
+				.map(call => `Requested workspace tool: ${call.name}(${JSON.stringify(call.arguments)})`)
+				.join('\n');
+			conversationHistory.push({
+				role: 'assistant',
+				content: assistantResponse || structuredCallSummary
+			});
 
-			conversationHistory.push({ role: 'assistant', content: assistantResponse });
-
-			// Check for tool call in assistant response
-			const toolCallMatch = assistantResponse.match(/```tool_call\s*\r?\n([\s\S]*?)```/);
-			if (toolCallMatch) {
-				let parsedCall: { name: string; parameters: any } | null = null;
-				try {
-					parsedCall = JSON.parse(toolCallMatch[1].trim());
-				} catch (e: any) {
-					const errorStep: IComposerAgentStep = {
-						stepIndex: stepCount,
-						thought: assistantResponse.replace(/```tool_call[\s\S]*?```/, '').trim(),
-						timestamp: Date.now(),
-						toolResult: {
-							callId: `call-${stepCount}`,
-							toolName: 'unknown',
-							success: false,
-							output: '',
-							error: `Invalid JSON in tool_call block: ${e.message}`
-						}
+			if (structuredToolCalls.length > 0) {
+				for (let callIndex = 0; callIndex < structuredToolCalls.length; callIndex++) {
+					if (signal?.aborted) {
+						execution.status = 'cancelled';
+						return execution;
+					}
+					const modelCall = structuredToolCalls[callIndex];
+					const toolCall: IComposerToolCall = {
+						id: modelCall.id || `call-${stepCount}-${callIndex + 1}`,
+						name: modelCall.name,
+						parameters: modelCall.arguments || {}
 					};
-					steps.push(errorStep);
-					onStep?.(errorStep);
-					conversationHistory.push({
-						role: 'user',
-						content: `[TOOL ERROR] Failed to parse tool call JSON: ${e.message}. Please retry with valid JSON.`
-					});
-					continue;
-				}
-
-				if (!parsedCall) {
-					continue;
-				}
-
-				const toolCall: IComposerToolCall = {
-					id: `call-${stepCount}`,
-					name: parsedCall.name,
-					parameters: parsedCall.parameters || {}
-				};
-
-				// Pre-track original file content before mutation
-				if (toolCall.name === 'write_file' || toolCall.name === 'edit_file') {
-					const filePath = toolCall.parameters.path;
-					if (filePath && !touchedFiles.has(filePath)) {
-						let original = '';
-						try {
-							original = await scopedRegistry.executeTool({
-								id: 'pre-read',
-								name: 'read_file',
-								parameters: { path: filePath }
-							}).then(r => r.output);
-						} catch {}
-						touchedFiles.set(filePath, { original, proposed: '' });
-					}
-				}
-
-				// Execute tool
-				const toolResult = await scopedRegistry.executeTool(toolCall);
-
-				// Accurately update proposed content tracker for BOTH write_file AND edit_file
-				if (toolResult.success) {
-					const filePath = toolCall.parameters.path;
-					const tracked = touchedFiles.get(filePath);
-
-					if (toolCall.name === 'write_file') {
-						if (tracked) {
-							tracked.proposed = toolCall.parameters.content;
+					const definition = toolDefinitions.find(tool => tool.name === toolCall.name);
+					const invalidArguments = validateComposerToolArguments(definition, toolCall.parameters);
+					if (!invalidArguments && (toolCall.name === 'write_file' || toolCall.name === 'edit_file')) {
+						const filePath = toolCall.parameters.path;
+						if (filePath && !touchedFiles.has(filePath)) {
+							let original = '';
+							try {
+								original = await scopedRegistry.executeTool({
+									id: 'pre-read', name: 'read_file', parameters: { path: filePath }
+								}).then(result => result.output);
+							} catch {}
+							touchedFiles.set(filePath, { original, proposed: '' });
 						}
-						shadowCmdRunner?.updateOverlay(filePath, toolCall.parameters.content);
-					} else if (toolCall.name === 'edit_file') {
-						try {
-							const updatedContent = speculativeFs
-								? await speculativeFs.readFile(filePath)
-								: await scopedRegistry.executeTool({
-									id: 'post-read',
-									name: 'read_file',
-									parameters: { path: filePath }
-								}).then(r => r.output);
-
-							if (tracked) {
-								tracked.proposed = updatedContent;
-							}
-							shadowCmdRunner?.updateOverlay(filePath, updatedContent);
-						} catch {}
 					}
+					const toolResult: IComposerToolResult = invalidArguments
+						? { callId: toolCall.id, toolName: toolCall.name, success: false, output: '', error: invalidArguments }
+						: await scopedRegistry.executeTool(toolCall);
+
+					if (toolResult.success) {
+						const filePath = toolCall.parameters.path;
+						const tracked = touchedFiles.get(filePath);
+						if (toolCall.name === 'write_file') {
+							if (tracked) tracked.proposed = toolCall.parameters.content;
+							shadowCmdRunner?.updateOverlay(filePath, toolCall.parameters.content);
+						} else if (toolCall.name === 'edit_file') {
+							try {
+								const updatedContent = speculativeFs
+									? await speculativeFs.readFile(filePath)
+									: await scopedRegistry.executeTool({
+										id: 'post-read', name: 'read_file', parameters: { path: filePath }
+									}).then(result => result.output);
+								if (tracked) tracked.proposed = updatedContent;
+								shadowCmdRunner?.updateOverlay(filePath, updatedContent);
+							} catch {}
+						}
+					}
+					const stepRecord: IComposerAgentStep = {
+						stepIndex: stepCount,
+						thought: assistantResponse.trim(),
+						toolCall,
+						toolResult,
+						timestamp: Date.now()
+					};
+					steps.push(stepRecord);
+					onStep?.(stepRecord);
+					let observationMessage = `[TOOL OBSERVATION for ${toolCall.name}]\n${toolResult.output}`;
+					if (!toolResult.success) observationMessage = `[TOOL FAILURE for ${toolCall.name}]\nError: ${toolResult.error}`;
+					if (toolCall.name === 'run_terminal_command' &&
+						toolResult.output.includes('Exit Code: ') &&
+						!toolResult.output.includes('Exit Code: 0')) {
+						observationMessage += '\n\n[DIAGNOSTIC WARNING]: The command exited non-zero. Review the diagnostics and repair the failure.';
+					}
+					conversationHistory.push({ role: 'user', content: observationMessage });
 				}
-
-				const stepRecord: IComposerAgentStep = {
-					stepIndex: stepCount,
-					thought: assistantResponse.replace(/```tool_call[\s\S]*?```/, '').trim(),
-					toolCall,
-					toolResult,
-					timestamp: Date.now()
-				};
-				steps.push(stepRecord);
-				onStep?.(stepRecord);
-
-				// Build observation response
-				let observationMessage = `[TOOL OBSERVATION for ${toolCall.name}]\n${toolResult.output}`;
-				if (!toolResult.success) {
-					observationMessage = `[TOOL FAILURE for ${toolCall.name}]\nError: ${toolResult.error}`;
-				}
-
-				// Self-healing prompt if terminal command failed
-				if (toolCall.name === 'run_terminal_command' && toolResult.output.includes('Exit Code: ') && !toolResult.output.includes('Exit Code: 0')) {
-					observationMessage += '\n\n[DIAGNOSTIC WARNING]: The command exited with a non-zero exit code. Please review the error log above and apply necessary fixes.';
-				}
-
-				conversationHistory.push({
-					role: 'user',
-					content: observationMessage
-				});
+				continue;
 			} else {
 				// No more tool calls: Agent has reached conclusion
 				// Parse any code blocks into multi-file proposal

@@ -34,7 +34,9 @@
     "build:extensions": "node scripts/buildAllBuiltinExtensions.cjs",
     "start": "node dist/server.cjs",
     "test:native-ide": "node node_modules/tsx/dist/cli.mjs scripts/testNativeIdeWorkflow.ts",
-    "test:native-keyboard-layout": "node node_modules/tsx/dist/cli.mjs scripts/testNativeKeyboardLayoutFallback.ts"
+    "test:native-keyboard-layout": "node node_modules/tsx/dist/cli.mjs scripts/testNativeKeyboardLayoutFallback.ts",
+    "test:agent-step-protocol": "node node_modules/tsx/dist/cli.mjs scripts/testAgentStepProtocol.ts",
+    "test:structured-provider-toolcalls": "node node_modules/tsx/dist/cli.mjs scripts/testStructuredProviderToolCalls.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

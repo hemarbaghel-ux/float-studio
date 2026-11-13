@@ -179,21 +179,23 @@ async function runSuite(): Promise<void> {
 			getCheckpointService: () => sharedCheckpointService,
 			getProposalSession: () => new FloatProposalSession(),
 			getActiveModel: () => ({ id: 'gpt-6-astra', name: 'GPT-6 Astra' }),
-			streamChat: async (messages: any[], callbacks: any) => {
+			generateAgentStep: async (messages: any[]) => {
 				mockTurn++;
 				if (mockTurn === 1) {
-					// Turn 1: Model proposes code with a deliberate type error (TS2322)
-					callbacks.onChunk('I will update the calculator with a new multiplier.\n');
-					callbacks.onChunk('```ts path=calculator.ts\nexport const multiplier: number = "INVALID_STRING";\n```');
-					callbacks.onComplete();
-				} else if (mockTurn === 2) {
-					// Turn 2: Model receives Shadow Workspace error and self-corrects!
+					return {
+						text: 'I will propose a multiplier with a deliberate type error.\n```ts path=calculator.ts\nexport const multiplier: number = "INVALID_STRING";\n```',
+						toolCalls: []
+					};
+				}
+				if (mockTurn === 2) {
 					const lastMsg = messages[messages.length - 1].content;
 					assert(lastMsg.includes('SHADOW WORKSPACE SPECULATIVE COMPILATION REPORT'), 'Model must receive shadow diagnostic report');
-					callbacks.onChunk('Fixing the type error in multiplier as reported by the compiler.\n');
-					callbacks.onChunk('```ts path=calculator.ts\nexport const multiplier: number = 42;\n```');
-					callbacks.onComplete();
+					return {
+						text: 'I will correct the multiplier type.\n```ts path=calculator.ts\nexport const multiplier: number = 42;\n```',
+						toolCalls: []
+					};
 				}
+				throw new Error('Unexpected Composer model turn');
 			}
 		};
 

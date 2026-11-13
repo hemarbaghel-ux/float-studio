@@ -9,7 +9,7 @@ import { FloatProposalSession } from './proposals/floatProposal.js';
 import { FloatCheckpointService } from './checkpoints/floatCheckpointService.js';
 import { FloatBrainService } from './brain/floatBrainService.js';
 import { FloatWorkspaceIndexer } from './workspace/floatWorkspaceIndexer.js';
-import { FloatModelClient, IFloatStreamCallbacks, IFloatCompletionOptions, IFloatCompletionResult } from './model-runtime/floatModelClient.js';
+import { FloatModelClient, IFloatStreamCallbacks, IFloatCompletionOptions, IFloatCompletionResult, IFloatAgentToolDefinition, IFloatAgentStepResult } from './model-runtime/floatModelClient.js';
 import { FLOAT_MODELS, getDefaultFloatModel, getFloatModel } from './model-runtime/floatModelRegistry.js';
 import { FloatBoundedAgentLoop } from './agent-runtime/floatAgentLoop.js';
 import { FloatAuthService, IFloatAuthService } from './auth/floatAuthService.js';
@@ -47,6 +47,12 @@ export interface IFloatService {
 		conversationId?: string,
 		signal?: AbortSignal
 	): Promise<void>;
+	generateAgentStep(
+		messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+		tools: IFloatAgentToolDefinition[],
+		systemInstruction: string,
+		signal?: AbortSignal
+	): Promise<IFloatAgentStepResult>;
 	completeCode(
 		options: IFloatCompletionOptions,
 		authToken?: string,
@@ -144,6 +150,19 @@ export class FloatService extends Disposable implements IFloatService {
 			contextItems,
 			conversationId,
 			signal
+		);
+	}
+
+	public async generateAgentStep(
+		messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+		tools: IFloatAgentToolDefinition[],
+		systemInstruction: string,
+		signal?: AbortSignal
+	): Promise<IFloatAgentStepResult> {
+		const token = this._authService.getAuthToken() || undefined;
+		const projectId = this._authService.getActiveProjectId() || 'default-project';
+		return this._modelClient.generateAgentStep(
+			messages, tools, systemInstruction, this._activeModel.id, token, projectId, signal
 		);
 	}
 

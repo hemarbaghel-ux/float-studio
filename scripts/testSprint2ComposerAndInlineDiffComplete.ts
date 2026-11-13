@@ -403,10 +403,10 @@ async function runSprint2Verification(): Promise<void> {
 				return { success: true, restoredFiles: [] };
 			}
 		}),
-		streamChat: async (_messages: any[], callbacks: any) => {
-			callbacks.onChunk?.('Work step completed.');
-			await callbacks.onComplete?.('Work step completed.');
-		}
+		generateAgentStep: async (_messages: any[]) => ({
+			text: 'Work step completed.',
+			toolCalls: []
+		})
 	};
 
 	const testFs = new ProductionComposerFileSystem(workspaceDir);

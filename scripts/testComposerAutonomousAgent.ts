@@ -228,28 +228,34 @@ async function runStep4Tests() {
     getActiveModel: () => ({ id: 'gpt-6-astra', name: 'GPT-6 Astra' }),
     getCheckpointService: () => sharedCheckpointService,
     getProposalSession: () => new FloatProposalSession(),
-    streamChat: async (messages: any[], callbacks: any) => {
+    generateAgentStep: async (messages: any[]) => {
       agentConversationStep++;
       const lastMsg = messages[messages.length - 1].content;
-
       if (agentConversationStep === 1) {
-        // Step 1: Model reads calculator.ts
-        callbacks.onChunk('I will read the calculator implementation.\n```tool_call\n{"name":"read_file","parameters":{"path":"src/calculator.ts"}}\n```');
+        return { text: 'I will inspect the calculator implementation.', toolCalls: [
+          { id: 'call-read', name: 'read_file', arguments: { path: 'src/calculator.ts' } }
+        ] };
       } else if (agentConversationStep === 2) {
-        // Step 2: Model runs a failing test command to observe failure
-        callbacks.onChunk('Now running tests to verify current state.\n```tool_call\n{"name":"run_terminal_command","parameters":{"command":"npm test fail"}}\n```');
+        return { text: 'I will run the test suite.', toolCalls: [
+          { id: 'call-test-fail', name: 'run_terminal_command', arguments: { command: 'npm test fail' } }
+        ] };
       } else if (agentConversationStep === 3) {
-        // Step 3: Self-healing response - model observes failure and writes fix
         assert.ok(lastMsg.includes('Cannot find module "math-lib"'), 'Model must receive failure diagnostic');
-        callbacks.onChunk('Observed failure. Writing fix to calculator.ts.\n```tool_call\n{"name":"write_file","parameters":{"path":"src/calculator.ts","content":"export function add(a: number, b: number) { return a + b; }\\nexport function safeDiv(a: number, b: number) { return b === 0 ? 0 : a / b; }"}}\n```');
+        return { text: 'I will repair the calculator implementation.', toolCalls: [
+          { id: 'call-write', name: 'write_file', arguments: {
+            path: 'src/calculator.ts',
+            content: 'export function add(a: number, b: number) { return a + b; }\nexport function safeDiv(a: number, b: number) { return b === 0 ? 0 : a / b; }'
+          } }
+        ] };
       } else if (agentConversationStep === 4) {
-        // Step 4: Model verifies with passing command
-        callbacks.onChunk('Verifying fix with test suite.\n```tool_call\n{"name":"run_terminal_command","parameters":{"command":"npm test pass"}}\n```');
-      } else {
-        // Step 5: Concludes with final code summary
-        callbacks.onChunk('All tests passing. Completed multi-file task.\n```typescript path="src/calculator.ts"\nexport function add(a: number, b: number) { return a + b; }\nexport function safeDiv(a: number, b: number) { return b === 0 ? 0 : a / b; }\n```');
+        return { text: 'I will verify the repair.', toolCalls: [
+          { id: 'call-test-pass', name: 'run_terminal_command', arguments: { command: 'npm test pass' } }
+        ] };
       }
-      callbacks.onComplete();
+      return {
+        text: 'All tests passed. Completed the task.\n```typescript path="src/calculator.ts"\nexport function add(a: number, b: number) { return a + b; }\nexport function safeDiv(a: number, b: number) { return b === 0 ? 0 : a / b; }\n```',
+        toolCalls: []
+      };
     }
   };
 
@@ -285,20 +291,17 @@ async function runStep4Tests() {
   const streamStarted = new Promise<void>(resolve => { notifyStreamStarted = resolve; });
   const cancellableFloatService: any = {
     getCheckpointService: () => sharedCheckpointService,
-    streamChat: async (
+    generateAgentStep: async (
       _messages: any[],
-      _callbacks: any,
-      _authToken?: string,
-      _projectId?: string,
-      _contextItems?: any[],
-      _conversationId?: string,
+      _tools: any[],
+      _systemInstruction: string,
       signal?: AbortSignal
     ) => {
       forwardedSignal = signal;
       notifyStreamStarted();
       await new Promise<void>((_resolve, reject) => {
         if (!signal) {
-          reject(new Error('Composer did not forward its AbortSignal to streamChat'));
+          reject(new Error('Composer did not forward its AbortSignal to generateAgentStep'));
           return;
         }
         if (signal.aborted) {
@@ -307,6 +310,7 @@ async function runStep4Tests() {
         }
         signal.addEventListener('abort', () => reject(new Error('generation aborted')), { once: true });
       });
+      return { text: '', toolCalls: [] };
     }
   };
   const cancellationAgent = new FloatComposerAgent(cancellableFloatService, toolRegistry, orchestrator);
