@@ -20,6 +20,7 @@ import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './proposals/proposalService';
 import { BoundedToolExecutor } from './agent/boundedToolExecutor';
 import { cancelComposerTask, registerComposerTask, runComposerTask, unregisterComposerTask } from './agent/composerExecutionService';
+import { normalizeComposerWorkspaceSnapshot } from './agent/composerWorkspaceSnapshot';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
 import { loadProjectFileTreeAdmin } from './projectContent';
@@ -223,6 +224,12 @@ export async function createApp(options: CreateAppOptions = {}) {
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
     const mode = req.body?.mode || 'agent';
     const requestedModel = typeof req.body?.model === 'string' ? req.body.model.trim() : 'auto';
+    let workspaceSnapshot;
+    try {
+      workspaceSnapshot = normalizeComposerWorkspaceSnapshot(req.body?.workspaceFiles);
+    } catch (error: any) {
+      return res.status(400).json({ error: error?.message || 'A valid local workspace snapshot is required.' });
+    }
 
     if (!checkEndpointRateLimit('composer', userId, 6, 60_000)) {
       return res.status(429).json({ error: 'Composer task limit reached. Wait before starting another task.' });
@@ -286,6 +293,7 @@ export async function createApp(options: CreateAppOptions = {}) {
         maxIterations: req.body?.maxIterations,
         maxRuntimeMs: req.body?.maxRuntimeMs,
         dataSharingAllowed: ServerPrivacyGuard.evaluateConsent(req),
+        workspaceFiles: workspaceSnapshot.files,
         signal: controller.signal,
         generate: (request) => modelRouter.generateContent(request),
         onEvent: send
