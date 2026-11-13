@@ -8,21 +8,21 @@ import type * as tsType from 'typescript';
 let _tsModule: typeof tsType | null | undefined = undefined;
 function getTs(): typeof tsType | null {
 	if (_tsModule !== undefined) {
-		return _tsModule;
+		return _tsModule ?? null;
 	}
 	try {
 		if (typeof process !== 'undefined' && (process as any).versions?.node) {
 			const req = (globalThis as any).require;
 			if (typeof req === 'function') {
 				_tsModule = req('typescript');
-				return _tsModule;
+				return _tsModule ?? null;
 			}
 		}
 	} catch {
 		// Browser sandbox
 	}
 	_tsModule = null;
-	return _tsModule;
+	return _tsModule ?? null;
 }
 
 export interface ISemanticCodeChunk {
@@ -89,7 +89,7 @@ export class FloatSemanticChunker {
 		const isTsx = filePath.endsWith('.tsx') || filePath.endsWith('.jsx');
 		const isJs = filePath.endsWith('.js') || filePath.endsWith('.jsx') || filePath.endsWith('.mjs');
 
-		let sourceFile: ts.SourceFile;
+		let sourceFile: tsType.SourceFile;
 		try {
 			sourceFile = ts.createSourceFile(
 				filePath,
@@ -107,7 +107,7 @@ export class FloatSemanticChunker {
 		const pushChunk = (
 			name: string,
 			kind: NonNullable<ISemanticCodeChunk['symbolKind']>,
-			node: ts.Node,
+			node: tsType.Node,
 			containerName?: string,
 			contentOverride?: string
 		): void => {
@@ -127,7 +127,7 @@ export class FloatSemanticChunker {
 			});
 		};
 
-		const visitNode = (node: ts.Node, containerName?: string): void => {
+		const visitNode = (node: tsType.Node, containerName?: string): void => {
 			// A single VariableStatement may declare several independent symbols.
 			// Index each identifier separately and classify callable initializers as functions.
 			if (ts.isVariableStatement(node)) {
