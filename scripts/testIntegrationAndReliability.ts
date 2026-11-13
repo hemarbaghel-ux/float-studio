@@ -203,16 +203,30 @@ async function runEndToEndEvaluation() {
 
 	const mockFloat5: any = createMockFloatService(ws5);
 	let stepCounter = 0;
-	mockFloat5.streamChat = async (messages: any[], callbacks: any) => {
+	mockFloat5.generateAgentStep = async (messages: any[]) => {
 		stepCounter++;
 		if (stepCounter === 1) {
-			callbacks.onChunk('Reading math.ts\n```tool_call\n{"name":"read_file","parameters":{"path":"src/math.ts"}}\n```');
+			return {
+				text: 'Reading math.ts',
+				toolCalls: [{ id: 'read-math', name: 'read_file', arguments: { path: 'src/math.ts' } }]
+			};
 		} else if (stepCounter === 2) {
-			callbacks.onChunk('Writing mult.ts\n```tool_call\n{"name":"write_file","parameters":{"path":"src/mult.ts","content":"export function mult(a: number, b: number) { return a * b; }"}}\n```');
-		} else {
-			callbacks.onChunk('Finished work.\n```typescript path="src/math.ts"\nexport function sum(a: number, b: number) { return a + b; }\nexport function sub(a: number, b: number) { return a - b; }\n```');
+			return {
+				text: 'Writing mult.ts',
+				toolCalls: [{
+					id: 'write-mult',
+					name: 'write_file',
+					arguments: {
+						path: 'src/mult.ts',
+						content: 'export function mult(a: number, b: number) { return a * b; }'
+					}
+				}]
+			};
 		}
-		callbacks.onComplete();
+		return {
+			text: 'Finished work.',
+			toolCalls: []
+		};
 	};
 
 	const fs5 = new ProductionComposerFileSystem(ws5);
@@ -321,10 +335,10 @@ async function runEndToEndEvaluation() {
 	// -------------------------------------------------------------
 	console.log('[Task 11/20] Agent Failure State & Max Steps Enforcement...');
 	const mockFloat11: any = createMockFloatService(ws5);
-	mockFloat11.streamChat = async (messages: any[], callbacks: any) => {
-		callbacks.onChunk('Looping...\n```tool_call\n{"name":"list_directory","parameters":{"path":"."}}\n```');
-		callbacks.onComplete();
-	};
+	mockFloat11.generateAgentStep = async () => ({
+		text: 'Looping...',
+		toolCalls: [{ id: 'list-loop', name: 'list_directory', arguments: { path: '.' } }]
+	});
 
 	const agent11 = new FloatComposerAgent(mockFloat11, scopedReg10, composer5.orchestrator);
 	const exec11 = await agent11.executeGoal({

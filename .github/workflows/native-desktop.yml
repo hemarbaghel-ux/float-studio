@@ -54,6 +54,9 @@ jobs:
       - name: Install Root Dependencies
         run: npm ci --ignore-scripts
 
+      - name: Verify Root TypeScript Project
+        run: npm run lint
+
       - name: Install Desktop Build Dependencies
         run: npm --prefix desktop/build ci --ignore-scripts
 
@@ -91,6 +94,9 @@ jobs:
 
       - name: Verify Headless Keyboard Metadata Fallback
         run: npm run test:native-keyboard-layout
+
+      - name: Verify Structured Composer Request Protocol
+        run: npm run test:agent-step-protocol
 
       - name: Unpack Ripgrep Binary
         run: node ./lib/postinstall.js

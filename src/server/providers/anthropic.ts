@@ -299,9 +299,19 @@ export class AnthropicAdapter implements AIProviderAdapter {
         outputTokens: finalMsg.usage.output_tokens || 0
       } : undefined;
 
+      const toolCalls = Array.isArray(finalMsg?.content)
+        ? finalMsg.content
+            .filter((block: any) => block?.type === 'tool_use' && typeof block.name === 'string')
+            .map((block: any, index: number) => ({
+              id: String(block.id || `tool-call-${index + 1}`),
+              name: block.name,
+              arguments: block.input && typeof block.input === 'object' && !Array.isArray(block.input) ? block.input : {}
+            }))
+        : [];
       return {
         text: fullText,
-        usage
+        usage,
+        toolCalls: toolCalls.length ? toolCalls : undefined
       };
     } catch (err: any) {
       throw normalizeAnthropicError(err);

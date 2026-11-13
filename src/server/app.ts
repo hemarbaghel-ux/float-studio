@@ -19,6 +19,7 @@ import { ContextBuilder } from './contextBuilder';
 import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './proposals/proposalService';
 import { BoundedToolExecutor } from './agent/boundedToolExecutor';
+import { validateAgentStepPayload, validateAgentToolCalls } from './agent/agentStepProtocol';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
 import { loadProjectFileTreeAdmin } from './projectContent';
@@ -688,6 +689,85 @@ ${selectedCode || fullCode}
     } catch (error: any) {
       console.error('Project search error:', error);
       res.status(500).json({ error: error.message || 'Search failed' });
+    }
+  });
+
+  // One authenticated model turn for the native Composer. Tool execution stays local to the workbench.
+  app.post('/api/ai/agent/step', requireAuth, async (req: any, res: any) => {
+    if (!checkEndpointRateLimit('agent-step', req.user.uid, 90, 60_000)) {
+      return res.status(429).json({ error: 'Composer request limit exceeded. Wait before retrying.' });
+    }
+
+    const validation = validateAgentStepPayload(req.body);
+    if (!validation.ok) return res.status(400).json({ error: validation.error });
+    const payload = validation.value;
+    const headerProjectId = typeof req.headers['x-float-project-id'] === 'string'
+      ? req.headers['x-float-project-id'].trim()
+      : undefined;
+    if (headerProjectId && payload.projectId && headerProjectId !== payload.projectId) {
+      return res.status(400).json({ error: 'Conflicting project identifier in header and request body.' });
+    }
+
+    const projectId = payload.projectId || headerProjectId;
+    if (projectId) {
+      const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: true });
+      if (!ownership.allowed) {
+        return res.status(ownership.status).json({ error: ownership.error || 'Project access denied.' });
+      }
+    }
+
+    const abortController = new AbortController();
+    const requestTimeout = setTimeout(() => abortController.abort(new Error('Composer model step timed out.')), 120_000);
+    requestTimeout.unref?.();
+    req.on('aborted', () => abortController.abort());
+    res.on('close', () => {
+      if (!res.writableEnded) abortController.abort();
+    });
+
+    try {
+      const dataSharingAllowed = ServerPrivacyGuard.evaluateConsent(req);
+      let streamedText = '';
+      const response = await modelRouter.generateContentStream(
+        {
+          model: payload.model,
+          messages: payload.messages,
+          systemInstruction: payload.systemInstruction,
+          reasoningEffort: payload.reasoningEffort,
+          tools: payload.tools,
+          dataSharingConsent: dataSharingAllowed,
+          dataSharingAllowed
+        },
+        (delta: string) => { streamedText += delta; },
+        abortController.signal
+      );
+      clearTimeout(requestTimeout);
+      if (abortController.signal.aborted || res.destroyed || res.writableEnded) return;
+
+      const validatedCalls = validateAgentToolCalls(payload.tools, response.toolCalls);
+      if (!validatedCalls.ok) {
+        return res.status(502).json({ error: validatedCalls.error, code: 'INVALID_PROVIDER_TOOL_CALL' });
+      }
+      res.json({
+        text: response.text || streamedText,
+        toolCalls: validatedCalls.toolCalls,
+        usage: response.usage,
+        isSimulated: response.isSimulated === true
+      });
+    } catch (error: any) {
+      clearTimeout(requestTimeout);
+      if (abortController.signal.aborted || error?.name === 'AbortError') {
+        if (!res.destroyed && !res.writableEnded) res.status(499).json({ error: 'Composer generation was cancelled.' });
+        return;
+      }
+      const statusCode = error?.statusCode ||
+        (error?.code === 'AUTH_ERROR' ? 401 : error?.code === 'RATE_LIMITED' ? 429 : 502);
+      if (!res.headersSent && !res.destroyed) {
+        res.status(statusCode).json({
+          error: error?.message || 'Composer model step failed.',
+          code: error?.code || 'PROVIDER_ERROR',
+          provider: error?.provider || 'FLOAT'
+        });
+      }
     }
   });
 

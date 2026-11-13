@@ -768,27 +768,55 @@ Let me know what specific module, file, or integration you would like to impleme
       let fullText = '';
       let inputTokens: number | undefined = undefined;
       let outputTokens: number | undefined = undefined;
+      const streamedToolCalls = new Map<number, { id: string; name: string; arguments: string }>();
 
       for await (const chunk of stream) {
         if (signal?.aborted) break;
-        const delta = chunk.choices[0]?.delta?.content || '';
+        const choiceDelta: any = chunk.choices[0]?.delta;
+        const delta = choiceDelta?.content || '';
         if (delta) {
           fullText += delta;
           onChunk(delta);
+        }
+        for (const callDelta of choiceDelta?.tool_calls || []) {
+          const index = Number.isInteger(callDelta.index) ? callDelta.index : streamedToolCalls.size;
+          const current = streamedToolCalls.get(index) || { id: '', name: '', arguments: '' };
+          if (typeof callDelta.id === 'string') current.id = callDelta.id;
+          if (typeof callDelta.function?.name === 'string') current.name += callDelta.function.name;
+          if (typeof callDelta.function?.arguments === 'string') current.arguments += callDelta.function.arguments;
+          streamedToolCalls.set(index, current);
         }
         if (chunk.usage) {
           inputTokens = chunk.usage.prompt_tokens ?? inputTokens;
           outputTokens = chunk.usage.completion_tokens ?? outputTokens;
         }
       }
+      if (signal?.aborted) {
+        const cancelled = new Error('Operation was cancelled.');
+        cancelled.name = 'AbortError';
+        throw cancelled;
+      }
 
+      const toolCalls = Array.from(streamedToolCalls.entries()).sort((a, b) => a[0] - b[0]).map(([index, call]) => {
+        if (!call.name) throw new AIProviderError('OpenAI returned a function call without a name.', 'PROVIDER_ERROR', 'OpenAI', 502);
+        let args: Record<string, any>;
+        try {
+          const parsed = JSON.parse(call.arguments || '{}');
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Arguments must be an object.');
+          args = parsed;
+        } catch {
+          throw new AIProviderError('OpenAI returned invalid streamed function arguments.', 'PROVIDER_ERROR', 'OpenAI', 502);
+        }
+        return { id: call.id || `call-${index + 1}`, name: call.name, arguments: args };
+      });
       const usage = (inputTokens !== undefined || outputTokens !== undefined)
         ? { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 }
         : undefined;
 
       return {
         text: fullText,
-        usage
+        usage,
+        toolCalls: toolCalls.length ? toolCalls : undefined
       };
     } catch (err: any) {
       throw normalizeOpenAIError(err);

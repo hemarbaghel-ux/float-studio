@@ -195,20 +195,38 @@ async function runPhase4Tests() {
 		getCheckpointService: () => ({
 			createCheckpoint: (name: string, snapshot: any) => ({ id: 'ckpt-1', name, snapshot })
 		}),
-		streamChat: async (messages: any[], callbacks: any) => {
+		generateAgentStep: async (messages: any[]) => {
 			modelTurn++;
 			if (modelTurn === 1) {
-				// Turn 1: Assistant proposes code with a deliberate syntax error
-				callbacks.onChunk('I will update src/index.ts with a bug.\n');
-				callbacks.onChunk('```tool_call\n{"name":"write_file","parameters":{"path":"src/index.ts","content":"export function run(): number { return \\"string-not-number\\"; }"}}\n```');
+				return {
+					text: 'I will update src/index.ts with a deliberate type error.',
+					toolCalls: [{
+						id: 'write-invalid',
+						name: 'write_file',
+						arguments: {
+							path: 'src/index.ts',
+							content: 'export function run(): number { return "string-not-number"; }'
+						}
+					}]
+				};
 			} else if (modelTurn === 2) {
-				// Turn 2: Assistant receives compiler diagnostic feedback from Shadow Workspace and fixes it
-				callbacks.onChunk('I noticed the type mismatch reported by shadow validation. Fixing now:\n');
-				callbacks.onChunk('```tool_call\n{"name":"write_file","parameters":{"path":"src/index.ts","content":"export function run(): number { return 42; }"}}\n```');
-			} else {
-				callbacks.onChunk('All changes fixed and validated.\n');
+				const lastMessage = messages[messages.length - 1].content;
+				assert(lastMessage.includes('SHADOW WORKSPACE SPECULATIVE COMPILATION REPORT') ||
+					lastMessage.includes('Type') || lastMessage.includes('error'),
+					'Agent should receive shadow-validation diagnostics');
+				return {
+					text: 'I will fix the reported return type mismatch.',
+					toolCalls: [{
+						id: 'write-fixed',
+						name: 'write_file',
+						arguments: {
+							path: 'src/index.ts',
+							content: 'export function run(): number { return 42; }'
+						}
+					}]
+				};
 			}
-			callbacks.onComplete();
+			return { text: 'All changes fixed and validated.', toolCalls: [] };
 		}
 	};
 

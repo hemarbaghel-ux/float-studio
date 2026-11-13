@@ -29,6 +29,34 @@ export interface IFloatCompletionResult {
 	cancelled?: boolean;
 }
 
+export interface IFloatAgentToolDefinition {
+	name: string;
+	description: string;
+	parameters: {
+		type: 'object';
+		properties: Record<string, {
+			type: string;
+			description: string;
+			items?: { type: string };
+			enum?: string[];
+		}>;
+		required: string[];
+	};
+}
+
+export interface IFloatAgentToolCall {
+	id: string;
+	name: string;
+	arguments: Record<string, any>;
+}
+
+export interface IFloatAgentStepResult {
+	text: string;
+	toolCalls: IFloatAgentToolCall[];
+	usage?: { inputTokens: number; outputTokens: number };
+	isSimulated?: boolean;
+}
+
 export interface IFloatStreamCallbacks {
 	onChunk: (chunk: string) => void;
 	onError: (error: Error) => void;
@@ -306,6 +334,56 @@ export class FloatModelClient {
 				this._activeAbortControllers.delete(requestKey);
 			}
 		}
+	}
+
+	/**
+	 * Generate one bounded Composer step using provider-native function calling.
+	 * Tool execution remains local to the native workbench after schema checks.
+	 */
+	public async generateAgentStep(
+		messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+		tools: IFloatAgentToolDefinition[],
+		systemInstruction: string,
+		modelId: string,
+		authToken?: string,
+		projectId: string = 'default-project',
+		signal?: AbortSignal
+	): Promise<IFloatAgentStepResult> {
+		const headers: Record<string, string> = {
+			'Content-Type': 'application/json',
+			'Accept': 'application/json',
+			'X-Float-Project-Id': projectId
+		};
+		if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+		const base = this._endpoint.replace(/\/api\/ai\/chat.*$/, '');
+		const response = await fetch(`${base}/api/ai/agent/step`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ messages, tools, systemInstruction, model: modelId, projectId }),
+			signal
+		});
+		const payload: any = await response.json().catch(() => ({}));
+		if (!response.ok) {
+			throw new Error(payload.error || `Composer model request failed (HTTP ${response.status}).`);
+		}
+		const calls = Array.isArray(payload.toolCalls) ? payload.toolCalls : [];
+		for (const call of calls) {
+			if (!call || typeof call.name !== 'string' || !call.name ||
+				typeof call.arguments !== 'object' || call.arguments === null || Array.isArray(call.arguments)) {
+				throw new Error('The model gateway returned an invalid structured tool call.');
+			}
+		}
+		return {
+			text: typeof payload.text === 'string' ? payload.text : '',
+			toolCalls: calls.map((call: any, index: number) => ({
+				id: typeof call.id === 'string' && call.id ? call.id : `tool-call-${index + 1}`,
+				name: call.name,
+				arguments: call.arguments
+			})),
+			usage: payload.usage && typeof payload.usage === 'object' ? payload.usage : undefined,
+			isSimulated: payload.isSimulated === true
+		};
 	}
 
 	/**
