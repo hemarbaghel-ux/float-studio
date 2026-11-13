@@ -114,31 +114,37 @@ export class OpenFloatComposerAction extends Action2 {
 				widget.onSubmit(async e => {
 					if (e.mode === 'agent') {
 						widget!.setStatus('Agent executing tools and verifying with shadow daemon...');
-						const execution = await composer.executeAutonomousGoal({
-							prompt: e.prompt,
-							activeFilePath: activeEditor.getModel()?.uri.path
-						}, step => {
-							if (step.toolCall) {
-								widget!.setStatus(`Tool: ${step.toolCall.name}...`);
+						try {
+							const execution = await composer.executeAutonomousGoal({
+								prompt: e.prompt,
+								activeFilePath: activeEditor.getModel()?.uri.path
+							}, step => {
+								if (step.toolCall) {
+									widget!.setStatus(`Tool: ${step.toolCall.name}...`);
+								}
+							});
+	
+							if (execution.validationResult) {
+								widget!.setShadowValidation(
+									execution.validationResult.status === 'clean',
+									execution.validationResult.errorCount,
+									execution.validationResult.warningCount
+								);
 							}
-						});
-
-						if (execution.validationResult) {
-							widget!.setShadowValidation(
-								execution.validationResult.status === 'clean',
-								execution.validationResult.errorCount,
-								execution.validationResult.warningCount
-							);
-						}
-
-						if (execution.proposal && execution.proposal.files.length > 0) {
-							widget!.setProposalReady(
-								execution.proposal.files.length,
-								execution.proposal.stats.totalAdditions,
-								execution.proposal.stats.totalDeletions
-							);
-						} else {
-							widget!.setStatus(execution.status === 'completed' ? 'Agent finished: no file changes needed.' : `Agent error: ${execution.error || 'Failed'}`);
+	
+							if (execution.proposal && execution.proposal.files.length > 0) {
+								widget!.setProposalReady(
+									execution.proposal.files.length,
+									execution.proposal.stats.totalAdditions,
+									execution.proposal.stats.totalDeletions
+								);
+							} else {
+								widget!.setStatus(execution.status === 'completed' ? 'Agent finished: no file changes needed.' : `Agent error: ${execution.error || 'Failed'}`);
+							}
+						} catch (error: any) {
+							const message = error?.message || String(error);
+							widget!.setStatus(`Agent error: ${message}`);
+							notificationService.error(`FLOAT Composer Agent failed: ${message}`);
 						}
 					} else {
 						widget!.setStatus('Generating multi-file proposal...');
