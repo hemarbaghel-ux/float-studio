@@ -906,6 +906,7 @@ ${selectedCode || fullCode}
 
   // 4. Apply proposal (with concurrency protection and stale conflict detection)
   app.post('/api/projects/:projectId/proposals/:proposalId/apply', requireAuth, async (req: any, res: any) => {
+    const cleanupProjectId = String(req.params.projectId || '');
     let stagedGeneration: string | undefined;
     let snapshotCommitted = false;
     try {
@@ -996,7 +997,7 @@ ${selectedCode || fullCode}
       return res.status(error?.statusCode || 500).json({ error: error.message || 'Failed to apply proposal' });
     } finally {
       if (stagedGeneration && !snapshotCommitted) {
-        await deleteProjectContentGenerationAdmin(projectIdForCleanup(req), stagedGeneration).catch(() => {});
+        await deleteProjectContentGenerationAdmin(cleanupProjectId, stagedGeneration).catch(() => {});
       }
     }
   });
