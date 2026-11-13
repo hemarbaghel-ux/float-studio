@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 // Load environment variables early
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
@@ -20,10 +21,12 @@ import { searchCodebase } from '../services/codebaseSearch';
 import { ProposalService, computeDiffStats } from './proposals/proposalService';
 import { BoundedToolExecutor } from './agent/boundedToolExecutor';
 import { cancelComposerTask, registerComposerTask, runComposerTask, unregisterComposerTask } from './agent/composerExecutionService';
+import { mergeApprovedComposerChanges, normalizeComposerWorkspaceSnapshot } from './agent/composerWorkspaceSnapshot';
 import { normalizeComposerWorkspaceSnapshot } from './agent/composerWorkspaceSnapshot';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
-import { loadProjectFileTreeAdmin } from './projectContent';
+import { deleteProjectContentGenerationAdmin, loadProjectFileTreeAdmin, writeProjectFileTreeAdmin } from './projectContent';
+import { serializeProjectFileTree } from '../services/projectCloudFiles';
 import { projectProcessManager, ExecutionFile, ExecutionEvent } from './execution/processManager';
 import { gitRouter } from './github/gitRouter';
 import { milestone9Router } from './milestone9Router';
@@ -903,9 +906,11 @@ ${selectedCode || fullCode}
 
   // 4. Apply proposal (with concurrency protection and stale conflict detection)
   app.post('/api/projects/:projectId/proposals/:proposalId/apply', requireAuth, async (req: any, res: any) => {
+    let stagedGeneration: string | undefined;
+    let snapshotCommitted = false;
     try {
       const { projectId, proposalId } = req.params;
-      const { approvedPaths } = req.body || {};
+      const { approvedPaths, workspaceFiles } = req.body || {};
 
       const ownership = await verifyProjectOwnership(projectId, req.user.uid, { allowMissing: false });
       if (!ownership.allowed) {
@@ -917,7 +922,10 @@ ${selectedCode || fullCode}
       if (!ownership.projectData) return res.status(503).json({ error: 'The saved project snapshot could not be verified.' });
 
       const savedFiles = await loadProjectFileTreeAdmin(projectId, ownership.projectData);
-      const currentFiles: Array<{ path: string; content: string }> = [];
+      let finalTree = savedFiles;
+      let currentFiles: Array<{ path: string; content: string }> = [];
+      let projectSnapshotManifest: { fileGeneration: string; fileChunkCount: number; fileBytes: number } | undefined;
+
       const collectFiles = (nodes: any[], parentPath = '') => {
         for (const node of nodes) {
           const filePath = parentPath ? `${parentPath}/${node.name}` : node.name;
@@ -925,14 +933,45 @@ ${selectedCode || fullCode}
           else if (node.type === 'folder' && Array.isArray(node.children)) collectFiles(node.children, filePath);
         }
       };
-      collectFiles(savedFiles);
+
+      if (workspaceFiles !== undefined) {
+        const submitted = normalizeComposerWorkspaceSnapshot(workspaceFiles);
+        const merged = mergeApprovedComposerChanges(
+          savedFiles,
+          submitted.files,
+          proposal.changes.map(change => ({
+            path: change.path,
+            operation: change.operation,
+            originalContent: change.originalContent,
+            proposedContent: change.proposedContent
+          })),
+          approvedPaths
+        );
+        finalTree = merged.files;
+        collectFiles(finalTree);
+
+        const serialized = serializeProjectFileTree(finalTree);
+        if (serialized.ok === false) {
+          return res.status(422).json({ error: 'The approved workspace snapshot could not be serialized safely.' });
+        }
+        stagedGeneration = randomUUID();
+        await writeProjectFileTreeAdmin(projectId, req.user.uid, stagedGeneration, serialized.chunks);
+        projectSnapshotManifest = {
+          fileGeneration: stagedGeneration,
+          fileChunkCount: serialized.chunks.length,
+          fileBytes: serialized.byteLength
+        };
+      } else {
+        collectFiles(savedFiles);
+      }
 
       const result = await ProposalService.finalizeProposalDurable(proposalId, {
         ownerId: req.user.uid,
         projectId,
         approvedPaths,
         currentFiles,
-        projectData: ownership.projectData
+        projectData: ownership.projectData,
+        projectSnapshotManifest
       });
 
       if (!result.success) {
@@ -940,10 +979,25 @@ ${selectedCode || fullCode}
         return res.status(statusCode).json(result);
       }
 
-      res.json(result);
+      snapshotCommitted = Boolean(stagedGeneration);
+      const previousGeneration = ownership.projectData.fileStorageVersion === 2 &&
+        typeof ownership.projectData.fileGeneration === 'string'
+        ? ownership.projectData.fileGeneration
+        : undefined;
+      if (snapshotCommitted && previousGeneration && previousGeneration !== stagedGeneration) {
+        await deleteProjectContentGenerationAdmin(projectId, previousGeneration).catch((error) => {
+          console.warn('A previous project content generation could not be cleaned up after Composer Apply:', error);
+        });
+      }
+
+      return res.json(result);
     } catch (error: any) {
       console.error('Apply Proposal Error:', error);
-      res.status(500).json({ error: error.message || 'Failed to apply proposal' });
+      return res.status(error?.statusCode || 500).json({ error: error.message || 'Failed to apply proposal' });
+    } finally {
+      if (stagedGeneration && !snapshotCommitted) {
+        await deleteProjectContentGenerationAdmin(projectIdForCleanup(req), stagedGeneration).catch(() => {});
+      }
     }
   });
 
