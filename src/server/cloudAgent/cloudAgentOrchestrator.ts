@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import crypto from 'node:crypto';
-import { IProposal } from '../../shared/contracts/proposals';
+import { IProposal, IProposalFileChange, ProposalStatus } from '../../shared/contracts/proposals';
 import { validateSafeWorkspacePath } from '../../shared/contracts/workspace';
 
 export interface CloudAgentSubtaskSpec {
@@ -77,16 +77,17 @@ export class CloudAgentOrchestrator {
     subtasks: readonly CloudAgentSubtaskSpec[];
     proposalsBySubtask?: Readonly<Record<string, IProposal>>;
   }): CloudAgentRunRecord {
-    const runId = `cloudrun_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const now = Date.now();
+    const runId = `cloudrun_${now}_${crypto.randomBytes(4).toString('hex')}`;
     const worktreeId = `wt_${params.projectId}_${crypto.randomBytes(3).toString('hex')}`;
     const conflicts = this.detectOwnershipConflicts(params.subtasks);
     const logs: string[] = [
-      `[${new Date().toISOString()}] Initialized isolated worktree ${worktreeId} for project ${params.projectId}`,
+      `[${new Date(now).toISOString()}] Initialized isolated worktree ${worktreeId} for project ${params.projectId}`,
     ];
 
     if (conflicts.length > 0) {
       logs.push(
-        `[${new Date().toISOString()}] Blocked parallel execution: file ownership conflict on ${conflicts
+        `[${new Date(now).toISOString()}] Blocked parallel execution: file ownership conflict on ${conflicts
           .map(c => `${c.path} (${c.subtaskA} vs ${c.subtaskB})`)
           .join(', ')}`
       );
@@ -100,19 +101,21 @@ export class CloudAgentOrchestrator {
         subtasks: params.subtasks,
         fileOwnershipConflicts: conflicts,
         logs,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt: now,
+        updatedAt: now,
       };
       this.runs.set(runId, blockedRecord);
       return blockedRecord;
     }
 
-    const mergedFiles: IProposal['files'] = [];
+    const mergedFiles: IProposalFileChange[] = [];
     if (params.proposalsBySubtask) {
       for (const st of params.subtasks) {
         const subProp = params.proposalsBySubtask[st.subtaskId];
         if (subProp) {
-          logs.push(`[${new Date().toISOString()}] Subtask ${st.subtaskId} (${st.role}) produced ${subProp.files.length} file diff(s)`);
+          logs.push(
+            `[${new Date(now).toISOString()}] Subtask ${st.subtaskId} (${st.role}) produced ${subProp.files.length} file diff(s)`
+          );
           for (const f of subProp.files) {
             mergedFiles.push(f);
           }
@@ -120,15 +123,19 @@ export class CloudAgentOrchestrator {
       }
     }
 
+    const proposalStatus: ProposalStatus = 'pending_review';
     const mergedProposal: IProposal | undefined =
       mergedFiles.length > 0
         ? {
             id: `prop_cloud_${crypto.randomBytes(4).toString('hex')}`,
+            ownerId: params.userId,
+            projectId: params.projectId,
             title: `Cloud Agent: ${params.goal.slice(0, 80)}`,
             explanation: `Synthesized from ${params.subtasks.length} isolated subtask(s) in worktree ${worktreeId}.`,
+            status: proposalStatus,
             files: mergedFiles,
-            status: 'pending',
-            createdAt: Date.now(),
+            createdAt: now,
+            updatedAt: now,
           }
         : undefined;
 
@@ -143,8 +150,8 @@ export class CloudAgentOrchestrator {
       fileOwnershipConflicts: [],
       logs,
       mergedProposal,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     this.runs.set(runId, record);

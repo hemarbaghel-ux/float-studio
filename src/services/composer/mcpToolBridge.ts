@@ -3,15 +3,31 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { CanonicalToolRegistry } from './canonicalTools';
+import {
+  CanonicalToolRegistry,
+  IToolDefinition,
+  IToolRegistry,
+  ToolExecutionContext,
+  ToolExecutionResult,
+} from '../../shared/contracts/tools';
 import { sanitizeToolOutputText } from './canonicalTools';
-import { ToolCategory, ToolExecutionContext, ToolExecutionOutcome } from '../../shared/contracts/tools';
-import { MCPServerConfig, MCPToolDefinition } from '../../server/mcp/mcpService';
+import { MCPDiscoveredTool, MCPServerConfig, MCPToolParameterSchema } from '../../server/mcp/mcpService';
+
+export type BridgedMCPToolInput = Pick<MCPDiscoveredTool, 'name' | 'description' | 'inputSchema'> &
+  Partial<Pick<MCPDiscoveredTool, 'serverId' | 'serverName' | 'isAllowed'>>;
+
+export type BridgedMCPServerInput = Pick<MCPServerConfig, 'id' | 'name' | 'transport' | 'enabled'> &
+  Partial<Omit<MCPServerConfig, 'id' | 'name' | 'transport' | 'enabled'>>;
+
+export interface MCPToolExecutionContext extends ToolExecutionContext {
+  readonly mcpApprovedTools?: readonly string[];
+}
 
 export interface BridgedMCPToolOptions {
-  readonly server: MCPServerConfig;
-  readonly tool: MCPToolDefinition;
+  readonly server: BridgedMCPServerInput;
+  readonly tool: BridgedMCPToolInput;
   readonly requireExplicitApproval?: boolean;
+  readonly timeoutMs?: number;
   readonly invokeHandler: (
     serverId: string,
     toolName: string,
@@ -20,85 +36,158 @@ export interface BridgedMCPToolOptions {
   ) => Promise<unknown>;
 }
 
+const DEFAULT_BRIDGED_MCP_TIMEOUT_MS = 15_000;
+
+function validateMCPInputSchema(
+  toolName: string,
+  schema: MCPToolParameterSchema | undefined,
+  args: Record<string, unknown>
+): string | null {
+  if (!schema) return null;
+
+  const requiredProps = Array.isArray(schema.required) ? schema.required : [];
+  for (const reqProp of requiredProps) {
+    if (args[reqProp] === undefined || args[reqProp] === null) {
+      return `MCP tool "${toolName}" missing required argument "${reqProp}".`;
+    }
+  }
+
+  if (schema.properties && typeof schema.properties === 'object') {
+    for (const [propName, propSpec] of Object.entries(schema.properties)) {
+      if (args[propName] === undefined || args[propName] === null) continue;
+      const expectedType = propSpec && typeof propSpec === 'object' ? (propSpec as { type?: string }).type : undefined;
+      if (!expectedType) continue;
+
+      const val = args[propName];
+      if (expectedType === 'array') {
+        if (!Array.isArray(val)) {
+          return `MCP tool "${toolName}" argument "${propName}" must be an array.`;
+        }
+      } else if (expectedType === 'object') {
+        if (typeof val !== 'object' || Array.isArray(val)) {
+          return `MCP tool "${toolName}" argument "${propName}" must be an object.`;
+        }
+      } else if (expectedType === 'string' || expectedType === 'number' || expectedType === 'boolean') {
+        if (typeof val !== expectedType) {
+          return `MCP tool "${toolName}" argument "${propName}" must be of type ${expectedType}.`;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 /**
- * Registers an external MCP tool into a dedicated namespace with schema checks,
- * timeout enforcement, explicit approval gating, and secret redaction.
+ * Registers an external MCP tool into a dedicated namespace using the public
+ * `IToolRegistry.register()` / `CanonicalToolRegistry.register()` contract with
+ * input schema validation, timeout enforcement, explicit approval gating, and secret redaction.
  */
 export function registerBridgedMCPTool(
-  registry: CanonicalToolRegistry,
+  registry: IToolRegistry | CanonicalToolRegistry,
   options: BridgedMCPToolOptions
 ): string {
-  const namespacedName = `mcp__${options.server.id.replace(/[^a-zA-Z0-9_]/g, '_')}__${options.tool.name.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-  const requiresApproval = options.requireExplicitApproval ?? true;
-  const requiredProps = Array.isArray(options.tool.inputSchema?.required)
-    ? (options.tool.inputSchema.required as string[])
-    : [];
+  const sanitizedServerId = options.server.id.replace(/[^a-zA-Z0-9_]/g, '_');
+  const sanitizedToolName = options.tool.name.replace(/[^a-zA-Z0-9_]/g, '_');
+  const namespacedName = `mcp__${sanitizedServerId}__${sanitizedToolName}`;
+  const requiresApproval = options.requireExplicitApproval ?? options.server.requiresApproval ?? true;
+  const effectiveTimeoutMs = options.timeoutMs ?? options.server.timeoutMs ?? DEFAULT_BRIDGED_MCP_TIMEOUT_MS;
 
-  (registry as any).tools.set(namespacedName, {
-    descriptor: {
-      name: namespacedName as any,
-      category: 'execution' as ToolCategory,
-      description: `[MCP:${options.server.name}] ${options.tool.description}`,
-      requiresApproval,
-      parametersSchema: options.tool.inputSchema || { type: 'object', properties: {} },
-    },
+  const toolDefinition: IToolDefinition = {
+    name: namespacedName,
+    description: `[MCP:${options.server.name}] ${options.tool.description}`,
+    parametersSchema: options.tool.inputSchema || { type: 'object', properties: {} },
+    requiresApproval,
     execute: async (
-      args: Record<string, unknown>,
-      context: ToolExecutionContext & { mcpApprovedTools?: readonly string[] }
-    ): Promise<ToolExecutionOutcome> => {
+      rawArgs: Record<string, unknown>,
+      context: MCPToolExecutionContext
+    ): Promise<ToolExecutionResult> => {
       const startTime = Date.now();
+      const args: Record<string, unknown> =
+        typeof rawArgs === 'object' && rawArgs !== null ? rawArgs : {};
+
       if (context.signal?.aborted) {
         return {
-          toolName: namespacedName as any,
+          toolName: namespacedName,
           success: false,
           error: 'MCP tool execution aborted by cancellation signal.',
-          durationMs: 0,
+          durationMs: Date.now() - startTime,
+          timestamp: startTime,
         };
       }
 
-      if (options.server.transport === 'stdio' && process.env.FLOAT_ENABLE_MCP_STDIO !== 'true') {
+      if (!options.server.enabled || options.tool.isAllowed === false) {
         return {
-          toolName: namespacedName as any,
+          toolName: namespacedName,
+          success: false,
+          error: `MCP tool "${namespacedName}" is disabled or not allowed on server "${options.server.name}".`,
+          durationMs: Date.now() - startTime,
+          timestamp: startTime,
+        };
+      }
+
+      if (
+        options.server.transport === 'stdio' &&
+        process.env.FLOAT_ENABLE_MCP_STDIO !== 'true' &&
+        process.env.FLOAT_ALLOW_STDIO_MCP !== 'true'
+      ) {
+        return {
+          toolName: namespacedName,
           success: false,
           error: 'MCP stdio transport is disabled on this host (FLOAT_ENABLE_MCP_STDIO !== "true").',
           durationMs: Date.now() - startTime,
+          timestamp: startTime,
         };
       }
 
-      for (const reqProp of requiredProps) {
-        if (args[reqProp] === undefined || args[reqProp] === null) {
-          return {
-            toolName: namespacedName as any,
-            success: false,
-            error: `MCP tool "${namespacedName}" missing required argument "${reqProp}".`,
-            durationMs: Date.now() - startTime,
-          };
-        }
+      const schemaError = validateMCPInputSchema(namespacedName, options.tool.inputSchema, args);
+      if (schemaError) {
+        return {
+          toolName: namespacedName,
+          success: false,
+          error: schemaError,
+          durationMs: Date.now() - startTime,
+          timestamp: startTime,
+        };
       }
 
       if (requiresApproval) {
         const approvedList = context.mcpApprovedTools || [];
         if (!approvedList.includes(namespacedName) && !approvedList.includes(options.tool.name)) {
+          const reason = `Approval required: MCP tool "${namespacedName}" on server "${options.server.name}" requires explicit user authorization before invocation.`;
           return {
-            toolName: namespacedName as any,
+            toolName: namespacedName,
             success: false,
-            error: `Approval required: MCP tool "${namespacedName}" on server "${options.server.name}" requires explicit user authorization before invocation.`,
+            requiresApproval: true,
+            approvalReason: reason,
+            error: reason,
             durationMs: Date.now() - startTime,
+            timestamp: startTime,
           };
         }
       }
 
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       try {
-        const rawResult = await options.invokeHandler(
+        const invocationPromise = options.invokeHandler(
           options.server.id,
           options.tool.name,
           args,
           context.signal
         );
+
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new Error(`MCP tool "${namespacedName}" timed out after ${effectiveTimeoutMs}ms.`));
+          }, effectiveTimeoutMs);
+        });
+
+        const rawResult = await Promise.race([invocationPromise, timeoutPromise]);
         const serialized = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
         const redacted = sanitizeToolOutputText(serialized);
+
         return {
-          toolName: namespacedName as any,
+          toolName: namespacedName,
           success: true,
           data: {
             serverId: options.server.id,
@@ -106,17 +195,25 @@ export function registerBridgedMCPTool(
             output: redacted,
           },
           durationMs: Date.now() - startTime,
+          timestamp: startTime,
         };
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const errMessage = err instanceof Error ? err.message : String(err || 'MCP tool invocation failed.');
         return {
-          toolName: namespacedName as any,
+          toolName: namespacedName,
           success: false,
-          error: sanitizeToolOutputText(err?.message || 'MCP tool invocation failed.'),
+          error: sanitizeToolOutputText(errMessage),
           durationMs: Date.now() - startTime,
+          timestamp: startTime,
         };
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+        }
       }
     },
-  });
+  };
 
+  registry.register(toolDefinition);
   return namespacedName;
 }

@@ -6,7 +6,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { scanFileForSecrets } from './secretScanner';
+import { scanFileForSecrets, SecretLeakMatch } from './secretScanner';
 import { SecretLeakError, CommitResult } from './gitService';
 import { validateSafeWorkspacePath } from '../../shared/contracts/workspace';
 
@@ -179,7 +179,7 @@ export class NativeLocalGitService {
     }
 
     // Pre-commit secret scan across all staged files
-    const leaks = [];
+    const leaks: SecretLeakMatch[] = [];
     for (const entry of stagedEntries) {
       if (entry.indexStatus === 'D') continue;
       const fullPath = path.join(this.repoRoot, entry.path);

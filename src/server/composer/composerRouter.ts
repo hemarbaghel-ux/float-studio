@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import crypto from 'crypto';
-import express, { Router } from 'express';
+import express, { Request, Response, Router } from 'express';
 import { requireAuth } from '../authMiddleware';
 import { verifyProjectOwnership } from '../projectOwnership';
 import { ModelRouter } from '../providers/router';
@@ -18,11 +18,12 @@ import { createStandardToolRegistry } from '../../services/composer/canonicalToo
 import { WorkspaceCheckpointManager } from '../../services/composer/checkpointManager';
 import { applyProposal, rejectProposal, rollbackProposal } from '../../services/composer/proposalApplier';
 import {
-  IFileEntry,
-  IFileStat,
-  IWorkspaceCapabilities,
   IWorkspaceService,
   ListFilesOptions,
+  WorkspaceCapabilities,
+  WorkspaceFile,
+  WorkspaceFileChangeEvent,
+  WorkspaceFileStat,
   validateSafeWorkspacePath,
 } from '../../shared/contracts/workspace';
 import { IProposal } from '../../shared/contracts/proposals';
@@ -31,118 +32,169 @@ import { RulesService } from '../rules/rulesService';
 import { SkillsService } from '../skills/skillsService';
 import { LocalFileSystemWorkspaceService } from '../../services/indexing/localWorkspaceService';
 
+const DEFAULT_VIRTUAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+
+interface VirtualFileRecord {
+  content: string;
+  mtime: number;
+}
+
 export class VirtualProjectWorkspaceService implements IWorkspaceService {
-  private readonly files = new Map<string, string>();
-  public readonly index = new WorkspaceIndex();
+  private readonly files = new Map<string, VirtualFileRecord>();
+  private readonly listeners = new Set<(event: WorkspaceFileChangeEvent) => void>();
+  public readonly index: WorkspaceIndex;
 
   constructor(
     private readonly projectId: string,
     initialFiles: Array<{ path?: string; name?: string; content?: string }> = []
   ) {
+    this.index = new WorkspaceIndex(projectId);
+    const now = Date.now();
     for (const f of initialFiles) {
       const rawPath = (f.path || f.name || '').trim().replace(/^\/+/, '');
       if (!rawPath) continue;
       try {
-        const safe = validateSafeWorkspacePath(rawPath);
+        const safe = this.resolvePath(rawPath);
         const content = typeof f.content === 'string' ? f.content : '';
-        this.files.set(safe, content);
+        this.files.set(safe, { content, mtime: now });
       } catch {
-        // Skip invalid/sensitive paths
+        // Skip invalid or sensitive paths during initial load
       }
     }
     this.rebuildIndex();
   }
 
   private rebuildIndex(): void {
-    const entries = Array.from(this.files.entries()).map(([p, content]) => ({
+    const entries = Array.from(this.files.entries()).map(([p, record]) => ({
       id: p,
       name: p.split('/').pop() || p,
       path: p,
       type: 'file' as const,
-      content,
+      content: record.content,
     }));
     this.index.indexProject(entries);
+  }
+
+  private emitChange(type: WorkspaceFileChangeEvent['type'], filePath: string, timestamp: number): void {
+    const event: WorkspaceFileChangeEvent = {
+      type,
+      path: filePath,
+      timestamp,
+    };
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch {
+        // Isolate individual listener errors
+      }
+    }
   }
 
   getRootUri(): string {
     return `float-workspace://${this.projectId}`;
   }
 
-  getCapabilities(): IWorkspaceCapabilities {
+  resolvePath(relativePath: string): string {
+    return validateSafeWorkspacePath(relativePath);
+  }
+
+  getCapabilities(): WorkspaceCapabilities {
     return {
-      isLocalDisk: false,
+      canWatch: true,
       canWrite: true,
-      canExecuteCommands: false,
-      canWatchFiles: false,
+      isLocalDisk: false,
+      maxFileSize: DEFAULT_VIRTUAL_MAX_FILE_SIZE,
     };
   }
 
-  async listFiles(options?: ListFilesOptions): Promise<readonly IFileEntry[]> {
+  async listFiles(options?: ListFilesOptions): Promise<WorkspaceFile[]> {
     const maxFiles = options?.maxFiles ?? 500;
-    const entries: IFileEntry[] = [];
-    for (const [p, content] of this.files.entries()) {
+    const includePatterns = options?.includePatterns;
+    const excludePatterns = options?.excludePatterns;
+    const entries: WorkspaceFile[] = [];
+
+    for (const [p, record] of this.files.entries()) {
+      if (excludePatterns && excludePatterns.some(rx => rx.test(p))) {
+        continue;
+      }
+      if (includePatterns && includePatterns.length > 0 && !includePatterns.some(rx => rx.test(p))) {
+        continue;
+      }
+
       entries.push({
         path: p,
         name: p.split('/').pop() || p,
         type: 'file',
-        size: Buffer.byteLength(content, 'utf8'),
-        lastModified: Date.now(),
+        size: Buffer.byteLength(record.content, 'utf8'),
+        mtime: record.mtime,
+        content: record.content,
       });
       if (entries.length >= maxFiles) break;
     }
     return entries;
   }
 
-  async readFile(path: string): Promise<string> {
-    const safe = validateSafeWorkspacePath(path);
-    if (!this.files.has(safe)) {
+  async readFile(relativePath: string): Promise<string> {
+    const safe = this.resolvePath(relativePath);
+    const record = this.files.get(safe);
+    if (!record) {
       throw new Error(`File not found in workspace: "${safe}"`);
     }
-    return this.files.get(safe)!;
+    return record.content;
   }
 
-  async writeFile(path: string, content: string): Promise<void> {
-    if (path.startsWith('.float/checkpoints/')) {
-      this.files.set(path, content);
-      return;
+  async writeFile(relativePath: string, content: string): Promise<void> {
+    const safe = this.resolvePath(relativePath);
+    const byteLength = Buffer.byteLength(content, 'utf8');
+    if (byteLength > DEFAULT_VIRTUAL_MAX_FILE_SIZE) {
+      throw new Error(`File "${safe}" (${byteLength} bytes) exceeds maxFileSize (${DEFAULT_VIRTUAL_MAX_FILE_SIZE} bytes).`);
     }
-    const safe = validateSafeWorkspacePath(path);
-    this.files.set(safe, content);
+    const existed = this.files.has(safe);
+    const now = Date.now();
+    this.files.set(safe, { content, mtime: now });
     this.index.updateFile(safe, content);
+    this.emitChange(existed ? 'modified' : 'created', safe, now);
   }
 
-  async deleteFile(path: string): Promise<void> {
-    const safe = validateSafeWorkspacePath(path);
-    this.files.delete(safe);
+  async deleteFile(relativePath: string): Promise<void> {
+    const safe = this.resolvePath(relativePath);
+    const existed = this.files.delete(safe);
     this.index.removeFile(safe);
+    if (existed) {
+      this.emitChange('deleted', safe, Date.now());
+    }
   }
 
-  async fileExists(path: string): Promise<boolean> {
-    if (path.startsWith('.float/checkpoints/')) {
-      return this.files.has(path);
-    }
-    const safe = validateSafeWorkspacePath(path);
+  async fileExists(relativePath: string): Promise<boolean> {
+    const safe = this.resolvePath(relativePath);
     return this.files.has(safe);
   }
 
-  async stat(path: string): Promise<IFileStat> {
-    const safe = validateSafeWorkspacePath(path);
-    const content = this.files.get(safe);
-    if (content === undefined) {
+  async stat(relativePath: string): Promise<WorkspaceFileStat> {
+    const safe = this.resolvePath(relativePath);
+    const record = this.files.get(safe);
+    if (!record) {
       throw new Error(`File not found: "${safe}"`);
     }
     return {
-      size: Buffer.byteLength(content, 'utf8'),
-      lastModified: Date.now(),
+      size: Buffer.byteLength(record.content, 'utf8'),
+      mtime: record.mtime,
       isFile: true,
       isDirectory: false,
+    };
+  }
+
+  watch(listener: (event: WorkspaceFileChangeEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
     };
   }
 
   exportFiles(): Array<{ path: string; content: string }> {
     return Array.from(this.files.entries())
       .filter(([p]) => !p.startsWith('.float/'))
-      .map(([path, content]) => ({ path, content }));
+      .map(([path, record]) => ({ path, content: record.content }));
   }
 }
 
@@ -168,6 +220,13 @@ export interface StoredComposerTask {
   abortController: AbortController;
 }
 
+interface AuthenticatedComposerRequest extends Request {
+  user?: {
+    uid: string;
+    email?: string;
+  };
+}
+
 const tasksById = new Map<string, StoredComposerTask>();
 const taskByIdempotencyKey = new Map<string, string>();
 const proposalsById = new Map<string, { proposal: IProposal; taskId: string; ownerId: string; projectId: string }>();
@@ -184,9 +243,9 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
   const router = Router({ mergeParams: true });
 
   // 1. Run Composer Agent (Ask, Plan, Agent, Debug) with SSE progress events & idempotency
-  router.post('/run', requireAuth, express.json({ limit: '24mb' }), async (req: any, res: any) => {
-    const { projectId } = req.params;
-    const userId = req.user.uid;
+  router.post('/run', requireAuth, express.json({ limit: '24mb' }), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
     const {
       task,
       prompt,
@@ -203,7 +262,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       verificationCommand,
       repairOnVerificationFailure = true,
       stream = false,
-    } = req.body || {};
+    } = (req.body || {}) as Record<string, unknown>;
 
     const taskText = String(task || prompt || '').trim();
     if (!taskText) {
@@ -211,7 +270,9 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
     }
 
     const validModes: ComposerMode[] = ['ask', 'plan', 'agent', 'debug'];
-    const effectiveMode: ComposerMode = validModes.includes(mode) ? mode : 'agent';
+    const modeStr = String(mode) as ComposerMode;
+    const effectiveMode: ComposerMode = validModes.includes(modeStr) ? modeStr : 'agent';
+    const selectedModel = typeof model === 'string' && model.trim() ? model.trim() : 'gpt-6.1-sol';
 
     const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
     if (!ownership.allowed) {
@@ -249,13 +310,17 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       await localWs.initializeIndex();
       workspace = localWs;
     } else {
-      let initialFiles: Array<{ path?: string; name?: string; content?: string }> = Array.isArray(files) ? files : [];
+      let initialFiles: Array<{ path?: string; name?: string; content?: string }> = Array.isArray(files)
+        ? (files as Array<{ path?: string; name?: string; content?: string }>)
+        : [];
       if (initialFiles.length === 0 && ownership.projectData?.files) {
         try {
           const parsed = typeof ownership.projectData.files === 'string'
             ? JSON.parse(ownership.projectData.files)
             : ownership.projectData.files;
-          if (Array.isArray(parsed)) initialFiles = parsed;
+          if (Array.isArray(parsed)) {
+            initialFiles = parsed as Array<{ path?: string; name?: string; content?: string }>;
+          }
         } catch {}
       }
       workspace = new VirtualProjectWorkspaceService(projectId, initialFiles);
@@ -264,11 +329,17 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
     const checkpointManager = new WorkspaceCheckpointManager(workspace);
     const toolRegistry = createStandardToolRegistry();
 
-    // Resolve active Rules and Skills for this request
+    const ruleFiles: Array<{ path: string; content: string }> = Array.isArray(files)
+      ? (files as Array<{ path?: string; name?: string; content?: string }>).map(f => ({
+          path: String(f.path || f.name || ''),
+          content: typeof f.content === 'string' ? f.content : '',
+        }))
+      : [];
+
     const effectiveRules = RulesService.getEffectiveRules({
       userId,
       projectId,
-      files: Array.isArray(files) ? files : [],
+      files: ruleFiles,
     });
     const effectiveSkills = await SkillsService.selectRelevantSkillsDurable(taskText, 2, userId, projectId);
     const rulesPrompt = RulesService.formatRulesPrompt(effectiveRules);
@@ -285,7 +356,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       projectId,
       task: taskText,
       mode: effectiveMode,
-      modelId: model,
+      modelId: selectedModel,
       status: 'running',
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -302,7 +373,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       taskByIdempotencyKey.set(`${userId}:${projectId}:${storedTask.idempotencyKey}`, taskId);
     }
 
-    const isSse = stream === true || req.headers.accept?.includes('text/event-stream');
+    const isSse = stream === true || Boolean(req.headers.accept?.includes('text/event-stream'));
     if (isSse) {
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -323,15 +394,15 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       projectId,
       taskId,
       mode: effectiveMode,
-      modelId: model,
-      maxIterations,
-      timeoutMs,
-      maxTokens,
+      modelId: selectedModel,
+      maxIterations: typeof maxIterations === 'number' ? maxIterations : undefined,
+      timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : undefined,
+      maxTokens: typeof maxTokens === 'number' ? maxTokens : undefined,
       signal: abortController.signal,
-      allowedCommands,
-      autoApplyApprovedProposal,
-      verificationCommand,
-      repairOnVerificationFailure,
+      allowedCommands: Array.isArray(allowedCommands) ? allowedCommands.map(String) : undefined,
+      autoApplyApprovedProposal: Boolean(autoApplyApprovedProposal),
+      verificationCommand: typeof verificationCommand === 'string' ? verificationCommand : undefined,
+      repairOnVerificationFailure: repairOnVerificationFailure !== false,
       activeRulesInstruction: activeRulesInstruction || undefined,
       onProgress: (event: ComposerProgressEvent) => {
         storedTask.events.push(event);
@@ -373,7 +444,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
             taskId,
             status: execResult.status,
             mode: effectiveMode,
-            modelId: model,
+            modelId: selectedModel,
             proposal: storedTask.proposal,
             checkpointId: storedTask.checkpointId,
             activeRules: storedTask.activeRules,
@@ -390,7 +461,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       taskId,
       status: execResult.status,
       mode: effectiveMode,
-      modelId: model,
+      modelId: selectedModel,
       events: storedTask.events,
       result: execResult,
       proposal: storedTask.proposal,
@@ -401,9 +472,10 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
   });
 
   // 2. Get Composer Task Status & Event Stream History (Reconnect / Refresh Resilience)
-  router.get('/tasks/:taskId', requireAuth, async (req: any, res: any) => {
-    const { projectId, taskId } = req.params;
-    const userId = req.user.uid;
+  router.get('/tasks/:taskId', requireAuth, async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const taskId = String(req.params.taskId || '');
+    const userId = String(req.user?.uid || '');
 
     const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
     if (!ownership.allowed) {
@@ -435,9 +507,10 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
   });
 
   // 3. Cancel In-Flight Composer Task
-  router.post('/tasks/:taskId/cancel', requireAuth, async (req: any, res: any) => {
-    const { projectId, taskId } = req.params;
-    const userId = req.user.uid;
+  router.post('/tasks/:taskId/cancel', requireAuth, async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const taskId = String(req.params.taskId || '');
+    const userId = String(req.user?.uid || '');
 
     const storedTask = tasksById.get(taskId);
     if (!storedTask || storedTask.projectId !== projectId) {
@@ -454,10 +527,11 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
   });
 
   // 4. Apply Proposal with Automatic Pre-Apply Checkpoint & Conflict Detection
-  router.post('/proposals/:proposalId/apply', requireAuth, express.json({ limit: '12mb' }), async (req: any, res: any) => {
-    const { projectId, proposalId } = req.params;
-    const userId = req.user.uid;
-    const { approvedPaths, force = false } = req.body || {};
+  router.post('/proposals/:proposalId/apply', requireAuth, express.json({ limit: '12mb' }), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const proposalId = String(req.params.proposalId || '');
+    const userId = String(req.user?.uid || '');
+    const { approvedPaths, force = false } = (req.body || {}) as { approvedPaths?: unknown; force?: unknown };
 
     const entry = proposalsById.get(proposalId);
     if (!entry || entry.projectId !== projectId) {
@@ -474,7 +548,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
 
     const applyResult = await applyProposal({
       proposal: entry.proposal,
-      approvedPaths: Array.isArray(approvedPaths) ? approvedPaths : undefined,
+      approvedPaths: Array.isArray(approvedPaths) ? approvedPaths.map(String) : undefined,
       workspace: storedTask.workspace,
       checkpointManager: storedTask.checkpointManager,
       force: Boolean(force),
@@ -506,10 +580,11 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
   });
 
   // 5. Reject Proposal Without Mutating Workspace
-  router.post('/proposals/:proposalId/reject', requireAuth, express.json(), async (req: any, res: any) => {
-    const { projectId, proposalId } = req.params;
-    const userId = req.user.uid;
-    const { rejectedPaths } = req.body || {};
+  router.post('/proposals/:proposalId/reject', requireAuth, express.json(), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const proposalId = String(req.params.proposalId || '');
+    const userId = String(req.user?.uid || '');
+    const { rejectedPaths } = (req.body || {}) as { rejectedPaths?: unknown };
 
     const entry = proposalsById.get(proposalId);
     if (!entry || entry.projectId !== projectId) {
@@ -521,7 +596,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
 
     const updatedProposal = rejectProposal({
       proposal: entry.proposal,
-      rejectedPaths: Array.isArray(rejectedPaths) ? rejectedPaths : undefined,
+      rejectedPaths: Array.isArray(rejectedPaths) ? rejectedPaths.map(String) : undefined,
     });
     entry.proposal = updatedProposal;
 
@@ -532,9 +607,10 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
   });
 
   // 6. Rollback Workspace to Pre-Apply Checkpoint
-  router.post('/checkpoints/:checkpointId/rollback', requireAuth, async (req: any, res: any) => {
-    const { projectId, checkpointId } = req.params;
-    const userId = req.user.uid;
+  router.post('/checkpoints/:checkpointId/rollback', requireAuth, async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const checkpointId = String(req.params.checkpointId || '');
+    const userId = String(req.user?.uid || '');
 
     const entry = checkpointsById.get(checkpointId);
     if (!entry || entry.projectId !== projectId) {
