@@ -328,7 +328,8 @@ export async function runComposerTask(options: RunComposerTaskOptions): Promise<
         tools: availableTools,
         dataSharingConsent: options.dataSharingAllowed === true,
         dataSharingAllowed: options.dataSharingAllowed === true,
-        demoMode: false
+        demoMode: false,
+        signal: options.signal
       });
 
       if (response.isSimulated) {
