@@ -22,7 +22,6 @@ import { ProposalService, computeDiffStats } from './proposals/proposalService';
 import { BoundedToolExecutor } from './agent/boundedToolExecutor';
 import { cancelComposerTask, registerComposerTask, runComposerTask, unregisterComposerTask } from './agent/composerExecutionService';
 import { mergeApprovedComposerChanges, normalizeComposerWorkspaceSnapshot } from './agent/composerWorkspaceSnapshot';
-import { normalizeComposerWorkspaceSnapshot } from './agent/composerWorkspaceSnapshot';
 import { ValidationService } from './validation/validationService';
 import { verifyProjectOwnership, ProjectOwnershipResult } from './projectOwnership';
 import { deleteProjectContentGenerationAdmin, loadProjectFileTreeAdmin, writeProjectFileTreeAdmin } from './projectContent';
