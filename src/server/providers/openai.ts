@@ -620,7 +620,7 @@ Let me know what specific module, file, or integration you would like to impleme
           ...(this.formatResponsesTools(request.tools) ? { tools: this.formatResponsesTools(request.tools) } : {}),
           ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
           ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {})
-        } as any);
+        } as any, request.signal ? { signal: request.signal } : undefined);
         return this.parseResponsesOutput(response) as AIProviderResponse;
       } catch (err: any) {
         throw normalizeOpenAIError(err);
@@ -643,7 +643,7 @@ Let me know what specific module, file, or integration you would like to impleme
         (params as any).reasoning_effort = request.reasoningEffort;
       }
 
-      const response = await client.chat.completions.create(params);
+      const response = await client.chat.completions.create(params, request.signal ? { signal: request.signal } : undefined);
 
       const choice = response.choices[0];
       const text = choice?.message?.content || '';
