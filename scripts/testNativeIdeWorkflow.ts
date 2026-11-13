@@ -213,7 +213,9 @@ async function run(): Promise<void> {
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
     await page.keyboard.press('Enter');
     await page.keyboard.insertText(saveMarker);
-    await page.keyboard.press(MODIFIER + '+S');
+    // Invoke the workbench command explicitly instead of relying on host shortcut routing.
+    // This makes the test assert the actual Save command and on-disk write, not just editor input.
+    await openCommandPaletteCommand(page, 'File: Save');
     await waitForFileContains(mainFile, saveMarker, 15_000);
     pass('Editor changes were saved to the actual workspace file');
 
