@@ -71,7 +71,7 @@ const corpus = [
     path: 'src/g.ts',
     content: [
       'export function resolveThemePreference(value: string): string {',
-      '  // Resolve dark theme preference from the user's saved appearance setting.',
+      '  // Resolve dark theme preference from the user saved appearance setting.',
       '  return value;',
       '}'
     ].join('\n')
