@@ -16,7 +16,7 @@ import { IFloatCommandApprovalHandler } from '../../common/composer/floatCompose
 import { getFloatComposerWorkspaceRoot } from './floatComposerWorkspaceRoot.js';
 import { FloatComposer } from './floatComposer.js';
 import { FloatFloatingComposerWidget } from './floatFloatingComposerWidget.js';
-import { IFloatTurnCheckpoint } from '../../common/checkpoints/floatCheckpointService.js';
+import type { IFloatTurnCheckpoint } from '../../common/checkpoints/floatCheckpointService.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 
@@ -295,7 +295,6 @@ export class RollbackFloatComposerTurnAction extends Action2 {
 	}
 }
 
-registerAction2(OpenFloatComposerAction);
 registerAction2(RollbackFloatComposerTurnAction);
 
 export class OpenFloatSnapshotTimelineAction extends Action2 {
@@ -327,7 +326,7 @@ export class OpenFloatSnapshotTimelineAction extends Action2 {
 		const picks = checkpoints.map((cp: IFloatTurnCheckpoint, idx: number) => ({
 			id: cp.id,
 			label: `$(history) #${idx + 1}: ${cp.description}`,
-			description: `${new Date(cp.timestamp).toLocaleTimeString()} • ${Object.keys(cp.files).length} files`
+			description: `${new Date(cp.timestamp).toLocaleTimeString()} • ${Object.keys(cp.snapshot || {}).length} files`
 		}));
 
 		const selected = await quickInputService.pick(picks.reverse(), {

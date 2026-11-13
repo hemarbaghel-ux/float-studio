@@ -3,9 +3,8 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import * as net from 'net';
-import * as os from 'os';
-import * as path from 'path';
+import * as path from '../../../../../base/common/path.js';
+import { isWindows } from '../../../../../base/common/platform.js';
 import {
 	FloatIpcFramer,
 	FloatIpcMessage,
@@ -17,13 +16,47 @@ import {
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 
+function getNodeNet(): any | null {
+	try {
+		if (typeof process !== 'undefined') {
+			if (typeof (process as any).getBuiltinModule === 'function') {
+				return (process as any).getBuiltinModule('net');
+			}
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				return req('net');
+			}
+		}
+	} catch {
+		// Browser sandbox
+	}
+	return null;
+}
+
+function getNodeOs(): any | null {
+	try {
+		if (typeof process !== 'undefined') {
+			if (typeof (process as any).getBuiltinModule === 'function') {
+				return (process as any).getBuiltinModule('os');
+			}
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				return req('os');
+			}
+		}
+	} catch {
+		// Browser sandbox
+	}
+	return null;
+}
+
 export interface IFloatDaemonClientOptions {
 	pipeName?: string;
 	connectTimeoutMs?: number;
 }
 
 export class FloatDaemonClient extends Disposable {
-	private _socket: net.Socket | null = null;
+	private _socket: any = null;
 	private readonly _pipePath: string;
 	private _isConnected: boolean = false;
 	private _requestCounter: number = 0;
@@ -64,15 +97,21 @@ export class FloatDaemonClient extends Disposable {
 	}
 
 	private _resolveDefaultPipePath(): string {
-		if (process.platform === 'win32') {
+		if (isWindows) {
 			return '\\\\.\\pipe\\float-core-ipc';
 		} else {
-			return path.join(os.tmpdir(), 'float-core-ipc.sock');
+			const os = getNodeOs();
+			const tmp = os?.tmpdir ? os.tmpdir() : '/tmp';
+			return path.join(tmp, 'float-core-ipc.sock');
 		}
 	}
 
 	public async connect(timeoutMs: number = 3000): Promise<void> {
 		return new Promise<void>((resolve, reject) => {
+			const net = getNodeNet();
+			if (!net) {
+				return reject(new Error('Node net module unavailable in current environment'));
+			}
 			const socket = net.createConnection(this._pipePath);
 			this._socket = socket;
 

@@ -64,9 +64,15 @@ export default function App() {
           url.pathname.startsWith('/chat/') || 
           url.pathname === '/' ||
           url.pathname === '/dashboard' ||
+          url.pathname === '/new-chat' ||
+          url.pathname === '/chat' ||
           url.pathname === '/workspace' ||
           url.pathname === '/ide' ||
           url.pathname === '/projects' ||
+          url.pathname === '/codebase' ||
+          url.pathname === '/dashboard/projects' ||
+          url.pathname === '/dashboard/codebase' ||
+          url.pathname === '/dashboard/new-chat' ||
           url.pathname === '/integrations' ||
           url.pathname === '/git-sync' ||
           url.pathname === '/dashboard/git-sync' ||
@@ -252,13 +258,26 @@ export default function App() {
   ) {
     return <Dashboard initialTab="usage" />;
   }
-  if (currentPath === '/integrations') {
+  if (currentPath === '/integrations' || currentPath === '/dashboard/integrations') {
     return <Dashboard initialTab="integrations" />;
   }
-  if (currentPath === '/projects') {
-    return <Dashboard initialTab="projects" />;
+  if (currentPath === '/git-sync' || currentPath === '/dashboard/git-sync') {
+    return <Dashboard initialTab="git-sync" />;
   }
-  if (currentPath === '/dashboard') {
+  if (
+    currentPath === '/projects' ||
+    currentPath === '/codebase' ||
+    currentPath === '/dashboard/projects' ||
+    currentPath === '/dashboard/codebase'
+  ) {
+    return <Dashboard initialTab="codebase" />;
+  }
+  if (
+    currentPath === '/dashboard' ||
+    currentPath === '/new-chat' ||
+    currentPath === '/chat' ||
+    currentPath === '/dashboard/new-chat'
+  ) {
     return <Dashboard initialTab="new-chat" />;
   }
 
@@ -284,7 +303,17 @@ export default function App() {
       currentPath === '/sign-in' || 
       currentPath === '/signin' || 
       currentPath === '/login' || 
-      currentPath === '/dashboard'
+      currentPath === '/dashboard' ||
+      currentPath === '/new-chat' ||
+      currentPath === '/chat' ||
+      currentPath === '/projects' ||
+      currentPath === '/codebase' ||
+      currentPath === '/analyst' ||
+      currentPath === '/usage' ||
+      currentPath === '/analytics' ||
+      currentPath === '/integrations' ||
+      currentPath === '/git-sync' ||
+      currentPath.startsWith('/dashboard/')
     ) {
       return <Dashboard initialTab="new-chat" />;
     }

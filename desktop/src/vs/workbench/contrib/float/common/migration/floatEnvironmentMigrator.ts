@@ -3,9 +3,23 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import * as path from '../../../../../base/common/path.js';
+
+function getNodeRuntime(): { fs: any; os: any } | null {
+	try {
+		if (typeof process !== 'undefined') {
+			const getBuiltin = (process as any).getBuiltinModule;
+			if (typeof getBuiltin === 'function') {
+				return { fs: getBuiltin('fs'), os: getBuiltin('os') };
+			}
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				return { fs: req('fs'), os: req('os') };
+			}
+		}
+	} catch {}
+	return null;
+}
 
 export type FloatMigrationSource = 'vscode' | 'cursor' | 'vscodium';
 
@@ -44,21 +58,24 @@ export class FloatEnvironmentMigrator {
 	private readonly _homedir: string;
 	private readonly _targetFloatConfigDir: string;
 
-	constructor(homedir: string = os.homedir(), targetConfigDir?: string) {
-		this._homedir = homedir;
+	constructor(homedir?: string, targetConfigDir?: string) {
+		const os = getNodeRuntime()?.os;
+		this._homedir = homedir || (os?.homedir ? os.homedir() : (typeof process !== 'undefined' && process.env?.USERPROFILE ? process.env.USERPROFILE : '/'));
 		this._targetFloatConfigDir = targetConfigDir || this._resolveDefaultFloatConfigDir();
 	}
 
 	private _resolveDefaultFloatConfigDir(): string {
 		const platform = process.platform;
+		const os = getNodeRuntime()?.os;
+		const defaultHome = os?.homedir ? os.homedir() : this._homedir;
 		if (platform === 'win32') {
-			const isDefaultHome = this._homedir === os.homedir();
+			const isDefaultHome = this._homedir === defaultHome;
 			const appData = (isDefaultHome && process.env['APPDATA']) ? process.env['APPDATA'] : path.join(this._homedir, 'AppData', 'Roaming');
 			return path.join(appData, 'FloatStudio', 'User');
 		} else if (platform === 'darwin') {
 			return path.join(this._homedir, 'Library', 'Application Support', 'FloatStudio', 'User');
 		} else {
-			const isDefaultHome = this._homedir === os.homedir();
+			const isDefaultHome = this._homedir === defaultHome;
 			const configHome = (isDefaultHome && process.env['XDG_CONFIG_HOME']) ? process.env['XDG_CONFIG_HOME'] : path.join(this._homedir, '.config');
 			return path.join(configHome, 'FloatStudio', 'User');
 		}
@@ -95,6 +112,9 @@ export class FloatEnvironmentMigrator {
 	}
 
 	public detectEnvironments(): IFloatDetectedEnvironment[] {
+		const runtime = getNodeRuntime();
+		if (!runtime) return [];
+		const fs = runtime.fs;
 		const sources: FloatMigrationSource[] = ['vscode', 'cursor', 'vscodium'];
 		const results: IFloatDetectedEnvironment[] = [];
 
@@ -139,6 +159,19 @@ export class FloatEnvironmentMigrator {
 	}
 
 	public async migrate(options: IFloatMigrationOptions): Promise<IFloatMigrationResult> {
+		const runtime = getNodeRuntime();
+		if (!runtime) {
+			return {
+				source: options.source,
+				success: false,
+				settingsImported: 0,
+				keybindingsImported: 0,
+				snippetsImported: 0,
+				extensionsDiscovered: [],
+				errors: ['Node runtime unavailable in browser sandbox']
+			};
+		}
+		const fs = runtime.fs;
 		const { userConfigPath, extensionsPath } = this.resolveSourcePaths(options.source);
 		const errors: string[] = [];
 		let settingsImported = 0;

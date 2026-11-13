@@ -3,9 +3,23 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as path from '../../../../../base/common/path.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
+
+function getNodeFs(): any | null {
+	try {
+		if (typeof process !== 'undefined') {
+			if (typeof (process as any).getBuiltinModule === 'function') {
+				return (process as any).getBuiltinModule('fs');
+			}
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				return req('fs');
+			}
+		}
+	} catch {}
+	return null;
+}
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { FloatDaemonLifecycleManager } from '../daemon/floatDaemonLifecycleManager.js';
@@ -119,8 +133,12 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 		if (depth > 10 || !this._localAutoIndexer) {
 			return;
 		}
+		const nodeFs = getNodeFs();
+		if (!nodeFs) {
+			return;
+		}
 		try {
-			const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+			const entries = await nodeFs.promises.readdir(dir, { withFileTypes: true });
 			for (const entry of entries) {
 				const fullPath = path.join(dir, entry.name);
 				if (this._localAutoIndexer.isExcluded(fullPath)) {
@@ -130,7 +148,7 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 					await this._indexDirectoryRecursively(fullPath, depth + 1);
 				} else if (entry.isFile()) {
 					try {
-						const content = await fs.promises.readFile(fullPath, 'utf8');
+						const content = await nodeFs.promises.readFile(fullPath, 'utf8');
 						const rel = this._activeWorkspaceRoot ? path.relative(this._activeWorkspaceRoot, fullPath) : fullPath;
 						this._localAutoIndexer.indexFile(rel, content);
 					} catch {}
@@ -140,18 +158,19 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 	}
 
 	public async refreshIndex(filePath?: string): Promise<void> {
+		const nodeFs = getNodeFs();
 		if (filePath) {
-			if (this._localAutoIndexer && fs.existsSync(filePath)) {
+			if (this._localAutoIndexer && nodeFs?.existsSync(filePath)) {
 				try {
-					const content = await fs.promises.readFile(filePath, 'utf8');
+					const content = await nodeFs.promises.readFile(filePath, 'utf8');
 					const rel = this._activeWorkspaceRoot ? path.relative(this._activeWorkspaceRoot, filePath) : filePath;
 					this._localAutoIndexer.indexFile(rel, content);
 				} catch {}
 			}
 			if (this._daemonLifecycle.client.isConnected()) {
 				try {
-					if (fs.existsSync(filePath)) {
-						const content = await fs.promises.readFile(filePath, 'utf8');
+					if (nodeFs?.existsSync(filePath)) {
+						const content = await nodeFs.promises.readFile(filePath, 'utf8');
 						await this._daemonLifecycle.client.call('semantic_index_file', { filePath, content });
 					}
 				} catch {}
@@ -278,8 +297,9 @@ export class FloatWorkspaceContextService extends Disposable implements IFloatWo
 
 	public async getFileContext(filePath: string): Promise<string | null> {
 		try {
-			if (fs.existsSync(filePath)) {
-				return await fs.promises.readFile(filePath, 'utf8');
+			const nodeFs = getNodeFs();
+			if (nodeFs?.existsSync(filePath)) {
+				return await nodeFs.promises.readFile(filePath, 'utf8');
 			}
 		} catch {}
 		return null;

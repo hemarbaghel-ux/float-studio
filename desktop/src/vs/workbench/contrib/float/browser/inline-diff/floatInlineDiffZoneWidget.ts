@@ -44,7 +44,6 @@ export class FloatInlineDiffZoneWidget extends ZoneWidget {
 	}
 
 	protected override _fillContainer(container: HTMLElement): void {
-		this._container = container;
 		container.style.display = 'flex';
 		container.style.flexDirection = 'column';
 		container.style.padding = '8px 12px';

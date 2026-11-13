@@ -3,10 +3,43 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import ts from 'typescript';
-import fs from 'node:fs';
-import path from 'node:path';
+import type * as tsType from 'typescript';
+import * as path from '../../../../../base/common/path.js';
 import { IShadowDiagnostic, IShadowValidationOptions } from './floatShadowTypes.js';
+
+let _tsModule: typeof tsType | null | undefined = undefined;
+function getTs(): typeof tsType | null {
+	if (_tsModule !== undefined) {
+		return _tsModule;
+	}
+	try {
+		if (typeof process !== 'undefined' && (process as any).versions?.node) {
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				_tsModule = req('typescript');
+				return _tsModule;
+			}
+		}
+	} catch {
+		// Browser sandbox
+	}
+	_tsModule = null;
+	return _tsModule;
+}
+
+function getNodeFs(): any | null {
+	try {
+		if (typeof process !== 'undefined' && (process as any).versions?.node) {
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				return req('fs');
+			}
+		}
+	} catch {
+		// Browser sandbox
+	}
+	return null;
+}
 
 export class FloatShadowCompiler {
 	/**
@@ -43,6 +76,10 @@ export class FloatShadowCompiler {
 		}
 
 		if (/\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(normalized)) {
+			const ts = getTs();
+			if (!ts) {
+				return diagnostics;
+			}
 			try {
 				const isTsx = /\.(tsx|jsx)$/i.test(normalized);
 				const isJs = /\.(js|jsx|mjs|cjs)$/i.test(normalized);
@@ -170,9 +207,14 @@ export class FloatShadowCompiler {
 			return diagnostics.slice(0, maxDiags);
 		}
 
+		const ts = getTs();
+		if (!ts) {
+			return diagnostics.slice(0, maxDiags);
+		}
+
 		try {
 			const baseWorkspace = options.baseWorkspacePath;
-			let compilerOptions: ts.CompilerOptions = {
+			let compilerOptions: any = {
 				target: ts.ScriptTarget.ES2022,
 				module: ts.ModuleKind.ESNext,
 				moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -187,15 +229,16 @@ export class FloatShadowCompiler {
 			};
 
 			// Load real tsconfig.json if present
+			const nodeFs = getNodeFs();
 			let rawCompilerOptions: any = null;
 			if (virtualFiles.has('tsconfig.json')) {
 				try {
 					const parsed = JSON.parse(virtualFiles.get('tsconfig.json')!);
 					rawCompilerOptions = parsed.compilerOptions;
 				} catch {}
-			} else if (baseWorkspace && fs.existsSync(path.join(baseWorkspace, 'tsconfig.json'))) {
+			} else if (baseWorkspace && nodeFs?.existsSync(path.join(baseWorkspace, 'tsconfig.json'))) {
 				try {
-					const raw = fs.readFileSync(path.join(baseWorkspace, 'tsconfig.json'), 'utf8');
+					const raw = nodeFs.readFileSync(path.join(baseWorkspace, 'tsconfig.json'), 'utf8');
 					const parsed = JSON.parse(raw);
 					rawCompilerOptions = parsed.compilerOptions;
 				} catch {}
@@ -210,18 +253,19 @@ export class FloatShadowCompiler {
 
 			// Helper to resolve physical project path
 			const resolveDisk = (normPath: string): string | null => {
-				if (path.isAbsolute(normPath) && fs.existsSync(normPath)) return normPath;
+				if (!nodeFs) return null;
+				if (path.isAbsolute(normPath) && nodeFs.existsSync(normPath)) return normPath;
 				const leadingSlash = '/' + normPath;
-				if (path.isAbsolute(leadingSlash) && fs.existsSync(leadingSlash)) return leadingSlash;
+				if (path.isAbsolute(leadingSlash) && nodeFs.existsSync(leadingSlash)) return leadingSlash;
 				if (!baseWorkspace) return null;
 				const full = path.resolve(baseWorkspace, normPath);
-				if (fs.existsSync(full)) return full;
+				if (nodeFs.existsSync(full)) return full;
 				return null;
 			};
 
 			// In-memory compiler host backed by virtualFiles with disk fallback for unchanged project files
-			const host: ts.CompilerHost = {
-				getSourceFile: (fileName: string, languageVersion: ts.ScriptTarget) => {
+			const host: any = {
+				getSourceFile: (fileName: string, languageVersion: any) => {
 					const norm = fileName.replace(/\\/g, '/').replace(/^\.\//, '');
 					let content: string | undefined = undefined;
 
@@ -237,16 +281,16 @@ export class FloatShadowCompiler {
 					}
 
 					// Disk fallback for unchanged project files
-					if (content === undefined) {
-						if (fs.existsSync(fileName)) {
+					if (content === undefined && nodeFs) {
+						if (nodeFs.existsSync(fileName)) {
 							try {
-								content = fs.readFileSync(fileName, 'utf8');
+								content = nodeFs.readFileSync(fileName, 'utf8');
 							} catch {}
 						} else {
 							const disk = resolveDisk(norm);
 							if (disk) {
 								try {
-									content = fs.readFileSync(disk, 'utf8');
+									content = nodeFs.readFileSync(disk, 'utf8');
 								} catch {}
 							}
 						}
@@ -287,21 +331,21 @@ export class FloatShadowCompiler {
 					for (const k of virtualFiles.keys()) {
 						if (k.endsWith(norm) || norm.endsWith(k)) return true;
 					}
-					if (fs.existsSync(fileName)) return true;
+					if (nodeFs?.existsSync(fileName)) return true;
 					return resolveDisk(norm) !== null;
 				},
 				readFile: (fileName: string) => {
 					const norm = fileName.replace(/\\/g, '/').replace(/^\.\//, '');
 					if (virtualFiles.has(norm)) return virtualFiles.get(norm);
-					if (fs.existsSync(fileName)) {
+					if (nodeFs?.existsSync(fileName)) {
 						try {
-							return fs.readFileSync(fileName, 'utf8');
+							return nodeFs.readFileSync(fileName, 'utf8');
 						} catch {}
 					}
 					const disk = resolveDisk(norm);
-					if (disk) {
+					if (disk && nodeFs) {
 						try {
-							return fs.readFileSync(disk, 'utf8');
+							return nodeFs.readFileSync(disk, 'utf8');
 						} catch {}
 					}
 					return undefined;

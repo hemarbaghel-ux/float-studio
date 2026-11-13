@@ -227,14 +227,18 @@ export class CodeApplication extends Disposable {
 
 		const isAllowedVsCodeFileRequest = (details: Electron.OnBeforeRequestListenerDetails) => {
 			const frame = details.frame;
-			if (!frame || !this.windowsMainService) {
+			const webContentsId = (details as { webContentsId?: number }).webContentsId;
+			if (!this.windowsMainService) {
 				return false;
 			}
 
 			// Check to see if the request comes from one of the main windows (or shared process) and not from embedded content
 			const windows = getAllWindowsExcludingOffscreen();
 			for (const window of windows) {
-				if (frame.processId === window.webContents.mainFrame.processId) {
+				if (
+					(webContentsId !== undefined && window.webContents.id === webContentsId) ||
+					(frame && frame.processId === window.webContents.mainFrame.processId)
+				) {
 					return true;
 				}
 			}

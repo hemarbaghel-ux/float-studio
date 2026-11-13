@@ -3,12 +3,26 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import * as child_process from 'child_process';
-import * as path from 'path';
-import * as fs from 'fs';
+import * as path from '../../../../../base/common/path.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { FloatDaemonClient } from './floatDaemonClient.js';
+
+function getNodeRuntime(): { cp: any; fs: any } | null {
+	try {
+		if (typeof process !== 'undefined') {
+			const getBuiltin = (process as any).getBuiltinModule;
+			if (typeof getBuiltin === 'function') {
+				return { cp: getBuiltin('child_process'), fs: getBuiltin('fs') };
+			}
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				return { cp: req('child_process'), fs: req('fs') };
+			}
+		}
+	} catch {}
+	return null;
+}
 
 export interface IFloatDaemonHealthStatus {
 	isAlive: boolean;
@@ -21,7 +35,7 @@ export interface IFloatDaemonHealthStatus {
 
 export class FloatDaemonLifecycleManager extends Disposable {
 	private _client: FloatDaemonClient;
-	private _daemonProcess: child_process.ChildProcess | null = null;
+	private _daemonProcess: any = null;
 	private _healthCheckTimer: NodeJS.Timeout | null = null;
 	private _isStarting: boolean = false;
 	private _lastHealthStatus: IFloatDaemonHealthStatus;
@@ -97,16 +111,21 @@ export class FloatDaemonLifecycleManager extends Disposable {
 	}
 
 	private async _spawnDaemonProcess(): Promise<void> {
+		const runtime = getNodeRuntime();
+		if (!runtime) {
+			console.warn('[FloatDaemonLifecycleManager] Node runtime unavailable in browser sandbox');
+			return;
+		}
+
+		const cwd = typeof process !== 'undefined' && process.cwd ? process.cwd() : '.';
 		const candidates = [
-			path.resolve(__dirname, '../../../../../../../daemon/src/index.js'),
-			path.resolve(__dirname, '../../../../../../../daemon/src/index.ts'),
-			path.resolve(process.cwd(), 'daemon/src/index.js'),
-			path.resolve(process.cwd(), 'daemon/src/index.ts')
+			path.resolve(cwd, 'daemon/src/index.js'),
+			path.resolve(cwd, 'daemon/src/index.ts')
 		];
 
 		let daemonScript: string | null = null;
 		for (const c of candidates) {
-			if (fs.existsSync(c)) {
+			if (runtime.fs.existsSync(c)) {
 				daemonScript = c;
 				break;
 			}
@@ -122,7 +141,7 @@ export class FloatDaemonLifecycleManager extends Disposable {
 			? ['node_modules/tsx/dist/cli.mjs', daemonScript]
 			: [daemonScript];
 
-		const proc = child_process.spawn(execCmd, args, {
+		const proc = runtime.cp.spawn(execCmd, args, {
 			detached: false,
 			stdio: 'pipe',
 			env: {

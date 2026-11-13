@@ -3,11 +3,22 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { execFile } from 'node:child_process';
-import type { ChildProcess } from 'node:child_process';
+import * as path from '../../../../../base/common/path.js';
 import { sanitizeProposalPath } from '../proposals/floatProposalValidator.js';
+
+function getNodeRuntime(): { fs: any; execFile: any } | null {
+  try {
+    if (typeof process !== 'undefined' && (process as any).versions?.node) {
+      const req = (globalThis as any).require;
+      if (typeof req === 'function') {
+        return { fs: req('fs'), execFile: req('child_process').execFile };
+      }
+    }
+  } catch {
+    // In sandboxed browser environment
+  }
+  return null;
+}
 
 export const DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE = 'node:22-bookworm-slim';
 
@@ -33,14 +44,15 @@ export function buildFloatDockerSandboxArgs(options: IFloatDockerSandboxOptions)
     throw new Error('Invalid FLOAT Composer sandbox container name.');
   }
 
-  const workspaceRoot = fs.realpathSync(options.workspaceRoot);
-  if (!fs.statSync(workspaceRoot).isDirectory()) {
+  const node = getNodeRuntime();
+  const workspaceRoot = node ? node.fs.realpathSync(options.workspaceRoot) : path.resolve(options.workspaceRoot);
+  if (node && !node.fs.statSync(workspaceRoot).isDirectory()) {
     throw new Error('FLOAT Composer sandbox workspace must be a directory.');
   }
 
   const relativeCwd = !options.cwd || options.cwd === '.' ? '' : sanitizeProposalPath(options.cwd);
   const requestedCwd = path.resolve(workspaceRoot, relativeCwd);
-  const cwdRealPath = fs.realpathSync(requestedCwd);
+  const cwdRealPath = node ? node.fs.realpathSync(requestedCwd) : requestedCwd;
   const relativeRealCwd = path.relative(workspaceRoot, cwdRealPath);
   if (relativeRealCwd === '..' ||
       relativeRealCwd.startsWith('..' + path.sep) ||
@@ -116,7 +128,7 @@ export interface IFloatDockerCommandResult {
  * fails closed. There is intentionally no host-shell fallback.
  */
 export class FloatDockerSandboxRunner {
-  private _activeChild: ChildProcess | null = null;
+  private _activeChild: any = null;
   private _activeContainerName: string | null = null;
   private static _sequence = 0;
 
@@ -130,8 +142,18 @@ export class FloatDockerSandboxRunner {
     command: string,
     options: { cwd?: string; timeoutMs?: number } = {}
   ): Promise<IFloatDockerCommandResult> {
+    const node = getNodeRuntime();
+    if (!node) {
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Docker sandbox runner requires a Node.js utility process or runtime.',
+        durationMs: 0
+      };
+    }
+
     const start = Date.now();
-    const containerName = 'float-composer-' + process.pid + '-' + Date.now() + '-' + (++FloatDockerSandboxRunner._sequence);
+    const containerName = 'float-composer-' + (typeof process !== 'undefined' ? process.pid : 0) + '-' + Date.now() + '-' + (++FloatDockerSandboxRunner._sequence);
     let args: string[];
 
     try {
@@ -140,7 +162,7 @@ export class FloatDockerSandboxRunner {
         dependenciesDirectory: this._dependenciesDirectory,
         command,
         cwd: options.cwd || '.',
-        image: process.env.FLOAT_COMPOSER_SANDBOX_IMAGE || DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE,
+        image: (typeof process !== 'undefined' && process.env?.FLOAT_COMPOSER_SANDBOX_IMAGE) || DEFAULT_FLOAT_COMPOSER_SANDBOX_IMAGE,
         containerName
       });
     } catch (error) {
@@ -154,11 +176,11 @@ export class FloatDockerSandboxRunner {
 
     const timeoutMs = Math.max(1000, options.timeoutMs ?? this._defaultTimeoutMs);
     return await new Promise<IFloatDockerCommandResult>(resolve => {
-      const child = execFile('docker', args, {
+      const child = node.execFile('docker', args, {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
         windowsHide: true
-      }, (error, stdout, stderr) => {
+      }, (error: any, stdout: any, stderr: any) => {
         const finish = async () => {
           if (error && (error.code === 'ETIMEDOUT' || error.killed)) {
             await this._stopContainer(containerName);
@@ -211,8 +233,12 @@ export class FloatDockerSandboxRunner {
   }
 
   private async _stopContainer(containerName: string): Promise<void> {
+    const node = getNodeRuntime();
+    if (!node) {
+      return;
+    }
     await new Promise<void>(resolve => {
-      execFile('docker', ['stop', '--time', '1', containerName], {
+      node.execFile('docker', ['stop', '--time', '1', containerName], {
         timeout: 5000,
         windowsHide: true
       }, () => resolve());

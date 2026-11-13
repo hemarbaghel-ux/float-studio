@@ -4,7 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	FloatMultiFileDiffOrchestrator
+	FloatMultiFileDiffOrchestrator,
+	ITransactionCommitResult
 } from './floatMultiFileDiffOrchestrator.js';
 import { IComposerAgentGoal } from './floatComposerAgent.js';
 

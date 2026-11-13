@@ -12,8 +12,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   native-desktop:
@@ -60,8 +60,13 @@ jobs:
       - name: Install Desktop Dependencies
         run: npm --prefix desktop ci --ignore-scripts
 
-      - name: Compile Code-OSS Workbench Client
-        run: npm --prefix desktop run gulp -- transpile-client-esbuild
+      - name: Unpack Ripgrep Binary
+        run: node ./lib/postinstall.js
+        working-directory: desktop/node_modules/@vscode/ripgrep
+
+      - name: Compile Code-OSS Workbench Client (Type Checked)
+        run: node --max-old-space-size=8192 ./node_modules/gulp/bin/gulp.js compile-client
+        working-directory: desktop
 
       - name: Build FLOAT Daemon Worker Entrypoint
         run: node scripts/buildFloatDaemonWorker.mjs
@@ -74,20 +79,26 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm --prefix desktop run electron
 
-      - name: Run Native Desktop Smoke Test
+      - name: Run Daemon Utility Process Integration Test
+        run: node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testFloatDaemonUtilityProcess.ts
+
+      - name: Run Native Desktop Smoke Test (Playwright)
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
-            xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" node node_modules/tsx/dist/cli.mjs scripts/testNativeDesktopSmoke.ts
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testNativeDesktopSmoke.ts
           else
-            node node_modules/tsx/dist/cli.mjs scripts/testNativeDesktopSmoke.ts
+            node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testNativeDesktopSmoke.ts
           fi
 
       - name: Upload Compiled Desktop Workbench Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: float-desktop-${{ matrix.platform }}
           path: |
             desktop/out/
             desktop/.build/electron/
-          if-no-files-found: ignore
+            *.log
+            tmp/
+          if-no-files-found: warn

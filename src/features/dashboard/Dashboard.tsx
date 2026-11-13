@@ -44,16 +44,18 @@ interface ProjectItem {
   updatedAt?: any;
 }
 
+const resolveTab = (pathname: string, defaultTab: string = 'new-chat'): string => {
+  if (pathname === '/dashboard/analyst' || pathname === '/analyst' || pathname === '/data-analyst') return 'analyst';
+  if (pathname === '/dashboard/usage' || pathname === '/usage' || pathname === '/analytics') return 'usage';
+  if (pathname === '/git-sync' || pathname === '/dashboard/git-sync') return 'git-sync';
+  if (pathname === '/integrations' || pathname === '/dashboard/integrations') return 'integrations';
+  if (pathname === '/projects' || pathname === '/codebase' || pathname === '/dashboard/projects' || pathname === '/dashboard/codebase') return 'codebase';
+  if (pathname === '/' || pathname === '/dashboard' || pathname === '/new-chat' || pathname === '/chat' || pathname === '/dashboard/new-chat') return 'new-chat';
+  return defaultTab;
+};
+
 export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) {
-  const [activeTab, setActiveTab] = useState(() => {
-    const p = window.location.pathname;
-    if (p === '/dashboard/analyst' || p === '/analyst' || p === '/data-analyst') return 'analyst';
-    if (p === '/dashboard/usage' || p === '/usage' || p === '/analytics') return 'usage';
-    if (p === '/git-sync') return 'git-sync';
-    if (p === '/integrations') return 'integrations';
-    if (p === '/projects') return 'projects';
-    return initialTab;
-  });
+  const [activeTab, setActiveTab] = useState(() => resolveTab(window.location.pathname, initialTab));
   const [activeChatId, setActiveChatId] = useState<string | null>(() => {
     const match = window.location.pathname.match(/^\/chat\/([^/]+)/);
     return match ? match[1] : null;
@@ -82,25 +84,30 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const projectLoadSequenceRef = useRef(0);
 
-  const resolveTab = (pathname: string): string => {
-    if (pathname === '/dashboard/analyst' || pathname === '/analyst' || pathname === '/data-analyst') return 'analyst';
-    if (pathname === '/dashboard/usage' || pathname === '/usage' || pathname === '/analytics') return 'usage';
-    if (pathname === '/git-sync' || pathname === '/dashboard/git-sync') return 'git-sync';
-    if (pathname === '/integrations' || pathname === '/dashboard/integrations') return 'integrations';
-    if (pathname === '/projects' || pathname === '/codebase' || pathname === '/dashboard/projects') return 'codebase';
-    if (pathname === '/' || pathname === '/dashboard') return 'new-chat';
-    return initialTab;
+  const handleOpenNewChat = () => {
+    setActiveChatId(null);
+    setActiveTab('new-chat');
+    setPrompt('');
+    if (window.location.pathname !== '/dashboard') {
+      window.history.pushState({}, '', '/dashboard');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
+    }, 50);
   };
 
   useEffect(() => {
     const p = window.location.pathname;
-    setActiveTab(resolveTab(p));
+    setActiveTab(resolveTab(p, initialTab));
     const match = p.match(/^\/chat\/([^/]+)/);
     setActiveChatId(match ? match[1] : null);
 
     const handlePopState = () => {
       const current = window.location.pathname;
-      setActiveTab(resolveTab(current));
+      setActiveTab(resolveTab(current, initialTab));
       const chatMatch = current.match(/^\/chat\/([^/]+)/);
       setActiveChatId(chatMatch ? chatMatch[1] : null);
     };
@@ -113,14 +120,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N') && !e.shiftKey && !e.altKey) {
         e.preventDefault();
-        setActiveChatId(null);
-        setActiveTab('new-chat');
-        setPrompt('');
-        window.history.pushState({}, '', '/');
-        window.dispatchEvent(new PopStateEvent('popstate'));
-        setTimeout(() => {
-          if (textareaRef.current) textareaRef.current.focus();
-        }, 50);
+        handleOpenNewChat();
       }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
@@ -203,9 +203,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
       setProjects(prev => prev.filter(p => p.id !== projectId));
       if (projectToDelete === projectId) setProjectToDelete(null);
       if (activeChatId === projectId) {
-        setActiveChatId(null);
-        window.history.pushState({}, '', '/');
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        handleOpenNewChat();
       }
     } catch (err) {
       console.error('Failed to delete chat:', err);
@@ -276,14 +274,10 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
         <div className="h-12 flex items-center px-4 justify-between shrink-0">
           <div className="flex items-center gap-2">
             <a
-              href="/"
+              href="/dashboard"
               onClick={(e) => {
                 e.preventDefault();
-                setActiveChatId(null);
-                setActiveTab('new-chat');
-                setPrompt('');
-                window.history.pushState({}, '', '/');
-                window.dispatchEvent(new PopStateEvent('popstate'));
+                handleOpenNewChat();
               }}
               className="flex items-center hover:opacity-85 transition-opacity"
               title="FLOAT Home"
@@ -321,16 +315,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
         <div className="px-2 py-1 flex flex-col gap-0.5">
           {/* New Chat Button */}
           <button
-            onClick={() => {
-              setActiveChatId(null);
-              setActiveTab('new-chat');
-              setPrompt('');
-              window.history.pushState({}, '', '/');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-              setTimeout(() => {
-                if (textareaRef.current) textareaRef.current.focus();
-              }, 50);
-            }}
+            onClick={handleOpenNewChat}
             title="New Chat"
             className={`w-full flex items-center ${
               sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3'
@@ -521,13 +506,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                 </p>
               </div>
               <button
-                onClick={() => {
-                  setActiveChatId(null);
-                  setActiveTab('new-chat');
-                  setPrompt('');
-                  window.history.pushState({}, '', '/');
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }}
+                onClick={handleOpenNewChat}
                 className="px-3.5 py-1.5 bg-slate-900 text-white dark:bg-white dark:text-black rounded-lg text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer"
               >
                 <Plus size={14} />
@@ -547,13 +526,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
                   Start a new chat to have FLOAT create and maintain a project workspace for you.
                 </p>
                 <button
-                  onClick={() => {
-                    setActiveChatId(null);
-                    setActiveTab('new-chat');
-                    setPrompt('');
-                    window.history.pushState({}, '', '/');
-                    window.dispatchEvent(new PopStateEvent('popstate'));
-                  }}
+                  onClick={handleOpenNewChat}
                   className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 text-slate-900 dark:text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
                 >
                   Start New Chat
@@ -604,7 +577,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
           <div className="flex-1 flex flex-col items-center justify-start px-4 pt-28 sm:pt-32 pb-8 w-full max-w-4xl mx-auto">
 
             {/* 2. Main Chat Composer Box */}
-            <div className="w-full max-w-2xl bg-white dark:bg-[#141414] border border-slate-200/90 dark:border-[#2C2C2C] rounded-b-2xl shadow-sm p-4 relative flex flex-col transition-colors">
+            <div className="w-full max-w-2xl bg-white dark:bg-[#141414] border border-slate-200/90 dark:border-[#2C2C2C] rounded-2xl shadow-sm p-4 relative flex flex-col transition-colors">
               {/* Textarea Input with FLOAT placeholder */}
               <textarea
                 ref={textareaRef}

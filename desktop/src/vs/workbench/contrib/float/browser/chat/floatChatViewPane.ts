@@ -21,7 +21,8 @@ export interface IFloatCodeBlock {
 	targetPath?: string;
 }
 
-export interface IFloatChatViewMessage extends IFloatChatMessage {
+export interface IFloatChatViewMessage extends Omit<IFloatChatMessage, 'content'> {
+	content: string;
 	contextChips?: IFloatChatContextChip[];
 	codeBlocks?: IFloatCodeBlock[];
 	streaming?: boolean;

@@ -3,12 +3,25 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
+import * as path from '../../../../../base/common/path.js';
 import { FloatMerkleTree } from './floatMerkleTree.js';
 import { FloatSemanticChunker } from './floatSemanticChunker.js';
 import { FloatVectorIndex, IRankedCodeChunk, IBoundedContextResult, ISerializedVectorIndex } from './floatVectorIndex.js';
+
+function getNodeFs(): { fs: any; fsp: any } | null {
+	try {
+		if (typeof process !== 'undefined' && (process as any).versions?.node) {
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				const nFs = req('fs');
+				return { fs: nFs, fsp: nFs.promises || req('fs/promises') };
+			}
+		}
+	} catch {
+		// In sandboxed browser environment
+	}
+	return null;
+}
 
 const EXCLUDED_PATTERNS = [
 	/(^|[\\/])node_modules([\\/]|$)/i,
@@ -121,12 +134,13 @@ export class FloatWorkspaceIndexer {
 		let indexed = 0;
 		let skipped = 0;
 
-		if (!fs.existsSync(rootPath)) {
+		const node = getNodeFs();
+		if (!node || !node.fs.existsSync(rootPath)) {
 			return { indexed, skipped };
 		}
 
 		const scanDir = async (dir: string, relBase: string) => {
-			const entries = await fsp.readdir(dir, { withFileTypes: true });
+			const entries = await node.fsp.readdir(dir, { withFileTypes: true });
 			for (const entry of entries) {
 				const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
 				if (this.isExcluded(relPath)) {
@@ -140,13 +154,13 @@ export class FloatWorkspaceIndexer {
 				} else if (entry.isFile()) {
 					try {
 						// Only index text / code files under 2MB
-						const stat = await fsp.stat(fullPath);
+						const stat = await node.fsp.stat(fullPath);
 						if (stat.size > 2 * 1024 * 1024) {
 							skipped++;
 							continue;
 						}
 
-						const content = await fsp.readFile(fullPath, 'utf8');
+						const content = await node.fsp.readFile(fullPath, 'utf8');
 						if (this.indexFile(relPath, content)) {
 							indexed++;
 						} else {
@@ -187,6 +201,11 @@ export class FloatWorkspaceIndexer {
 	 * Persists index metadata snapshot and serialized semantic vectors to disk for instant recovery after workbench restart.
 	 */
 	public async saveIndexMetadata(savePath: string): Promise<void> {
+		const node = getNodeFs();
+		if (!node) {
+			return;
+		}
+
 		const payload: IFloatIndexMetadataPayload = {
 			version: 1,
 			timestamp: Date.now(),
@@ -196,20 +215,21 @@ export class FloatWorkspaceIndexer {
 			vectorIndex: this._vectorIndex.serialize()
 		};
 
-		await fsp.mkdir(path.dirname(savePath), { recursive: true });
-		await fsp.writeFile(savePath, JSON.stringify(payload, null, 2), 'utf8');
+		await node.fsp.mkdir(path.dirname(savePath), { recursive: true });
+		await node.fsp.writeFile(savePath, JSON.stringify(payload, null, 2), 'utf8');
 	}
 
 	/**
 	 * Restores index metadata and serialized semantic vector chunks from disk snapshot.
 	 */
 	public async loadIndexMetadata(metaPath: string): Promise<boolean> {
-		if (!fs.existsSync(metaPath)) {
+		const node = getNodeFs();
+		if (!node || !node.fs.existsSync(metaPath)) {
 			return false;
 		}
 
 		try {
-			const raw = await fsp.readFile(metaPath, 'utf8');
+			const raw = await node.fsp.readFile(metaPath, 'utf8');
 			const payload: IFloatIndexMetadataPayload = JSON.parse(raw);
 			if (!payload.files || !Array.isArray(payload.files)) {
 				return false;
