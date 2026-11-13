@@ -155,10 +155,8 @@ export class OpenFloatComposerAction extends Action2 {
 
 				widget.onAccept(async () => {
 					if (composer.activeMultiFileProposal) {
-						await composer.orchestrator.acceptAll(composer.activeMultiFileProposal.id, async (p, content) => {
-							await composer.acceptFile(composer.activeMultiFileProposal!.id, p);
-						});
-						notificationService.info(`FLOAT Composer: Changes accepted and saved to disk.`);
+						const applied = await composer.applyProposal(composer.activeMultiFileProposal.id);
+						if (applied) notificationService.info('FLOAT Composer: Changes accepted and saved to disk.');
 					} else if (composer.activeProposal) {
 						await composer.applyProposal(composer.activeProposal.id);
 					}
@@ -166,7 +164,7 @@ export class OpenFloatComposerAction extends Action2 {
 
 				widget.onReject(() => {
 					if (composer.activeMultiFileProposal) {
-						composer.orchestrator.rejectAll(composer.activeMultiFileProposal.id);
+						composer.rejectProposal(composer.activeMultiFileProposal.id);
 					} else if (composer.activeProposal) {
 						composer.rejectProposal(composer.activeProposal.id);
 					}
@@ -226,12 +224,10 @@ export class OpenFloatComposerAction extends Action2 {
 				});
 
 				if (actionChoice?.id === 'applyAll') {
-					await composer.orchestrator.acceptAll(prop.id, async (p, content) => {
-						await composer.acceptFile(prop.id, p);
-					});
-					notificationService.info(`FLOAT Composer: All ${prop.files.length} files accepted and written to disk.`);
+					const applied = await composer.applyProposal(prop.id);
+					if (applied) notificationService.info(`FLOAT Composer: All ${prop.files.length} files accepted and written to disk.`);
 				} else if (actionChoice?.id === 'rejectAll') {
-					composer.orchestrator.rejectAll(prop.id);
+					composer.rejectProposal(prop.id);
 					notificationService.info('FLOAT Composer: All proposals rejected.');
 				} else if (actionChoice?.id === 'rollback' && execution.checkpointId) {
 					await composer.rollbackTurn(execution.checkpointId);
