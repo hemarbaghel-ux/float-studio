@@ -120,8 +120,11 @@ async function run(): Promise<void> {
     // In sandboxed mode, the agent may stage a durable proposal, but the
     // proposal remains pending review and never edits the project snapshot.
     ExecutionPolicyManager.setPolicyMode(USER_ID, 'sandboxed');
+    let proposalIterations = 0;
     const proposalRun = await runComposerTask(options('agent', async request => {
+      proposalIterations++;
       assert.ok(request.tools?.some(tool => tool.name === 'propose_changes'));
+      if (proposalIterations > 1) return { text: 'The proposal is staged and ready for review.' };
       return {
         text: 'I prepared a small change for review.',
         toolCalls: [{
@@ -132,19 +135,20 @@ async function run(): Promise<void> {
             changes: [{
               path: 'src/index.ts',
               operation: 'modify',
-              proposedContent: 'export const answer = 43;\\n'
+              proposedContent: 'export const answer = 43;\n'
             }]
           }
         }]
       };
-    }, { maxIterations: 1 }));
+    }, { maxIterations: 2 }));
+    assert.equal(proposalRun.status, 'completed');
     assert.equal(proposalRun.steps[0].success, true);
     assert.equal(proposalRun.proposalsGenerated.length, 1);
     const stagedProposal = ProposalService.getProposal(proposalRun.proposalsGenerated[0]);
     assert.ok(stagedProposal);
     assert.equal(stagedProposal?.status, 'pending_review');
-    assert.equal(stagedProposal?.changes[0].originalContent, 'export const answer = 42;\\n');
-    assert.equal(stagedProposal?.changes[0].proposedContent, 'export const answer = 43;\\n');
+    assert.equal(stagedProposal?.changes[0].originalContent, 'export const answer = 42;\n');
+    assert.equal(stagedProposal?.changes[0].proposedContent, 'export const answer = 43;\n');
 
     // A pre-cancelled task does not call the model or execute tools.
     const abort = new AbortController();
@@ -169,7 +173,6 @@ async function run(): Promise<void> {
   } finally {
     setProjectLookupForTests(null);
     resetEphemeralWorkspacesForTests();
-    ProposalService.clearForTests?.();
     ExecutionPolicyManager.clearCacheForTests();
   }
 }
