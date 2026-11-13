@@ -179,7 +179,7 @@ export class FloatComposerAgent {
 			}
 			const structuredCallSummary = structuredToolCalls
 				.map(call => `Requested workspace tool: ${call.name}(${JSON.stringify(call.arguments)})`)
-				.join('\\n');
+				.join('\n');
 			conversationHistory.push({
 				role: 'assistant',
 				content: assistantResponse || structuredCallSummary
