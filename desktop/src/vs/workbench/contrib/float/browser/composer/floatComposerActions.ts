@@ -210,14 +210,21 @@ export class OpenFloatComposerAction extends Action2 {
 
 		if (modeChoice.id === 'agent') {
 			notificationService.info(`FLOAT Autonomous Composer running: "${prompt.trim()}"...`);
-			const execution = await composer.executeAutonomousGoal({
-				prompt: prompt.trim()
-			}, step => {
-				if (step.toolCall) {
-					notificationService.info(`Agent executing tool: ${step.toolCall.name}...`);
-				}
-			});
-
+			let execution: Awaited<ReturnType<FloatComposer['executeAutonomousGoal']>>;
+			try {
+				const execution = await composer.executeAutonomousGoal({
+					prompt: prompt.trim()
+				}, step => {
+					if (step.toolCall) {
+						notificationService.info(`Agent executing tool: ${step.toolCall.name}...`);
+					}
+				});
+	
+			} catch (error: any) {
+				const message = error?.message || String(error);
+				notificationService.error(`FLOAT Composer Agent failed: ${message}`);
+				return;
+			}
 			if (execution.proposal && execution.proposal.files.length > 0) {
 				const prop = execution.proposal;
 				const actionChoice = await quickInputService.pick([
