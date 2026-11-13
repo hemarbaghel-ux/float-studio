@@ -91,6 +91,15 @@ jobs:
             node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testNativeDesktopSmoke.ts
           fi
 
+      - name: Verify Native IDE Workflows (Stage 1)
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" node node_modules/tsx/dist/cli.mjs scripts/testNativeIdeWorkflow.ts
+          else
+            node node_modules/tsx/dist/cli.mjs scripts/testNativeIdeWorkflow.ts
+          fi
+
       - name: Upload Compiled Desktop Workbench Artifacts
         if: always()
         uses: actions/upload-artifact@v4
