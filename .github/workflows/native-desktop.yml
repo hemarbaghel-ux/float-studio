@@ -110,4 +110,4 @@ jobs:
             desktop/.build/electron/
             *.log
             tmp/
-          if-no-files-found: warn
+          if-no-files-found: error
