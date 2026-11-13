@@ -1,0 +1,45 @@
+name: FLOAT Code Intelligence Verification
+
+on:
+  push:
+    branches:
+      - 'float/**'
+      - 'main'
+  pull_request:
+    branches:
+      - 'float/**'
+      - 'main'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retrieval-quality:
+    name: Retrieval Quality and Index Freshness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.18.2'
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run retrieval quality benchmark
+        run: node node_modules/tsx/dist/cli.mjs scripts/testCodebaseRetrievalQuality.ts
+
+      - name: Run codebase search regression
+        run: node node_modules/tsx/dist/cli.mjs scripts/testCodebaseSearch.ts
+
+      - name: Run index persistence regression
+        run: node node_modules/tsx/dist/cli.mjs scripts/testFloatWorkspaceIndexPersistence.ts
+
+      - name: Run root TypeScript typecheck
+        run: npm run lint

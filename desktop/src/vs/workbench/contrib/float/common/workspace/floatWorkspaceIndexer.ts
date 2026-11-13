@@ -231,27 +231,67 @@ export class FloatWorkspaceIndexer {
 		try {
 			const raw = await node.fsp.readFile(metaPath, 'utf8');
 			const payload: IFloatIndexMetadataPayload = JSON.parse(raw);
-			if (!payload.files || !Array.isArray(payload.files)) {
+			if (
+				payload.version !== 1 ||
+				payload.embeddingArchitecture !== 'sparse_token_hash_projection' ||
+				!Array.isArray(payload.files) ||
+				!payload.stats ||
+				typeof payload.stats.fileCount !== 'number' ||
+				typeof payload.stats.chunkCount !== 'number' ||
+				typeof payload.stats.rootHash !== 'string'
+			) {
 				return false;
+			}
+
+			// Validate every record before clearing the live index. Corrupt paths or
+			// malformed hashes must not partially replace a working index.
+			for (const file of payload.files) {
+				if (
+					!file ||
+					typeof file.relativePath !== 'string' ||
+					typeof file.contentLength !== 'number' ||
+					file.contentLength < 0 ||
+					typeof file.isBinary !== 'boolean' ||
+					(file.hash !== undefined && !/^[a-f0-9]{40}$/i.test(file.hash))
+				) {
+					return false;
+				}
 			}
 
 			this.clear();
 
 			for (const file of payload.files) {
-				if (!this.isExcluded(file.relativePath)) {
-					this._files.set(file.relativePath, file);
-					if (file.hash) {
-						this._merkleTree.updateFile(file.relativePath, '');
+				const normPath = file.relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
+				if (!normPath || normPath.startsWith('/') || /^[a-z]:/i.test(normPath) || normPath.includes('\\0') || normPath.split('/').some(segment => segment === '..')) {
+					this.clear();
+					return false;
+				}
+				if (this.isExcluded(normPath)) {
+					continue;
+				}
+				this._files.set(normPath, { ...file, relativePath: normPath });
+				if (file.hash) {
+					if (!this._merkleTree.restoreFileHash(normPath, file.hash)) {
+						this.clear();
+						return false;
 					}
 				}
 			}
 
+			if (this._files.size !== payload.stats.fileCount || this._merkleTree.rootHash !== payload.stats.rootHash) {
+				this.clear();
+				return false;
+			}
 			if (payload.vectorIndex) {
 				this._vectorIndex.deserialize(payload.vectorIndex);
 			}
-
+			if (this._vectorIndex.chunkCount !== payload.stats.chunkCount) {
+				this.clear();
+				return false;
+			}
 			return true;
 		} catch {
+			this.clear();
 			return false;
 		}
 	}

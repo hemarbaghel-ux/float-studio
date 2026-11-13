@@ -14,12 +14,18 @@ import { extractSymbols } from './symbolExtractor';
  * Fast string hashing for cache invalidation and change detection
  */
 function hashString(content: string): string {
-  let hash = 5381;
+  // This is a cache fingerprint, not a security primitive. Two independent
+  // 32-bit accumulators reduce accidental collision risk compared with the
+  // previous single 32-bit DJB2 hash while preserving a synchronous browser API.
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
   for (let i = 0; i < content.length; i++) {
-    hash = ((hash << 5) + hash) + content.charCodeAt(i);
-    hash |= 0;
+    const code = content.charCodeAt(i);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ (code + i), 0x85ebca6b);
+    second ^= second >>> 13;
   }
-  return `${hash}_${content.length}`;
+  return `${(first >>> 0).toString(16)}${(second >>> 0).toString(16)}_${content.length}`;
 }
 
 /**
@@ -418,6 +424,9 @@ export class WorkspaceIndex {
       let symbolScore = 0;
 
       for (const sym of doc.symbols) {
+        // A kind filter removes disallowed symbols from ranking entirely; it
+        // must not still boost a document and leak through a content result.
+        if (options.filterSymbolKinds && !options.filterSymbolKinds.includes(sym.kind)) continue;
         const symNameLower = sym.name.toLowerCase();
         let currentSymBoost = 0;
 
