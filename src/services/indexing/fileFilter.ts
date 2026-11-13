@@ -83,7 +83,11 @@ export function matchesIgnorePattern(filePath: string, patterns: string[]): bool
   const norm = normalizeWorkspacePath(filePath);
   if (!norm) return false;
   const segments = norm.split('/');
+  const fileName = segments[segments.length - 1];
+  let ignored = false;
 
+  // Gitignore uses last-match-wins semantics. In particular, a later
+  // negation must be able to re-include a file excluded by an earlier rule.
   for (const rawPat of patterns) {
     const pat = rawPat.trim();
     if (!pat || pat.startsWith('#')) continue;
@@ -92,45 +96,44 @@ export function matchesIgnorePattern(filePath: string, patterns: string[]): bool
     const activePat = isNegation ? pat.slice(1).trim() : pat;
     if (!activePat) continue;
 
+    const directoryOnly = activePat.endsWith('/');
     const cleanPat = activePat.replace(/^\/+/, '').replace(/\/+$/, '');
+    if (!cleanPat) continue;
 
-    // Directory match like 'coverage/' or 'dist/'
-    if (activePat.endsWith('/')) {
-      if (segments.some(seg => seg === cleanPat) || norm.startsWith(`${cleanPat}/`)) {
-        return !isNegation;
-      }
-    }
+    let matches = false;
 
-    // Extension glob match like '*.log'
-    if (activePat.startsWith('*.')) {
-      const ext = activePat.slice(2).toLowerCase();
-      if (norm.toLowerCase().endsWith(`.${ext}`)) {
-        return !isNegation;
-      }
-    }
-
-    // Exact path or filename match
-    const fileName = segments[segments.length - 1];
-    if (cleanPat === norm || cleanPat === fileName || segments.includes(cleanPat)) {
-      return !isNegation;
-    }
-
-    // Wildcard match
-    if (activePat.includes('*')) {
-      const escaped = cleanPat.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-      const regexStr = '^' + escaped.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*') + '$';
+    // Directory rules apply to the directory and all descendants.
+    if (directoryOnly) {
+      matches = segments.some(segment => segment === cleanPat) ||
+        norm === cleanPat ||
+        norm.startsWith(`${cleanPat}/`);
+    } else if (activePat.startsWith('*.') && !activePat.includes('/')) {
+      const extension = activePat.slice(2).toLowerCase();
+      matches = fileName.toLowerCase().endsWith(`.${extension}`);
+    } else if (!activePat.includes('*') && !activePat.includes('?')) {
+      // A slash makes a pattern workspace-root-relative. A bare name matches
+      // a path segment at any depth, as in .gitignore.
+      matches = cleanPat.includes('/')
+        ? norm === cleanPat || norm.startsWith(`${cleanPat}/`)
+        : segments.includes(cleanPat);
+    } else {
+      const escaped = cleanPat.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      const regexSource = '^' + escaped
+        .replace(/\*\*/g, '.*')
+        .replace(/\*/g, '[^/]*')
+        .replace(/\?/g, '[^/]') + '$';
       try {
-        const regex = new RegExp(regexStr, 'i');
-        if (regex.test(norm) || regex.test(fileName)) {
-          return !isNegation;
-        }
+        const matcher = new RegExp(regexSource, 'i');
+        matches = matcher.test(norm) || (!cleanPat.includes('/') && matcher.test(fileName));
       } catch {
-        // ignore regex compilation failure
+        matches = false;
       }
     }
+
+    if (matches) ignored = !isNegation;
   }
 
-  return false;
+  return ignored;
 }
 
 export function sanitizePath(rawPath: string, ignorePatterns?: string[]): { safePath: string; error?: string } {
