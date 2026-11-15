@@ -112,3 +112,10 @@ export function scanChangesForSecrets(files: Map<string, string> | Record<string
 
   return matches;
 }
+
+/**
+ * Checks whether the given string content contains any detectable secrets.
+ */
+export function containsSecrets(content: string): boolean {
+  return scanFileForSecrets('buffer', content).length > 0;
+}

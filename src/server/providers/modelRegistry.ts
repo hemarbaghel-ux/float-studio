@@ -69,6 +69,10 @@ export function getModelDescriptor(modelId: string): ServerModelDescriptor | und
   return MODEL_REGISTRY.find(model => model.id === modelId || model.apiModelId === modelId);
 }
 
+export function listSelectableModels(): ServerModelDescriptor[] {
+  return MODEL_REGISTRY.filter((model) => model.selectable);
+}
+
 const route = (
   provider: RoutedProvider,
   apiModelId: string,
