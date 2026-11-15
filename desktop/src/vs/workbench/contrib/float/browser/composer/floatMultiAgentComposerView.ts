@@ -5,9 +5,9 @@
 
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { FloatComposerViewPane, IFloatComposerSession } from './floatComposerViewPane.js';
+import { FloatComposerViewPane } from './floatComposerViewPane.js';
 import { FloatMultiAgentTeamOrchestrator, IAgentMessage, IAgentSessionResult } from '../agent/floatMultiAgentTeamOrchestrator.js';
-import { FloatAgentTaskDag, IFloatAgentTaskNode } from '../agent/floatAgentTaskDag.js';
+import { FloatAgentTaskDag } from '../agent/floatAgentTaskDag.js';
 
 export interface IAgentTimelineCard {
 	id: string;

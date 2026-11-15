@@ -95,7 +95,12 @@ let _initPromise: Promise<void> | null = null;
 
 function resolveTreeSitterWasmDir(): string {
 	const candidates = [
+		path.resolve(__dirname, 'wasm'),
+		path.resolve(__dirname, '../wasm'),
 		path.resolve(__dirname, '../../wasm'),
+		path.resolve(__dirname, '../../../../../../../../daemon/wasm'),
+		path.resolve(__dirname, '../../../../../../../daemon/wasm'),
+		path.resolve(__dirname, '../../../../../../daemon/wasm'),
 		path.resolve(process.cwd(), 'daemon/wasm'),
 		path.resolve(process.cwd(), 'desktop/node_modules/@vscode/tree-sitter-wasm/wasm'),
 		path.resolve(process.cwd(), 'node_modules/@vscode/tree-sitter-wasm/wasm')

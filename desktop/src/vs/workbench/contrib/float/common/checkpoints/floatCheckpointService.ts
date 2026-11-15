@@ -3,7 +3,8 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { IFloatTurnCheckpoint } from '../protocols/floatProtocol.js';
+import type { IFloatTurnCheckpoint } from '../protocols/floatProtocol.js';
+export type { IFloatTurnCheckpoint };
 
 export interface IFloatFileRestorationAction {
 	path: string;
@@ -84,6 +85,10 @@ export class FloatCheckpointService {
 
 	public getAllCheckpoints(): IFloatTurnCheckpoint[] {
 		return [...this._checkpoints];
+	}
+
+	public listCheckpoints(): IFloatTurnCheckpoint[] {
+		return this.getAllCheckpoints();
 	}
 
 	public popLatestCheckpoint(): IFloatTurnCheckpoint | undefined {

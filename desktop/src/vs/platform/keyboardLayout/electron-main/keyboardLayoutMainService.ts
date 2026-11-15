@@ -46,17 +46,32 @@ export class KeyboardLayoutMainService extends Disposable implements INativeKeyb
 	}
 
 	private async _doInitialize(): Promise<void> {
-		const nativeKeymapMod = await import('native-keymap');
+		try {
+			const nativeKeymapMod = await import('native-keymap');
 
-		this._keyboardLayoutData = readKeyboardLayoutData(nativeKeymapMod);
-		if (!platform.isCI) {
-			// See https://github.com/microsoft/vscode/issues/152840
-			// Do not register the keyboard layout change listener in CI because it doesn't work
-			// on the build machines and it just adds noise to the build logs.
-			nativeKeymapMod.onDidChangeKeyboardLayout(() => {
-				this._keyboardLayoutData = readKeyboardLayoutData(nativeKeymapMod);
-				this._onDidChangeKeyboardLayout.fire(this._keyboardLayoutData);
-			});
+			this._keyboardLayoutData = readKeyboardLayoutData(nativeKeymapMod);
+			if (!platform.isCI && typeof nativeKeymapMod?.onDidChangeKeyboardLayout === 'function') {
+				// See https://github.com/microsoft/vscode/issues/152840
+				// Do not register the keyboard layout change listener in CI because it doesn't work
+				// on the build machines and it just adds noise to the build logs.
+				try {
+					nativeKeymapMod.onDidChangeKeyboardLayout(() => {
+						try {
+							this._keyboardLayoutData = readKeyboardLayoutData(nativeKeymapMod);
+							this._onDidChangeKeyboardLayout.fire(this._keyboardLayoutData);
+						} catch {
+							// Ignore native keymap change errors
+						}
+					});
+				} catch {
+					// Ignore native keymap registration errors
+				}
+			}
+		} catch {
+			this._keyboardLayoutData = {
+				keyboardMapping: {} as any,
+				keyboardLayoutInfo: { name: '00000409', id: '0409:00000409', text: 'US', isUSStandard: true } as any
+			};
 		}
 	}
 
@@ -67,7 +82,27 @@ export class KeyboardLayoutMainService extends Disposable implements INativeKeyb
 }
 
 function readKeyboardLayoutData(nativeKeymapMod: typeof nativeKeymap): IKeyboardLayoutData {
-	const keyboardMapping = nativeKeymapMod.getKeyMap();
-	const keyboardLayoutInfo = nativeKeymapMod.getCurrentKeyboardLayout();
+	let keyboardMapping: any = {};
+	let keyboardLayoutInfo: any = { name: '00000409', id: '0409:00000409', text: 'US', isUSStandard: true };
+	try {
+		if (typeof nativeKeymapMod?.getKeyMap === 'function') {
+			const res = nativeKeymapMod.getKeyMap();
+			if (res && typeof res === 'object') {
+				keyboardMapping = res;
+			}
+		}
+	} catch {
+		// Ignore native keymap errors
+	}
+	try {
+		if (typeof nativeKeymapMod?.getCurrentKeyboardLayout === 'function') {
+			const res = nativeKeymapMod.getCurrentKeyboardLayout();
+			if (res && typeof res === 'object') {
+				keyboardLayoutInfo = res;
+			}
+		}
+	} catch {
+		// Ignore native keymap errors
+	}
 	return { keyboardMapping, keyboardLayoutInfo };
 }

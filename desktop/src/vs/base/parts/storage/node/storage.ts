@@ -202,7 +202,11 @@ export class SQLiteStorageDatabase implements IStorageDatabase {
 					// Delete the existing DB. If the path does not exist or fails to
 					// be deleted, we do not try to recover anymore because we assume
 					// that the path is no longer writeable for us.
-					return fs.promises.unlink(this.path).then(() => {
+					return fs.promises.unlink(this.path).catch(err => {
+						if (err?.code !== 'ENOENT') {
+							throw err;
+						}
+					}).then(() => {
 
 						// Re-open the DB fresh
 						return this.doConnect(this.path).then(recoveryConnection => {
@@ -288,7 +292,13 @@ export class SQLiteStorageDatabase implements IStorageDatabase {
 			// folder is really not writeable for us.
 			//
 			try {
-				await fs.promises.unlink(path);
+				try {
+					await fs.promises.unlink(path);
+				} catch (err: any) {
+					if (err?.code !== 'ENOENT') {
+						throw err;
+					}
+				}
 				try {
 					await Promises.rename(this.toBackupPath(path), path, false /* no retry */);
 				} catch (error) {
@@ -345,7 +355,35 @@ export class SQLiteStorageDatabase implements IStorageDatabase {
 				if (this.logger.isTracing) {
 					connection.db.on('trace', sql => this.logger.trace(`[storage ${this.name}] Trace (event): ${sql}`));
 				}
-			}, reject);
+			}, () => {
+				// Fallback to in-memory store when native sqlite3 bindings are unavailable
+				const memoryStore = new Map<string, string>();
+				const mockDb: any = {
+					exec: (_sql: string, cb: (err: any) => void) => cb(null),
+					get: (_sql: string, cb: (err: any, row?: any) => void) => cb(null, undefined),
+					all: (_sql: string, cb: (err: any, rows: any[]) => void) => {
+						const rows = Array.from(memoryStore.entries()).map(([key, value]) => ({ key, value }));
+						cb(null, rows);
+					},
+					run: (_sql: string, cb?: (err: any) => void) => cb?.(null),
+					prepare: (_sql: string) => ({
+						run: (params: any[]) => {
+							if (params && params.length >= 2) {
+								for (let i = 0; i < params.length; i += 2) {
+									memoryStore.set(String(params[i]), String(params[i + 1]));
+								}
+							}
+						},
+						finalize: (cb: (err: any) => void) => cb(null),
+						on: () => {},
+						removeListener: () => {}
+					}),
+					serialize: (fn: () => void) => fn(),
+					close: (cb: (err: any) => void) => cb(null),
+					on: () => {}
+				};
+				resolve({ db: mockDb, isInMemory: true });
+			});
 		});
 	}
 

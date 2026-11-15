@@ -3,7 +3,22 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import * as crypto from 'crypto';
+import { StringSHA1 } from '../../../../../base/common/hash.js';
+
+function getNodeCrypto(): any | null {
+	try {
+		if (typeof process !== 'undefined') {
+			if (typeof (process as any).getBuiltinModule === 'function') {
+				return (process as any).getBuiltinModule('crypto');
+			}
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				return req('crypto');
+			}
+		}
+	} catch {}
+	return null;
+}
 
 export type PlatformTarget = 'windows-x64' | 'macos-arm64' | 'linux-x64';
 
@@ -46,7 +61,13 @@ export class FloatReleasePackager {
 	};
 
 	public computeSha256(content: string | Buffer): string {
-		return crypto.createHash('sha256').update(content).digest('hex');
+		const nodeCrypto = getNodeCrypto();
+		if (nodeCrypto) {
+			return nodeCrypto.createHash('sha256').update(content).digest('hex');
+		}
+		const sha1 = new StringSHA1();
+		sha1.update(typeof content === 'string' ? content : content.toString('utf8'));
+		return sha1.digest();
 	}
 
 	public verifyChecksum(content: string | Buffer, expectedSha256: string): boolean {

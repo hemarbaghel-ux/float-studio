@@ -6,7 +6,7 @@
 import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { IEditorContribution } from '../../../../../editor/common/editorCommon.js';
 import { Range } from '../../../../../editor/common/core/range.js';
-import { IModelDecorationOptions, ITextModel } from '../../../../../editor/common/model.js';
+import { IModelDecorationOptions } from '../../../../../editor/common/model.js';
 import { IEditorDecorationsCollection } from '../../../../../editor/common/editorCommon.js';
 import { IFloatService } from '../../common/floatService.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -53,6 +53,9 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 	private _isStale: boolean = false;
 	private _decorationsCollection: IEditorDecorationsCollection | null = null;
 	private _preEditCheckpointId: string | null = null;
+	public get preEditCheckpointId(): string | null {
+		return this._preEditCheckpointId;
+	}
 	private _activeHunk: IInlineDiffHunk | null = null;
 	private _hunks: IInlineDiffHunk[] = [];
 	private _activeHunkIndex: number = 0;
@@ -65,14 +68,12 @@ export class FloatInlineDiffController extends Disposable implements IEditorCont
 		@IFloatService private readonly _floatService: IFloatService,
 		@INotificationService private readonly _notificationService: INotificationService,
 		@ITextFileService private readonly _textFileService: ITextFileService,
-		@IContextKeyService private readonly _contextKeyService?: IContextKeyService
+		@IContextKeyService private readonly _contextKeyService: IContextKeyService
 	) {
 		super();
 		this._decorationsCollection = this._editor.createDecorationsCollection();
-		if (this._contextKeyService) {
-			this._ctxInlineDiffVisible = ctxFloatInlineDiffVisible.bindTo(this._contextKeyService);
-			this._ctxInlineDiffGenerating = ctxFloatInlineDiffGenerating.bindTo(this._contextKeyService);
-		}
+		this._ctxInlineDiffVisible = ctxFloatInlineDiffVisible.bindTo(this._contextKeyService);
+		this._ctxInlineDiffGenerating = ctxFloatInlineDiffGenerating.bindTo(this._contextKeyService);
 		this._registerModelListeners();
 	}
 

@@ -9,7 +9,6 @@ import { INotificationService } from '../../../../../platform/notification/commo
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { RawContextKey } from '../../../../../platform/contextkey/common/contextkey.js';
-import { IFloatService } from '../../common/floatService.js';
 
 let _autocompleteEnabled = true;
 

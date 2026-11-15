@@ -3,7 +3,58 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { FloatTreeSitterIndexer, IFloatAstNode } from '../../../../../../../../daemon/src/indexer/floatTreeSitterIndexer.js';
+export interface IFloatAstNode {
+	id: string;
+	name: string;
+	kind: 'function' | 'class' | 'interface' | 'method' | 'variable' | 'type' | 'module' | 'struct' | 'enum' | 'trait' | 'property';
+	language: string;
+	startLine: number;
+	endLine: number;
+	signature?: string;
+	docstring?: string;
+	hash?: string;
+	parentName?: string;
+	parentSymbolId?: string;
+	children?: IFloatAstNode[];
+}
+
+export interface IFloatSyntaxIndexer {
+	parseFileSymbols(filePath: string, content: string): { symbols: IFloatAstNode[] };
+}
+
+export class FloatDefaultSyntaxIndexer implements IFloatSyntaxIndexer {
+	public parseFileSymbols(filePath: string, content: string): { symbols: IFloatAstNode[] } {
+		const symbols: IFloatAstNode[] = [];
+		const lines = content.split('\n');
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const classMatch = line.match(/^\s*(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z0-9_$]+)/);
+			if (classMatch) {
+				symbols.push({
+					id: `${filePath}#${classMatch[1]}#${i + 1}`,
+					name: classMatch[1],
+					kind: 'class',
+					language: 'typescript',
+					startLine: i + 1,
+					endLine: Math.min(lines.length, i + 50)
+				});
+				continue;
+			}
+			const funcMatch = line.match(/^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/);
+			if (funcMatch) {
+				symbols.push({
+					id: `${filePath}#${funcMatch[1]}#${i + 1}`,
+					name: funcMatch[1],
+					kind: 'function',
+					language: 'typescript',
+					startLine: i + 1,
+					endLine: Math.min(lines.length, i + 30)
+				});
+			}
+		}
+		return { symbols };
+	}
+}
 
 export interface IFloatSyntaxContextSlice {
 	filePath: string;
@@ -19,10 +70,10 @@ export interface IFloatSyntaxContextSlice {
 }
 
 export class FloatSyntaxContextSlicer {
-	private readonly _indexer: FloatTreeSitterIndexer;
+	private readonly _indexer: IFloatSyntaxIndexer;
 
-	constructor(indexer?: FloatTreeSitterIndexer) {
-		this._indexer = indexer || new FloatTreeSitterIndexer();
+	constructor(indexer?: IFloatSyntaxIndexer) {
+		this._indexer = indexer || new FloatDefaultSyntaxIndexer();
 	}
 
 	public sliceContext(

@@ -3,7 +3,29 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import ts from 'typescript';
+import type * as tsType from 'typescript';
+
+let _tsModule: typeof tsType | null = null;
+let _tsChecked = false;
+function getTs(): typeof tsType | null {
+	if (_tsChecked) {
+		return _tsModule;
+	}
+	_tsChecked = true;
+	try {
+		if (typeof process !== 'undefined' && (process as any).versions?.node) {
+			const req = (globalThis as any).require;
+			if (typeof req === 'function') {
+				_tsModule = req('typescript') ?? null;
+				return _tsModule;
+			}
+		}
+	} catch {
+		// Browser sandbox
+	}
+	_tsModule = null;
+	return _tsModule;
+}
 
 export interface ISemanticCodeChunk {
 	id: string;
@@ -61,11 +83,15 @@ export class FloatSemanticChunker {
 	}
 
 	private static _chunkTypeScript(filePath: string, content: string): ISemanticCodeChunk[] {
+		const ts = getTs();
+		if (!ts) {
+			return this._chunkGeneric(filePath, content);
+		}
 		const chunks: ISemanticCodeChunk[] = [];
 		const isTsx = filePath.endsWith('.tsx') || filePath.endsWith('.jsx');
 		const isJs = filePath.endsWith('.js') || filePath.endsWith('.jsx') || filePath.endsWith('.mjs');
 
-		let sourceFile: ts.SourceFile;
+		let sourceFile: tsType.SourceFile;
 		try {
 			sourceFile = ts.createSourceFile(
 				filePath,
@@ -83,7 +109,7 @@ export class FloatSemanticChunker {
 		const pushChunk = (
 			name: string,
 			kind: NonNullable<ISemanticCodeChunk['symbolKind']>,
-			node: ts.Node,
+			node: tsType.Node,
 			containerName?: string,
 			contentOverride?: string
 		): void => {
@@ -103,7 +129,7 @@ export class FloatSemanticChunker {
 			});
 		};
 
-		const visitNode = (node: ts.Node, containerName?: string): void => {
+		const visitNode = (node: tsType.Node, containerName?: string): void => {
 			// A single VariableStatement may declare several independent symbols.
 			// Index each identifier separately and classify callable initializers as functions.
 			if (ts.isVariableStatement(node)) {

@@ -20,12 +20,14 @@ export interface IFloatProposalFileChange {
 	readonly isNew: boolean;
 	readonly isDeletion: boolean;
 	readonly status: 'pending' | 'accepted' | 'rejected';
+	readonly diff?: string;
 }
 
 export interface IFloatProposal {
 	readonly id: string;
 	readonly title: string;
 	readonly explanation: string;
+	readonly summary?: string;
 	readonly files: IFloatProposalFileChange[];
 	readonly timestamp: number;
 	readonly status: 'pending' | 'applied' | 'rejected' | 'partially_applied';
@@ -34,7 +36,7 @@ export interface IFloatProposal {
 export interface IFloatModelInfo {
 	readonly id: string;
 	readonly name: string;
-	readonly provider: 'openai' | 'google' | 'anthropic' | 'custom';
+	readonly provider: 'openai' | 'google' | 'anthropic' | 'custom' | 'ollama';
 	readonly contextWindow: number;
 	readonly supportsStreaming: boolean;
 	readonly isDefault?: boolean;

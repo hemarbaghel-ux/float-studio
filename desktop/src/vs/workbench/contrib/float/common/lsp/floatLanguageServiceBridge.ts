@@ -41,8 +41,8 @@ export interface IFloatSymbolReference {
 }
 
 export class FloatLanguageServiceBridge extends Disposable {
-	private readonly _onDidChangeDiagnostics = this._register(new Emitter<URI[]>());
-	public readonly onDidChangeDiagnostics: Event<URI[]> = this._onDidChangeDiagnostics.event;
+	private readonly _onDidChangeDiagnostics = this._register(new Emitter<readonly URI[]>());
+	public readonly onDidChangeDiagnostics: Event<readonly URI[]> = this._onDidChangeDiagnostics.event;
 
 	constructor(
 		@IMarkerService private readonly _markerService?: IMarkerService,
@@ -57,6 +57,10 @@ export class FloatLanguageServiceBridge extends Disposable {
 				})
 			);
 		}
+	}
+
+	public get languageFeaturesService(): ILanguageFeaturesService | undefined {
+		return this._languageFeaturesService;
 	}
 
 	/**

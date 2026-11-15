@@ -10,7 +10,7 @@ import { parseModelProposals } from '../proposals/floatProposalValidator.js';
 import { FloatShadowWorkspaceService } from '../shadow/floatShadowWorkspaceService.js';
 import { IShadowValidationResult } from '../shadow/floatShadowTypes.js';
 import { SpeculativeComposerFileSystem, IsolatedShadowWorkspaceCommandRunner } from './floatProductionAdapters.js';
-import { FloatDagTaskPlanner, IFloatTaskNode, IFloatDagExecutionSummary } from '../planner/floatDagTaskPlanner.js';
+import { FloatDagTaskPlanner, IFloatDagExecutionSummary } from '../planner/floatDagTaskPlanner.js';
 
 export interface IComposerAgentStep {
 	stepIndex: number;
@@ -206,6 +206,10 @@ export class FloatComposerAgent {
 						role: 'user',
 						content: `[TOOL ERROR] Failed to parse tool call JSON: ${e.message}. Please retry with valid JSON.`
 					});
+					continue;
+				}
+
+				if (!parsedCall) {
 					continue;
 				}
 

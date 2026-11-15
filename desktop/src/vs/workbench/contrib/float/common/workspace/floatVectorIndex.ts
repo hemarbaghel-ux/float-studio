@@ -335,9 +335,6 @@ export class FloatVectorIndex {
 				const candVec = this._vectors.get(candidate.chunk.id);
 				if (!candVec) continue;
 
-				// Sim to query
-				const simToQuery = candidate.cosineSimilarity;
-
 				// Max sim to already selected chunks
 				let maxSimToSelected = 0;
 				for (const sel of selected) {

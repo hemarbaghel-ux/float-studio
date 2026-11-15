@@ -52,7 +52,7 @@ registerSingleton(IFloatDebugAutoRepairService, FloatDebugAutoRepairService, Ins
 // 2. Register Inline Diff Controller (Ctrl+K) in Editor
 registerEditorContribution(
 	FloatInlineDiffController.ID,
-	FloatInlineDiffController,
+	FloatInlineDiffController as any,
 	EditorContributionInstantiation.AfterFirstRender
 );
 

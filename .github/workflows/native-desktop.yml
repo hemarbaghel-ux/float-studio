@@ -1,0 +1,104 @@
+name: FLOAT Studio Native Desktop CI
+
+on:
+  push:
+    branches:
+      - 'float/**'
+      - 'main'
+  pull_request:
+    branches:
+      - 'float/**'
+      - 'main'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  native-desktop:
+    name: Build & Smoke Test (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            os: windows-latest
+            arch: x64
+          - platform: macos-arm64
+            os: macos-14
+            arch: arm64
+          - platform: linux-x64
+            os: ubuntu-24.04
+            arch: x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup Node.js 20.18.2
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.18.2'
+          cache: 'npm'
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbfile-dev libsecret-1-dev fakeroot rpm build-essential xvfb
+
+      - name: Install Root Dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Desktop Build Dependencies
+        run: npm --prefix desktop/build ci --ignore-scripts
+
+      - name: Install Desktop Dependencies
+        run: npm --prefix desktop ci --ignore-scripts
+
+      - name: Unpack Ripgrep Binary
+        run: node ./lib/postinstall.js
+        working-directory: desktop/node_modules/@vscode/ripgrep
+
+      - name: Compile Code-OSS Workbench Client (Type Checked)
+        run: node --max-old-space-size=8192 ./node_modules/gulp/bin/gulp.js compile-client
+        working-directory: desktop
+
+      - name: Build FLOAT Daemon Worker Entrypoint
+        run: node scripts/buildFloatDaemonWorker.mjs
+
+      - name: Build Built-in Core Language Extensions
+        run: npm run build:extensions
+
+      - name: Download & Prepare Electron Runtime
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm --prefix desktop run electron
+
+      - name: Run Daemon Utility Process Integration Test
+        run: node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testFloatDaemonUtilityProcess.ts
+
+      - name: Run Native Desktop Smoke Test (Playwright)
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testNativeDesktopSmoke.ts
+          else
+            node node_modules/tsx/dist/cli.mjs --tsconfig desktop/src/tsconfig.json scripts/testNativeDesktopSmoke.ts
+          fi
+
+      - name: Upload Compiled Desktop Workbench Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: float-desktop-${{ matrix.platform }}
+          path: |
+            desktop/out/
+            desktop/.build/electron/
+            *.log
+            tmp/
+          if-no-files-found: warn

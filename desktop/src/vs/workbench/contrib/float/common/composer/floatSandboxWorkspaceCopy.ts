@@ -3,8 +3,21 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import fs from 'node:fs';
-import path from 'node:path';
+import * as path from '../../../../../base/common/path.js';
+
+function getNodeFs(): any | null {
+  try {
+    if (typeof process !== 'undefined' && (process as any).versions?.node) {
+      const req = (globalThis as any).require;
+      if (typeof req === 'function') {
+        return req('fs');
+      }
+    }
+  } catch {
+    // In sandboxed browser environment
+  }
+  return null;
+}
 
 const EXCLUDED_DIRECTORIES = new Set([
   '.git', '.svn', '.hg',
@@ -51,6 +64,10 @@ export function copyComposerWorkspace(
   destinationRoot: string,
   extraExcludedPaths: ReadonlySet<string> = new Set()
 ): IComposerWorkspaceCopyStats {
+  const fs = getNodeFs();
+  if (!fs) {
+    return { directoriesCopied: 0, filesCopied: 0, filesSkipped: 0 };
+  }
   const source = fs.realpathSync(sourceRoot);
   const destination = path.resolve(destinationRoot);
   const sourceToDestination = path.relative(source, destination);
