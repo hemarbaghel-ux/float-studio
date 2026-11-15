@@ -96,7 +96,8 @@ export function buildFloatDockerSandboxArgs(options: IFloatDockerSandboxOptions)
     '--env=npm_config_cache=/tmp/npm-cache'
   ];
 
-  if (options.dependenciesDirectory && fs.existsSync(options.dependenciesDirectory)) {
+  const fs = getNodeRuntime()?.fs;
+  if (options.dependenciesDirectory && fs && fs.existsSync(options.dependenciesDirectory)) {
     const dependencyStat = fs.lstatSync(options.dependenciesDirectory);
     if (dependencyStat.isSymbolicLink() || !dependencyStat.isDirectory()) {
       throw new Error('FLOAT Composer dependencies must be a real directory, not a symlink.');

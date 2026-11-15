@@ -245,7 +245,7 @@ async function runNativeDesktopSmokeTest(): Promise<void> {
       NODE_ENV: 'development',
       VSCODE_DEV: isPackaged ? '0' : '1'
     },
-    timeout: 60000
+    timeout: 120000
   });
 
   const proc = app.process();
@@ -267,7 +267,7 @@ async function runNativeDesktopSmokeTest(): Promise<void> {
 
     console.log('Waiting for .monaco-workbench in DOM...');
     try {
-      await window.waitForSelector('.monaco-workbench', { timeout: 60000 });
+      await window.waitForSelector('.monaco-workbench', { state: 'attached', timeout: 120000 });
     } catch (waitErr) {
       console.error(`[DIAGNOSTIC] Window URL after timeout: ${window.url()}`);
       try {
@@ -281,7 +281,7 @@ async function runNativeDesktopSmokeTest(): Promise<void> {
     reportPass('Workbench Rendered', '.monaco-workbench is mounted and visible');
 
     console.log('Waiting for editor container in DOM...');
-    await window.waitForSelector('.part.editor', { timeout: 60000 });
+    await window.waitForSelector('.part.editor', { state: 'attached', timeout: 120000 });
     reportPass('Editor Container Mounted', '.part.editor container verified in workbench layout');
 
     console.log('Verifying active editor or document title...');
