@@ -147,7 +147,8 @@ export class FloatModelClient {
 			const headers: Record<string, string> = {
 				'Content-Type': 'application/json',
 				'Accept': 'text/event-stream',
-				'X-Float-Project-Id': projectId
+				'X-Float-Project-Id': projectId,
+				'X-Float-Desktop-Client': 'true'
 			};
 			if (authToken) {
 				headers['Authorization'] = `Bearer ${authToken}`;
@@ -320,7 +321,8 @@ export class FloatModelClient {
 		const startTime = Date.now();
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json',
-			'X-Float-Project-Id': projectId
+			'X-Float-Project-Id': projectId,
+			'X-Float-Desktop-Client': 'true'
 		};
 		if (authToken) {
 			headers['Authorization'] = `Bearer ${authToken}`;

@@ -310,6 +310,20 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   // Privacy & Governance Disclosure Route
+  // Terminal Execution Policy endpoints
+  let currentTerminalExecutionPolicyMode: 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed' = 'sandboxed';
+  app.get('/api/policy', requireAuth, (_req, res) => {
+    res.json({ mode: currentTerminalExecutionPolicyMode, permitted: true });
+  });
+  app.post('/api/policy', requireAuth, express.json(), (req: any, res: any) => {
+    const { mode } = req.body || {};
+    const validModes = ['safe', 'review', 'allowlist', 'manual', 'sandboxed'];
+    if (validModes.includes(mode)) {
+      currentTerminalExecutionPolicyMode = mode;
+    }
+    res.json({ success: true, mode: currentTerminalExecutionPolicyMode });
+  });
+
   app.get('/api/privacy/policy', (_req, res) => {
     const launchBlockerChecklist = {
       controllerAndContact: Boolean(process.env.FLOAT_PRIVACY_CONTROLLER_NAME && process.env.FLOAT_PRIVACY_CONTACT_EMAIL),

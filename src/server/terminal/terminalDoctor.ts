@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 export interface TerminalDoctorCheck {
   readonly id: string;
@@ -16,7 +17,7 @@ export interface TerminalDoctorCheck {
 
 export interface TerminalDoctorReport {
   readonly ready: boolean;
-  readonly mode: 'isolated_docker_pty' | 'unconfigured';
+  readonly mode: 'isolated_docker_pty' | 'local_spawn_process' | 'unconfigured';
   readonly browserPreviewDisclaimer: string;
   readonly checks: readonly TerminalDoctorCheck[];
   readonly timestamp: string;
@@ -26,7 +27,7 @@ export function runTerminalSetupDoctor(env: NodeJS.ProcessEnv = process.env): Te
   const checks: TerminalDoctorCheck[] = [];
 
   const dockerBin = (env.FLOAT_DOCKER_BIN || '').trim();
-  const dockerBinValid = Boolean(dockerBin && dockerBin.startsWith('/') && fs.existsSync(dockerBin));
+  const dockerBinValid = Boolean(dockerBin && (path.isAbsolute(dockerBin) || dockerBin.startsWith('/')) && fs.existsSync(dockerBin));
   checks.push({
     id: 'docker_binary',
     envVar: 'FLOAT_DOCKER_BIN',
@@ -55,9 +56,9 @@ export function runTerminalSetupDoctor(env: NodeJS.ProcessEnv = process.env): Te
   const dockerTls = (env.DOCKER_TLS_VERIFY || '').trim();
   const dockerCertPath = (env.DOCKER_CERT_PATH || '').trim();
   const daemonProxyValid =
-    dockerHost.startsWith('tcp://') &&
-    dockerTls === '1' &&
-    Boolean(dockerCertPath && dockerCertPath.startsWith('/'));
+    (dockerHost.startsWith('tcp://') || (process.platform === 'win32' && dockerHost.startsWith('npipe://'))) &&
+    (dockerTls === '1' || process.platform === 'win32') &&
+    Boolean(dockerCertPath && (path.isAbsolute(dockerCertPath) || dockerCertPath.startsWith('/')));
   checks.push({
     id: 'docker_tls_proxy',
     envVar: 'DOCKER_HOST',
@@ -71,10 +72,10 @@ export function runTerminalSetupDoctor(env: NodeJS.ProcessEnv = process.env): Te
 
   const sharedDir = (env.FLOAT_EXECUTION_SHARED_DIR || '').trim();
   let sharedDirValid = false;
-  if (sharedDir && sharedDir.startsWith('/') && fs.existsSync(sharedDir)) {
+  if (sharedDir && (path.isAbsolute(sharedDir) || sharedDir.startsWith('/')) && fs.existsSync(sharedDir)) {
     try {
       const st = fs.statSync(sharedDir);
-      sharedDirValid = st.isDirectory() && (st.mode & 0o077) === 0;
+      sharedDirValid = st.isDirectory() && (process.platform === 'win32' || (st.mode & 0o077) === 0);
     } catch {
       sharedDirValid = false;
     }
@@ -90,10 +91,14 @@ export function runTerminalSetupDoctor(env: NodeJS.ProcessEnv = process.env): Te
     remediation: 'Run: mkdir -p /var/lib/float-exec && chmod 0700 /var/lib/float-exec && export FLOAT_EXECUTION_SHARED_DIR=/var/lib/float-exec',
   });
 
-  const ready = checks.every(c => c.passed);
+  const dockerReady = checks.every(c => c.passed);
+  const localExecutionEnabled = env.FLOAT_ENABLE_LOCAL_EXECUTION === 'true' || env.FLOAT_DESKTOP_DEV === '1';
+  const ready = dockerReady || localExecutionEnabled;
+  const mode = dockerReady ? 'isolated_docker_pty' : localExecutionEnabled ? 'local_spawn_process' : 'unconfigured';
+
   return {
     ready,
-    mode: ready ? 'isolated_docker_pty' : 'unconfigured',
+    mode,
     browserPreviewDisclaimer:
       'Browser Web Worker preview (src/features/float/sandbox.ts) is an in-memory UI preview only and never substitutes for OS/container terminal execution.',
     checks,

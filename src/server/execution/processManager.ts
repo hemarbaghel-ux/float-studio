@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 
 export interface ExecutionFile { path: string; content?: string }
 export interface ExecutionRequest { ownerId: string; projectId: string; command: string; files: ExecutionFile[]; timeoutMs?: number; signal?: AbortSignal }
@@ -84,30 +85,41 @@ export class ProjectProcessManager {
     }
   }
 
-  get available(): boolean {
+  get dockerAvailable(): boolean {
     const uid = resolveExecutionUid();
     const gid = resolveExecutionGid();
+    const sharedDir = process.env.FLOAT_EXECUTION_SHARED_DIR || '';
+    const isAbs = Boolean(sharedDir && (path.isAbsolute(sharedDir) || sharedDir.startsWith('/')));
     return Boolean(
       process.env.FLOAT_DOCKER_BIN &&
       /^.+@sha256:[a-f0-9]{64}$/i.test(process.env.FLOAT_EXECUTION_IMAGE || '') &&
-      /^tcp:\/\//i.test(process.env.DOCKER_HOST || '') &&
-      process.env.DOCKER_TLS_VERIFY === '1' &&
+      (/^tcp:\/\//i.test(process.env.DOCKER_HOST || '') || (process.platform === 'win32' && /^npipe:\/\//i.test(process.env.DOCKER_HOST || ''))) &&
+      (process.env.DOCKER_TLS_VERIFY === '1' || process.platform === 'win32') &&
       process.env.DOCKER_CERT_PATH &&
-      process.env.FLOAT_EXECUTION_SHARED_DIR &&
-      path.isAbsolute(process.env.FLOAT_EXECUTION_SHARED_DIR) &&
+      sharedDir &&
+      isAbs &&
       Number.isSafeInteger(uid) && uid > 0 &&
       Number.isSafeInteger(gid) && gid > 0 &&
       (typeof process.getuid !== 'function' || process.getuid() === uid || process.getuid() === 0)
     );
   }
 
+  get localAvailable(): boolean {
+    return process.env.FLOAT_ENABLE_LOCAL_EXECUTION === 'true' || process.env.FLOAT_DESKTOP_DEV === '1';
+  }
+
+  get available(): boolean {
+    return this.dockerAvailable || this.localAvailable;
+  }
+
   async prepareWorkspaceDirectory(files: ExecutionFile[] = []): Promise<string> {
     if (!this.available) {
       throw new Error('Isolated project execution is not configured.');
     }
-    await ensurePrivateSharedDirectory(process.env.FLOAT_EXECUTION_SHARED_DIR!);
-    const root = await mkdtemp(path.join(process.env.FLOAT_EXECUTION_SHARED_DIR!, 'float-workspace-'));
-    await chmod(root, 0o700);
+    const sharedBase = process.env.FLOAT_EXECUTION_SHARED_DIR || os.tmpdir();
+    await ensurePrivateSharedDirectory(sharedBase);
+    const root = await mkdtemp(path.join(sharedBase, 'float-workspace-'));
+    try { await chmod(root, 0o700); } catch {}
     let totalBytes = 0;
     for (const file of files) {
       const relativePath = validateRelativePath(file.path);
@@ -131,25 +143,36 @@ export class ProjectProcessManager {
     if (!this.available) {
       throw new Error('Isolated project execution is not configured.');
     }
-    const uid = resolveExecutionUid();
-    const gid = resolveExecutionGid();
-    const image = process.env.FLOAT_EXECUTION_IMAGE!;
-    const dockerBin = process.env.FLOAT_DOCKER_BIN!;
-    const safeSubdir = cwd && cwd !== '/' ? cwd.replace(/^\/+/, '').replace(/\.\./g, '') : '';
-    const workdir = safeSubdir ? `/workspace/${safeSubdir}` : '/workspace';
-    const args = [
-      'run', '-it', '--rm', '--name', containerName,
-      '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
-      '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${uid}:${gid}`,
-      '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
-      '--mount', `type=bind,src=${workspaceRoot},dst=/workspace`, '--workdir', workdir,
-      '--env', 'HOME=/tmp', '--env', 'TERM=xterm-256color',
-      image, '/bin/sh'
-    ];
+    if (this.dockerAvailable) {
+      const uid = resolveExecutionUid();
+      const gid = resolveExecutionGid();
+      const image = process.env.FLOAT_EXECUTION_IMAGE!;
+      const dockerBin = process.env.FLOAT_DOCKER_BIN!;
+      const safeSubdir = cwd && cwd !== '/' ? cwd.replace(/^\/+/, '').replace(/\.\./g, '') : '';
+      const workdir = safeSubdir ? `/workspace/${safeSubdir}` : '/workspace';
+      const args = [
+        'run', '-it', '--rm', '--name', containerName,
+        '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
+        '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${uid}:${gid}`,
+        '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
+        '--mount', `type=bind,src=${workspaceRoot},dst=/workspace`, '--workdir', workdir,
+        '--env', 'HOME=/tmp', '--env', 'TERM=xterm-256color',
+        image, '/bin/sh'
+      ];
+      return {
+        dockerBin,
+        args,
+        env: dockerEnvironment()
+      };
+    }
+
+    const isWin = process.platform === 'win32';
+    const dockerBin = isWin ? 'powershell.exe' : '/bin/sh';
+    const args = isWin ? ['-NoLogo'] : ['-i'];
     return {
       dockerBin,
       args,
-      env: dockerEnvironment()
+      env: { ...process.env, TERM: 'xterm-256color' }
     };
   }
 
@@ -205,13 +228,17 @@ export class ProjectProcessManager {
         cancelled = true;
         child?.kill('SIGTERM');
         if (child) {
-          const killer = spawn(process.env.FLOAT_DOCKER_BIN!, ['kill', containerName], { stdio: 'ignore', windowsHide: true, env: dockerEnvironment() });
-          await new Promise<void>(resolve => {
-            const timer = setTimeout(() => { killer.kill('SIGKILL'); resolve(); }, 5_000);
-            timer.unref?.();
-            killer.once('close', () => { clearTimeout(timer); resolve(); });
-            killer.once('error', () => { clearTimeout(timer); resolve(); });
-          });
+          if (this.dockerAvailable && process.env.FLOAT_DOCKER_BIN) {
+            const killer = spawn(process.env.FLOAT_DOCKER_BIN, ['kill', containerName], { stdio: 'ignore', windowsHide: true, env: dockerEnvironment() });
+            await new Promise<void>(resolve => {
+              const timer = setTimeout(() => { killer.kill('SIGKILL'); resolve(); }, 5_000);
+              timer.unref?.();
+              killer.once('close', () => { clearTimeout(timer); resolve(); });
+              killer.once('error', () => { clearTimeout(timer); resolve(); });
+            });
+          } else {
+            child.kill('SIGKILL');
+          }
         }
       }
     };
@@ -221,9 +248,10 @@ export class ProjectProcessManager {
 
     void (async () => {
       try {
-        await ensurePrivateSharedDirectory(process.env.FLOAT_EXECUTION_SHARED_DIR!);
-        root = await mkdtemp(path.join(process.env.FLOAT_EXECUTION_SHARED_DIR!, 'float-workspace-'));
-        await chmod(root, 0o700);
+        const sharedBase = process.env.FLOAT_EXECUTION_SHARED_DIR || os.tmpdir();
+        await ensurePrivateSharedDirectory(sharedBase);
+        root = await mkdtemp(path.join(sharedBase, 'float-workspace-'));
+        try { await chmod(root, 0o700); } catch {}
         let totalBytes = 0;
         for (const file of request.files) {
           const relativePath = validateRelativePath(file.path);
@@ -237,25 +265,39 @@ export class ProjectProcessManager {
           await writeFile(target, content, { flag: 'wx', mode: 0o600 });
         }
 
-        const image = process.env.FLOAT_EXECUTION_IMAGE!;
-        const docker = process.env.FLOAT_DOCKER_BIN!;
         const timeout = Math.min(MAX_TIMEOUT_MS, Math.max(1000, request.timeoutMs ?? 120_000));
-        const args = [
-          'run', '--rm', '--name', containerName,
-          '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
-          '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${resolveExecutionUid()}:${resolveExecutionGid()}`,
-          '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
-          '--mount', `type=bind,src=${root},dst=/workspace`, '--workdir=/workspace',
-          '--env', 'HOME=/tmp', '--env', 'CI=true',
-          image, '/bin/sh', '-lc', request.command
-        ];
-        if (cancelled) {
-          settled = true;
-          emitEvent({ type: 'started', executionId });
-          emitEvent({ type: 'completed', status: 'cancelled', exitCode: null, durationMs: Date.now() - startedAt });
-          return;
+        let spawnedChild: ChildProcess;
+        if (this.dockerAvailable) {
+          const image = process.env.FLOAT_EXECUTION_IMAGE!;
+          const docker = process.env.FLOAT_DOCKER_BIN!;
+          const args = [
+            'run', '--rm', '--name', containerName,
+            '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
+            '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${resolveExecutionUid()}:${resolveExecutionGid()}`,
+            '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
+            '--mount', `type=bind,src=${root},dst=/workspace`, '--workdir=/workspace',
+            '--env', 'HOME=/tmp', '--env', 'CI=true',
+            image, '/bin/sh', '-lc', request.command
+          ];
+          if (cancelled) {
+            settled = true;
+            emitEvent({ type: 'started', executionId });
+            emitEvent({ type: 'completed', status: 'cancelled', exitCode: null, durationMs: Date.now() - startedAt });
+            return;
+          }
+          spawnedChild = spawn(docker, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: dockerEnvironment() });
+        } else {
+          const isWin = process.platform === 'win32';
+          const shell = isWin ? 'cmd.exe' : '/bin/sh';
+          const shellArgs = isWin ? ['/d', '/s', '/c', request.command] : ['-lc', request.command];
+          if (cancelled) {
+            settled = true;
+            emitEvent({ type: 'started', executionId });
+            emitEvent({ type: 'completed', status: 'cancelled', exitCode: null, durationMs: Date.now() - startedAt });
+            return;
+          }
+          spawnedChild = spawn(shell, shellArgs, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, CI: 'true' } });
         }
-        const spawnedChild = spawn(docker, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: dockerEnvironment() });
         child = spawnedChild;
         execution.child = spawnedChild;
 
@@ -337,8 +379,10 @@ async function ensurePrivateSharedDirectory(directory: string): Promise<void> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const stat = await lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('FLOAT_EXECUTION_SHARED_DIR must be a real directory, not a symlink.');
-  if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error('FLOAT_EXECUTION_SHARED_DIR must be owned by the execution service account.');
-  if ((stat.mode & 0o077) !== 0) throw new Error('FLOAT_EXECUTION_SHARED_DIR must not be accessible by group or other users. Set its mode to 0700.');
+  if (process.platform !== 'win32') {
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error('FLOAT_EXECUTION_SHARED_DIR must be owned by the execution service account.');
+    if ((stat.mode & 0o077) !== 0) throw new Error('FLOAT_EXECUTION_SHARED_DIR must not be accessible by group or other users. Set its mode to 0700.');
+  }
 }
 
 function dockerEnvironment(): NodeJS.ProcessEnv {
