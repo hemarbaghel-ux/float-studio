@@ -5,6 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { MODEL_REGISTRY, getModelDescriptor, listSelectableModels } from '../src/server/providers/modelRegistry';
+import { modelRouter } from '../src/server/providers/router';
 
 describe('Model Gateway & Dynamic Model Registry', () => {
   it('loads valid model descriptors with declared capabilities', () => {
@@ -39,5 +40,13 @@ describe('Model Gateway & Dynamic Model Registry', () => {
 
     const nonExistent = getModelDescriptor('non_existent_model_id');
     expect(nonExistent).toBeUndefined();
+  });
+
+  it('resolves abstract role aliases into verified model IDs', () => {
+    expect(modelRouter.resolveModelId('fast_coding')).toBeDefined();
+    expect(modelRouter.resolveModelId('autocomplete')).toBeDefined();
+    expect(modelRouter.resolveModelId('reasoning')).toBeDefined();
+    expect(modelRouter.resolveModelId('composer')).toBeDefined();
+    expect(modelRouter.resolveModelId('auto')).toBeDefined();
   });
 });
