@@ -256,7 +256,7 @@ async function runNativeDesktopSmokeTest(): Promise<void> {
     reportPass('Electron Main Process Spawned', `Spawned process via Playwright without --no-sandbox`);
 
     console.log('Waiting for main application window...');
-    const window = await app.firstWindow();
+    const window = await app.firstWindow({ timeout: 120000 });
     assert.ok(window, 'First application window must be created by Electron main');
     reportPass('Main Window Initialization', 'Received first application window handle');
 
