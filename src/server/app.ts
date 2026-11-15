@@ -602,7 +602,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     });
   });
 
-  // Fast inline ghost-text completion endpoint
+  // Fast inline ghost-text completion endpoint (Cursor Tab Parity)
   app.post('/api/ai/complete', requireAuth, express.json({ limit: '2mb' }), async (req: any, res: any) => {
     try {
       const {
@@ -610,12 +610,27 @@ export async function createApp(options: CreateAppOptions = {}) {
         suffix = '',
         language = 'plaintext',
         fileName = 'file',
-        model = 'gpt-6-astra'
+        model = 'gpt-4o-mini'
       } = req.body || {};
+
+      if (!defaultTabCoordinator.isAllowedForLanguage(language)) {
+        return res.json({ completion: '', disabled: true });
+      }
 
       if (!prefix && !suffix) {
         return res.json({ completion: '' });
       }
+
+      const cacheKey = defaultTabCoordinator.buildCacheKey(fileName, language, prefix, suffix);
+      const cached = defaultTabCoordinator.getCached(cacheKey);
+      if (cached) {
+        return res.json({
+          completion: cached.completionText,
+          ...cached,
+        });
+      }
+
+      const startMs = Date.now();
 
       // Bound context to fast local window
       const boundedPrefix = String(prefix).slice(-2000);
@@ -632,8 +647,10 @@ ${boundedPrefix}
 ${boundedSuffix}
 </SUFFIX>`;
 
+      const effectiveModel = model && model !== 'gpt-6-astra' ? model : 'gpt-4o-mini';
+
       const result = await modelRouter.generateContent({
-        model,
+        model: effectiveModel,
         messages: [{ role: 'user', content: prompt }],
         speed: 'fast',
         systemInstruction: "You are an inline code autocompletion engine. Output only the immediate completion code."
@@ -643,15 +660,44 @@ ${boundedSuffix}
       // Clean up markdown fences if the model emitted them accidentally
       completionText = completionText.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '');
 
-      res.json({ completion: completionText });
+      const latencyMs = Date.now() - startMs;
+      const prediction = defaultTabCoordinator.recordCompletion(
+        cacheKey,
+        completionText,
+        fileName,
+        suffix,
+        latencyMs
+      );
+
+      res.json({
+        completion: completionText,
+        ...prediction,
+      });
     } catch (error: any) {
       const isCancelled = error?.name === 'AbortError' || /cancel/i.test(error?.message || '');
       if (isCancelled) {
+        defaultTabCoordinator.recordCancellation();
         return res.json({ completion: '', cancelled: true });
       }
       const statusCode = error?.statusCode || 500;
       res.status(statusCode).json({ error: error.message || 'Completion failed', code: error?.code || 'PROVIDER_ERROR' });
     }
+  });
+
+  // Autocomplete Telemetry & User Feedback endpoint
+  app.post('/api/ai/complete/feedback', requireAuth, express.json(), (req: any, res: any) => {
+    const { accepted, cancelled } = req.body || {};
+    if (cancelled) {
+      defaultTabCoordinator.recordCancellation();
+    } else if (typeof accepted === 'boolean') {
+      defaultTabCoordinator.recordAcceptance(accepted);
+    }
+    res.json({ success: true, metrics: defaultTabCoordinator.getMetrics() });
+  });
+
+  // Autocomplete Metrics endpoint
+  app.get('/api/ai/complete/metrics', requireAuth, (_req: any, res: any) => {
+    res.json(defaultTabCoordinator.getMetrics());
   });
 
   // Dedicated Inline AI Transformation endpoint (Ctrl+K / Cmd+K)

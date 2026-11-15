@@ -15,6 +15,8 @@ import {
   ComposerProgressEvent,
 } from '../../services/composer/composerAgent';
 import { createStandardToolRegistry } from '../../services/composer/canonicalTools';
+import { registerBridgedMCPTool } from '../../services/composer/mcpToolBridge';
+import { MCPService } from '../mcp/mcpService';
 import { WorkspaceCheckpointManager } from '../../services/composer/checkpointManager';
 import { applyProposal, rejectProposal, rollbackProposal } from '../../services/composer/proposalApplier';
 import {
@@ -328,6 +330,29 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
 
     const checkpointManager = new WorkspaceCheckpointManager(workspace);
     const toolRegistry = createStandardToolRegistry();
+
+    // Register active bridged MCP tools into Composer's canonical registry
+    try {
+      const activeServers = MCPService.listServers(true, userId, projectId).filter(s => s.enabled);
+      for (const srv of activeServers) {
+        const tools = MCPService.getDiscoveredTools(srv.id, userId, projectId).filter(t => t.isAllowed);
+        for (const t of tools) {
+          try {
+            registerBridgedMCPTool(toolRegistry, {
+              server: srv,
+              tool: t,
+              invokeHandler: async (sId, tName, tArgs) => {
+                return await MCPService.executeTool(sId, tName, tArgs, { userId, projectId, userApproved: true });
+              }
+            });
+          } catch {
+            // Already registered or schema error
+          }
+        }
+      }
+    } catch (mcpErr) {
+      console.warn('[Composer] MCP tool registration skipped:', mcpErr);
+    }
 
     const ruleFiles: Array<{ path: string; content: string }> = Array.isArray(files)
       ? (files as Array<{ path?: string; name?: string; content?: string }>).map(f => ({

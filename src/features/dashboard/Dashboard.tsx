@@ -306,6 +306,7 @@ export function Dashboard({ initialTab = 'new-chat' }: { initialTab?: string }) 
               setActiveChatId(null);
               setActiveTab('new-chat');
               setPrompt('');
+              window.history.pushState({}, '', '/');
               window.dispatchEvent(new PopStateEvent('popstate'));
               if (textareaRef.current) textareaRef.current.focus();
             }}
