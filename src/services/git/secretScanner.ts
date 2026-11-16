@@ -30,6 +30,16 @@ export const SECRET_SCAN_RULES: readonly SecretRule[] = [
     description: 'OpenAI project or secret API key',
   },
   {
+    name: 'Anthropic API Key',
+    pattern: /sk-ant-[a-zA-Z0-9_-]{20,}/,
+    description: 'Anthropic Claude API key',
+  },
+  {
+    name: 'Database URL with Password',
+    pattern: /(?:postgres|postgresql|mysql|mongodb|redis):\/\/[^:\s]+:[^@\s]+@[^\s]+/,
+    description: 'Database connection URI containing authentication credentials',
+  },
+  {
     name: 'GitHub Personal Access Token',
     pattern: /(?:gh[pousr]_[a-zA-Z0-9]{16,}|github_pat_[a-zA-Z0-9_]{30,})/,
     description: 'GitHub personal access token or fine-grained token',
@@ -140,10 +150,33 @@ export function redactSecretsInText(text: string): string {
   sanitized = sanitized.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[REDACTED_JWT]');
   // Redact API keys and tokens
   sanitized = sanitized.replace(/sk-(?:proj-|live-|test-)?[a-zA-Z0-9_-]{20,}/g, '[REDACTED_SECRET]');
+  sanitized = sanitized.replace(/sk-ant-[a-zA-Z0-9_-]{20,}/g, '[REDACTED_SECRET]');
+  sanitized = sanitized.replace(/(?:postgres|postgresql|mysql|mongodb|redis):\/\/[^:\s]+:[^@\s]+@[^\s]+/gi, '[REDACTED_DB_URL]');
   sanitized = sanitized.replace(/(?:gh[pousr]_[a-zA-Z0-9]{16,}|github_pat_[a-zA-Z0-9_]{30,})/g, '[REDACTED_SECRET]');
   sanitized = sanitized.replace(/AIzaSy[a-zA-Z0-9_-]{25,}/g, '[REDACTED_SECRET]');
   sanitized = sanitized.replace(/(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/g, '[REDACTED_SECRET]');
   sanitized = sanitized.replace(/xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*/g, '[REDACTED_SECRET]');
   sanitized = sanitized.replace(/sk_(?:live|test)_[0-9a-zA-Z]{24,}/g, '[REDACTED_SECRET]');
   return sanitized;
+}
+
+/**
+ * Deeply sanitizes arbitrary nested objects (messages, tool arguments, metadata)
+ * by applying secret redaction without mutating original input objects or workspace files.
+ */
+export function sanitizeOutboundPayload<T>(payload: T): T {
+  if (typeof payload === 'string') {
+    return redactSecretsInText(payload) as unknown as T;
+  }
+  if (payload === null || typeof payload !== 'object') {
+    return payload;
+  }
+  if (Array.isArray(payload)) {
+    return payload.map(item => sanitizeOutboundPayload(item)) as unknown as T;
+  }
+  const result: Record<string, any> = {};
+  for (const [key, val] of Object.entries(payload)) {
+    result[key] = sanitizeOutboundPayload(val);
+  }
+  return result as T;
 }

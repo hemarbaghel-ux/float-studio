@@ -17,7 +17,7 @@ import {
   getPublicModelCatalog
 } from './modelRegistry';
 import { ServerPrivacyGuard } from '../privacyGuard';
-import { redactSecretsInText } from '../../services/git/secretScanner';
+import { redactSecretsInText, sanitizeOutboundPayload } from '../../services/git/secretScanner';
 import type {
   IModelGateway,
   ModelGatewayRequest,
@@ -300,11 +300,12 @@ export class ModelRouter implements IModelGateway {
     // Pre-dispatch secret redaction for non-streaming provider transmission (Phase 1.1 Task 4)
     const sanitizedMessages = (request.messages || []).map(m => ({
       ...m,
-      content: typeof m.content === 'string' ? redactSecretsInText(m.content) : m.content,
+      content: sanitizeOutboundPayload(m.content),
     }));
     const sanitizedSystemInstruction = request.systemInstruction
       ? redactSecretsInText(request.systemInstruction)
       : undefined;
+    const sanitizedTools = request.tools ? sanitizeOutboundPayload(request.tools) : undefined;
 
     const startTime = Date.now();
     const result = await adapter.generateContent({
@@ -312,6 +313,7 @@ export class ModelRouter implements IModelGateway {
       apiKeyOverride: userApiKey,
       messages: sanitizedMessages,
       systemInstruction: sanitizedSystemInstruction,
+      tools: sanitizedTools,
       model: route.apiModelId,
       apiModelId: route.apiModelId,
       dataSharingConsent: dataSharingAllowed,
@@ -394,11 +396,12 @@ export class ModelRouter implements IModelGateway {
     // Pre-dispatch secret redaction for streaming provider transmission (Phase 1.1 Task 4)
     const sanitizedMessages = (request.messages || []).map(m => ({
       ...m,
-      content: typeof m.content === 'string' ? redactSecretsInText(m.content) : m.content,
+      content: sanitizeOutboundPayload(m.content),
     }));
     const sanitizedSystemInstruction = request.systemInstruction
       ? redactSecretsInText(request.systemInstruction)
       : undefined;
+    const sanitizedTools = request.tools ? sanitizeOutboundPayload(request.tools) : undefined;
 
     if (adapter.generateContentStream) {
       return adapter.generateContentStream(
@@ -407,6 +410,7 @@ export class ModelRouter implements IModelGateway {
           apiKeyOverride: userApiKey,
           messages: sanitizedMessages,
           systemInstruction: sanitizedSystemInstruction,
+          tools: sanitizedTools,
           model: route.apiModelId,
           apiModelId: route.apiModelId,
           dataSharingConsent: dataSharingAllowed,
