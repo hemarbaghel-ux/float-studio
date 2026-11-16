@@ -51,6 +51,8 @@ export interface AIProviderRequest {
   dataSharingAllowed?: boolean;
   allowFallback?: boolean;
   demoMode?: boolean;
+  apiKeyOverride?: string;
+  userApiKeys?: Record<string, string>;
 }
 
 export interface AIProviderResponse {
@@ -82,8 +84,8 @@ export interface ProviderHealthCheckResult {
 export interface AIProviderAdapter {
   id: string;
   name: string;
-  isConfigured(): boolean;
-  checkHealth?(): Promise<ProviderHealthCheckResult>;
+  isConfigured(apiKeyOverride?: string): boolean;
+  checkHealth?(apiKeyOverride?: string): Promise<ProviderHealthCheckResult>;
   generateContent(request: AIProviderRequest): Promise<AIProviderResponse>;
   generateContentStream?(
     request: AIProviderRequest,

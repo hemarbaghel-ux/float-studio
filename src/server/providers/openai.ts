@@ -105,22 +105,26 @@ export class OpenAIAdapter implements AIProviderAdapter {
 
   /**
    * Authoritative, documented credential resolver for OpenAI.
-   * Primary documented credential source for OpenAI API requests is OPENAI_API_KEY.
+   * Primary documented credential source for OpenAI API requests is OPENAI_API_KEY,
+   * or a user-supplied BYOK key override.
    */
-  public resolveApiKey(_forModel?: string): string | undefined {
+  public resolveApiKey(_forModel?: string, apiKeyOverride?: string): string | undefined {
+    if (apiKeyOverride && apiKeyOverride.trim().length > 0) {
+      return apiKeyOverride.trim();
+    }
     const key = process.env.OPENAI_API_KEY?.trim();
     return key && key.length > 0 && !key.includes('replace_with') ? key : undefined;
   }
 
-  isConfigured(): boolean {
-    return Boolean(this.resolveApiKey());
+  isConfigured(apiKeyOverride?: string): boolean {
+    return Boolean(this.resolveApiKey(undefined, apiKeyOverride));
   }
 
-  private getClient(forModel?: string): OpenAI {
-    const key = this.resolveApiKey(forModel);
+  private getClient(forModel?: string, apiKeyOverride?: string): OpenAI {
+    const key = this.resolveApiKey(forModel, apiKeyOverride);
     if (!key) {
       throw new AIProviderError(
-        "OpenAI is not configured on the FLOAT server. To use OpenAI models, configure OPENAI_API_KEY in the server environment.",
+        "OpenAI is not configured on the FLOAT server. To use OpenAI models, configure OPENAI_API_KEY or provide your own API key in Settings -> Models.",
         'AUTH_ERROR',
         'OpenAI',
         401
@@ -129,7 +133,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
     return new OpenAI({ apiKey: key });
   }
 
-  async checkHealth(): Promise<ProviderHealthCheckResult> {
+  async checkHealth(apiKeyOverride?: string): Promise<ProviderHealthCheckResult> {
     const selectedModels = MODEL_REGISTRY.filter((model) => model.selectable);
     const defaultModel = selectedModels.find((model) => model.id === 'gpt-6-astra')?.apiModelId;
     const configurationRequired = Object.fromEntries(selectedModels.map((model) => [model.id, {
@@ -138,7 +142,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
       detail: 'OPENAI_API_KEY is not configured on this server.'
     }]));
 
-    if (!this.isConfigured()) {
+    if (!this.isConfigured(apiKeyOverride)) {
       return {
         provider: 'OpenAI',
         configured: false,
@@ -151,7 +155,7 @@ export class OpenAIAdapter implements AIProviderAdapter {
     }
 
     try {
-      const client = this.getClient(defaultModel);
+      const client = this.getClient(defaultModel, apiKeyOverride);
       const models = await client.models.list();
       const listedModelIds = new Set(models.data.map((model) => model.id));
       const accessibleModelIds = selectedModels
@@ -610,7 +614,7 @@ Let me know what specific module, file, or integration you would like to impleme
       );
     }
 
-    const client = this.getClient(requestedModel);
+    const client = this.getClient(requestedModel, request.apiKeyOverride);
     if (this.usesResponsesApi(effectiveModel)) {
       try {
         const response = await client.responses.create({
@@ -707,7 +711,7 @@ Let me know what specific module, file, or integration you would like to impleme
       );
     }
 
-    const client = this.getClient(requestedModel);
+    const client = this.getClient(requestedModel, request.apiKeyOverride);
     if (this.usesResponsesApi(effectiveModel)) {
       try {
         const stream = await client.responses.create({

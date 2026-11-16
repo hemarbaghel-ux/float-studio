@@ -29,6 +29,7 @@ import { brainRouter } from './brain';
 import { createAnalystRouter } from './analystRouter';
 import { createComposerRouter } from './composer/composerRouter';
 import { createExtensionGalleryRouter } from './extensions/extensionGalleryRouter';
+import { createByokRouter, createUserApiKeyMiddleware } from './byok/byokRouter';
 import { runTerminalSetupDoctor } from './terminal/terminalDoctor';
 import { defaultTabCoordinator } from '../services/completion/tabCompletionService';
 import { defaultFimEngine } from '../services/completion/fimCompletionEngine';
@@ -115,6 +116,9 @@ export async function createApp(options: CreateAppOptions = {}) {
   // Subscription & Checkout Routes
   app.use('/api/subscription', subscriptionRouter);
 
+  // User BYOK API Key Middleware (attaches user keys for execution)
+  app.use(createUserApiKeyMiddleware());
+
   // Data Analyst routes use the same registry/router as chat and agents.
   app.use('/api/analyst', createAnalystRouter(modelRouter));
 
@@ -195,6 +199,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   // Integrations Routes
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/extensions/gallery', createExtensionGalleryRouter());
+  app.use('/api/user', createByokRouter());
   app.use('/api/projects/:projectId/git', gitRouter);
   app.use('/api/projects/:projectId/composer', createComposerRouter(modelRouter));
   app.use('/api', milestone9Router);
@@ -275,10 +280,22 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   // Model Intelligence & Availability Routes
-  app.get(['/api/ai/models', '/api/ai/models/'], (_req, res) => {
+  app.get(['/api/ai/models', '/api/ai/models/'], (req: any, res: any) => {
     try {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.json({ success: true, models: modelRouter.getModelCatalog(), timestamp: Date.now() });
+      const userConfiguredProviders: Record<string, boolean> = {};
+      if (req.userApiKeys) {
+        for (const [provider, key] of Object.entries(req.userApiKeys)) {
+          if (typeof key === 'string' && key.trim().length > 0) {
+            userConfiguredProviders[provider] = true;
+          }
+        }
+      }
+      res.json({
+        success: true,
+        models: modelRouter.getModelCatalog(userConfiguredProviders),
+        timestamp: Date.now()
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'Could not load model catalog.' });
     }
@@ -523,7 +540,8 @@ export async function createApp(options: CreateAppOptions = {}) {
             speed,
             dataSharingConsent: dataSharingAllowed,
             dataSharingAllowed,
-            demoMode: Boolean(req.body?.demoMode)
+            demoMode: Boolean(req.body?.demoMode),
+            userApiKeys: req.userApiKeys
           },
           (delta: string) => {
             if (!abortController.signal.aborted && !res.destroyed && !res.writableEnded) {
@@ -576,7 +594,8 @@ export async function createApp(options: CreateAppOptions = {}) {
         speed,
         dataSharingConsent: dataSharingAllowed,
         dataSharingAllowed,
-        demoMode: Boolean(req.body?.demoMode)
+        demoMode: Boolean(req.body?.demoMode),
+        userApiKeys: req.userApiKeys
       });
 
       res.json({ text: response.text, usage: response.usage, isSimulated: response.isSimulated });
@@ -666,6 +685,7 @@ export async function createApp(options: CreateAppOptions = {}) {
           language,
           fileName,
           model,
+          userApiKeys: req.userApiKeys,
         },
         { modelRouter }
       );

@@ -20,6 +20,7 @@ export interface FimCompletionRequest {
   readonly fimEndpoint?: string;
   readonly maxTokens?: number;
   readonly temperature?: number;
+  readonly userApiKeys?: Record<string, string>;
 }
 
 export interface FimCompletionResult {
@@ -340,6 +341,7 @@ ${suffix}
         messages: [{ role: 'user', content: formatting.prompt }],
         speed: 'fast',
         systemInstruction: 'You are an inline code autocompletion engine. Output only the immediate completion code without markdown fences.',
+        userApiKeys: req.userApiKeys,
       });
       rawOutput = result.text || '';
     }

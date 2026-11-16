@@ -8,6 +8,7 @@ import {
 import { OpenAIAdapter } from './openai';
 import { GoogleGeminiAdapter } from './gemini';
 import { AnthropicAdapter } from './anthropic';
+import { DeepSeekAdapter } from './deepseek';
 import {
   MODEL_REGISTRY,
   MODEL_ROUTES,
@@ -28,7 +29,7 @@ import type {
 import { AuthoritativeModelCatalog } from '../../shared/contracts/index';
 
 export interface ModelRouteDefinition {
-  provider: 'openai' | 'google' | 'anthropic';
+  provider: 'openai' | 'google' | 'anthropic' | 'deepseek' | 'xai';
   apiModelId: string;
   protocol?: ModelProtocol;
   isInternalAlias?: boolean;
@@ -54,6 +55,9 @@ export class ModelRouter implements IModelGateway {
       if (!this.adapters.has('anthropic') && typeof AnthropicAdapter === 'function') {
         this.registerAdapter(new AnthropicAdapter());
       }
+      if (!this.adapters.has('deepseek') && typeof DeepSeekAdapter === 'function') {
+        this.registerAdapter(new DeepSeekAdapter());
+      }
     } catch {}
   }
 
@@ -77,12 +81,15 @@ export class ModelRouter implements IModelGateway {
     return this.adapters.get(providerId);
   }
 
-  getModelCatalog() {
+  getModelCatalog(userConfiguredProviders?: Record<string, boolean>) {
     this.ensureAdaptersRegistered();
     const configured = Object.fromEntries(
-      Array.from(this.adapters.entries()).map(([id, adapter]) => [id, adapter.isConfigured()])
+      Array.from(this.adapters.entries()).map(([id, adapter]) => [
+        id,
+        adapter.isConfigured() || userConfiguredProviders?.[id] === true
+      ])
     );
-    return getPublicModelCatalog(configured);
+    return getPublicModelCatalog(configured, undefined, userConfiguredProviders);
   }
 
   getConfiguredModelIds(): string[] {
@@ -229,9 +236,11 @@ export class ModelRouter implements IModelGateway {
       }
     );
 
-    if (!adapter.isConfigured() && !request.demoMode) {
+    const userApiKey = request.apiKeyOverride || request.userApiKeys?.[route.provider];
+
+    if (!adapter.isConfigured(userApiKey) && !request.demoMode) {
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${route.provider === 'google' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'} in the server environment.`,
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${route.provider === 'google' ? 'GEMINI_API_KEY' : route.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : route.provider === 'deepseek' ? 'DEEPSEEK_API_KEY' : 'OPENAI_API_KEY'} or provide your own API key in Settings -> Models.`,
         'AUTH_ERROR',
         adapter.name,
         401
@@ -250,6 +259,7 @@ export class ModelRouter implements IModelGateway {
     const startTime = Date.now();
     const result = await adapter.generateContent({
       ...request,
+      apiKeyOverride: userApiKey,
       messages: sanitizedMessages,
       systemInstruction: sanitizedSystemInstruction,
       model: route.apiModelId,
@@ -310,9 +320,11 @@ export class ModelRouter implements IModelGateway {
       }
     );
 
-    if (!adapter.isConfigured() && !request.demoMode) {
+    const userApiKey = request.apiKeyOverride || request.userApiKeys?.[route.provider];
+
+    if (!adapter.isConfigured(userApiKey) && !request.demoMode) {
       throw new AIProviderError(
-        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${route.provider === 'google' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'} in the server environment.`,
+        `Provider "${adapter.name}" is not configured on the FLOAT server. To use "${request.model}", configure ${route.provider === 'google' ? 'GEMINI_API_KEY' : route.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : route.provider === 'deepseek' ? 'DEEPSEEK_API_KEY' : 'OPENAI_API_KEY'} or provide your own API key in Settings -> Models.`,
         'AUTH_ERROR',
         adapter.name,
         401
@@ -332,6 +344,7 @@ export class ModelRouter implements IModelGateway {
       return adapter.generateContentStream(
         {
           ...request,
+          apiKeyOverride: userApiKey,
           messages: sanitizedMessages,
           systemInstruction: sanitizedSystemInstruction,
           model: route.apiModelId,
@@ -348,6 +361,7 @@ export class ModelRouter implements IModelGateway {
 
     const result = await adapter.generateContent({
       ...request,
+      apiKeyOverride: userApiKey,
       messages: sanitizedMessages,
       systemInstruction: sanitizedSystemInstruction,
       model: route.apiModelId,

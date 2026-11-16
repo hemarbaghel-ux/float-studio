@@ -63,6 +63,7 @@ export interface ComposerAgentOptions {
   readonly repairOnVerificationFailure?: boolean;
   readonly activeRulesInstruction?: string;
   readonly executionAdapter?: import('../../shared/contracts/tools').ICommandExecutionAdapter;
+  readonly userApiKeys?: Record<string, string>;
   readonly onProgress?: (event: ComposerProgressEvent) => void;
 }
 
@@ -317,7 +318,8 @@ Rules:
             systemPrompt,
             temperature: 0.2,
             maxTokens: 2048,
-          },
+            ...(options.userApiKeys ? { userApiKeys: options.userApiKeys } : {}),
+          } as any,
           options.signal
         );
       } catch (err: any) {
@@ -501,7 +503,14 @@ Rules:
                   content: `Verification command "${verifyCmd}" failed with exit code ${exitCode}.\nOutput:\n${stdout}\n${stderr}\nPlease diagnose the failure and call propose_changes with a corrective fix.`,
                 });
                 const repairTurn = await this.gateway.generate(
-                  { modelId, messages, systemPrompt, temperature: 0.1, maxTokens: 2048 },
+                  {
+                    modelId,
+                    messages,
+                    systemPrompt,
+                    temperature: 0.1,
+                    maxTokens: 2048,
+                    ...(options.userApiKeys ? { userApiKeys: options.userApiKeys } : {}),
+                  } as any,
                   options.signal
                 );
                 accumulatedTokens += (repairTurn.usage?.inputTokens ?? 50) + (repairTurn.usage?.outputTokens ?? 100);

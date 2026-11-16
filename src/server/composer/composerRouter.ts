@@ -482,6 +482,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       repairOnVerificationFailure: repairOnVerificationFailure !== false,
       activeRulesInstruction: activeRulesInstruction || undefined,
       executionAdapter: desktopExecutionAdapter,
+      userApiKeys: (req as any).userApiKeys,
       onProgress: (event: ComposerProgressEvent) => {
         storedTask.events.push(event);
         storedTask.updatedAt = Date.now();

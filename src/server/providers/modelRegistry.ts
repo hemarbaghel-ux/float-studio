@@ -2,7 +2,7 @@ import { VERIFIED_MODELS } from '../../data/verifiedModels';
 import type { ModelRouteDefinition } from './router';
 
 export type ModelProtocol = 'responses' | 'chat_completions';
-export type RoutedProvider = 'openai' | 'google' | 'anthropic';
+export type RoutedProvider = 'openai' | 'google' | 'anthropic' | 'deepseek' | 'xai';
 
 export interface ModelVerificationMatrix {
   readonly credentialConfigured: boolean;
@@ -84,7 +84,19 @@ export const MODEL_ROUTES: Readonly<Record<string, ModelRouteDefinition>> = Obje
       .filter((model) => model.selectable)
       .map((model) => [model.id, route(model.providerId, model.apiModelId, model.id !== model.apiModelId, model.protocol)])
   ),
-  auto: route('openai', 'gpt-6-astra', true, 'responses')
+  auto: route('openai', 'gpt-6-astra', true, 'responses'),
+  'o1': route('openai', 'o1'),
+  'o3-mini': route('openai', 'o3-mini'),
+  'gpt-4o': route('openai', 'gpt-4o'),
+  'gpt-4o-mini': route('openai', 'gpt-4o-mini'),
+  'claude-3-5-sonnet': route('anthropic', 'claude-3-5-sonnet-20241022'),
+  'claude-3-5-haiku': route('anthropic', 'claude-3-5-haiku-20241022'),
+  'claude-3-opus': route('anthropic', 'claude-3-opus-20240229'),
+  'gemini-1.5-pro': route('google', 'gemini-1.5-pro'),
+  'gemini-2.0-flash': route('google', 'gemini-2.0-flash'),
+  'gemini-1.5-flash': route('google', 'gemini-1.5-flash'),
+  'deepseek-chat': route('deepseek', 'deepseek-chat'),
+  'deepseek-reasoner': route('deepseek', 'deepseek-reasoner'),
 });
 
 export function getModelProtocol(modelId: string): ModelProtocol {
@@ -93,32 +105,37 @@ export function getModelProtocol(modelId: string): ModelProtocol {
 
 export function getPublicModelCatalog(
   providerConfigured: Readonly<Record<string, boolean>>,
-  verificationOverrides?: Readonly<Record<string, Partial<ModelVerificationMatrix>>>
+  verificationOverrides?: Readonly<Record<string, Partial<ModelVerificationMatrix>>>,
+  userConfiguredProviders?: Readonly<Record<string, boolean>>
 ) {
   return MODEL_REGISTRY.filter((model) => model.selectable).map((model) => {
-    const configured = providerConfigured[model.providerId] === true;
+    const isUserConfigured = userConfiguredProviders?.[model.providerId] === true;
+    const configured = isUserConfigured || providerConfigured[model.providerId] === true;
     const overrides = verificationOverrides?.[model.id] || {};
     const verification: ModelVerificationMatrix = {
       credentialConfigured: configured,
-      authVerified: Boolean(overrides.authVerified),
-      modelListed: Boolean(overrides.modelListed),
+      authVerified: isUserConfigured || Boolean(overrides.authVerified),
+      modelListed: isUserConfigured || Boolean(overrides.modelListed),
       generationVerified: Boolean(overrides.generationVerified),
     };
     return {
       ...model,
       providerConfigured: configured,
+      unlockedWithByok: isUserConfigured,
       verification,
       modelAvailability: verification.generationVerified ? 'verified' as const : 'unverified' as const,
-      status: verification.generationVerified
+      status: isUserConfigured || verification.generationVerified
         ? 'AVAILABLE' as const
         : configured
           ? 'UNKNOWN' as const
           : 'CONFIG_REQUIRED' as const,
-      availabilityDetails: verification.generationVerified
-        ? 'Live model generation has been verified on this server.'
-        : configured
-          ? 'Server credential is configured; access to this model has not been verified.'
-          : `${model.requiredEnvironmentVariable} is not configured on the server.`
+      availabilityDetails: isUserConfigured
+        ? 'Unlocked via your personal BYOK API key.'
+        : verification.generationVerified
+          ? 'Live model generation has been verified on this server.'
+          : configured
+            ? 'Server credential is configured; access to this model has not been verified.'
+            : `${model.requiredEnvironmentVariable} is not configured on the server.`
     };
   });
 }

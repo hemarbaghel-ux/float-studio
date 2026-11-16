@@ -87,27 +87,28 @@ export class AnthropicAdapter implements AIProviderAdapter {
   id = 'anthropic';
   name = 'Anthropic';
 
-  isConfigured(): boolean {
-    const key = process.env.ANTHROPIC_API_KEY;
-    return Boolean(key && key.trim().length > 0 && !key.includes('replace_with'));
+  isConfigured(apiKeyOverride?: string): boolean {
+    const key = apiKeyOverride?.trim() || process.env.ANTHROPIC_API_KEY?.trim();
+    return Boolean(key && key.length > 0 && !key.includes('replace_with'));
   }
 
-  private getClient(): Anthropic {
-    if (!this.isConfigured()) {
+  private getClient(apiKeyOverride?: string): Anthropic {
+    const key = apiKeyOverride?.trim() || process.env.ANTHROPIC_API_KEY?.trim();
+    if (!key || key.includes('replace_with')) {
       throw new AIProviderError(
-        "Anthropic is not configured on the FLOAT server. To use Claude models, configure ANTHROPIC_API_KEY in the server environment.",
+        "Anthropic is not configured. To use Claude models, configure ANTHROPIC_API_KEY or provide your own API key in Settings -> Models.",
         'AUTH_ERROR',
         'Anthropic',
         401
       );
     }
     return new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY
+      apiKey: key
     });
   }
 
-  async checkHealth(): Promise<ProviderHealthCheckResult> {
-    if (!this.isConfigured()) {
+  async checkHealth(apiKeyOverride?: string): Promise<ProviderHealthCheckResult> {
+    if (!this.isConfigured(apiKeyOverride)) {
       return {
         provider: 'Anthropic',
         configured: false,
@@ -118,7 +119,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
     }
 
     try {
-      this.getClient();
+      this.getClient(apiKeyOverride);
       return {
         provider: 'Anthropic',
         configured: true,
@@ -190,7 +191,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
   }
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
-    const client = this.getClient();
+    const client = this.getClient(request.apiKeyOverride);
     const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
 
     try {
@@ -252,7 +253,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
-    const client = this.getClient();
+    const client = this.getClient(request.apiKeyOverride);
     const effectiveModel = this.resolveApiModel(request.apiModelId || request.model);
 
     try {
