@@ -10,7 +10,147 @@
  * and explicit approval gates for both server-side agent loops and native desktop composer agents.
  */
 
+import crypto from 'node:crypto';
 import { IWorkspaceService } from './workspace';
+
+export interface ToolApprovalPayload {
+  readonly actionId: string;
+  readonly toolName: string;
+  readonly paramsHash: string;
+  readonly userId: string;
+  readonly projectId: string;
+  readonly nonce: string;
+  readonly expiresAt: number;
+}
+
+export function computeToolParamsHash(args: any): string {
+  const normalize = (val: any): any => {
+    if (val === null || typeof val !== 'object') return val;
+    if (Array.isArray(val)) return val.map(normalize);
+    const sorted: Record<string, any> = {};
+    for (const key of Object.keys(val).sort()) {
+      sorted[key] = normalize(val[key]);
+    }
+    return sorted;
+  };
+  const json = JSON.stringify(normalize(args ?? {}));
+  return crypto.createHash('sha256').update(json).digest('hex');
+}
+
+const DEFAULT_APPROVAL_SECRET = process.env.FLOAT_APPROVAL_SECRET || 'float-tool-approval-secret-key-2026';
+const MAX_APPROVAL_VALIDITY_MS = 5 * 60 * 1000; // 5 minute maximum validity
+const consumedApprovalTokens = new Map<string, number>();
+
+export function clearConsumedApprovalTokensForTests(): void {
+  consumedApprovalTokens.clear();
+}
+
+export function createToolApprovalToken(
+  params: {
+    actionId?: string;
+    toolName: string;
+    paramsHash: string;
+    userId: string;
+    projectId: string;
+    expiresInMs?: number;
+    nonce?: string;
+  },
+  secret: string = DEFAULT_APPROVAL_SECRET
+): string {
+  const nonce = params.nonce || crypto.randomBytes(16).toString('hex');
+  const actionId = params.actionId || `act_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  // Enforce 5-minute maximum validity ceiling
+  const requestedValidity = typeof params.expiresInMs === 'number' ? params.expiresInMs : MAX_APPROVAL_VALIDITY_MS;
+  const effectiveValidity = Math.min(requestedValidity, MAX_APPROVAL_VALIDITY_MS);
+  const expiresAt = Date.now() + effectiveValidity;
+  const payload: ToolApprovalPayload = {
+    actionId,
+    toolName: params.toolName,
+    paramsHash: params.paramsHash,
+    userId: params.userId,
+    projectId: params.projectId,
+    nonce,
+    expiresAt,
+  };
+  const payloadBase64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(payloadBase64).digest('base64url');
+  return `${payloadBase64}.${signature}`;
+}
+
+export function verifyAndConsumeToolApprovalToken(
+  token: string,
+  expected: {
+    actionId?: string;
+    toolName: string;
+    paramsHash: string;
+    userId: string;
+    projectId: string;
+  },
+  secret: string = DEFAULT_APPROVAL_SECRET
+): { valid: boolean; error?: string } {
+  if (!token || typeof token !== 'string') {
+    return { valid: false, error: 'Missing or malformed approval token.' };
+  }
+  const parts = token.split('.');
+  if (parts.length !== 2) {
+    return { valid: false, error: 'Invalid approval token format.' };
+  }
+  const [payloadBase64, signature] = parts;
+  const expectedSig = crypto.createHmac('sha256', secret).update(payloadBase64).digest('base64url');
+  
+  // Constant-time signature verification preventing timing side-channel attacks
+  const sigBuf = Buffer.from(signature, 'utf8');
+  const expBuf = Buffer.from(expectedSig, 'utf8');
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return { valid: false, error: 'Invalid approval token signature.' };
+  }
+
+  let payload: ToolApprovalPayload;
+  try {
+    payload = JSON.parse(Buffer.from(payloadBase64, 'base64url').toString('utf8'));
+  } catch {
+    return { valid: false, error: 'Unparseable approval token payload.' };
+  }
+
+  const now = Date.now();
+  if (payload.expiresAt < now) {
+    return { valid: false, error: 'Approval token has expired.' };
+  }
+
+  if (expected.actionId && payload.actionId !== expected.actionId) {
+    return { valid: false, error: `Token actionId "${payload.actionId}" does not match requested "${expected.actionId}".` };
+  }
+  if (payload.toolName !== expected.toolName) {
+    return { valid: false, error: `Token tool "${payload.toolName}" does not match requested "${expected.toolName}".` };
+  }
+  if (payload.paramsHash !== expected.paramsHash) {
+    return { valid: false, error: 'Token parameters hash does not match execution arguments.' };
+  }
+  if (payload.userId !== expected.userId) {
+    return { valid: false, error: 'Token userId does not match execution context.' };
+  }
+  if (payload.projectId !== expected.projectId) {
+    return { valid: false, error: 'Token projectId does not match execution context.' };
+  }
+
+  // Prevent replay attacks (single-use)
+  const tokenKey = `${payload.nonce}:${payload.expiresAt}`;
+  if (consumedApprovalTokens.has(tokenKey)) {
+    return { valid: false, error: 'Approval token has already been consumed (replay attack detected).' };
+  }
+
+  // Mark token consumed
+  consumedApprovalTokens.set(tokenKey, payload.expiresAt);
+
+  // Periodic cleanup of expired tokens
+  if (consumedApprovalTokens.size > 1000) {
+    for (const [key, exp] of consumedApprovalTokens.entries()) {
+      if (exp < now) consumedApprovalTokens.delete(key);
+    }
+  }
+
+  return { valid: true };
+}
 
 export interface ToolExecutionContext {
   readonly workspace: IWorkspaceService;
@@ -20,6 +160,8 @@ export interface ToolExecutionContext {
   readonly maxReadBytes?: number;
   readonly allowedCommands?: readonly string[];
   readonly mode?: 'ask' | 'plan' | 'agent' | 'debug';
+  readonly approvalToken?: string;
+  readonly approvalSecret?: string;
 }
 
 export interface ToolExecutionResult {
@@ -213,6 +355,43 @@ export class CanonicalToolRegistry implements IToolRegistry {
         durationMs: Date.now() - start,
         timestamp: start,
       };
+    }
+
+    if (tool.requiresApproval && name !== 'request_approval') {
+      if (!context.approvalToken) {
+        return {
+          toolName: name,
+          success: false,
+          requiresApproval: true,
+          approvalReason: `Tool "${name}" requires explicit user approval before execution.`,
+          error: `Tool "${name}" requires explicit user approval. Provide a valid single-use approvalToken.`,
+          durationMs: Date.now() - start,
+          timestamp: start,
+        };
+      }
+
+      const paramsHash = computeToolParamsHash(args);
+      const verification = verifyAndConsumeToolApprovalToken(
+        context.approvalToken,
+        {
+          toolName: name,
+          paramsHash,
+          userId: context.userId,
+          projectId: context.projectId,
+        },
+        context.approvalSecret
+      );
+
+      if (!verification.valid) {
+        return {
+          toolName: name,
+          success: false,
+          requiresApproval: true,
+          error: `Approval token verification failed: ${verification.error}`,
+          durationMs: Date.now() - start,
+          timestamp: start,
+        };
+      }
     }
 
     try {

@@ -27,6 +27,9 @@ export async function loadProjectFileTreeAdmin(
   return joinProjectFileTreeChunks(chunks, projectData as unknown as ProjectContentManifest);
 }
 
+export const MAX_BATCH_BYTES = 8 * 1024 * 1024; // 8 MiB safety margin under 10 MiB Firestore limit
+export const MAX_BATCH_OPERATIONS = 400; // max 400 writes under Firestore 500 limit
+
 export async function writeProjectFileTreeAdmin(
   projectId: string,
   ownerId: string,
@@ -34,19 +37,37 @@ export async function writeProjectFileTreeAdmin(
   chunks: string[]
 ): Promise<void> {
   const fileCollection = adminDb.collection('projects').doc(projectId).collection('projectContent');
-  const batchSize = 400;
-  for (let start = 0; start < chunks.length; start += batchSize) {
-    const batch = adminDb.batch();
-    const end = Math.min(start + batchSize, chunks.length);
-    for (let index = start; index < end; index += 1) {
-      batch.create(fileCollection.doc(`${generation}_${String(index).padStart(8, '0')}`), {
-        ownerId,
-        generation,
-        index,
-        content: chunks[index]
-      });
+  
+  let currentBatch = adminDb.batch();
+  let currentBytes = 0;
+  let currentOps = 0;
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunkContent = chunks[index];
+    const estimatedDocBytes = Buffer.byteLength(chunkContent, 'utf8') + 512; // payload + field overhead
+
+    // If adding this chunk breaches 8 MiB or 400 ops, commit current batch first
+    if (currentOps > 0 && (currentBytes + estimatedDocBytes > MAX_BATCH_BYTES || currentOps >= MAX_BATCH_OPERATIONS)) {
+      await currentBatch.commit();
+      currentBatch = adminDb.batch();
+      currentBytes = 0;
+      currentOps = 0;
     }
-    await batch.commit();
+
+    const docRef = fileCollection.doc(`${generation}_${String(index).padStart(8, '0')}`);
+    currentBatch.create(docRef, {
+      ownerId,
+      generation,
+      index,
+      content: chunkContent
+    });
+
+    currentBytes += estimatedDocBytes;
+    currentOps += 1;
+  }
+
+  if (currentOps > 0) {
+    await currentBatch.commit();
   }
 }
 

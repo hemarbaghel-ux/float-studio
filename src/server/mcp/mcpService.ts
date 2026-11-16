@@ -12,6 +12,9 @@
  * - Server-side secret storage (credentials never returned to client)
  */
 
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import readline from 'readline';
 import { projectProcessManager } from '../execution/processManager';
@@ -79,6 +82,30 @@ export class MCPService {
   private static servers = new Map<string, MCPServerConfig>();
   private static toolCache = new Map<string, MCPDiscoveredTool[]>();
   private static resourceCache = new Map<string, MCPDiscoveredResource[]>();
+  private static persistencePath = process.env.FLOAT_MCP_PERSISTENCE_PATH || path.join(os.tmpdir(), 'float-mcp-servers.json');
+
+  private static loadPersistedServers(): void {
+    try {
+      if (fs.existsSync(this.persistencePath)) {
+        const raw = fs.readFileSync(this.persistencePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const s of parsed) {
+            if (s && s.id && !this.servers.has(s.id)) {
+              this.servers.set(s.id, s);
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  private static persistServers(): void {
+    try {
+      const arr = Array.from(this.servers.values());
+      fs.writeFileSync(this.persistencePath, JSON.stringify(arr, null, 2), 'utf8');
+    } catch {}
+  }
 
   /**
    * Enforces user and project isolation for MCP servers:
@@ -150,10 +177,12 @@ export class MCPService {
       createdAt: config.createdAt || Date.now()
     };
     this.servers.set(stored.id, stored);
+    this.persistServers();
     return stored;
   }
 
   static getServer(id: string, userId?: string, projectId?: string): MCPServerConfig | undefined {
+    if (this.servers.size === 0) this.loadPersistedServers();
     const srv = this.servers.get(id);
     if (!this.canAccessServer(srv, userId, projectId)) return undefined;
     return srv;
@@ -164,10 +193,13 @@ export class MCPService {
     if (!this.canAccessServer(srv, userId, projectId)) return false;
     this.toolCache.delete(id);
     this.resourceCache.delete(id);
-    return this.servers.delete(id);
+    const deleted = this.servers.delete(id);
+    if (deleted) this.persistServers();
+    return deleted;
   }
 
   static listServers(sanitizeSecrets = true, userId?: string, projectId?: string): MCPServerConfig[] {
+    if (this.servers.size === 0) this.loadPersistedServers();
     const list = Array.from(this.servers.values()).filter((srv) =>
       this.canAccessServer(srv, userId, projectId)
     );
@@ -835,5 +867,10 @@ export class MCPService {
     this.servers.clear();
     this.toolCache.clear();
     this.resourceCache.clear();
+    try {
+      if (fs.existsSync(this.persistencePath)) {
+        fs.unlinkSync(this.persistencePath);
+      }
+    } catch {}
   }
 }

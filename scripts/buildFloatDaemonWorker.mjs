@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, cp } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,4 +22,10 @@ await build({
   sourcemap: true,
   logLevel: 'info'
 });
+
+// Copy Tree-Sitter WASM engine into the sandbox distribution directory
+const wasmSourceDir = path.join(repositoryRoot, 'daemon', 'wasm');
+const wasmTargetDir = path.join(path.dirname(outputFile), 'wasm');
+await cp(wasmSourceDir, wasmTargetDir, { recursive: true });
+
 console.log('[FLOAT] Built Electron daemon worker:', outputFile);

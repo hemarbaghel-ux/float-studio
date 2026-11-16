@@ -104,6 +104,15 @@ export async function verifyProjectOwnership(
 
   // Fail closed when required server-side Firebase Admin configuration is missing
   if (!customProjectLookupForTests && !hasAdminCredentials()) {
+    if (options.allowMissing || normalizedUserId === 'desktop-local-user') {
+      return {
+        allowed: true,
+        status: 200,
+        persisted: false,
+        isEphemeral: true,
+        effectiveProjectId: sanitizedId === 'default-project' ? `ephemeral-${normalizedUserId}-default-project` : sanitizedId
+      };
+    }
     return {
       allowed: false,
       status: 503,

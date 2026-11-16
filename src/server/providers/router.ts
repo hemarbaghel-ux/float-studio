@@ -126,13 +126,49 @@ export class ModelRouter implements IModelGateway {
   resolveModelId(modelId: string): string {
     this.ensureAdaptersRegistered();
     const trimmed = (modelId || '').trim();
-    if (!trimmed || trimmed === 'auto') {
+
+    if (trimmed === 'fast_coding' || trimmed === 'autocomplete' || trimmed === 'tab') {
+      const candidate = this.getConfiguredModelIds().find(id => {
+        const desc = getModelDescriptor(id);
+        return desc?.capabilities.coding && (desc.id.includes('mini') || desc.id.includes('flash'));
+      });
+      if (candidate) return candidate;
+      return 'gpt-4o-mini';
+    }
+
+    if (trimmed === 'reasoning' || trimmed === 'planner') {
+      const candidate = this.getConfiguredModelIds().find(id => {
+        const desc = getModelDescriptor(id);
+        return desc?.capabilities.reasoning && (desc.id.includes('o3') || desc.id.includes('reasoning'));
+      });
+      if (candidate) return candidate;
+      return 'o3-mini';
+    }
+
+    if (!trimmed || trimmed === 'auto' || trimmed === 'composer') {
+      const configuredIds = this.getConfiguredModelIds();
+      const flagship = configuredIds.find(id => {
+        const desc = getModelDescriptor(id);
+        return desc?.capabilities.coding;
+      });
+      if (flagship) return flagship;
       return 'gpt-6-astra';
     }
     return trimmed;
   }
 
   validateModelAvailability(modelId: string): void {
+    if (
+      modelId === 'auto' ||
+      modelId === 'composer' ||
+      modelId === 'fast_coding' ||
+      modelId === 'autocomplete' ||
+      modelId === 'tab' ||
+      modelId === 'reasoning' ||
+      modelId === 'planner'
+    ) {
+      return;
+    }
     // An explicit route is authoritative. Provider-prefix rejection only applies to
     // model IDs that are not present in the verified runtime route registry.
     if (MODEL_ROUTES[modelId]) {
