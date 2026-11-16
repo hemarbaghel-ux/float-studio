@@ -9,7 +9,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { LocalFileSystemWorkspaceService } from '../src/services/indexing/localWorkspaceService';
 
-describe('Workspace Containment & Realpath Validation (Phase 1 P0)', () => {
+describe('Workspace Containment & Realpath Validation (Phase 1 SEC-04)', () => {
   let tempBaseDir: string;
   let workspaceRoot: string;
   let externalSecretDir: string;
@@ -48,6 +48,34 @@ describe('Workspace Containment & Realpath Validation (Phase 1 P0)', () => {
     expect(() => ws.resolvePath('../../etc/passwd')).toThrow();
   });
 
+  it('rejects writing to nonexistent paths that would escape workspace root', async () => {
+    const ws = new LocalFileSystemWorkspaceService(workspaceRoot);
+    await expect(async () => {
+      await ws.writeFile('../escaped-file.txt', 'malicious');
+    }).rejects.toThrow();
+
+    await expect(async () => {
+      await ws.writeFile('../../outside/deep/file.txt', 'malicious');
+    }).rejects.toThrow();
+  });
+
+  it('rejects deleting or stating files that escape workspace root', async () => {
+    const ws = new LocalFileSystemWorkspaceService(workspaceRoot);
+    await expect(async () => {
+      await ws.deleteFile('../external-secrets/external-data.txt');
+    }).rejects.toThrow();
+
+    await expect(async () => {
+      await ws.stat('../external-secrets/external-data.txt');
+    }).rejects.toThrow();
+  });
+
+  it('safely returns false for fileExists on escaping paths without throwing unhandled exceptions', async () => {
+    const ws = new LocalFileSystemWorkspaceService(workspaceRoot);
+    const exists = await ws.fileExists('../external-secrets/external-data.txt');
+    expect(exists).toBe(false);
+  });
+
   it('prevents symlink attacks pointing to files outside workspace root', async () => {
     const symlinkPath = path.join(workspaceRoot, 'secret-link');
     try {
@@ -67,6 +95,11 @@ describe('Workspace Containment & Realpath Validation (Phase 1 P0)', () => {
     // Writing through the symlink must throw containment violation
     await expect(async () => {
       await ws.writeFile('secret-link/pwned.txt', 'malicious');
+    }).rejects.toThrow(/containment violation/i);
+
+    // Writing to a nonexistent deep subpath through symlink must throw containment violation
+    await expect(async () => {
+      await ws.writeFile('secret-link/deep/sub/nonexistent.txt', 'malicious');
     }).rejects.toThrow(/containment violation/i);
 
     // Directory listing must not follow escaping symlinks into external directories

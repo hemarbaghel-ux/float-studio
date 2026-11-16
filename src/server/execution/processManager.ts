@@ -105,11 +105,12 @@ export class ProjectProcessManager {
   }
 
   get localAvailable(): boolean {
-    return process.env.FLOAT_ENABLE_LOCAL_EXECUTION === 'true' || process.env.FLOAT_DESKTOP_DEV === '1';
+    // Insecure host-shell fallback is strictly prohibited on hosted environments
+    return false;
   }
 
   get available(): boolean {
-    return this.dockerAvailable || this.localAvailable;
+    return this.dockerAvailable;
   }
 
   async prepareWorkspaceDirectory(files: ExecutionFile[] = []): Promise<string> {
@@ -140,39 +141,28 @@ export class ProjectProcessManager {
     args: string[];
     env: NodeJS.ProcessEnv;
   } {
-    if (!this.available) {
-      throw new Error('Isolated project execution is not configured.');
+    if (!this.dockerAvailable) {
+      throw new Error('Isolated project execution is not configured. Docker container isolation is required.');
     }
-    if (this.dockerAvailable) {
-      const uid = resolveExecutionUid();
-      const gid = resolveExecutionGid();
-      const image = process.env.FLOAT_EXECUTION_IMAGE!;
-      const dockerBin = process.env.FLOAT_DOCKER_BIN!;
-      const safeSubdir = cwd && cwd !== '/' ? cwd.replace(/^\/+/, '').replace(/\.\./g, '') : '';
-      const workdir = safeSubdir ? `/workspace/${safeSubdir}` : '/workspace';
-      const args = [
-        'run', '-it', '--rm', '--name', containerName,
-        '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
-        '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${uid}:${gid}`,
-        '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
-        '--mount', `type=bind,src=${workspaceRoot},dst=/workspace`, '--workdir', workdir,
-        '--env', 'HOME=/tmp', '--env', 'TERM=xterm-256color',
-        image, '/bin/sh'
-      ];
-      return {
-        dockerBin,
-        args,
-        env: dockerEnvironment()
-      };
-    }
-
-    const isWin = process.platform === 'win32';
-    const dockerBin = isWin ? 'powershell.exe' : '/bin/sh';
-    const args = isWin ? ['-NoLogo'] : ['-i'];
+    const uid = resolveExecutionUid();
+    const gid = resolveExecutionGid();
+    const image = process.env.FLOAT_EXECUTION_IMAGE!;
+    const dockerBin = process.env.FLOAT_DOCKER_BIN!;
+    const safeSubdir = cwd && cwd !== '/' ? cwd.replace(/^\/+/, '').replace(/\.\./g, '') : '';
+    const workdir = safeSubdir ? `/workspace/${safeSubdir}` : '/workspace';
+    const args = [
+      'run', '-it', '--rm', '--name', containerName,
+      '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
+      '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${uid}:${gid}`,
+      '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
+      '--mount', `type=bind,src=${workspaceRoot},dst=/workspace`, '--workdir', workdir,
+      '--env', 'HOME=/tmp', '--env', 'TERM=xterm-256color',
+      image, '/bin/sh'
+    ];
     return {
       dockerBin,
       args,
-      env: { ...process.env, TERM: 'xterm-256color' }
+      env: dockerEnvironment()
     };
   }
 
@@ -267,37 +257,27 @@ export class ProjectProcessManager {
 
         const timeout = Math.min(MAX_TIMEOUT_MS, Math.max(1000, request.timeoutMs ?? 120_000));
         let spawnedChild: ChildProcess;
-        if (this.dockerAvailable) {
-          const image = process.env.FLOAT_EXECUTION_IMAGE!;
-          const docker = process.env.FLOAT_DOCKER_BIN!;
-          const args = [
-            'run', '--rm', '--name', containerName,
-            '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
-            '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${resolveExecutionUid()}:${resolveExecutionGid()}`,
-            '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
-            '--mount', `type=bind,src=${root},dst=/workspace`, '--workdir=/workspace',
-            '--env', 'HOME=/tmp', '--env', 'CI=true',
-            image, '/bin/sh', '-lc', request.command
-          ];
-          if (cancelled) {
-            settled = true;
-            emitEvent({ type: 'started', executionId });
-            emitEvent({ type: 'completed', status: 'cancelled', exitCode: null, durationMs: Date.now() - startedAt });
-            return;
-          }
-          spawnedChild = spawn(docker, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: dockerEnvironment() });
-        } else {
-          const isWin = process.platform === 'win32';
-          const shell = isWin ? 'cmd.exe' : '/bin/sh';
-          const shellArgs = isWin ? ['/d', '/s', '/c', request.command] : ['-lc', request.command];
-          if (cancelled) {
-            settled = true;
-            emitEvent({ type: 'started', executionId });
-            emitEvent({ type: 'completed', status: 'cancelled', exitCode: null, durationMs: Date.now() - startedAt });
-            return;
-          }
-          spawnedChild = spawn(shell, shellArgs, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, CI: 'true' } });
+        if (!this.dockerAvailable) {
+          throw new Error('Isolated project execution is not configured. Dedicated Docker container runner is required.');
         }
+        const image = process.env.FLOAT_EXECUTION_IMAGE!;
+        const docker = process.env.FLOAT_DOCKER_BIN!;
+        const args = [
+          'run', '--rm', '--name', containerName,
+          '--network=none', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128',
+          '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--user', `${resolveExecutionUid()}:${resolveExecutionGid()}`,
+          '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
+          '--mount', `type=bind,src=${root},dst=/workspace`, '--workdir=/workspace',
+          '--env', 'HOME=/tmp', '--env', 'CI=true',
+          image, '/bin/sh', '-lc', request.command
+        ];
+        if (cancelled) {
+          settled = true;
+          emitEvent({ type: 'started', executionId });
+          emitEvent({ type: 'completed', status: 'cancelled', exitCode: null, durationMs: Date.now() - startedAt });
+          return;
+        }
+        spawnedChild = spawn(docker, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: dockerEnvironment() });
         child = spawnedChild;
         execution.child = spawnedChild;
 

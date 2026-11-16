@@ -23,17 +23,15 @@ import {
 import { validateSafeWorkspacePath } from '../../shared/contracts/workspace';
 import { TerminalExecutionPolicy } from '../terminal';
 
+import { redactSecretsInText } from '../git/secretScanner';
+
 const DEFAULT_MAX_READ_BYTES = 50_000;
 const DEFAULT_MAX_SEARCH_RESULTS = 25;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 
 export function sanitizeToolOutputText(text: string): string {
   if (!text) return '';
-  return text
-    .replace(/sk-(?:proj-)?[a-zA-Z0-9_\-]{12,}/g, '[REDACTED_SECRET]')
-    .replace(/gh[pousr]_[a-zA-Z0-9]{16,}/g, '[REDACTED_SECRET]')
-    .replace(/AIzaSy[A-Za-z0-9_\-]{25,}/g, '[REDACTED_SECRET]')
-    .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED_SECRET]');
+  return redactSecretsInText(text);
 }
 
 /**

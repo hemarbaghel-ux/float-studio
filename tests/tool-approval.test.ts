@@ -12,15 +12,18 @@ import {
   clearConsumedApprovalTokensForTests,
   ToolExecutionContext,
 } from '../src/shared/contracts/tools';
+import { ToolApprovalService } from '../src/server/composer/toolApprovalService';
 
-describe('Tool Approval Security Engine (Phase 1 P0)', () => {
+describe('Tool Approval Security Engine (Phase 1 SEC-02)', () => {
   let registry: CanonicalToolRegistry;
   let mockContext: ToolExecutionContext;
+  let approvalService: ToolApprovalService;
   const mockSecret = 'test-approval-secret-key-12345';
 
   beforeEach(() => {
     clearConsumedApprovalTokensForTests();
     registry = new CanonicalToolRegistry();
+    approvalService = new ToolApprovalService(mockSecret);
 
     const mockWorkspace: any = {
       getRootUri: () => 'float-workspace://proj-1',
@@ -73,6 +76,7 @@ describe('Tool Approval Security Engine (Phase 1 P0)', () => {
     const paramsHash = computeToolParamsHash(args);
     const token = createToolApprovalToken(
       {
+        actionId: 'act-12345',
         toolName: 'deploy_production',
         paramsHash,
         userId: 'user-alice',
@@ -97,6 +101,7 @@ describe('Tool Approval Security Engine (Phase 1 P0)', () => {
     const paramsHash = computeToolParamsHash(originalArgs);
     const token = createToolApprovalToken(
       {
+        actionId: 'act-12345',
         toolName: 'deploy_production',
         paramsHash,
         userId: 'user-alice',
@@ -139,6 +144,27 @@ describe('Tool Approval Security Engine (Phase 1 P0)', () => {
     const result = await registry.execute('deploy_production', args, contextWithToken);
     expect(result.success).toBe(false);
     expect(result.error).toContain('Approval token has expired');
+  });
+
+  it('enforces a 5-minute maximum validity ceiling even if a larger expiresInMs is requested', () => {
+    const args = { target: 'us-east-1' };
+    const paramsHash = computeToolParamsHash(args);
+    // Request 1 hour validity (should be clamped to 5 minutes)
+    const token = createToolApprovalToken(
+      {
+        toolName: 'deploy_production',
+        paramsHash,
+        userId: 'user-alice',
+        projectId: 'proj-omega',
+        expiresInMs: 60 * 60 * 1000,
+      },
+      mockSecret
+    );
+
+    const [payloadBase64] = token.split('.');
+    const payload = JSON.parse(Buffer.from(payloadBase64, 'base64url').toString('utf8'));
+    const maxExpiry = Date.now() + 5 * 60 * 1000 + 1000; // 5 min + 1s tolerance
+    expect(payload.expiresAt).toBeLessThanOrEqual(maxExpiry);
   });
 
   it('prevents replay attacks by rejecting a second execution with the same single-use token', async () => {
@@ -190,5 +216,60 @@ describe('Tool Approval Security Engine (Phase 1 P0)', () => {
     const result = await registry.execute('deploy_production', args, contextWithToken);
     expect(result.success).toBe(false);
     expect(result.error).toContain('Invalid approval token signature');
+  });
+
+  describe('Dedicated ToolApprovalService integration', () => {
+    it('generates, verifies, and single-use consumes tokens end-to-end', () => {
+      const params = { command: 'npm test', timeoutMs: 15000 };
+      const token = approvalService.generateToken({
+        actionId: 'action-exec-1',
+        toolName: 'run_command',
+        params,
+        userId: 'user-alice',
+        projectId: 'proj-omega',
+      });
+
+      // Valid check with matching actionId and params
+      const firstCheck = approvalService.verifyAndConsume(token, {
+        actionId: 'action-exec-1',
+        toolName: 'run_command',
+        params,
+        userId: 'user-alice',
+        projectId: 'proj-omega',
+      });
+      expect(firstCheck.valid).toBe(true);
+
+      // Replay attempt must fail
+      const replayCheck = approvalService.verifyAndConsume(token, {
+        actionId: 'action-exec-1',
+        toolName: 'run_command',
+        params,
+        userId: 'user-alice',
+        projectId: 'proj-omega',
+      });
+      expect(replayCheck.valid).toBe(false);
+      expect(replayCheck.error).toContain('replay attack detected');
+    });
+
+    it('rejects token when actionId does not match expected action', () => {
+      const params = { path: 'dist/bundle.js' };
+      const token = approvalService.generateToken({
+        actionId: 'action-expected',
+        toolName: 'delete_file',
+        params,
+        userId: 'user-alice',
+        projectId: 'proj-omega',
+      });
+
+      const check = approvalService.verifyAndConsume(token, {
+        actionId: 'action-different',
+        toolName: 'delete_file',
+        params,
+        userId: 'user-alice',
+        projectId: 'proj-omega',
+      });
+      expect(check.valid).toBe(false);
+      expect(check.error).toContain('does not match requested');
+    });
   });
 });

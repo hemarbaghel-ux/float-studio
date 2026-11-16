@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import { IWorkspaceService } from './workspace';
 
 export interface ToolApprovalPayload {
+  readonly actionId: string;
   readonly toolName: string;
   readonly paramsHash: string;
   readonly userId: string;
@@ -37,6 +38,7 @@ export function computeToolParamsHash(args: any): string {
 }
 
 const DEFAULT_APPROVAL_SECRET = process.env.FLOAT_APPROVAL_SECRET || 'float-tool-approval-secret-key-2026';
+const MAX_APPROVAL_VALIDITY_MS = 5 * 60 * 1000; // 5 minute maximum validity
 const consumedApprovalTokens = new Map<string, number>();
 
 export function clearConsumedApprovalTokensForTests(): void {
@@ -45,6 +47,7 @@ export function clearConsumedApprovalTokensForTests(): void {
 
 export function createToolApprovalToken(
   params: {
+    actionId?: string;
     toolName: string;
     paramsHash: string;
     userId: string;
@@ -55,8 +58,13 @@ export function createToolApprovalToken(
   secret: string = DEFAULT_APPROVAL_SECRET
 ): string {
   const nonce = params.nonce || crypto.randomBytes(16).toString('hex');
-  const expiresAt = Date.now() + (params.expiresInMs ?? 5 * 60 * 1000); // 5 min default
+  const actionId = params.actionId || `act_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  // Enforce 5-minute maximum validity ceiling
+  const requestedValidity = typeof params.expiresInMs === 'number' ? params.expiresInMs : MAX_APPROVAL_VALIDITY_MS;
+  const effectiveValidity = Math.min(requestedValidity, MAX_APPROVAL_VALIDITY_MS);
+  const expiresAt = Date.now() + effectiveValidity;
   const payload: ToolApprovalPayload = {
+    actionId,
     toolName: params.toolName,
     paramsHash: params.paramsHash,
     userId: params.userId,
@@ -72,6 +80,7 @@ export function createToolApprovalToken(
 export function verifyAndConsumeToolApprovalToken(
   token: string,
   expected: {
+    actionId?: string;
     toolName: string;
     paramsHash: string;
     userId: string;
@@ -88,7 +97,11 @@ export function verifyAndConsumeToolApprovalToken(
   }
   const [payloadBase64, signature] = parts;
   const expectedSig = crypto.createHmac('sha256', secret).update(payloadBase64).digest('base64url');
-  if (signature !== expectedSig) {
+  
+  // Constant-time signature verification preventing timing side-channel attacks
+  const sigBuf = Buffer.from(signature, 'utf8');
+  const expBuf = Buffer.from(expectedSig, 'utf8');
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
     return { valid: false, error: 'Invalid approval token signature.' };
   }
 
@@ -104,6 +117,9 @@ export function verifyAndConsumeToolApprovalToken(
     return { valid: false, error: 'Approval token has expired.' };
   }
 
+  if (expected.actionId && payload.actionId !== expected.actionId) {
+    return { valid: false, error: `Token actionId "${payload.actionId}" does not match requested "${expected.actionId}".` };
+  }
   if (payload.toolName !== expected.toolName) {
     return { valid: false, error: `Token tool "${payload.toolName}" does not match requested "${expected.toolName}".` };
   }

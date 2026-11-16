@@ -31,12 +31,12 @@ export const SECRET_SCAN_RULES: readonly SecretRule[] = [
   },
   {
     name: 'GitHub Personal Access Token',
-    pattern: /(?:ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{82})/,
-    description: 'GitHub personal access token',
+    pattern: /(?:gh[pousr]_[a-zA-Z0-9]{16,}|github_pat_[a-zA-Z0-9_]{30,})/,
+    description: 'GitHub personal access token or fine-grained token',
   },
   {
     name: 'Google API Key',
-    pattern: /AIzaSy[a-zA-Z0-9_-]{33}/,
+    pattern: /AIzaSy[a-zA-Z0-9_-]{25,}/,
     description: 'Google Cloud / Gemini API key',
   },
   {
@@ -56,8 +56,13 @@ export const SECRET_SCAN_RULES: readonly SecretRule[] = [
   },
   {
     name: 'Private Key Block',
-    pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
+    pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY(?: BLOCK)?-----/,
     description: 'Unencrypted cryptographic private key block',
+  },
+  {
+    name: 'JSON Web Token (JWT)',
+    pattern: /eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/,
+    description: 'Signed JSON Web Token credential',
   },
 ];
 
@@ -118,4 +123,27 @@ export function scanChangesForSecrets(files: Map<string, string> | Record<string
  */
 export function containsSecrets(content: string): boolean {
   return scanFileForSecrets('buffer', content).length > 0;
+}
+
+/**
+ * Redacts detectable secrets (API keys, JWTs, private keys, cloud tokens)
+ * from arbitrary text buffers, terminal outputs, and prompt payloads.
+ */
+export function redactSecretsInText(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  let sanitized = text;
+  // Redact private key blocks completely
+  sanitized = sanitized.replace(/-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY(?: BLOCK)?-----/g, '[REDACTED_PRIVATE_KEY]');
+  // Redact single-line private key headers if not closed
+  sanitized = sanitized.replace(/-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY(?: BLOCK)?-----/g, '[REDACTED_PRIVATE_KEY]');
+  // Redact JWTs
+  sanitized = sanitized.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[REDACTED_JWT]');
+  // Redact API keys and tokens
+  sanitized = sanitized.replace(/sk-(?:proj-|live-|test-)?[a-zA-Z0-9_-]{20,}/g, '[REDACTED_SECRET]');
+  sanitized = sanitized.replace(/(?:gh[pousr]_[a-zA-Z0-9]{16,}|github_pat_[a-zA-Z0-9_]{30,})/g, '[REDACTED_SECRET]');
+  sanitized = sanitized.replace(/AIzaSy[a-zA-Z0-9_-]{25,}/g, '[REDACTED_SECRET]');
+  sanitized = sanitized.replace(/(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/g, '[REDACTED_SECRET]');
+  sanitized = sanitized.replace(/xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*/g, '[REDACTED_SECRET]');
+  sanitized = sanitized.replace(/sk_(?:live|test)_[0-9a-zA-Z]{24,}/g, '[REDACTED_SECRET]');
+  return sanitized;
 }

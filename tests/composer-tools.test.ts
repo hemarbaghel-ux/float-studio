@@ -69,14 +69,69 @@ describe('Composer Canonical Tools & Diff Engine', () => {
     });
   });
 
-  describe('Standard Tool Registry Initialization', () => {
-    it('registers canonical tools: read_file, list_dir, search_codebase, propose_changes, run_command', () => {
+  describe('run_command Security & Fail-Closed Isolation (SEC-01)', () => {
+    it('requires approval and blocks dangerous commands via policy', async () => {
       const registry = createStandardToolRegistry();
-      expect(registry.get('read_file')).toBeDefined();
-      expect(registry.get('list_dir')).toBeDefined();
-      expect(registry.get('search_codebase')).toBeDefined();
-      expect(registry.get('propose_changes')).toBeDefined();
-      expect(registry.get('run_command')).toBeDefined();
+      const runCmd = registry.get('run_command');
+      expect(runCmd?.requiresApproval).toBe(true);
+
+      const mockWorkspace: any = {
+        getRootUri: () => 'float-workspace://test-proj',
+        resolvePath: (p: string) => p,
+        readFile: async () => '',
+        writeFile: async () => {},
+        deleteFile: async () => {},
+        fileExists: async () => true,
+        listFiles: async () => [],
+        stat: async () => ({ size: 0, mtime: 0, isFile: true, isDirectory: false }),
+        watch: () => () => {},
+        getCapabilities: () => ({ canWatch: false, canWrite: true, isLocalDisk: false, maxFileSize: 1000 }),
+      };
+
+      const context: any = {
+        workspace: mockWorkspace,
+        userId: 'alice',
+        projectId: 'proj-1',
+      };
+
+      // 1. Dangerous command must be blocked by policy
+      const blockedResult = await runCmd!.execute({ command: 'rm -rf /' }, context);
+      expect(blockedResult.success).toBe(false);
+      expect(blockedResult.error).toContain('blocked by TerminalExecutionPolicy');
+
+      // 2. Safe command fails closed if Docker isolated runner is not configured
+      const result = await runCmd!.execute({ command: 'npm test' }, context);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Isolated project execution environment is not configured');
+    });
+
+    it('enforces allowedCommands boundary when configured in context', async () => {
+      const registry = createStandardToolRegistry();
+      const runCmd = registry.get('run_command');
+
+      const mockWorkspace: any = {
+        getRootUri: () => 'float-workspace://test-proj',
+        resolvePath: (p: string) => p,
+        readFile: async () => '',
+        writeFile: async () => {},
+        deleteFile: async () => {},
+        fileExists: async () => true,
+        listFiles: async () => [],
+        stat: async () => ({ size: 0, mtime: 0, isFile: true, isDirectory: false }),
+        watch: () => () => {},
+        getCapabilities: () => ({ canWatch: false, canWrite: true, isLocalDisk: false, maxFileSize: 1000 }),
+      };
+
+      const context: any = {
+        workspace: mockWorkspace,
+        userId: 'alice',
+        projectId: 'proj-1',
+        allowedCommands: ['npm test', 'npm run build'],
+      };
+
+      const unauthorized = await runCmd!.execute({ command: 'curl http://evil.com' }, context);
+      expect(unauthorized.success).toBe(false);
+      expect(unauthorized.error).toContain('is not in the allowed verification commands list');
     });
   });
 });

@@ -31,6 +31,7 @@ import { createComposerRouter } from './composer/composerRouter';
 import { runTerminalSetupDoctor } from './terminal/terminalDoctor';
 import { defaultTabCoordinator } from '../services/completion/tabCompletionService';
 import { defaultCloudAgentOrchestrator } from './cloudAgent/cloudAgentOrchestrator';
+import { redactSecretsInText } from '../services/git/secretScanner';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -640,15 +641,10 @@ export async function createApp(options: CreateAppOptions = {}) {
       let boundedPrefix = String(prefix).slice(-4000);
       let boundedSuffix = String(suffix).slice(0, 2000);
 
-      // Server-side privacy mode redaction: scrub API keys, tokens, and secrets
+      // Server-side privacy mode redaction: scrub API keys, tokens, JWTs, and private keys
       if (policy.privacyModeRedaction) {
-        const redactSecrets = (text: string) => text
-          .replace(/sk-(?:proj-)?[a-zA-Z0-9_\-]{12,}/g, '[REDACTED_SECRET]')
-          .replace(/gh[pousr]_[a-zA-Z0-9]{16,}/g, '[REDACTED_SECRET]')
-          .replace(/AIzaSy[A-Za-z0-9_\-]{25,}/g, '[REDACTED_SECRET]')
-          .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED_SECRET]');
-        boundedPrefix = redactSecrets(boundedPrefix);
-        boundedSuffix = redactSecrets(boundedSuffix);
+        boundedPrefix = redactSecretsInText(boundedPrefix);
+        boundedSuffix = redactSecretsInText(boundedSuffix);
       }
 
       const cacheKey = defaultTabCoordinator.buildCacheKey(fileName, language, boundedPrefix, boundedSuffix);
