@@ -21,6 +21,7 @@
     "test": "vitest run",
     "test:vitest": "vitest run",
     "test:desktop": "node node_modules/tsx/dist/cli.mjs scripts/testNativeDesktopSmoke.ts",
+    "test:repo": "node node_modules/tsx/dist/cli.mjs scripts/testRepositoryStructureIntegrity.ts",
     "package:desktop": "node scripts/packageDesktopRelease.cjs",
     "validate:release": "node scripts/validateReleaseArtifacts.cjs",
     "clean": "node scripts/clean.cjs",
