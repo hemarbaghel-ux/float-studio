@@ -428,6 +428,7 @@ export class ModelRouter implements IModelGateway {
       apiKeyOverride: userApiKey,
       messages: sanitizedMessages,
       systemInstruction: sanitizedSystemInstruction,
+      tools: sanitizedTools,
       model: route.apiModelId,
       apiModelId: route.apiModelId,
       dataSharingConsent: dataSharingAllowed,
