@@ -62,11 +62,10 @@ import { FloatTreeSitterGrammarRegistry } from '../daemon/src/grammars/floatTree
 import { FloatTreeSitterIndexer } from '../daemon/src/indexer/floatTreeSitterIndexer.js';
 import { FloatRulesGovernanceService } from '../desktop/src/vs/workbench/contrib/float/common/rules/floatRulesGovernanceService.js';
 import { FloatAutonomousAgentController } from '../desktop/src/vs/workbench/contrib/float/browser/agent/floatAutonomousAgentController.js';
-import { SweBenchTaskBank } from '../benchmarks/tasks/sweBenchTaskBank.js';
 
 console.log('================================================================');
-console.log('FLOAT Studio: Cursor 7.5M LOC Scale Monorepo Verification Suite');
-console.log('Testing: Multi-Grammars, Rules Governance, Agent Loop, SWE Bank');
+console.log('FLOAT Studio: Multi-Language and Agent Governance Regression Suite');
+console.log('Testing: Multi-Grammars, Rules Governance and Agent Loop');
 console.log('================================================================\n');
 
 async function runFullScaleTests() {
@@ -349,30 +348,9 @@ function bootstrapRoutes() {}
 	console.log('✔ Autonomous agent controller demonstrated self-repair loop and verification gates');
 
 	// =========================================================================
-	// 4. Enterprise SWE-bench Task Bank Evaluation
-	// =========================================================================
-	console.log('\n--- Test 5: Enterprise SWE-bench Task Bank (10 Tasks, 5 Domains) ---');
-	const taskBank = new SweBenchTaskBank();
-	const tasks = taskBank.getTasks();
-	assert.strictEqual(tasks.length, 10, 'Task bank must contain 10 enterprise challenge tasks');
-
-	const domains = new Set(tasks.map(t => t.domain));
-	assert.ok(domains.has('security'), 'Must test security');
-	assert.ok(domains.has('concurrency'), 'Must test concurrency');
-	assert.ok(domains.has('algorithms'), 'Must test algorithms');
-	assert.ok(domains.has('type_safety'), 'Must test type_safety');
-	assert.ok(domains.has('perf'), 'Must test perf');
-
-	const evalResult = taskBank.evaluateAll();
-	console.log(`[SWE-bench Bank] Total Tasks: ${evalResult.total}, Passed: ${evalResult.passed}, Pass Rate: ${evalResult.passRate}%`);
-	assert.strictEqual(evalResult.total, 10);
-	assert.strictEqual(evalResult.passed, 10);
-	assert.strictEqual(evalResult.passRate, 100);
-	totalPassed++;
-	console.log('✔ Enterprise SWE-bench task bank evaluated with 100% pass rate (10/10 tasks)');
 
 	console.log('\n================================================================');
-	console.log(`SUCCESS: All ${totalPassed} Cursor 7.5M scale verification tests PASSED!`);
+	console.log(`SUCCESS: All ${totalPassed} multi-language and agent-governance tests PASSED!`);
 	console.log('================================================================');
 }
 

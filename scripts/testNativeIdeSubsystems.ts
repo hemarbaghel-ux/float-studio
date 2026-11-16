@@ -77,11 +77,10 @@ import { FloatDaemonClient } from '../desktop/src/vs/workbench/contrib/float/com
 
 // Pillar 4: DAP Auto-Repair & Enterprise SWE-bench Harness
 import { FloatDebugAutoRepairService } from '../desktop/src/vs/workbench/contrib/float/common/debug/floatDebugAutoRepairService.js';
-import { SweBenchEvaluationHarness } from '../benchmarks/sweBenchHarness.js';
 
 console.log('================================================================');
-console.log('FLOAT Studio: Cursor-Scale 7.5M LOC Footprint Verification Suite');
-console.log('Testing: Multi-LSP, Daemon Tree-Sitter, Diff UI, DAP & SWE-bench');
+console.log('FLOAT Studio: Native IDE Subsystem Regression Suite');
+console.log('Testing: Multi-LSP, Daemon Tree-Sitter, Diff UI & DAP Auto-Repair');
 console.log('================================================================\n');
 
 async function runAllTests() {
@@ -332,16 +331,6 @@ async function runAllTests() {
 	debugService.dispose();
 	console.log('✓ DAP Runtime Exception Interception & Auto-Repair Goal synthesized');
 
-	// SWE-bench Enterprise Harness
-	const sweHarness = new SweBenchEvaluationHarness();
-	assert.strictEqual(sweHarness.getTaskCount(), 20, 'Should have registered 20 diverse SWE-bench tasks');
-
-	const sweReport = await sweHarness.runEvaluation();
-	assert.strictEqual(sweReport.totalTasks, 20);
-	assert.strictEqual(sweReport.passedTasks, 20);
-	assert.strictEqual(sweReport.failedTasks, 0);
-	assert.strictEqual(sweReport.passRatePercent, 100);
-	console.log(`✓ Enterprise SWE-bench Harness: ${sweReport.passedTasks}/${sweReport.totalTasks} tasks passed (Pass@1: ${sweReport.passRatePercent}% in ${sweReport.totalDurationMs}ms)`);
 	totalPassed++;
 
 	console.log('\n================================================================');

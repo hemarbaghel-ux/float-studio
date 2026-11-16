@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * FLOAT Studio - Production Desktop Packaging Engine
+ * FLOAT Studio - Development Preview Desktop Packaging Utility
  * 
  * Replaces placeholder stubbing with real installers and portable bundles:
  * - Windows: Inno Setup installer bundling VC++ Redistributable + portable ZIP
@@ -132,11 +132,7 @@ if (isSmokeTest) {
       height: 800,
       title: "FLOAT Studio (Self-Check)",
       show: true,
-      webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
-        webSecurity: false
-      }
+      webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: true, sandbox: true }
     });
 
     win.webContents.on('console-message', (event, level, message) => {
@@ -224,7 +220,7 @@ if (isSmokeTest) {
       height: 800,
       title: "FLOAT Studio",
       show: !isHeadless,
-      webPreferences: { nodeIntegration: true, contextIsolation: false }
+      webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: true, sandbox: true }
     });
     if (isHeadless) {
       console.log('FLOAT Studio launched in headless mode.');

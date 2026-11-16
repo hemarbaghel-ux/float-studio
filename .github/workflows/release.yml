@@ -57,36 +57,13 @@ jobs:
           npm run build:float-daemon-worker
           npm run build:extensions
 
-      - name: Package Real Desktop Installers & Portable Bundles
+      - name: Block incomplete native desktop release
         shell: bash
         run: |
-          node scripts/packageDesktopRelease.cjs --platform=${{ matrix.platform }}
-
-      - name: Validate Binary Magic Headers & Minimum Artifact Sizes (>= 20 MB)
-        shell: bash
-        run: |
-          node scripts/validateReleaseArtifacts.cjs --platform=${{ matrix.platform }}
-
-      - name: Smoke-Test Packaged Desktop Binary
-        shell: bash
-        run: |
-          if [ "${{ matrix.platform }}" = "linux-x64" ]; then
-            test -x dist/build-desktop-tmp/linux-unpacked/float-studio
-            xvfb-run -a dist/build-desktop-tmp/linux-unpacked/float-studio --headless --no-sandbox
-          elif [ "${{ matrix.platform }}" = "windows-x64" ]; then
-            test -f dist/build-desktop-tmp/win-unpacked/FLOAT.exe
-            ./dist/build-desktop-tmp/win-unpacked/FLOAT.exe --headless
-          elif [ "${{ matrix.platform }}" = "macos-arm64" ]; then
-            test -d "dist/build-desktop-tmp/mac-unpacked/FLOAT Studio.app"
-            "dist/build-desktop-tmp/mac-unpacked/FLOAT Studio.app/Contents/MacOS/Electron" --headless
-          fi
-
-      - name: Upload Validated Release Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.platform }}
-          path: dist/release/
-          if-no-files-found: error
+          echo "::error::Production desktop release is blocked until the genuine Code-OSS workbench and platform installers pass runtime acceptance."
+          echo "The local Electron preview packager does not create a production FLOAT desktop IDE."
+          echo "Required before release: compiled workbench, native module rebuilds, signed platform packages, installation tests, and real workbench launch smoke tests."
+          exit 1
 
   create-github-release:
     name: Publish Release & Checksums
