@@ -5,6 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import {
   IWorkspaceService,
   WorkspaceCapabilities,
@@ -194,15 +195,25 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
   async readFile(relativePath: string): Promise<string> {
     const fullPath = this.resolvePath(relativePath);
     
-    // Secure file handle open with post-open realpath check (eliminates TOCTOU race)
+    // 1. Verify parent directory hierarchy has no escaping symlinks
+    this.validateDirectoryHierarchy(path.dirname(fullPath));
+
+    // 2. Secure file handle open with post-open realpath and inode verification
     const handle = await fs.promises.open(fullPath, 'r');
     try {
-      const st = await handle.stat();
-      if (st.isDirectory()) {
+      const fdStat = await handle.stat();
+      if (fdStat.isDirectory()) {
         throw new Error(`Cannot readFile on directory "${relativePath}".`);
       }
       const realAfterOpen = fs.realpathSync(fullPath);
       this.assertContainedInRoots(realAfterOpen, relativePath);
+
+      // Verify open descriptor points to the exact same filesystem object as realAfterOpen
+      const realStat = fs.statSync(realAfterOpen);
+      if (fdStat.dev && realStat.dev && (fdStat.dev !== realStat.dev || fdStat.ino !== realStat.ino)) {
+        throw new Error(`TOCTOU race detected: file descriptor does not match realpath target for "${relativePath}".`);
+      }
+
       return await handle.readFile('utf8');
     } finally {
       await handle.close();
@@ -213,31 +224,53 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
     const fullPath = this.resolvePath(relativePath);
     const parentDir = path.dirname(fullPath);
 
-    // Validate parent directory hierarchy contains no escaping symlinks (Phase 1.1 Task 5)
+    // 1. Validate parent directory hierarchy contains no escaping symlinks
     this.validateDirectoryHierarchy(parentDir);
     await fs.promises.mkdir(parentDir, { recursive: true });
 
-    // Refuse writing if target is an existing symlink (prevents writing through symlinks)
-    if (fs.existsSync(fullPath)) {
+    // 2. Refuse writing if target is an existing symlink (prevents writing through symlinks)
+    try {
       const lstat = await fs.promises.lstat(fullPath);
       if (lstat.isSymbolicLink()) {
         throw new Error(`Path containment violation: refusing to write through symlink "${relativePath}".`);
       }
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') throw err;
     }
 
-    // Atomic file open with post-open realpath containment check
-    const handle = await fs.promises.open(
-      fullPath,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC,
+    // 3. Write via unique temporary file in the same directory using O_CREAT | O_EXCL
+    const tempName = `.${path.basename(fullPath)}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+    const tempPath = path.join(parentDir, tempName);
+
+    const tempHandle = await fs.promises.open(
+      tempPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
       0o600
     );
     try {
-      const realAfterOpen = fs.realpathSync(fullPath);
-      this.assertContainedInRoots(realAfterOpen, relativePath);
-      await handle.writeFile(content, 'utf8');
+      const realTemp = fs.realpathSync(tempPath);
+      this.assertContainedInRoots(realTemp, tempName);
+      await tempHandle.writeFile(content, 'utf8');
     } finally {
-      await handle.close();
+      await tempHandle.close();
     }
+
+    // 4. Double check target is not a symlink right before atomic rename
+    try {
+      const finalLstat = await fs.promises.lstat(fullPath);
+      if (finalLstat.isSymbolicLink()) {
+        await fs.promises.unlink(tempPath).catch(() => {});
+        throw new Error(`Path containment violation: refusing to write through symlink "${relativePath}".`);
+      }
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        await fs.promises.unlink(tempPath).catch(() => {});
+        throw err;
+      }
+    }
+
+    // 5. Atomic rename into place
+    await fs.promises.rename(tempPath, fullPath);
 
     // Incrementally update index
     const safeRel = validateSafeWorkspacePath(relativePath);
