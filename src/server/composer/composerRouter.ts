@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import crypto from 'crypto';
+import path from 'node:path';
 import express, { Request, Response, Router } from 'express';
 import { requireAuth } from '../authMiddleware';
 import { verifyProjectOwnership } from '../projectOwnership';
@@ -308,6 +309,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
 
     // Resolve workspace (local filesystem ONLY in authenticated desktop dev mode when explicitly requested)
     let workspace: IWorkspaceService;
+    let desktopExecutionAdapter: import('../../shared/contracts/tools').ICommandExecutionAdapter | undefined;
     if (typeof localWorkspacePath === 'string' && localWorkspacePath.trim()) {
       if (process.env.FLOAT_DESKTOP_DEV !== '1') {
         return res.status(403).json({
@@ -318,6 +320,31 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       const localWs = new LocalFileSystemWorkspaceService(localWorkspacePath.trim());
       await localWs.initializeIndex();
       workspace = localWs;
+      const validatedRoot = path.resolve(localWorkspacePath.trim());
+      desktopExecutionAdapter = {
+        async runCommand(command: string, options?: { cwd?: string; timeoutMs?: number; signal?: AbortSignal }) {
+          const { exec } = await import('node:child_process');
+          return new Promise((resolve) => {
+            const proc = exec(command, { cwd: validatedRoot, timeout: options?.timeoutMs }, (error, stdout, stderr) => {
+              if (options?.signal?.aborted) {
+                resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
+              } else {
+                resolve({
+                  exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
+                  stdout: stdout?.toString() || '',
+                  stderr: stderr?.toString() || (error ? error.message : ''),
+                });
+              }
+            });
+            if (options?.signal) {
+              options.signal.addEventListener('abort', () => {
+                proc.kill();
+                resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
+              });
+            }
+          });
+        }
+      };
     } else {
       let initialFiles: Array<{ path?: string; name?: string; content?: string }> = Array.isArray(files)
         ? (files as Array<{ path?: string; name?: string; content?: string }>)
@@ -454,6 +481,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       verificationCommand: typeof verificationCommand === 'string' ? verificationCommand : undefined,
       repairOnVerificationFailure: repairOnVerificationFailure !== false,
       activeRulesInstruction: activeRulesInstruction || undefined,
+      executionAdapter: desktopExecutionAdapter,
       onProgress: (event: ComposerProgressEvent) => {
         storedTask.events.push(event);
         storedTask.updatedAt = Date.now();

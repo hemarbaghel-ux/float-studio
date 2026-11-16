@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 export interface TerminalDoctorCheck {
   readonly id: string;
@@ -26,7 +27,7 @@ export function runTerminalSetupDoctor(env: NodeJS.ProcessEnv = process.env): Te
   const checks: TerminalDoctorCheck[] = [];
 
   const dockerBin = (env.FLOAT_DOCKER_BIN || '').trim();
-  const dockerBinValid = Boolean(dockerBin && dockerBin.startsWith('/') && fs.existsSync(dockerBin));
+  const dockerBinValid = Boolean(dockerBin && path.isAbsolute(dockerBin) && fs.existsSync(dockerBin));
   checks.push({
     id: 'docker_binary',
     envVar: 'FLOAT_DOCKER_BIN',
@@ -57,7 +58,7 @@ export function runTerminalSetupDoctor(env: NodeJS.ProcessEnv = process.env): Te
   const daemonProxyValid =
     dockerHost.startsWith('tcp://') &&
     dockerTls === '1' &&
-    Boolean(dockerCertPath && dockerCertPath.startsWith('/'));
+    Boolean(dockerCertPath && path.isAbsolute(dockerCertPath));
   checks.push({
     id: 'docker_tls_proxy',
     envVar: 'DOCKER_HOST',
@@ -71,10 +72,10 @@ export function runTerminalSetupDoctor(env: NodeJS.ProcessEnv = process.env): Te
 
   const sharedDir = (env.FLOAT_EXECUTION_SHARED_DIR || '').trim();
   let sharedDirValid = false;
-  if (sharedDir && sharedDir.startsWith('/') && fs.existsSync(sharedDir)) {
+  if (sharedDir && path.isAbsolute(sharedDir) && fs.existsSync(sharedDir)) {
     try {
       const st = fs.statSync(sharedDir);
-      sharedDirValid = st.isDirectory() && (st.mode & 0o077) === 0;
+      sharedDirValid = st.isDirectory() && (process.platform === 'win32' || (st.mode & 0o077) === 0);
     } catch {
       sharedDirValid = false;
     }

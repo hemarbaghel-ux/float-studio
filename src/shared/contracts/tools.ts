@@ -449,7 +449,7 @@ export class CanonicalToolRegistry implements IToolRegistry {
 
   register(tool: IToolDefinition): void {
     if (this.tools.has(tool.name)) {
-      throw new Error(`Tool "${tool.name}" is already registered`);
+      throw new Error(`Tool "${tool.name}" is already registered in CanonicalToolRegistry`);
     }
     this.tools.set(tool.name, tool);
   }

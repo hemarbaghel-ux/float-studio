@@ -62,6 +62,7 @@ export interface ComposerAgentOptions {
   readonly verificationCommand?: string;
   readonly repairOnVerificationFailure?: boolean;
   readonly activeRulesInstruction?: string;
+  readonly executionAdapter?: import('../../shared/contracts/tools').ICommandExecutionAdapter;
   readonly onProgress?: (event: ComposerProgressEvent) => void;
 }
 
@@ -208,6 +209,7 @@ export class ComposerAgent {
       signal: options.signal,
       allowedCommands: options.allowedCommands,
       mode,
+      executionAdapter: options.executionAdapter,
     };
 
     const toolsDescription = availableTools
