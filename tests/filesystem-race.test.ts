@@ -137,4 +137,90 @@ describe('SEC-04 Filesystem Race Condition & Symlink Protection Engine (Phase 1.
       /Path traversal is strictly prohibited|Path containment violation/
     );
   });
+
+  it('eliminates TOCTOU symlink-swap races during concurrent read and write operations', async () => {
+    const validTargetDir = path.join(workspaceDir, 'legit-target');
+    fs.mkdirSync(validTargetDir, { recursive: true });
+    fs.writeFileSync(path.join(validTargetDir, 'data.txt'), 'LEGIT_WORKSPACE_CONTENT', 'utf8');
+
+    const swapLink = path.join(workspaceDir, 'dynamic-link');
+
+    const createLink = (target: string) => {
+      try {
+        if (fs.existsSync(swapLink)) {
+          fs.unlinkSync(swapLink);
+        }
+      } catch {}
+      try {
+        if (process.platform === 'win32') {
+          fs.symlinkSync(target, swapLink, 'junction');
+        } else {
+          fs.symlinkSync(target, swapLink, 'dir');
+        }
+      } catch (err: any) {
+        if (process.platform === 'win32' && err.code === 'EPERM') return false;
+        throw err;
+      }
+      return true;
+    };
+
+    if (!createLink(validTargetDir)) {
+      // Windows unprivileged fallback if junctions restricted
+      return;
+    }
+
+    let isSwapping = true;
+    // Background worker rapidly swapping dynamic-link between valid workspace and outside sensitive dir
+    const swapper = (async () => {
+      let turn = 0;
+      while (isSwapping) {
+        const target = turn % 2 === 0 ? outsideDir : validTargetDir;
+        createLink(target);
+        turn++;
+        await new Promise(r => setTimeout(r, 2));
+      }
+    })();
+
+    const operations: Promise<void>[] = [];
+    const leakedPayloads: string[] = [];
+
+    for (let i = 0; i < 30; i++) {
+      // Concurrent read
+      operations.push(
+        (async () => {
+          try {
+            const content = await workspaceService.readFile('dynamic-link/data.txt');
+            if (content.includes('SUPER_SECRET_PAYLOAD')) {
+              leakedPayloads.push(content);
+            }
+          } catch (err: any) {
+            // Path containment violation or ENOENT during swap is expected and correct
+            expect(err.message).toMatch(/Path containment violation|File not found|ENOENT/i);
+          }
+        })()
+      );
+
+      // Concurrent write attempt through dynamic link
+      operations.push(
+        (async () => {
+          try {
+            await workspaceService.writeFile('dynamic-link/attack.txt', 'MALICIOUS_OVERWRITE');
+          } catch (err: any) {
+            expect(err.message).toMatch(/Path containment violation|File not found|ENOENT|EEXIST/i);
+          }
+        })()
+      );
+    }
+
+    await Promise.all(operations);
+    isSwapping = false;
+    await swapper;
+
+    // Invariant 1: Zero leaks of outside secret payload
+    expect(leakedPayloads).toHaveLength(0);
+
+    // Invariant 2: External sensitive directory was NEVER modified or injected with attack files
+    expect(fs.existsSync(path.join(outsideDir, 'attack.txt'))).toBe(false);
+    expect(fs.readFileSync(path.join(outsideDir, 'sensitive.txt'), 'utf8')).toBe('SUPER_SECRET_PAYLOAD');
+  });
 });
