@@ -13,8 +13,9 @@ This checklist aligns with the current codebase, `Dockerfile`, `.env.example`, a
 - [ ] **Production Bundle Compilation**:
   - Run `npm run build` and verify that frontend assets (`dist/index.html`) and server bundles (`dist/server.cjs`, `dist/server.js`) are generated cleanly.
 - [ ] **Desktop Release Packaging & Binary Verification**:
-  - Verify `.github/workflows/release.yml` invokes `node scripts/packageDesktopRelease.cjs --platform=<target>` and `node scripts/validateReleaseArtifacts.cjs --platform=<target>`.
-  - Confirm each release artifact is `>= 20 MB`, passes binary magic-header checks (`MZ`, `PK`, `!<arch>\n`, `GZIP`, `DMG`), and passes the headless launch smoke test (`--headless` / `--smoke-test`). Text placeholder files are strictly forbidden.
+  - **Current status: BLOCKED.** `.github/workflows/release.yml` deliberately fails closed because the current packager wraps the React web preview in generic Electron and does not create the genuine Code-OSS IDE.
+  - `npm run package:desktop` is a local preview utility only. Artifact size and magic-header checks do not prove a valid native installer or workbench launch.
+  - Do not publish a desktop release until the Code-OSS workbench is compiled, native modules are rebuilt, platform installers are packaged and signed, and install/launch/uninstall acceptance tests pass.
 
 ---
 

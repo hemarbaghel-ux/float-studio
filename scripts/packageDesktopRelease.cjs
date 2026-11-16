@@ -5,12 +5,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * FLOAT Studio - Production Desktop Packaging Engine
- * 
- * Replaces placeholder stubbing with real installers and portable bundles:
- * - Windows: Inno Setup installer bundling VC++ Redistributable + portable ZIP
- * - Linux: Debian (.deb) package with dependencies + AppArmor profile + .desktop + tar.gz
- * - macOS: .app bundle + hardened runtime entitlements + .dmg image + ZIP
+ * FLOAT Studio - Development Preview Desktop Packaging Utility
+ *
+ * Packages the React web application inside Electron for local development preview.
+ * It does NOT compile or package the genuine Code-OSS desktop workbench and must not
+ * be used as a production desktop release tool. The production release workflow fails
+ * closed until native Code-OSS compilation, installer, signing and launch gates pass.
  */
 
 const fs = require('fs');
@@ -132,11 +132,7 @@ if (isSmokeTest) {
       height: 800,
       title: "FLOAT Studio (Self-Check)",
       show: true,
-      webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
-        webSecurity: false
-      }
+      webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: true, sandbox: true }
     });
 
     win.webContents.on('console-message', (event, level, message) => {
@@ -224,7 +220,7 @@ if (isSmokeTest) {
       height: 800,
       title: "FLOAT Studio",
       show: !isHeadless,
-      webPreferences: { nodeIntegration: true, contextIsolation: false }
+      webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: true, sandbox: true }
     });
     if (isHeadless) {
       console.log('FLOAT Studio launched in headless mode.');

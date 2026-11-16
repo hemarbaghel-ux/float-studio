@@ -22,3 +22,7 @@ desktop/extensions/**/dist/
 desktop/*.log
 
 tmp/
+
+# Generated LOC-padding benchmark/grammar datasets (not runtime dependencies)
+/benchmarks/swe-bench/data/
+/daemon/grammars/data/

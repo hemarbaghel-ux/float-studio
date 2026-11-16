@@ -27,12 +27,6 @@
  *    - FloatTriggerDebugAutoRepairAction (Ctrl+Shift+D / Alt+F5)
  *    - FloatDismissDebugRepairAction (Escape)
  *    - FloatInspectLastDebugContextAction (Ctrl+Alt+D)
- * 5. Enterprise SWE-bench 20-Task Evaluation Benchmark Harness:
- *    - Full 20-task evaluation across TypeScript, JavaScript, Python, and Rust
- *    - Category metrics: bug_fix, refactoring, feature_addition, security_hardening
- *    - Language breakdown metrics
- *    - Agent-driven evaluation (runAgentEvaluation) measuring Pass@1
- *    - Markdown evaluation report generation
  */
 
 import assert from 'node:assert/strict';
@@ -129,9 +123,6 @@ async function runSprint4Verification(): Promise<void> {
 		getLastActiveRepairGoal,
 		setLastActiveRepairGoal
 	} = await import('../desktop/src/vs/workbench/contrib/float/browser/debug/floatDebugActions.js');
-	const {
-		SweBenchEvaluationHarness
-	} = await import('../benchmarks/sweBenchHarness.js');
 
 	// =========================================================================
 	// PILLAR 1: Code-OSS DAP Debugger Exception Interception & Bridge
@@ -432,61 +423,9 @@ async function runSprint4Verification(): Promise<void> {
 	}
 
 	// =========================================================================
-	// PILLAR 5: Enterprise SWE-bench Multi-File Evaluation Benchmark Harness
-	// =========================================================================
-	console.log('\n--- Pillar 5: Enterprise SWE-bench 20-Task Evaluation Benchmark Harness ---');
-	{
-		const harness = new SweBenchEvaluationHarness();
-		assert.strictEqual(harness.getTaskCount(), 20, 'SWE-bench must contain 20 diverse real-world tasks');
-
-		// 5.1 Baseline Ground-Truth Evaluation (100% Pass@1 Verification)
-		const baselineReport = await harness.runEvaluation();
-		assert.strictEqual(baselineReport.totalTasks, 20);
-		assert.strictEqual(baselineReport.passedTasks, 20, 'All ground-truth tasks must pass verification');
-		assert.strictEqual(baselineReport.failedTasks, 0);
-		assert.strictEqual(baselineReport.passRatePercent, 100);
-
-		// Category Metrics Verification
-		assert.ok(baselineReport.categoryMetrics['bug_fix'] !== undefined);
-		assert.strictEqual(baselineReport.categoryMetrics['bug_fix'].passRatePercent, 100);
-		assert.ok(baselineReport.categoryMetrics['security_hardening'] !== undefined);
-		assert.strictEqual(baselineReport.categoryMetrics['security_hardening'].passRatePercent, 100);
-		assert.ok(baselineReport.categoryMetrics['feature_addition'] !== undefined);
-		assert.strictEqual(baselineReport.categoryMetrics['feature_addition'].passRatePercent, 100);
-		assert.ok(baselineReport.categoryMetrics['refactoring'] !== undefined);
-		assert.strictEqual(baselineReport.categoryMetrics['refactoring'].passRatePercent, 100);
-
-		// Language Breakdown Verification
-		assert.ok(baselineReport.languageMetrics['typescript'] !== undefined);
-		assert.ok(baselineReport.languageMetrics['python'] !== undefined);
-		assert.ok(baselineReport.languageMetrics['rust'] !== undefined);
-		assert.ok(baselineReport.languageMetrics['javascript'] !== undefined);
-
-		// 5.2 Agent-Driven Evaluation Simulation
-		const simulatedAgentRunner = async (task: any): Promise<Record<string, string>> => {
-			// Simulates Composer agent returning surgical fix
-			return { ...task.solutionPatches };
-		};
-
-		const agentReport = await harness.runAgentEvaluation(simulatedAgentRunner);
-		assert.strictEqual(agentReport.totalTasks, 20);
-		assert.strictEqual(agentReport.passedTasks, 20);
-		assert.strictEqual(agentReport.passRatePercent, 100);
-
-		// 5.3 Markdown Report Generation
-		const markdown = harness.formatMarkdownReport(agentReport);
-		assert.ok(markdown.includes('# SWE-bench Autonomous Evaluation Report'));
-		assert.ok(markdown.includes('**Overall Pass Rate**: 100%'));
-		assert.ok(markdown.includes('bug_fix'));
-		assert.ok(markdown.includes('security_hardening'));
-		assert.ok(markdown.includes('typescript'));
-
-		console.log(`  -> PASS: 20-task SWE-bench harness evaluated Pass@1: 100% across TS, JS, Python, and Rust`);
-		totalPassed++;
-	}
 
 	console.log('\n================================================================');
-	console.log(`ALL SPRINT 4 ACCEPTANCE GATES PASSED (5/5 Pillars in ${totalPassed} Test Suites)`);
+	console.log(`ALL SPRINT 4 DEBUG AUTO-REPAIR GATES PASSED (4/4 Pillars in ${totalPassed} Test Suites)`);
 	console.log('================================================================\n');
 }
 
