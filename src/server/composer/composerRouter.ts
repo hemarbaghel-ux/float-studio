@@ -210,7 +210,7 @@ export interface StoredComposerTask {
   readonly task: string;
   readonly mode: ComposerMode;
   readonly modelId: string;
-  status: 'running' | 'completed' | 'plan_ready' | 'proposal_ready' | 'verified' | 'cancelled' | 'budget_exceeded' | 'error';
+  status: 'running' | 'completed' | 'plan_ready' | 'proposal_ready' | 'verified' | 'cancelled' | 'budget_exceeded' | 'error' | 'approval_required';
   readonly createdAt: number;
   updatedAt: number;
   readonly events: ComposerProgressEvent[];
@@ -311,7 +311,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
     let workspace: IWorkspaceService;
     let desktopExecutionAdapter: import('../../shared/contracts/tools').ICommandExecutionAdapter | undefined;
     if (typeof localWorkspacePath === 'string' && localWorkspacePath.trim()) {
-      if (process.env.FLOAT_DESKTOP_DEV !== '1') {
+      if (process.env.NODE_ENV === 'production' || process.env.FLOAT_DESKTOP_DEV !== '1') {
         return res.status(403).json({
           error: 'Arbitrary localWorkspacePath is forbidden in hosted environment. Projects must use server-managed project storage.',
           code: 'FORBIDDEN_LOCAL_WORKSPACE_PATH',
@@ -738,7 +738,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       return res.status(400).json({ error: 'toolName is required.' });
     }
 
-    const pending = defaultToolApprovalService.registerRequest({
+    const pending = await defaultToolApprovalService.registerRequest({
       actionId,
       toolName: String(toolName),
       params: params || {},
@@ -769,7 +769,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       return res.status(400).json({ error: 'actionId and approved (boolean) are required.' });
     }
 
-    const outcome = defaultToolApprovalService.confirmRequest(String(actionId), approved, userId, projectId);
+    const outcome = await defaultToolApprovalService.confirmRequest(String(actionId), approved, userId, projectId);
     if (!outcome.success) {
       return res.status(400).json({ error: outcome.error });
     }
@@ -793,7 +793,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
     }
 
-    const request = defaultToolApprovalService.getRequest(actionId);
+    const request = await defaultToolApprovalService.getRequest(actionId);
     if (!request || request.projectId !== projectId) {
       return res.status(404).json({ error: `Approval request "${actionId}" not found.` });
     }
@@ -821,7 +821,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       return res.status(404).json({ error: `Tool "${toolName}" is not registered in CanonicalToolRegistry.` });
     }
 
-    // If tool requires approval, verify the approval token
+    // If tool requires approval, check presence of token before delegating to registry
     if (tool.requiresApproval && toolName !== 'request_approval') {
       if (!approvalToken) {
         return res.status(403).json({
@@ -829,27 +829,10 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
           requiresApproval: true,
         });
       }
-
-      const verification = await defaultToolApprovalService.verifyAndConsume(
-        String(approvalToken),
-        {
-          actionId: actionId ? String(actionId) : undefined,
-          toolName: String(toolName),
-          params: params || {},
-          userId,
-          projectId,
-        }
-      );
-
-      if (!verification.valid) {
-        return res.status(403).json({
-          error: `Approval token verification failed: ${verification.error}`,
-          requiresApproval: true,
-        });
-      }
     }
 
     // Resolve workspace for tool execution
+    // CanonicalToolRegistry.execute is the single authoritative token verification and nonce consumption boundary
     const workspace = new VirtualProjectWorkspaceService(projectId);
     const result = await toolRegistry.execute(String(toolName), params || {}, {
       workspace,
@@ -857,7 +840,17 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       projectId,
       actionId: actionId ? String(actionId) : undefined,
       approvalToken: approvalToken ? String(approvalToken) : undefined,
+      approvalSecret: defaultToolApprovalService.getSecret(),
+      nonceStore: defaultToolApprovalService.getNonceStore(),
     });
+
+    if (result.requiresApproval || (!result.success && result.error && /approval/i.test(result.error))) {
+      return res.status(403).json(result);
+    }
+
+    if (result.success && actionId) {
+      await defaultToolApprovalService.markConsumed(String(actionId), userId, projectId);
+    }
 
     return res.json(result);
   });

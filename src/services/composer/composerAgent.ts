@@ -28,7 +28,7 @@ export type ComposerProgressEvent =
   | { type: 'tool_call'; toolName: string; args: any; timestamp: number }
   | { type: 'tool_result'; toolName: string; success: boolean; data?: any; error?: string; timestamp: number }
   | { type: 'proposal_created'; proposal: IProposal; timestamp: number }
-  | { type: 'approval_requested'; proposalId?: string; reason: string; timestamp: number }
+  | { type: 'approval_requested'; actionId?: string; toolName?: string; params?: any; proposalId?: string; reason: string; timestamp: number }
   | { type: 'patch_applied'; proposalId: string; appliedFiles: string[]; checkpointId?: string; timestamp: number }
   | { type: 'command_started'; command: string; timestamp: number }
   | { type: 'command_output'; command: string; stdout: string; stderr: string; timestamp: number }
@@ -65,13 +65,16 @@ export interface ComposerAgentOptions {
   readonly executionAdapter?: import('../../shared/contracts/tools').ICommandExecutionAdapter;
   readonly userApiKeys?: Record<string, string>;
   readonly onProgress?: (event: ComposerProgressEvent) => void;
+  readonly requestApproval?: (request: { actionId: string; toolName: string; params: any; reason?: string }) => Promise<string | null>;
+  readonly approvalSecret?: string;
+  readonly nonceStore?: import('../../shared/contracts/tools').INonceStore;
 }
 
 export interface ComposerExecutionResult {
   readonly taskId: string;
   readonly mode: ComposerMode;
   readonly modelId: string;
-  readonly status: 'completed' | 'plan_ready' | 'proposal_ready' | 'verified' | 'cancelled' | 'budget_exceeded' | 'error';
+  readonly status: 'completed' | 'plan_ready' | 'proposal_ready' | 'verified' | 'cancelled' | 'budget_exceeded' | 'error' | 'approval_required';
   readonly iterations: number;
   readonly durationMs: number;
   readonly tokenUsage: number;
@@ -83,6 +86,12 @@ export interface ComposerExecutionResult {
   readonly verificationPassed?: boolean;
   readonly finalResponse?: string;
   readonly auditTrail: readonly ComposerAuditEntry[];
+  readonly pendingApproval?: {
+    actionId: string;
+    toolName: string;
+    params: any;
+    reason: string;
+  };
   readonly error?: string;
 }
 
@@ -107,6 +116,19 @@ export function extractToolCallsFromText(text: string): Array<{ name: string; ar
       }
     } catch {
       // Continue searching
+    }
+  }
+
+  const toolColonRegex = /```tool:([a-zA-Z0-9_-]+)\s*([\s\S]*?)```/gi;
+  let colonMatch;
+  while ((colonMatch = toolColonRegex.exec(text)) !== null) {
+    const name = colonMatch[1];
+    const rawArgs = (colonMatch[2] || '').trim();
+    try {
+      const args = rawArgs ? JSON.parse(rawArgs) : {};
+      toolCalls.push({ name, args });
+    } catch {
+      toolCalls.push({ name, args: {} });
     }
   }
 
@@ -211,6 +233,8 @@ export class ComposerAgent {
       allowedCommands: options.allowedCommands,
       mode,
       executionAdapter: options.executionAdapter,
+      approvalSecret: options.approvalSecret,
+      nonceStore: options.nonceStore,
     };
 
     const toolsDescription = availableTools
@@ -391,7 +415,66 @@ Rules:
         recordAudit('tool_call', `${call.name}(${JSON.stringify(call.args).slice(0, 200)})`);
         options.onProgress?.({ type: 'tool_call', toolName: call.name, args: call.args, timestamp: Date.now() });
 
-        const outcome = await this.toolRegistry.execute(call.name, call.args, executionContext);
+        let outcome = await this.toolRegistry.execute(call.name, call.args, executionContext);
+
+        if (!outcome.success && outcome.requiresApproval) {
+          const actionId = `act_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+          const reason = outcome.approvalReason || `Tool "${call.name}" requires explicit user approval before execution.`;
+          recordAudit('approval_requested', `Approval required for ${call.name} (actionId=${actionId})`);
+          options.onProgress?.({
+            type: 'approval_requested',
+            actionId,
+            toolName: call.name,
+            params: call.args,
+            reason,
+            timestamp: Date.now(),
+          });
+
+          if (typeof options.requestApproval === 'function') {
+            const token = await options.requestApproval({ actionId, toolName: call.name, params: call.args, reason });
+            if (token) {
+              const approvedContext: ToolExecutionContext = {
+                ...executionContext,
+                actionId,
+                approvalToken: token,
+              };
+              outcome = await this.toolRegistry.execute(call.name, call.args, approvedContext);
+              recordAudit('approval_consumed', `Approved and executed ${call.name} (actionId=${actionId})`);
+            } else {
+              recordAudit('approval_rejected', `User explicitly rejected ${call.name} (actionId=${actionId})`);
+              outcome = {
+                toolName: call.name,
+                success: false,
+                requiresApproval: true,
+                error: `Tool execution for "${call.name}" was rejected by user.`,
+                durationMs: 0,
+                timestamp: Date.now(),
+              };
+            }
+          } else {
+            toolOutcomes.push(outcome);
+            return {
+              taskId,
+              mode,
+              modelId,
+              status: 'approval_required',
+              iterations: iteration,
+              durationMs: Date.now() - startTime,
+              tokenUsage: accumulatedTokens,
+              toolOutcomes,
+              plan: synthesizedPlan,
+              proposal: createdProposal,
+              pendingApproval: {
+                actionId,
+                toolName: call.name,
+                params: call.args,
+                reason,
+              },
+              auditTrail,
+            };
+          }
+        }
+
         toolOutcomes.push(outcome);
 
         if (call.name === 'retrieve_context' && outcome.success && Array.isArray(outcome.data?.snippets)) {
@@ -462,11 +545,34 @@ Rules:
             if (options.verificationCommand) {
               const verifyCmd = options.verificationCommand;
               options.onProgress?.({ type: 'command_started', command: verifyCmd, timestamp: Date.now() });
-              const cmdOutcome = await this.toolRegistry.execute(
+              let cmdOutcome = await this.toolRegistry.execute(
                 'run_command',
                 { command: verifyCmd },
                 executionContext
               );
+
+              if (cmdOutcome.requiresApproval) {
+                const actionId = `act_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+                options.onProgress?.({
+                  type: 'approval_requested',
+                  actionId,
+                  toolName: 'run_command',
+                  params: { command: verifyCmd },
+                  reason: `Verification command "${verifyCmd}" requires explicit user approval before execution.`,
+                  timestamp: Date.now(),
+                });
+                if (typeof options.requestApproval === 'function') {
+                  const token = await options.requestApproval({ actionId, toolName: 'run_command', params: { command: verifyCmd } });
+                  if (token) {
+                    cmdOutcome = await this.toolRegistry.execute(
+                      'run_command',
+                      { command: verifyCmd },
+                      { ...executionContext, actionId, approvalToken: token }
+                    );
+                  }
+                }
+              }
+
               toolOutcomes.push(cmdOutcome);
 
               const stdout = String(cmdOutcome.data?.stdout || '');
@@ -541,11 +647,24 @@ Rules:
                           checkpointId: repairApply.checkpointId,
                           timestamp: Date.now(),
                         });
-                        const rerunOutcome = await this.toolRegistry.execute(
+                        let rerunOutcome = await this.toolRegistry.execute(
                           'run_command',
                           { command: verifyCmd },
                           executionContext
                         );
+                        if (rerunOutcome.requiresApproval) {
+                          const actionId = `act_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+                          if (typeof options.requestApproval === 'function') {
+                            const token = await options.requestApproval({ actionId, toolName: 'run_command', params: { command: verifyCmd } });
+                            if (token) {
+                              rerunOutcome = await this.toolRegistry.execute(
+                                'run_command',
+                                { command: verifyCmd },
+                                { ...executionContext, actionId, approvalToken: token }
+                              );
+                            }
+                          }
+                        }
                         toolOutcomes.push(rerunOutcome);
                         const rerunExit = typeof rerunOutcome.data?.exitCode === 'number' ? rerunOutcome.data.exitCode : (rerunOutcome.success ? 0 : 1);
                         verificationPassed = rerunExit === 0;

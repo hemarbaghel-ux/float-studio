@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 import { IWorkspaceService } from './workspace';
 
 export interface ToolApprovalPayload {
-  readonly actionId: string;
+  readonly actionId?: string;
   readonly toolName: string;
   readonly paramsHash: string;
   readonly userId: string;
@@ -153,7 +153,7 @@ export function createToolApprovalToken(
 ): string {
   const signingSecret = getApprovalSecret(secret);
   const nonce = params.nonce || crypto.randomBytes(16).toString('hex');
-  const actionId = params.actionId || `act_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  const actionId = params.actionId;
   // Enforce 5-minute maximum validity ceiling
   const requestedValidity = typeof params.expiresInMs === 'number' ? params.expiresInMs : MAX_APPROVAL_VALIDITY_MS;
   const effectiveValidity = Math.min(requestedValidity, MAX_APPROVAL_VALIDITY_MS);
@@ -222,7 +222,7 @@ export async function verifyAndConsumeToolApprovalToken(
   }
 
   if (expected.actionId && payload.actionId !== expected.actionId) {
-    return { valid: false, error: `Token actionId "${payload.actionId}" does not match requested "${expected.actionId}".` };
+    return { valid: false, error: `Token actionId "${payload.actionId || ''}" does not match requested "${expected.actionId}".` };
   }
   if (payload.toolName !== expected.toolName) {
     return { valid: false, error: `Token tool "${payload.toolName}" does not match requested "${expected.toolName}".` };
@@ -230,10 +230,10 @@ export async function verifyAndConsumeToolApprovalToken(
   if (payload.paramsHash !== expected.paramsHash) {
     return { valid: false, error: 'Token parameters hash does not match execution arguments.' };
   }
-  if (payload.userId !== expected.userId) {
+  if (!expected.userId || payload.userId !== expected.userId) {
     return { valid: false, error: 'Token userId does not match execution context.' };
   }
-  if (payload.projectId !== expected.projectId) {
+  if (!expected.projectId || payload.projectId !== expected.projectId) {
     return { valid: false, error: 'Token projectId does not match execution context.' };
   }
 
@@ -496,39 +496,49 @@ export class CanonicalToolRegistry implements IToolRegistry {
       };
     }
 
-    if (tool.requiresApproval && name !== 'request_approval') {
-      if (context.approvalToken) {
-        const paramsHash = computeToolParamsHash(args);
-        const verification = await verifyAndConsumeToolApprovalToken(
-          context.approvalToken,
-          {
-            actionId: context.actionId,
-            toolName: name,
-            paramsHash,
-            userId: context.userId,
-            projectId: context.projectId,
-          },
-          context.approvalSecret,
-          context.nonceStore
-        );
+    const isPreApproved =
+      (name === 'run_command' &&
+        Array.isArray(context.allowedCommands) &&
+        context.allowedCommands.length > 0 &&
+        typeof args?.command === 'string' &&
+        context.allowedCommands.some(cmd => args.command.trim().startsWith(cmd))) ||
+      (name.startsWith('mcp__') &&
+        Array.isArray((context as any).mcpApprovedTools) &&
+        (context as any).mcpApprovedTools.includes(name));
 
-        if (!verification.valid) {
-          return {
-            toolName: name,
-            success: false,
-            requiresApproval: true,
-            error: `Approval token verification failed: ${verification.error}`,
-            durationMs: Date.now() - start,
-            timestamp: start,
-          };
-        }
-      } else if (context.actionId) {
+    if (tool.requiresApproval && name !== 'request_approval' && !isPreApproved) {
+      if (!context.approvalToken) {
         return {
           toolName: name,
           success: false,
           requiresApproval: true,
-          approvalReason: `Tool "${name}" requires explicit user approval before execution.`,
-          error: `Tool "${name}" requires explicit user approval. Provide a valid single-use approvalToken.`,
+          approvalReason: `Approval required: Tool "${name}" requires explicit user approval before execution.`,
+          error: `Approval required: Tool "${name}" requires explicit user approval. Provide a valid single-use approvalToken.`,
+          durationMs: Date.now() - start,
+          timestamp: start,
+        };
+      }
+
+      const paramsHash = computeToolParamsHash(args);
+      const verification = await verifyAndConsumeToolApprovalToken(
+        context.approvalToken,
+        {
+          actionId: context.actionId,
+          toolName: name,
+          paramsHash,
+          userId: context.userId,
+          projectId: context.projectId,
+        },
+        context.approvalSecret,
+        context.nonceStore
+      );
+
+      if (!verification.valid) {
+        return {
+          toolName: name,
+          success: false,
+          requiresApproval: true,
+          error: `Approval token verification failed: ${verification.error}`,
           durationMs: Date.now() - start,
           timestamp: start,
         };

@@ -64,7 +64,7 @@ describe('Composer End-to-End Tool Approval Lifecycle (Phase 1.1 Task 3)', () =>
     const commandArgs = { command: 'npm run test:release' };
 
     // 1. Agent registers pending approval request
-    const pending = approvalService.registerRequest({
+    const pending = await approvalService.registerRequest({
       toolName: 'run_command',
       params: commandArgs,
       userId: 'user-charlie',
@@ -76,7 +76,7 @@ describe('Composer End-to-End Tool Approval Lifecycle (Phase 1.1 Task 3)', () =>
     expect(pending.status).toBe('pending');
 
     // 2. User confirms the request
-    const confirmation = approvalService.confirmRequest(
+    const confirmation = await approvalService.confirmRequest(
       pending.actionId,
       true,
       'user-charlie',
@@ -108,15 +108,15 @@ describe('Composer End-to-End Tool Approval Lifecycle (Phase 1.1 Task 3)', () =>
     expect(replayResult.error).toContain('already been consumed');
   });
 
-  it('rejects confirmation if approver userId does not match request owner', () => {
-    const pending = approvalService.registerRequest({
+  it('rejects confirmation if approver userId does not match request owner', async () => {
+    const pending = await approvalService.registerRequest({
       toolName: 'run_command',
       params: { command: 'rm -rf /' },
       userId: 'user-charlie',
       projectId: 'proj-123',
     });
 
-    const confirmation = approvalService.confirmRequest(
+    const confirmation = await approvalService.confirmRequest(
       pending.actionId,
       true,
       'malicious-attacker',
@@ -127,15 +127,15 @@ describe('Composer End-to-End Tool Approval Lifecycle (Phase 1.1 Task 3)', () =>
     expect(confirmation.error).toContain('Unauthorized approver: userId');
   });
 
-  it('rejects confirmation if approver projectId does not match request', () => {
-    const pending = approvalService.registerRequest({
+  it('rejects confirmation if approver projectId does not match request', async () => {
+    const pending = await approvalService.registerRequest({
       toolName: 'run_command',
       params: { command: 'ls -la' },
       userId: 'user-charlie',
       projectId: 'proj-123',
     });
 
-    const confirmation = approvalService.confirmRequest(
+    const confirmation = await approvalService.confirmRequest(
       pending.actionId,
       true,
       'user-charlie',
@@ -147,14 +147,14 @@ describe('Composer End-to-End Tool Approval Lifecycle (Phase 1.1 Task 3)', () =>
   });
 
   it('handles explicit user rejection, preventing token issuance', async () => {
-    const pending = approvalService.registerRequest({
+    const pending = await approvalService.registerRequest({
       toolName: 'run_command',
       params: { command: 'destructive-command' },
       userId: 'user-charlie',
       projectId: 'proj-123',
     });
 
-    const confirmation = approvalService.confirmRequest(
+    const confirmation = await approvalService.confirmRequest(
       pending.actionId,
       false, // User explicitly rejects
       'user-charlie',
@@ -165,12 +165,12 @@ describe('Composer End-to-End Tool Approval Lifecycle (Phase 1.1 Task 3)', () =>
     expect(confirmation.approved).toBe(false);
     expect(confirmation.approvalToken).toBeUndefined();
 
-    const state = approvalService.getRequest(pending.actionId);
+    const state = await approvalService.getRequest(pending.actionId);
     expect(state?.status).toBe('rejected');
   });
 
   it('expires pending requests after TTL ceiling', async () => {
-    const pending = approvalService.registerRequest({
+    const pending = await approvalService.registerRequest({
       toolName: 'run_command',
       params: { command: 'npm test' },
       userId: 'user-charlie',
@@ -180,7 +180,7 @@ describe('Composer End-to-End Tool Approval Lifecycle (Phase 1.1 Task 3)', () =>
 
     await new Promise(r => setTimeout(r, 15));
 
-    const confirmation = approvalService.confirmRequest(
+    const confirmation = await approvalService.confirmRequest(
       pending.actionId,
       true,
       'user-charlie',

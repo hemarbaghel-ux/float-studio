@@ -205,7 +205,7 @@ check('Executes tool within context and respects AbortSignal cancellation', asyn
   assert.strictEqual(listRes.toolName, 'list_dir');
 
   const propRes = await toolRegistry.execute('propose_changes', { title: 'Fix bug' }, ctx);
-  assert.strictEqual(propRes.success, true);
+  assert.strictEqual(propRes.success, false);
   assert.strictEqual(propRes.requiresApproval, true);
 
   const abortController = new AbortController();
