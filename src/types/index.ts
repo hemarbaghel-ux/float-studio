@@ -53,6 +53,7 @@ export interface AIMessage {
     excludedItems?: Array<{ name: string; reason: string }>;
     appliedRules?: Array<{ id: string; name: string; scope: string; sourceFile?: string; priority?: number }>;
   };
+  composerEvents?: any[];
 }
 
 export interface EditorSelection {

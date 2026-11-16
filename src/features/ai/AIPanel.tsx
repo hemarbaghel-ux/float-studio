@@ -16,6 +16,7 @@ import ReactMarkdown from 'react-markdown';
 import { ChangeSet, AIMessage, AIContextItem } from '../../types';
 import { DiffReviewModal } from '../proposals/DiffReviewModal';
 import { MultiFileDiffCard } from '../composer/MultiFileDiffCard';
+import { ComposerEventTimeline } from '../composer/ComposerEventTimeline';
 import { ModelSelector } from './ModelSelector';
 import { ProjectFilePickerModal } from './ProjectFilePickerModal';
 import { CodebaseSearchModal } from './CodebaseSearchModal';
@@ -293,6 +294,9 @@ export function AIPanel() {
 
   useEffect(() => {
     if (initialPrompt && !isLoading) {
+      if (initialPrompt.includes('terminal error') || initialPrompt.includes('Fix error')) {
+        setActiveWorkflowMode('debug');
+      }
       setInput(initialPrompt);
       setInitialPrompt(null);
       setTimeout(() => {
@@ -671,7 +675,7 @@ export function AIPanel() {
         effectiveSystemInstruction = "You are operating in DEBUG MODE. Follow the systematic 4-step diagnostic protocol:\n1. Inspect the reported error, stack trace, and any active compiler/runtime diagnostics.\n2. Trace the relevant symbol definitions, call sites, and recent git changes.\n3. Identify the underlying root cause with concrete evidence from the files (do NOT fabricate findings).\n4. Propose a targeted, minimal fix with exact before/after code blocks and verification instructions.";
       }
 
-      const isComposerMode = activeWorkflowMode === 'agent' || activeWorkflowMode === 'plan';
+      const isComposerMode = activeWorkflowMode === 'agent' || activeWorkflowMode === 'plan' || activeWorkflowMode === 'ask' || activeWorkflowMode === 'debug';
       const endpointUrl = isComposerMode
         ? `/api/projects/${encodeURIComponent(currentProjectId)}/composer/run`
         : '/api/ai/chat';
@@ -692,7 +696,10 @@ export function AIPanel() {
                 mode: activeWorkflowMode,
                 model: selectedModel,
                 files: flatFiles.filter(f => f.type === 'file').map(f => ({ path: f.path || f.name, content: f.content || '' })),
-                stream: true
+                stream: true,
+                verificationCommand: activeWorkflowMode === 'debug'
+                  ? (flatFiles.some(f => (f.path || f.name).endsWith('.py')) ? 'python -m unittest' : 'npm test')
+                  : undefined
               }
             : {
                 messages: requestMessages,
@@ -790,10 +797,26 @@ export function AIPanel() {
           data.type === 'completed' ||
           data.type === 'cancelled'
         ) {
-          setComposerTaskEvents(prev => [...prev, data]);
+          setComposerTaskEvents(prev => {
+            const next = [...prev, data];
+            updateAiMessage(modelMsgId, { composerEvents: next });
+            return next;
+          });
           if (data.type === 'thinking' && typeof data.content === 'string') {
             accumulatedText = data.content;
             updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
+          } else if (data.type === 'plan' && data.plan) {
+            const planText = Array.isArray(data.plan.steps)
+              ? `### Implementation Plan\n\n${data.plan.steps.map((s: any, i: number) => `${i + 1}. **${s.title || s.step || s}**\n   ${s.description || ''}`).join('\n')}`
+              : String(data.plan);
+            accumulatedText = planText;
+            updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
+          } else if (data.type === 'completed' && data.result) {
+            const completionMsg = data.result.message || data.result.answer || data.result.summary || '';
+            if (completionMsg) {
+              accumulatedText = completionMsg;
+              updateAiMessage(modelMsgId, { content: accumulatedText, status: 'completed' });
+            }
           } else if (data.type === 'proposal_created' && data.proposal) {
             const prop = data.proposal;
             updateAiMessage(modelMsgId, {
@@ -1637,6 +1660,14 @@ export function AIPanel() {
                       </button>
                     )}
                   </div>
+                )}
+
+                {/* Composer Event Timeline (Autonomous Tool & Test Execution Steps) */}
+                {msg.composerEvents && msg.composerEvents.length > 0 && (
+                  <ComposerEventTimeline
+                    events={msg.composerEvents}
+                    isStreaming={isStreaming && idx === aiMessages.length - 1}
+                  />
                 )}
 
                 {/* Proposed Changes Multi-File Diff Card (Cursor Composer UX) */}

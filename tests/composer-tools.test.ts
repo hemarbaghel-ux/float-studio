@@ -134,4 +134,27 @@ describe('Composer Canonical Tools & Diff Engine', () => {
       expect(unauthorized.error).toContain('is not in the allowed verification commands list');
     });
   });
+
+  describe('Composer Workflow Event Progression & Classification', () => {
+    it('classifies tool calls, test results, and self-repair steps', () => {
+      const events = [
+        { type: 'started', mode: 'debug' },
+        { type: 'context_retrieval', filesCount: 3 },
+        { type: 'iteration_start', iteration: 1, maxIterations: 5 },
+        { type: 'tool_call', toolName: 'read_file', parameters: { path: 'src/math.ts' } },
+        { type: 'tool_result', toolName: 'read_file', durationMs: 14, result: { success: true } },
+        { type: 'command_started', command: 'npm test' },
+        { type: 'test_result', exitCode: 1, passed: false, output: '1 test failed' },
+        { type: 'repair_proposal', reason: 'Self-repairing regression' },
+        { type: 'proposal_created', proposal: { id: 'p1', title: 'Fix math', files: [{ path: 'src/math.ts' }] } },
+        { type: 'completed', result: { message: 'Repaired and verified' } },
+      ];
+
+      expect(events.filter(e => e.type === 'tool_call').length).toBe(1);
+      expect(events.filter(e => e.type === 'test_result').length).toBe(1);
+      expect(events.filter(e => e.type === 'repair_proposal').length).toBe(1);
+      expect(events.some(e => e.type === 'completed')).toBe(true);
+      expect(events.find(e => e.type === 'tool_call')?.parameters.path).toBe('src/math.ts');
+    });
+  });
 });
