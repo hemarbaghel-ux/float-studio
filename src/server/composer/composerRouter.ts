@@ -15,6 +15,9 @@ import {
   ComposerProgressEvent,
 } from '../../services/composer/composerAgent';
 import { createStandardToolRegistry } from '../../services/composer/canonicalTools';
+import { defaultToolApprovalService } from './toolApprovalService';
+import { registerBridgedMCPTool } from '../../services/composer/mcpToolBridge';
+import { MCPService } from '../mcp/mcpService';
 import { WorkspaceCheckpointManager } from '../../services/composer/checkpointManager';
 import { applyProposal, rejectProposal, rollbackProposal } from '../../services/composer/proposalApplier';
 import {
@@ -303,9 +306,15 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       }
     }
 
-    // Resolve workspace (local filesystem in desktop/test when explicitly provided and exists, else virtual project workspace)
+    // Resolve workspace (local filesystem ONLY in authenticated desktop dev mode when explicitly requested)
     let workspace: IWorkspaceService;
     if (typeof localWorkspacePath === 'string' && localWorkspacePath.trim()) {
+      if (process.env.FLOAT_DESKTOP_DEV !== '1') {
+        return res.status(403).json({
+          error: 'Arbitrary localWorkspacePath is forbidden in hosted environment. Projects must use server-managed project storage.',
+          code: 'FORBIDDEN_LOCAL_WORKSPACE_PATH',
+        });
+      }
       const localWs = new LocalFileSystemWorkspaceService(localWorkspacePath.trim());
       await localWs.initializeIndex();
       workspace = localWs;
@@ -313,21 +322,62 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       let initialFiles: Array<{ path?: string; name?: string; content?: string }> = Array.isArray(files)
         ? (files as Array<{ path?: string; name?: string; content?: string }>)
         : [];
-      if (initialFiles.length === 0 && ownership.projectData?.files) {
+      if (initialFiles.length === 0 && ownership.projectData) {
         try {
-          const parsed = typeof ownership.projectData.files === 'string'
-            ? JSON.parse(ownership.projectData.files)
-            : ownership.projectData.files;
-          if (Array.isArray(parsed)) {
-            initialFiles = parsed as Array<{ path?: string; name?: string; content?: string }>;
-          }
-        } catch {}
+          const { loadProjectFileTreeAdmin } = await import('../projectContent');
+          const tree = await loadProjectFileTreeAdmin(projectId, ownership.projectData as Record<string, unknown>);
+          const flatten = (nodes: any[], prefix = ''): Array<{ path: string; content: string }> => {
+            const out: Array<{ path: string; content: string }> = [];
+            for (const n of nodes) {
+              const currentPath = prefix ? `${prefix}/${n.name}` : n.name;
+              if (n.type === 'file') {
+                out.push({ path: currentPath, content: n.content || '' });
+              } else if (n.type === 'folder' && Array.isArray(n.children)) {
+                out.push(...flatten(n.children, currentPath));
+              }
+            }
+            return out;
+          };
+          initialFiles = flatten(tree);
+        } catch {
+          try {
+            const parsed = typeof ownership.projectData.files === 'string'
+              ? JSON.parse(ownership.projectData.files)
+              : ownership.projectData.files;
+            if (Array.isArray(parsed)) {
+              initialFiles = parsed as Array<{ path?: string; name?: string; content?: string }>;
+            }
+          } catch {}
+        }
       }
       workspace = new VirtualProjectWorkspaceService(projectId, initialFiles);
     }
 
     const checkpointManager = new WorkspaceCheckpointManager(workspace);
     const toolRegistry = createStandardToolRegistry();
+
+    // Register active bridged MCP tools into Composer's canonical registry
+    try {
+      const activeServers = MCPService.listServers(true, userId, projectId).filter(s => s.enabled);
+      for (const srv of activeServers) {
+        const tools = MCPService.getDiscoveredTools(srv.id, userId, projectId).filter(t => t.isAllowed);
+        for (const t of tools) {
+          try {
+            registerBridgedMCPTool(toolRegistry, {
+              server: srv,
+              tool: t,
+              invokeHandler: async (sId, tName, tArgs) => {
+                return await MCPService.executeTool(sId, tName, tArgs, { userId, projectId, userApproved: true });
+              }
+            });
+          } catch {
+            // Already registered or schema error
+          }
+        }
+      }
+    } catch (mcpErr) {
+      console.warn('[Composer] MCP tool registration skipped:', mcpErr);
+    }
 
     const ruleFiles: Array<{ path: string; content: string }> = Array.isArray(files)
       ? (files as Array<{ path?: string; name?: string; content?: string }>).map(f => ({
@@ -643,6 +693,144 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       ...restoreResult,
       restoredWorkspaceFiles: restoredFiles,
     });
+  });
+
+  // 7. Request human approval for privileged operation (Phase 1.1 Task 3)
+  router.post('/approvals/request', requireAuth, express.json(), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const { actionId, toolName, params, reason, target, ttlMs } = req.body || {};
+    if (!toolName) {
+      return res.status(400).json({ error: 'toolName is required.' });
+    }
+
+    const pending = defaultToolApprovalService.registerRequest({
+      actionId,
+      toolName: String(toolName),
+      params: params || {},
+      userId,
+      projectId,
+      reason: reason ? String(reason) : undefined,
+      target: target ? String(target) : undefined,
+      ttlMs: typeof ttlMs === 'number' ? ttlMs : undefined,
+    });
+
+    return res.status(201).json({
+      success: true,
+      request: pending,
+    });
+  });
+
+  // 8. Explicit User Confirmation / Rejection of Approval Request (Phase 1.1 Task 3)
+  router.post('/approvals/confirm', requireAuth, express.json(), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const { actionId, approved } = req.body || {};
+    if (!actionId || typeof approved !== 'boolean') {
+      return res.status(400).json({ error: 'actionId and approved (boolean) are required.' });
+    }
+
+    const outcome = defaultToolApprovalService.confirmRequest(String(actionId), approved, userId, projectId);
+    if (!outcome.success) {
+      return res.status(400).json({ error: outcome.error });
+    }
+
+    return res.json({
+      success: true,
+      actionId,
+      approved: outcome.approved,
+      approvalToken: outcome.approvalToken,
+    });
+  });
+
+  // 9. Inspect Approval Request State
+  router.get('/approvals/:actionId', requireAuth, async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
+    const actionId = String(req.params.actionId || '');
+
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const request = defaultToolApprovalService.getRequest(actionId);
+    if (!request || request.projectId !== projectId) {
+      return res.status(404).json({ error: `Approval request "${actionId}" not found.` });
+    }
+
+    return res.json({ success: true, request });
+  });
+
+  // 10. Execute Privileged Canonical Tool with Approval Token (Phase 1.1 Task 3)
+  router.post('/tools/execute', requireAuth, express.json({ limit: '10mb' }), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const { actionId, toolName, params, approvalToken } = req.body || {};
+    if (!toolName) {
+      return res.status(400).json({ error: 'toolName is required.' });
+    }
+
+    const toolRegistry = createStandardToolRegistry();
+    const tool = toolRegistry.get(String(toolName));
+    if (!tool) {
+      return res.status(404).json({ error: `Tool "${toolName}" is not registered in CanonicalToolRegistry.` });
+    }
+
+    // If tool requires approval, verify the approval token
+    if (tool.requiresApproval && toolName !== 'request_approval') {
+      if (!approvalToken) {
+        return res.status(403).json({
+          error: `Tool "${toolName}" requires explicit user approval. Provide a valid approvalToken.`,
+          requiresApproval: true,
+        });
+      }
+
+      const verification = await defaultToolApprovalService.verifyAndConsume(
+        String(approvalToken),
+        {
+          actionId: actionId ? String(actionId) : undefined,
+          toolName: String(toolName),
+          params: params || {},
+          userId,
+          projectId,
+        }
+      );
+
+      if (!verification.valid) {
+        return res.status(403).json({
+          error: `Approval token verification failed: ${verification.error}`,
+          requiresApproval: true,
+        });
+      }
+    }
+
+    // Resolve workspace for tool execution
+    const workspace = new VirtualProjectWorkspaceService(projectId);
+    const result = await toolRegistry.execute(String(toolName), params || {}, {
+      workspace,
+      userId,
+      projectId,
+      actionId: actionId ? String(actionId) : undefined,
+      approvalToken: approvalToken ? String(approvalToken) : undefined,
+    });
+
+    return res.json(result);
   });
 
   return router;

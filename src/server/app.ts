@@ -31,6 +31,7 @@ import { createComposerRouter } from './composer/composerRouter';
 import { runTerminalSetupDoctor } from './terminal/terminalDoctor';
 import { defaultTabCoordinator } from '../services/completion/tabCompletionService';
 import { defaultCloudAgentOrchestrator } from './cloudAgent/cloudAgentOrchestrator';
+import { redactSecretsInText } from '../services/git/secretScanner';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -310,6 +311,20 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   // Privacy & Governance Disclosure Route
+  // Terminal Execution Policy endpoints
+  let currentTerminalExecutionPolicyMode: 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed' = 'sandboxed';
+  app.get('/api/policy', requireAuth, (_req, res) => {
+    res.json({ mode: currentTerminalExecutionPolicyMode, permitted: true });
+  });
+  app.post('/api/policy', requireAuth, express.json(), (req: any, res: any) => {
+    const { mode } = req.body || {};
+    const validModes = ['safe', 'review', 'allowlist', 'manual', 'sandboxed'];
+    if (validModes.includes(mode)) {
+      currentTerminalExecutionPolicyMode = mode;
+    }
+    res.json({ success: true, mode: currentTerminalExecutionPolicyMode });
+  });
+
   app.get('/api/privacy/policy', (_req, res) => {
     const launchBlockerChecklist = {
       controllerAndContact: Boolean(process.env.FLOAT_PRIVACY_CONTROLLER_NAME && process.env.FLOAT_PRIVACY_CONTACT_EMAIL),
@@ -602,7 +617,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     });
   });
 
-  // Fast inline ghost-text completion endpoint
+  // Fast inline ghost-text completion endpoint (Cursor Tab Parity)
   app.post('/api/ai/complete', requireAuth, express.json({ limit: '2mb' }), async (req: any, res: any) => {
     try {
       const {
@@ -610,16 +625,38 @@ export async function createApp(options: CreateAppOptions = {}) {
         suffix = '',
         language = 'plaintext',
         fileName = 'file',
-        model = 'gpt-6-astra'
+        model = 'gpt-4o-mini'
       } = req.body || {};
+
+      const policy = defaultTabCoordinator.getPolicy();
+      if (!policy.enabled || !defaultTabCoordinator.isAllowedForLanguage(language)) {
+        return res.json({ completion: '', disabled: true });
+      }
 
       if (!prefix && !suffix) {
         return res.json({ completion: '' });
       }
 
       // Bound context to fast local window
-      const boundedPrefix = String(prefix).slice(-2000);
-      const boundedSuffix = String(suffix).slice(0, 1000);
+      let boundedPrefix = String(prefix).slice(-4000);
+      let boundedSuffix = String(suffix).slice(0, 2000);
+
+      // Server-side privacy mode redaction: scrub API keys, tokens, JWTs, and private keys
+      if (policy.privacyModeRedaction) {
+        boundedPrefix = redactSecretsInText(boundedPrefix);
+        boundedSuffix = redactSecretsInText(boundedSuffix);
+      }
+
+      const cacheKey = defaultTabCoordinator.buildCacheKey(fileName, language, boundedPrefix, boundedSuffix);
+      const cached = defaultTabCoordinator.getCached(cacheKey);
+      if (cached) {
+        return res.json({
+          completion: cached.completionText,
+          ...cached,
+        });
+      }
+
+      const startMs = Date.now();
 
       const prompt = `You are a high-speed code completion engine. Continue the code exactly where the cursor is located between <PREFIX> and <SUFFIX>.
 Output ONLY the code continuation to be inserted directly at the cursor. Do not output markdown, do not output backticks, and do not repeat the prefix or suffix.
@@ -632,8 +669,10 @@ ${boundedPrefix}
 ${boundedSuffix}
 </SUFFIX>`;
 
+      const effectiveModel = model && model !== 'gpt-6-astra' ? model : 'gpt-4o-mini';
+
       const result = await modelRouter.generateContent({
-        model,
+        model: effectiveModel,
         messages: [{ role: 'user', content: prompt }],
         speed: 'fast',
         systemInstruction: "You are an inline code autocompletion engine. Output only the immediate completion code."
@@ -643,15 +682,44 @@ ${boundedSuffix}
       // Clean up markdown fences if the model emitted them accidentally
       completionText = completionText.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '');
 
-      res.json({ completion: completionText });
+      const latencyMs = Date.now() - startMs;
+      const prediction = defaultTabCoordinator.recordCompletion(
+        cacheKey,
+        completionText,
+        fileName,
+        boundedSuffix,
+        latencyMs
+      );
+
+      res.json({
+        completion: completionText,
+        ...prediction,
+      });
     } catch (error: any) {
       const isCancelled = error?.name === 'AbortError' || /cancel/i.test(error?.message || '');
       if (isCancelled) {
+        defaultTabCoordinator.recordCancellation();
         return res.json({ completion: '', cancelled: true });
       }
       const statusCode = error?.statusCode || 500;
       res.status(statusCode).json({ error: error.message || 'Completion failed', code: error?.code || 'PROVIDER_ERROR' });
     }
+  });
+
+  // Autocomplete Telemetry & User Feedback endpoint
+  app.post('/api/ai/complete/feedback', requireAuth, express.json(), (req: any, res: any) => {
+    const { accepted, cancelled } = req.body || {};
+    if (cancelled) {
+      defaultTabCoordinator.recordCancellation();
+    } else if (typeof accepted === 'boolean') {
+      defaultTabCoordinator.recordAcceptance(accepted);
+    }
+    res.json({ success: true, metrics: defaultTabCoordinator.getMetrics() });
+  });
+
+  // Autocomplete Metrics endpoint
+  app.get('/api/ai/complete/metrics', requireAuth, (_req: any, res: any) => {
+    res.json(defaultTabCoordinator.getMetrics());
   });
 
   // Dedicated Inline AI Transformation endpoint (Ctrl+K / Cmd+K)

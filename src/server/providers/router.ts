@@ -16,6 +16,7 @@ import {
   getPublicModelCatalog
 } from './modelRegistry';
 import { ServerPrivacyGuard } from '../privacyGuard';
+import { redactSecretsInText } from '../../services/git/secretScanner';
 import type {
   IModelGateway,
   ModelGatewayRequest,
@@ -36,6 +37,7 @@ export interface ModelRouteDefinition {
 
 export class ModelRouter implements IModelGateway {
   private adapters: Map<string, AIProviderAdapter> = new Map();
+  private customRoutes: Map<string, ModelRouteDefinition> = new Map();
 
   constructor() {
     this.ensureAdaptersRegistered();
@@ -57,6 +59,17 @@ export class ModelRouter implements IModelGateway {
 
   registerAdapter(adapter: AIProviderAdapter) {
     this.adapters.set(adapter.id, adapter);
+  }
+
+  registerCustomAdapter(providerId: string, adapter: AIProviderAdapter, modelIds: string[] = []): void {
+    this.ensureAdaptersRegistered();
+    this.registerAdapter(adapter);
+    for (const id of modelIds) {
+      this.customRoutes.set(id, {
+        provider: providerId as any,
+        apiModelId: id,
+      });
+    }
   }
 
   getAdapter(providerId: string): AIProviderAdapter | undefined {
@@ -135,7 +148,7 @@ export class ModelRouter implements IModelGateway {
   validateModelAvailability(modelId: string): void {
     // An explicit route is authoritative. Provider-prefix rejection only applies to
     // model IDs that are not present in the verified runtime route registry.
-    if (MODEL_ROUTES[modelId]) {
+    if (this.customRoutes.has(modelId) || MODEL_ROUTES[modelId]) {
       return;
     }
     const lower = (modelId || '').toLowerCase();
@@ -171,7 +184,7 @@ export class ModelRouter implements IModelGateway {
     this.ensureAdaptersRegistered();
     const key = this.resolveModelId(modelId);
     this.validateModelAvailability(key);
-    const route = MODEL_ROUTES[key];
+    const route = this.customRoutes.get(key) || MODEL_ROUTES[key];
 
     if (!route) {
       throw new AIProviderError(
@@ -225,14 +238,28 @@ export class ModelRouter implements IModelGateway {
       );
     }
 
+    // Pre-dispatch secret redaction for non-streaming provider transmission (Phase 1.1 Task 4)
+    const sanitizedMessages = (request.messages || []).map(m => ({
+      ...m,
+      content: typeof m.content === 'string' ? redactSecretsInText(m.content) : m.content,
+    }));
+    const sanitizedSystemInstruction = request.systemInstruction
+      ? redactSecretsInText(request.systemInstruction)
+      : undefined;
+
     const startTime = Date.now();
     const result = await adapter.generateContent({
       ...request,
+      messages: sanitizedMessages,
+      systemInstruction: sanitizedSystemInstruction,
       model: route.apiModelId,
       apiModelId: route.apiModelId,
       dataSharingConsent: dataSharingAllowed,
       dataSharingAllowed
     });
+    if (result.text) {
+      result.text = redactSecretsInText(result.text);
+    }
     const latencyMs = Date.now() - startTime;
 
     if (dataSharingAllowed) {
@@ -292,29 +319,46 @@ export class ModelRouter implements IModelGateway {
       );
     }
 
+    // Pre-dispatch secret redaction for streaming provider transmission (Phase 1.1 Task 4)
+    const sanitizedMessages = (request.messages || []).map(m => ({
+      ...m,
+      content: typeof m.content === 'string' ? redactSecretsInText(m.content) : m.content,
+    }));
+    const sanitizedSystemInstruction = request.systemInstruction
+      ? redactSecretsInText(request.systemInstruction)
+      : undefined;
+
     if (adapter.generateContentStream) {
       return adapter.generateContentStream(
         {
           ...request,
+          messages: sanitizedMessages,
+          systemInstruction: sanitizedSystemInstruction,
           model: route.apiModelId,
           apiModelId: route.apiModelId,
           dataSharingConsent: dataSharingAllowed,
           dataSharingAllowed
         },
-        onChunk,
+        (chunk: string) => {
+          onChunk(redactSecretsInText(chunk));
+        },
         signal
       );
     }
 
     const result = await adapter.generateContent({
       ...request,
+      messages: sanitizedMessages,
+      systemInstruction: sanitizedSystemInstruction,
       model: route.apiModelId,
       apiModelId: route.apiModelId,
       dataSharingConsent: dataSharingAllowed,
       dataSharingAllowed
     });
     if (result.text) {
-      onChunk(result.text);
+      const sanitized = redactSecretsInText(result.text);
+      onChunk(sanitized);
+      result.text = sanitized;
     }
     return result;
   }
