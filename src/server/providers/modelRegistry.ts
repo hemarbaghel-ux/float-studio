@@ -84,19 +84,7 @@ export const MODEL_ROUTES: Readonly<Record<string, ModelRouteDefinition>> = Obje
       .filter((model) => model.selectable)
       .map((model) => [model.id, route(model.providerId, model.apiModelId, model.id !== model.apiModelId, model.protocol)])
   ),
-  auto: route('openai', 'gpt-6-astra', true, 'responses'),
-  'o1': route('openai', 'o1'),
-  'o3-mini': route('openai', 'o3-mini'),
-  'gpt-4o': route('openai', 'gpt-4o'),
-  'gpt-4o-mini': route('openai', 'gpt-4o-mini'),
-  'claude-3-5-sonnet': route('anthropic', 'claude-3-5-sonnet-20241022'),
-  'claude-3-5-haiku': route('anthropic', 'claude-3-5-haiku-20241022'),
-  'claude-3-opus': route('anthropic', 'claude-3-opus-20240229'),
-  'gemini-1.5-pro': route('google', 'gemini-1.5-pro'),
-  'gemini-2.0-flash': route('google', 'gemini-2.0-flash'),
-  'gemini-1.5-flash': route('google', 'gemini-1.5-flash'),
-  'deepseek-chat': route('deepseek', 'deepseek-chat'),
-  'deepseek-reasoner': route('deepseek', 'deepseek-reasoner'),
+  auto: route('openai', 'gpt-6-astra', true, 'responses')
 });
 
 export function getModelProtocol(modelId: string): ModelProtocol {
