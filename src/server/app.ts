@@ -627,7 +627,8 @@ export async function createApp(options: CreateAppOptions = {}) {
         model = 'gpt-4o-mini'
       } = req.body || {};
 
-      if (!defaultTabCoordinator.isAllowedForLanguage(language)) {
+      const policy = defaultTabCoordinator.getPolicy();
+      if (!policy.enabled || !defaultTabCoordinator.isAllowedForLanguage(language)) {
         return res.json({ completion: '', disabled: true });
       }
 
@@ -635,7 +636,22 @@ export async function createApp(options: CreateAppOptions = {}) {
         return res.json({ completion: '' });
       }
 
-      const cacheKey = defaultTabCoordinator.buildCacheKey(fileName, language, prefix, suffix);
+      // Bound context to fast local window
+      let boundedPrefix = String(prefix).slice(-4000);
+      let boundedSuffix = String(suffix).slice(0, 2000);
+
+      // Server-side privacy mode redaction: scrub API keys, tokens, and secrets
+      if (policy.privacyModeRedaction) {
+        const redactSecrets = (text: string) => text
+          .replace(/sk-(?:proj-)?[a-zA-Z0-9_\-]{12,}/g, '[REDACTED_SECRET]')
+          .replace(/gh[pousr]_[a-zA-Z0-9]{16,}/g, '[REDACTED_SECRET]')
+          .replace(/AIzaSy[A-Za-z0-9_\-]{25,}/g, '[REDACTED_SECRET]')
+          .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED_SECRET]');
+        boundedPrefix = redactSecrets(boundedPrefix);
+        boundedSuffix = redactSecrets(boundedSuffix);
+      }
+
+      const cacheKey = defaultTabCoordinator.buildCacheKey(fileName, language, boundedPrefix, boundedSuffix);
       const cached = defaultTabCoordinator.getCached(cacheKey);
       if (cached) {
         return res.json({
@@ -645,10 +661,6 @@ export async function createApp(options: CreateAppOptions = {}) {
       }
 
       const startMs = Date.now();
-
-      // Bound context to fast local window
-      const boundedPrefix = String(prefix).slice(-2000);
-      const boundedSuffix = String(suffix).slice(0, 1000);
 
       const prompt = `You are a high-speed code completion engine. Continue the code exactly where the cursor is located between <PREFIX> and <SUFFIX>.
 Output ONLY the code continuation to be inserted directly at the cursor. Do not output markdown, do not output backticks, and do not repeat the prefix or suffix.
@@ -679,7 +691,7 @@ ${boundedSuffix}
         cacheKey,
         completionText,
         fileName,
-        suffix,
+        boundedSuffix,
         latencyMs
       );
 

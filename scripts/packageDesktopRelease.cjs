@@ -83,24 +83,26 @@ function assembleAppPayload(targetAppDir) {
     }
   }
 
-  // 3. Copy desktop compiled out & main entrypoints if present
+  // 3. Copy desktop compiled out & main entrypoints (Mandatory Code-OSS workbench)
   const desktopOut = path.join(repoRoot, 'desktop', 'out');
-  const targetOut = path.join(targetAppDir, 'out');
-  if (fs.existsSync(desktopOut)) {
-    fs.cpSync(desktopOut, targetOut, { recursive: true });
+  const desktopMain = path.join(desktopOut, 'main.js');
+  if (!fs.existsSync(desktopMain)) {
+    throw new Error('Release packaging aborted: Code-OSS desktop workbench is not built at desktop/out/main.js. Generic web wrapper fallback is strictly prohibited for native desktop releases.');
   }
+  const targetOut = path.join(targetAppDir, 'out');
+  fs.cpSync(desktopOut, targetOut, { recursive: true });
 
   // 4. Create desktop main wrapper with startup self-check
   const mainWrapperPath = path.join(targetAppDir, 'index.cjs');
   const mainWrapperContent = `// FLOAT Studio Desktop Entrypoint
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow } = require('electron');
+const { app } = require('electron');
 
 const isSmokeTest = process.argv.includes('--smoke-test');
 const isHeadless = process.argv.includes('--headless');
 
-console.log('[FLOAT Main] Starting FLOAT Studio desktop process...', {
+console.log('[FLOAT Main] Starting FLOAT Studio native desktop workbench...', {
   pid: process.pid,
   isSmokeTest,
   isHeadless,
@@ -116,128 +118,14 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-if (isSmokeTest) {
-  try {
-    app.disableHardwareAcceleration();
-    app.commandLine.appendSwitch('disable-gpu');
-    app.commandLine.appendSwitch('disable-software-rasterizer');
-  } catch (e) {}
-
-  const startTime = Date.now();
-
-  app.whenReady().then(async () => {
-    console.log('[FLOAT SmokeTest] Startup self-check initialized with --smoke-test.');
-    const win = new BrowserWindow({
-      width: 1280,
-      height: 800,
-      title: "FLOAT Studio (Self-Check)",
-      show: true,
-      webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
-        webSecurity: false
-      }
-    });
-
-    win.webContents.on('console-message', (event, level, message) => {
-      console.log('[Renderer Console]', message);
-    });
-
-    win.webContents.on('render-process-gone', (event, details) => {
-      console.error('[FLOAT SmokeTest] FAILURE: Renderer process gone:', details);
-      process.exit(1);
-    });
-
-    const htmlPath = path.join(__dirname, 'dist', 'index.html');
-    if (!fs.existsSync(htmlPath)) {
-      console.error('[FLOAT SmokeTest] FAILURE: dist/index.html not found at:', htmlPath);
-      process.exit(1);
-      return;
-    }
-
-    let verified = false;
-
-    // Hard timeout: 45 seconds
-    const timeoutHandle = setTimeout(() => {
-      if (!verified) {
-        console.error('[FLOAT SmokeTest] FAILURE: Timed out waiting for Editor and AI panel to mount (45s).');
-        process.exit(1);
-      }
-    }, 45000);
-
-    const pollInterval = setInterval(async () => {
-      try {
-        if (win.isDestroyed() || !win.webContents) return;
-
-        const res = await win.webContents.executeJavaScript(\`
-          (function() {
-            const ide = document.querySelector('[data-testid="ide-workspace"]') ||
-                        document.querySelector('.float-ide-workspace') ||
-                        document.body;
-            const editor = document.querySelector('[data-testid="editor-area"]') ||
-                           document.querySelector('[data-component="editor-area"]') ||
-                           document.querySelector('.monaco-editor') ||
-                           document.querySelector('main');
-            const aiPanel = document.querySelector('[data-testid="ai-panel"]') ||
-                            document.querySelector('[data-component="ai-panel"]') ||
-                            document.querySelector('textarea') ||
-                            document.querySelector('input');
-            return {
-              hasIde: Boolean(ide),
-              hasEditor: Boolean(editor),
-              hasAiPanel: Boolean(aiPanel),
-              url: window.location.href,
-              title: document.title
-            };
-          })()
-        \`);
-
-        if (res && res.hasIde && (res.hasEditor || res.hasAiPanel) && !verified) {
-          verified = true;
-          clearInterval(pollInterval);
-          clearTimeout(timeoutHandle);
-          console.log('[FLOAT SmokeTest] SUCCESS: Main window opened, workspace loaded, and views mounted successfully!');
-          console.log('[FLOAT SmokeTest] Diagnostic:', JSON.stringify(res));
-
-          const elapsed = Date.now() - startTime;
-          const remainingMs = Math.max(1000, 20000 - elapsed);
-          console.log('[FLOAT SmokeTest] Sustaining process life for ' + remainingMs + 'ms to confirm stability...');
-          setTimeout(() => {
-            console.log('[FLOAT SmokeTest] Exiting cleanly with code 0.');
-            app.exit(0);
-            process.exit(0);
-          }, remainingMs);
-        }
-      } catch (e) {
-        // Renderer still initializing
-      }
-    }, 500);
-
-    win.loadFile(htmlPath, { hash: '#/workspace?smoke-test=1', search: 'smoke-test=1' });
-  });
-} else if (fs.existsSync(path.join(__dirname, 'out', 'main.js'))) {
-  require('./out/main.js');
+// Enforce genuine Code-OSS desktop workbench boot without fallback to generic web window
+const codeOssMain = path.join(__dirname, 'out', 'main.js');
+if (fs.existsSync(codeOssMain)) {
+  require(codeOssMain);
 } else {
-  app.whenReady().then(() => {
-    const win = new BrowserWindow({
-      width: 1280,
-      height: 800,
-      title: "FLOAT Studio",
-      show: !isHeadless,
-      webPreferences: { nodeIntegration: true, contextIsolation: false }
-    });
-    if (isHeadless) {
-      console.log('FLOAT Studio launched in headless mode.');
-      setTimeout(() => app.quit(), 2000);
-      return;
-    }
-    const htmlPath = path.join(__dirname, 'dist', 'index.html');
-    if (fs.existsSync(htmlPath)) {
-      win.loadFile(htmlPath);
-    } else {
-      win.loadURL('data:text/html,<h2>FLOAT Studio Desktop Running</h2>');
-    }
-  });
+  console.error('[FLOAT Main] FATAL: Compiled Code-OSS workbench not found at:', codeOssMain);
+  console.error('[FLOAT Main] Generic web wrapper fallback is prohibited in release builds.');
+  process.exit(1);
 }
 `;
   fs.writeFileSync(mainWrapperPath, mainWrapperContent, 'utf8');

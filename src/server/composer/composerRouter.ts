@@ -305,9 +305,15 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       }
     }
 
-    // Resolve workspace (local filesystem in desktop/test when explicitly provided and exists, else virtual project workspace)
+    // Resolve workspace (local filesystem ONLY in authenticated desktop dev mode when explicitly requested)
     let workspace: IWorkspaceService;
     if (typeof localWorkspacePath === 'string' && localWorkspacePath.trim()) {
+      if (process.env.FLOAT_DESKTOP_DEV !== '1') {
+        return res.status(403).json({
+          error: 'Arbitrary localWorkspacePath is forbidden in hosted environment. Projects must use server-managed project storage.',
+          code: 'FORBIDDEN_LOCAL_WORKSPACE_PATH',
+        });
+      }
       const localWs = new LocalFileSystemWorkspaceService(localWorkspacePath.trim());
       await localWs.initializeIndex();
       workspace = localWs;
@@ -315,15 +321,33 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       let initialFiles: Array<{ path?: string; name?: string; content?: string }> = Array.isArray(files)
         ? (files as Array<{ path?: string; name?: string; content?: string }>)
         : [];
-      if (initialFiles.length === 0 && ownership.projectData?.files) {
+      if (initialFiles.length === 0 && ownership.projectData) {
         try {
-          const parsed = typeof ownership.projectData.files === 'string'
-            ? JSON.parse(ownership.projectData.files)
-            : ownership.projectData.files;
-          if (Array.isArray(parsed)) {
-            initialFiles = parsed as Array<{ path?: string; name?: string; content?: string }>;
-          }
-        } catch {}
+          const { loadProjectFileTreeAdmin } = await import('../projectContent');
+          const tree = await loadProjectFileTreeAdmin(projectId, ownership.projectData as Record<string, unknown>);
+          const flatten = (nodes: any[], prefix = ''): Array<{ path: string; content: string }> => {
+            const out: Array<{ path: string; content: string }> = [];
+            for (const n of nodes) {
+              const currentPath = prefix ? `${prefix}/${n.name}` : n.name;
+              if (n.type === 'file') {
+                out.push({ path: currentPath, content: n.content || '' });
+              } else if (n.type === 'folder' && Array.isArray(n.children)) {
+                out.push(...flatten(n.children, currentPath));
+              }
+            }
+            return out;
+          };
+          initialFiles = flatten(tree);
+        } catch {
+          try {
+            const parsed = typeof ownership.projectData.files === 'string'
+              ? JSON.parse(ownership.projectData.files)
+              : ownership.projectData.files;
+            if (Array.isArray(parsed)) {
+              initialFiles = parsed as Array<{ path?: string; name?: string; content?: string }>;
+            }
+          } catch {}
+        }
       }
       workspace = new VirtualProjectWorkspaceService(projectId, initialFiles);
     }

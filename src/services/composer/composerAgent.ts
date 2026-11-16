@@ -307,6 +307,18 @@ Rules:
       }
 
       let response;
+      const registeredTools = this.toolRegistry.list().map(t => ({
+        type: 'function',
+        name: t.name,
+        description: t.description,
+        parameters: t.parametersSchema || { type: 'object', properties: {} },
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.parametersSchema || { type: 'object', properties: {} },
+        },
+      }));
+
       try {
         response = await this.gateway.generate(
           {
@@ -315,6 +327,7 @@ Rules:
             systemPrompt,
             temperature: 0.2,
             maxTokens: 2048,
+            tools: registeredTools,
           },
           options.signal
         );
@@ -341,7 +354,15 @@ Rules:
       finalAssistantResponse = response.text;
       options.onProgress?.({ type: 'thinking', content: response.text, timestamp: Date.now() });
 
-      const toolCalls = extractToolCallsFromText(response.text);
+      let toolCalls: Array<{ name: string; args: any }> = [];
+      if (Array.isArray(response.toolCalls) && response.toolCalls.length > 0) {
+        toolCalls = response.toolCalls.map(tc => ({
+          name: tc.name,
+          args: tc.args || {},
+        }));
+      } else {
+        toolCalls = extractToolCallsFromText(response.text);
+      }
 
       if (toolCalls.length === 0) {
         if (mode === 'plan') {

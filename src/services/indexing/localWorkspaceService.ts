@@ -63,15 +63,73 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
 
   resolvePath(relativePath: string): string {
     const safeRel = validateSafeWorkspacePath(relativePath);
-    // Find matching root if multi-root
+
+    // Check all roots
     for (const root of this.rootPaths) {
-      const candidate = path.join(root, safeRel);
+      let realRoot = root;
+      try {
+        if (fs.existsSync(root)) {
+          realRoot = fs.realpathSync(root);
+        }
+      } catch {}
+
+      const candidate = path.resolve(root, safeRel);
       if (fs.existsSync(candidate)) {
-        return candidate;
+        try {
+          const realCandidate = fs.realpathSync(candidate);
+          const rel = path.relative(realRoot, realCandidate);
+          if (rel.startsWith('..') || path.isAbsolute(rel)) {
+            throw new Error(`Path containment violation: "${relativePath}" resolves to "${realCandidate}" outside workspace root "${realRoot}".`);
+          }
+          return candidate;
+        } catch (err: any) {
+          if (err.message && err.message.includes('Path containment violation')) {
+            throw err;
+          }
+        }
       }
     }
+
     // Default to primary root
-    return path.join(this.rootPaths[0], safeRel);
+    const primaryRoot = this.rootPaths[0];
+    let realPrimaryRoot = primaryRoot;
+    try {
+      if (fs.existsSync(primaryRoot)) {
+        realPrimaryRoot = fs.realpathSync(primaryRoot);
+      }
+    } catch {}
+
+    const candidate = path.resolve(primaryRoot, safeRel);
+
+    // If candidate exists, verify its realpath
+    if (fs.existsSync(candidate)) {
+      const realCandidate = fs.realpathSync(candidate);
+      const rel = path.relative(realPrimaryRoot, realCandidate);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        throw new Error(`Path containment violation: "${relativePath}" resolves to "${realCandidate}" outside workspace root "${realPrimaryRoot}".`);
+      }
+      return candidate;
+    }
+
+    // If candidate does not exist yet (e.g. for writeFile), verify closest existing ancestor
+    let ancestor = path.dirname(candidate);
+    while (!fs.existsSync(ancestor) && ancestor !== path.dirname(ancestor)) {
+      ancestor = path.dirname(ancestor);
+    }
+    if (fs.existsSync(ancestor)) {
+      const realAncestor = fs.realpathSync(ancestor);
+      const rel = path.relative(realPrimaryRoot, realAncestor);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        throw new Error(`Path containment violation: ancestor directory of "${relativePath}" resolves outside workspace root "${realPrimaryRoot}".`);
+      }
+    }
+
+    const relToRoot = path.relative(realPrimaryRoot, candidate);
+    if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) {
+      throw new Error(`Path containment violation: "${relativePath}" escapes primary workspace root "${realPrimaryRoot}".`);
+    }
+
+    return candidate;
   }
 
   async readFile(relativePath: string): Promise<string> {
@@ -161,6 +219,23 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
       }
 
       const relPath = currentRel ? `${currentRel}/${name}` : name;
+      const fullPath = path.join(baseDir, relPath);
+
+      // Verify symlink containment
+      if (entry.isSymbolicLink()) {
+        try {
+          const realTarget = fs.realpathSync(fullPath);
+          let realBase = baseDir;
+          try { realBase = fs.realpathSync(baseDir); } catch {}
+          const relFromBase = path.relative(realBase, realTarget);
+          if (relFromBase.startsWith('..') || path.isAbsolute(relFromBase)) {
+            // Symlink escapes workspace root; skip for containment security
+            continue;
+          }
+        } catch {
+          continue;
+        }
+      }
 
       if (entry.isDirectory()) {
         out.push({
@@ -194,10 +269,12 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
 
   /**
    * Initializes workspace indexing by scanning files and populating WorkspaceIndex.
+   * Respects .gitignore, .floatignore, and scalable file budgets.
    */
-  async initializeIndex(): Promise<{ totalIndexed: number; durationMs: number }> {
+  async initializeIndex(options?: { maxFiles?: number }): Promise<{ totalIndexed: number; totalScanned: number; durationMs: number }> {
     const start = Date.now();
-    const files = await this.listFiles({ recursive: true, maxFiles: 1000 });
+    const maxFiles = options?.maxFiles ?? 25_000;
+    const files = await this.listFiles({ recursive: true, maxFiles });
     const documentsToIndex: Array<{ path: string; content: string }> = [];
 
     for (const f of files) {
@@ -211,6 +288,7 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
     this.index.indexProject(documentsToIndex);
     return {
       totalIndexed: documentsToIndex.length,
+      totalScanned: files.length,
       durationMs: Date.now() - start,
     };
   }

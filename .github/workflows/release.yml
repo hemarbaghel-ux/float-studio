@@ -56,6 +56,7 @@ jobs:
           npm run build
           npm run build:float-daemon-worker
           npm run build:extensions
+          npm run build:desktop-extensions
 
       - name: Package Real Desktop Installers & Portable Bundles
         shell: bash

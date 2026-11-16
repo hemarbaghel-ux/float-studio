@@ -4,6 +4,8 @@ import type { FileNode } from '../types';
 // 600 KiB so its owner, generation, index, and field overhead also fit safely.
 export const MAX_PROJECT_CONTENT_CHUNK_BYTES = 600 * 1024;
 export const PROJECT_CONTENT_BATCH_SIZE = 400;
+export const MAX_PROJECT_CONTENT_BATCH_BYTES = 8 * 1024 * 1024; // 8 MiB batch ceiling safely under Firestore 10 MiB limit
+export const MAX_PROJECT_CONTENT_BATCH_OPS = 400; // max batch writes safely under Firestore 500 limit
 export const PROJECT_CONTENT_STORAGE_VERSION = 2;
 
 export type ProjectFileTreeSerialization =

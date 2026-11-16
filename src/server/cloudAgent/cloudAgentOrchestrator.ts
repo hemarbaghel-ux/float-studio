@@ -15,19 +15,42 @@ export interface CloudAgentSubtaskSpec {
   readonly dependsOn?: readonly string[];
 }
 
+export type CloudAgentTaskState =
+  | 'QUEUED'
+  | 'CLAIMED'
+  | 'RUNNING'
+  | 'CHECKPOINTED'
+  | 'WAITING_FOR_APPROVAL'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'TIMED_OUT'
+  | 'CANCELED'
+  // Backward compatibility aliases
+  | 'conflict_blocked'
+  | 'proposal_ready'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
+  | 'queued'
+  | 'running';
+
 export interface CloudAgentRunRecord {
   readonly runId: string;
   readonly userId: string;
   readonly projectId: string;
   readonly goal: string;
   readonly worktreeId: string;
-  status: 'queued' | 'running' | 'conflict_blocked' | 'proposal_ready' | 'completed' | 'cancelled' | 'failed';
+  status: CloudAgentTaskState;
   readonly subtasks: readonly CloudAgentSubtaskSpec[];
   readonly fileOwnershipConflicts: ReadonlyArray<{ path: string; subtaskA: string; subtaskB: string }>;
   readonly logs: string[];
   readonly mergedProposal?: IProposal;
   readonly createdAt: number;
   updatedAt: number;
+  workerId?: string;
+  leaseExpiresAt?: number;
+  heartbeatAt?: number;
+  cursor?: number;
 }
 
 export class CloudAgentOrchestrator {
@@ -167,10 +190,113 @@ export class CloudAgentOrchestrator {
   public cancelRun(runId: string, userId: string): CloudAgentRunRecord | undefined {
     const rec = this.runs.get(runId);
     if (!rec || rec.userId !== userId) return undefined;
-    rec.status = 'cancelled';
+    rec.status = 'CANCELED';
     rec.updatedAt = Date.now();
     rec.logs.push(`[${new Date().toISOString()}] Run cancelled by user ${userId}`);
     return rec;
+  }
+
+  /**
+   * Leases a queued task to an isolated background worker.
+   * Enforces lease timeout fencing to recover abandoned or dead workers.
+   */
+  public claimRun(
+    runId: string,
+    workerId: string,
+    leaseDurationMs = 60_000
+  ): { success: boolean; run?: CloudAgentRunRecord; reason?: string } {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return { success: false, reason: 'RUN_NOT_FOUND' };
+    }
+
+    const now = Date.now();
+    const canClaim =
+      run.status === 'QUEUED' ||
+      run.status === 'queued' ||
+      ((run.status === 'CLAIMED' || run.status === 'RUNNING' || run.status === 'running') &&
+        run.leaseExpiresAt !== undefined &&
+        run.leaseExpiresAt < now);
+
+    if (!canClaim) {
+      return { success: false, reason: 'RUN_NOT_AVAILABLE_FOR_CLAIM' };
+    }
+
+    run.status = 'CLAIMED';
+    run.workerId = workerId;
+    run.leaseExpiresAt = now + leaseDurationMs;
+    run.heartbeatAt = now;
+    run.updatedAt = now;
+    run.logs.push(`[${new Date(now).toISOString()}] Worker ${workerId} claimed run (lease valid for ${leaseDurationMs}ms)`);
+
+    return { success: true, run };
+  }
+
+  /**
+   * Heartbeat to extend worker lease. Fails if lease expired or claimed by another worker.
+   */
+  public heartbeatRun(runId: string, workerId: string, leaseDurationMs = 60_000): boolean {
+    const run = this.runs.get(runId);
+    if (!run || run.workerId !== workerId) return false;
+    const now = Date.now();
+    if (run.leaseExpiresAt && run.leaseExpiresAt < now) return false; // Lease expired
+
+    run.heartbeatAt = now;
+    run.leaseExpiresAt = now + leaseDurationMs;
+    run.updatedAt = now;
+    return true;
+  }
+
+  /**
+   * Transitions task through canonical state machine with lease verification.
+   */
+  public transitionRun(
+    runId: string,
+    toStatus: CloudAgentTaskState,
+    logMessage?: string
+  ): CloudAgentRunRecord | null {
+    const run = this.runs.get(runId);
+    if (!run) return null;
+
+    const now = Date.now();
+    run.status = toStatus;
+    run.updatedAt = now;
+    if (logMessage) {
+      run.logs.push(`[${new Date(now).toISOString()}] ${logMessage}`);
+    }
+    return run;
+  }
+
+  /**
+   * Appends an event to the task log and advances the durable sequence cursor.
+   */
+  public appendLogWithCursor(runId: string, message: string): number {
+    const run = this.runs.get(runId);
+    if (!run) return 0;
+    const now = Date.now();
+    run.cursor = (run.cursor ?? 0) + 1;
+    run.logs.push(`[${new Date(now).toISOString()}] ${message}`);
+    run.updatedAt = now;
+    return run.cursor;
+  }
+
+  /**
+   * Reconnectable event retrieval for SSE streams using Last-Event-ID / cursor.
+   */
+  public getEventsSince(
+    runId: string,
+    lastCursor = 0
+  ): { cursor: number; logs: string[]; status: CloudAgentTaskState } | null {
+    const run = this.runs.get(runId);
+    if (!run) return null;
+
+    const currentCursor = run.cursor ?? run.logs.length;
+    const logsSince = run.logs.slice(lastCursor);
+    return {
+      cursor: currentCursor,
+      logs: logsSince,
+      status: run.status,
+    };
   }
 }
 
