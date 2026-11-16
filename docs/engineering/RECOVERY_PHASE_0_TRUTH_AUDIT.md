@@ -311,3 +311,19 @@ Phase 0 has accomplished a rigorous, unfiltered audit of FLOAT Studio. Every rou
 - [x] Known P0 and P1 defects documented with clear remediation scope for Phase 1.
 
 The repository is now fully prepared to enter **PHASE 1 — Fix startup, build, and deployment reliability**.
+
+
+---
+
+## Follow-up cleanup record — 16 November 2026
+
+The following generated files were removed from the active repository after a reference audit:
+
+- 15 generated `daemon/grammars/data/*GrammarCatalog.ts` files (67,235,879 bytes).
+- 145 generated `benchmarks/swe-bench/data/sweBenchTask_*.ts` files (150,897,884 bytes).
+- The two generators that produced those datasets.
+- Two test-only harnesses that pre-applied their expected patches before declaring every synthetic task successful.
+
+The 160 generated files totaled approximately 218,133,763 bytes (raw file content). Repository search found no production imports of either generated dataset. Their references were limited to the generators, synthetic test fixtures, and this historical audit. Runtime language support remains in `daemon/src/grammars/` and is checked through `FloatTreeSitterGrammarRegistry`; built-in extension bundles are still verified independently.
+
+The dataset counts and LOC values above remain as historical baseline observations, not current repository metrics, code-quality measures, SWE-bench results, or Cursor-parity evidence.
