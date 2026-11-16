@@ -214,6 +214,7 @@ export function AIPanel() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef<boolean>(true);
   const activeConvIdRef = useRef<string | null>(null);
+  const activeTaskIdRef = useRef<string | null>(null);
 
   const currentProjectId = projectId || 'default-workspace';
 
@@ -255,6 +256,75 @@ export function AIPanel() {
     const list = await ConversationService.fetchCloudList(currentProjectId);
     setConversationList(list);
     return list;
+  };
+
+  const handleApproveTool = async (msgId: string, actionId: string, toolName: string, params: any) => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      // 1. Confirm approval request on server to obtain HMAC approvalToken
+      const confirmRes = await fetch(`/api/projects/${currentProjectId}/composer/approvals/confirm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ actionId, approved: true }),
+      });
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok || !confirmData.approvalToken) {
+        throw new Error(confirmData.error || 'Failed to authorize tool execution');
+      }
+
+      // 2. Resume task with the single-use approvalToken
+      const targetTaskId = activeTaskIdRef.current || 'active';
+      const resumeRes = await fetch(`/api/projects/${currentProjectId}/composer/tasks/${targetTaskId}/resume`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          actionId,
+          approved: true,
+          approvalToken: confirmData.approvalToken,
+        }),
+      });
+      const resumeData = await resumeRes.json();
+      if (resumeRes.ok) {
+        updateAiMessage(msgId, {
+          status: resumeData.status === 'completed' ? 'completed' : 'streaming',
+        });
+      } else {
+        throw new Error(resumeData.error || 'Execution failed during resumption');
+      }
+    } catch (err: any) {
+      console.error('[Composer] Tool approval execution failed:', err);
+      alert(`Approval execution failed: ${err.message}`);
+    }
+  };
+
+  const handleRejectTool = async (msgId: string, actionId: string) => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      await fetch(`/api/projects/${currentProjectId}/composer/approvals/confirm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ actionId, approved: false }),
+      });
+
+      const targetTaskId = activeTaskIdRef.current;
+      if (targetTaskId) {
+        await fetch(`/api/projects/${currentProjectId}/composer/tasks/${targetTaskId}/resume`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ actionId, approved: false }),
+        });
+      }
+
+      updateAiMessage(msgId, { status: 'cancelled' });
+    } catch (err: any) {
+      console.error('[Composer] Tool rejection failed:', err);
+    }
   };
 
   useEffect(() => {
@@ -758,6 +828,7 @@ export function AIPanel() {
           updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
         } else if (data.type === 'done') {
           receivedDone = true;
+          if (data.taskId) activeTaskIdRef.current = data.taskId;
           if (typeof data.text === 'string') accumulatedText = data.text;
           finalUsage = data.usage;
           if (data.contextExplanation) finalExplanation = data.contextExplanation;
@@ -770,9 +841,10 @@ export function AIPanel() {
             });
           } else {
             const isSimulated = Boolean(data.isSimulated || accumulatedText.includes('[SIMULATED DEMO RESPONSE]'));
+            const status = data.status === 'approval_required' ? 'approval_required' : 'completed';
             updateAiMessage(modelMsgId, {
               content: accumulatedText,
-              status: 'completed',
+              status,
               isSimulated,
               latency: Date.now() - startTime,
               contextExplanation: finalExplanation
@@ -802,6 +874,12 @@ export function AIPanel() {
             updateAiMessage(modelMsgId, { composerEvents: next });
             return next;
           });
+          if (data.type === 'started' && data.taskId) {
+            activeTaskIdRef.current = data.taskId;
+          }
+          if (data.type === 'approval_requested') {
+            updateAiMessage(modelMsgId, { status: 'approval_required' });
+          }
           if (data.type === 'thinking' && typeof data.content === 'string') {
             accumulatedText = data.content;
             updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
@@ -1667,6 +1745,8 @@ export function AIPanel() {
                   <ComposerEventTimeline
                     events={msg.composerEvents}
                     isStreaming={isStreaming && idx === aiMessages.length - 1}
+                    onApproveTool={(actionId, toolName, params) => handleApproveTool(msg.id, actionId, toolName, params)}
+                    onRejectTool={(actionId) => handleRejectTool(msg.id, actionId)}
                   />
                 )}
 

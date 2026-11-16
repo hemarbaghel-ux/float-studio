@@ -501,7 +501,12 @@ export class CanonicalToolRegistry implements IToolRegistry {
         Array.isArray(context.allowedCommands) &&
         context.allowedCommands.length > 0 &&
         typeof args?.command === 'string' &&
-        context.allowedCommands.some(cmd => args.command.trim().startsWith(cmd))) ||
+        context.allowedCommands.some(cmd => {
+          if (typeof cmd !== 'string') return false;
+          const trimmed = cmd.trim();
+          // Strict server-side verification: must be non-empty, exact match, NO prefix matching
+          return trimmed.length > 0 && args.command.trim() === trimmed;
+        })) ||
       (name.startsWith('mcp__') &&
         Array.isArray((context as any).mcpApprovedTools) &&
         (context as any).mcpApprovedTools.includes(name));

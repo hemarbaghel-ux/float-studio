@@ -12,17 +12,23 @@ import {
   Loader2,
   Wrench,
   Layers,
-  Cpu
+  Cpu,
+  ShieldAlert,
+  Check,
+  X
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export interface ComposerEventTimelineProps {
   events: any[];
   isStreaming?: boolean;
+  onApproveTool?: (actionId: string, toolName: string, params: any) => Promise<void> | void;
+  onRejectTool?: (actionId: string) => Promise<void> | void;
 }
 
-export function ComposerEventTimeline({ events, isStreaming }: ComposerEventTimelineProps) {
+export function ComposerEventTimeline({ events, isStreaming, onApproveTool, onRejectTool }: ComposerEventTimelineProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [approvalStates, setApprovalStates] = useState<Record<string, 'pending' | 'approving' | 'approved' | 'rejected'>>({});
 
   if (!events || events.length === 0) return null;
 
@@ -220,6 +226,86 @@ export function ComposerEventTimeline({ events, isStreaming }: ComposerEventTime
                     <span>Agent task completed successfully</span>
                   </div>
                 );
+
+              case 'approval_requested': {
+                const actionId = String(evt.actionId || `act_${idx}`);
+                const toolName = evt.toolName || 'run_command';
+                const params = evt.params || {};
+                const commandStr = params.command || (typeof params === 'string' ? params : JSON.stringify(params, null, 2));
+                const approvalState = approvalStates[actionId] || 'pending';
+
+                return (
+                  <div key={key} className="my-1.5 p-2.5 rounded-lg border border-amber-300 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-950/20 text-slate-800 dark:text-slate-200">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400 text-[11px]">
+                        <ShieldAlert size={13} className="shrink-0" />
+                        <span>Approval Required: Tool &quot;{toolName}&quot;</span>
+                      </div>
+                      <span className={cn(
+                        "text-[9px] px-1.5 py-0.5 rounded font-mono font-medium uppercase",
+                        approvalState === 'approved' ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300" :
+                        approvalState === 'rejected' ? "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300" :
+                        approvalState === 'approving' ? "bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-300 animate-pulse" :
+                        "bg-amber-200/70 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300"
+                      )}>
+                        {approvalState === 'approving' ? 'Authorizing...' : approvalState}
+                      </span>
+                    </div>
+
+                    {evt.reason && (
+                      <p className="text-[10px] text-slate-600 dark:text-slate-400 mb-1.5">
+                        {evt.reason}
+                      </p>
+                    )}
+
+                    <div className="bg-slate-900 text-slate-100 p-2 rounded text-[10px] font-mono overflow-x-auto mb-2 border border-slate-700/50">
+                      <code>{toolName === 'run_command' ? `$ ${commandStr}` : commandStr}</code>
+                    </div>
+
+                    {approvalState === 'pending' && (
+                      <div className="flex items-center gap-2 pt-1 border-t border-amber-200/50 dark:border-amber-900/30">
+                        <button
+                          type="button"
+                          disabled={approvalState !== 'pending'}
+                          onClick={async () => {
+                            setApprovalStates(prev => ({ ...prev, [actionId]: 'approving' }));
+                            try {
+                              if (onApproveTool) {
+                                await onApproveTool(actionId, toolName, params);
+                              }
+                              setApprovalStates(prev => ({ ...prev, [actionId]: 'approved' }));
+                            } catch {
+                              setApprovalStates(prev => ({ ...prev, [actionId]: 'pending' }));
+                            }
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-[10px] cursor-pointer shadow-xs transition-colors"
+                        >
+                          <Check size={11} />
+                          <span>Approve &amp; Run</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={approvalState !== 'pending'}
+                          onClick={async () => {
+                            try {
+                              if (onRejectTool) {
+                                await onRejectTool(actionId);
+                              }
+                              setApprovalStates(prev => ({ ...prev, [actionId]: 'rejected' }));
+                            } catch {
+                              setApprovalStates(prev => ({ ...prev, [actionId]: 'pending' }));
+                            }
+                          }}
+                          className="flex items-center gap-1 px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 dark:bg-white/10 dark:hover:bg-white/20 text-slate-700 dark:text-slate-300 font-medium text-[10px] cursor-pointer transition-colors"
+                        >
+                          <X size={11} />
+                          <span>Reject</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
 
               default:
                 return null;

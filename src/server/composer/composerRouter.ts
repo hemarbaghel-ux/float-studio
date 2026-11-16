@@ -35,6 +35,7 @@ import { WorkspaceIndex } from '../../services/indexing/workspaceIndex';
 import { RulesService } from '../rules/rulesService';
 import { SkillsService } from '../skills/skillsService';
 import { LocalFileSystemWorkspaceService } from '../../services/indexing/localWorkspaceService';
+import { ToolExecutionContext } from '../../shared/contracts/tools';
 
 const DEFAULT_VIRTUAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
@@ -261,7 +262,6 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       maxIterations,
       timeoutMs,
       maxTokens,
-      allowedCommands,
       autoApplyApprovedProposal = false,
       verificationCommand,
       repairOnVerificationFailure = true,
@@ -463,6 +463,28 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       });
     }
 
+    const SERVER_CONTROLLED_VERIFICATION_ALLOWLIST = new Set([
+      'npm test',
+      'npm run test',
+      'npm run lint',
+      'npm run build',
+      'npx vitest run',
+      'cargo test',
+      'go test ./...',
+      'pytest',
+      'python -m unittest',
+    ]);
+
+    const serverAllowedCommands: string[] = [];
+    if (typeof verificationCommand === 'string' && verificationCommand.trim()) {
+      const trimmedVerify = verificationCommand.trim();
+      const isServerAllowlisted = SERVER_CONTROLLED_VERIFICATION_ALLOWLIST.has(trimmedVerify);
+      const isDesktopDev = process.env.NODE_ENV !== 'production' && process.env.FLOAT_DESKTOP_DEV === '1';
+      if (isServerAllowlisted || isDesktopDev) {
+        serverAllowedCommands.push(trimmedVerify);
+      }
+    }
+
     const agent = new ComposerAgent(modelRouter, toolRegistry, workspace, checkpointManager);
 
     const execResult = await agent.run({
@@ -476,7 +498,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : undefined,
       maxTokens: typeof maxTokens === 'number' ? maxTokens : undefined,
       signal: abortController.signal,
-      allowedCommands: Array.isArray(allowedCommands) ? allowedCommands.map(String) : undefined,
+      allowedCommands: serverAllowedCommands.length > 0 ? serverAllowedCommands : undefined,
       autoApplyApprovedProposal: Boolean(autoApplyApprovedProposal),
       verificationCommand: typeof verificationCommand === 'string' ? verificationCommand : undefined,
       repairOnVerificationFailure: repairOnVerificationFailure !== false,
@@ -488,6 +510,18 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
         storedTask.updatedAt = Date.now();
         if (isSse && !res.writableEnded) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
+        }
+        if (event.type === 'approval_requested' && event.actionId) {
+          defaultToolApprovalService.registerRequest({
+            actionId: event.actionId,
+            toolName: String(event.toolName || 'run_command'),
+            params: event.params || {},
+            userId,
+            projectId,
+            reason: event.reason,
+          }).catch(regErr => {
+            console.warn('[Composer] Auto-registration of approval request skipped:', regErr);
+          });
         }
       },
     });
@@ -529,6 +563,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
             activeRules: storedTask.activeRules,
             activeSkills: storedTask.activeSkills,
             text: execResult.finalResponse || '',
+            pendingApproval: execResult.pendingApproval,
           })}\n\n`
         );
         res.end();
@@ -538,15 +573,14 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
 
     return res.json({
       taskId,
-      status: execResult.status,
-      mode: effectiveMode,
-      modelId: selectedModel,
-      events: storedTask.events,
+      status: storedTask.status,
+      mode: storedTask.mode,
+      modelId: storedTask.modelId,
       result: execResult,
       proposal: storedTask.proposal,
       checkpointId: storedTask.checkpointId,
-      activeRules: storedTask.activeRules,
-      activeSkills: storedTask.activeSkills,
+      events: storedTask.events,
+      pendingApproval: execResult.pendingApproval,
     });
   });
 
@@ -603,6 +637,103 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
     storedTask.status = 'cancelled';
     storedTask.updatedAt = Date.now();
     return res.json({ cancelled: true, taskId, status: storedTask.status });
+  });
+
+  // 3b. Resume a Paused Composer Task with User Tool Approval or Rejection (Phase 1.1 UI Connectivity)
+  router.post('/tasks/:taskId/resume', requireAuth, express.json(), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const taskId = String(req.params.taskId || '');
+    const userId = String(req.user?.uid || '');
+
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const storedTask = tasksById.get(taskId);
+    if (!storedTask || storedTask.projectId !== projectId) {
+      return res.status(404).json({ error: `Composer task "${taskId}" not found.` });
+    }
+    if (storedTask.ownerId !== userId) {
+      return res.status(403).json({ error: 'Permission denied for this Composer task.' });
+    }
+
+    if (storedTask.status !== 'approval_required') {
+      return res.status(400).json({
+        error: `Cannot resume task in "${storedTask.status}" state. Only tasks in "approval_required" status can be resumed.`,
+      });
+    }
+
+    const { actionId, approved = true, approvalToken } = req.body || {};
+    if (!actionId) {
+      return res.status(400).json({ error: 'actionId is required to resume task.' });
+    }
+
+    if (approved && !approvalToken) {
+      return res.status(400).json({ error: 'approvalToken is required when approving execution.' });
+    }
+
+    const pending = storedTask.result?.pendingApproval;
+    const toolName = pending?.toolName || 'run_command';
+    const params = pending?.params || {};
+
+    if (approved) {
+      const toolRegistry = createStandardToolRegistry();
+      const execContext: ToolExecutionContext = {
+        workspace: storedTask.workspace,
+        userId,
+        projectId,
+        approvalSecret: process.env.FLOAT_APPROVAL_SECRET,
+        nonceStore: defaultToolApprovalService.getNonceStore(),
+        actionId: String(actionId),
+        approvalToken: String(approvalToken),
+      };
+
+      const outcome = await toolRegistry.execute(toolName, params, execContext);
+
+      storedTask.events.push({
+        type: 'tool_result',
+        toolName,
+        success: outcome.success,
+        data: outcome.data,
+        error: outcome.error,
+        timestamp: Date.now(),
+      });
+
+      if (outcome.success) {
+        storedTask.status = 'completed';
+        storedTask.updatedAt = Date.now();
+        return res.json({
+          success: true,
+          status: 'completed',
+          taskId,
+          outcome,
+        });
+      } else {
+        storedTask.status = 'error';
+        storedTask.updatedAt = Date.now();
+        return res.status(400).json({
+          success: false,
+          status: 'error',
+          taskId,
+          error: outcome.error || 'Execution failed',
+        });
+      }
+    } else {
+      storedTask.status = 'cancelled';
+      storedTask.events.push({
+        type: 'cancelled',
+        reason: 'User rejected tool execution approval',
+        timestamp: Date.now(),
+      });
+      storedTask.updatedAt = Date.now();
+      return res.json({
+        success: true,
+        status: 'cancelled',
+        taskId,
+        message: 'Tool execution rejected by user.',
+      });
+    }
   });
 
   // 4. Apply Proposal with Automatic Pre-Apply Checkpoint & Conflict Detection

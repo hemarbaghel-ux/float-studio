@@ -382,6 +382,9 @@ Rules:
           });
           options.onProgress?.({
             type: 'approval_requested',
+            actionId: `act_plan_${Date.now()}`,
+            toolName: 'approve_plan',
+            params: { plan: synthesizedPlan },
             reason: 'Approve implementation plan to proceed with Agent execution.',
             timestamp: Date.now(),
           });

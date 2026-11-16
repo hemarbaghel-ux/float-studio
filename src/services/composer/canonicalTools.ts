@@ -710,7 +710,11 @@ export const runCommandTool: IToolDefinition = {
     }
 
     if (context.allowedCommands && context.allowedCommands.length > 0) {
-      const allowed = context.allowedCommands.some(cmd => command.startsWith(cmd));
+      const allowed = context.allowedCommands.some(cmd => {
+        if (typeof cmd !== 'string') return false;
+        const trimmed = cmd.trim();
+        return trimmed.length > 0 && command.trim() === trimmed;
+      });
       if (!allowed) {
         return {
           toolName: 'run_command',
