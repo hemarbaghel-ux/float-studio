@@ -31,6 +31,8 @@ export interface CloudAgentRunRecord {
   updatedAt: number;
 }
 
+export type CloudAgentRunStatus = CloudAgentRunRecord['status'];
+
 export class CloudAgentOrchestrator {
   private readonly runs = new Map<string, CloudAgentRunRecord>();
   private worktreeRunner?: WorktreeExecutionRunner;
@@ -181,13 +183,24 @@ export class CloudAgentOrchestrator {
           }
         : undefined;
 
+    const isAuditOnly = params.subtasks.length > 0 && params.subtasks.every(st => st.role === 'reviewer');
+    const status: CloudAgentRunStatus = mergedProposal
+      ? 'proposal_ready'
+      : (params.proposalsBySubtask || isAuditOnly)
+        ? 'completed'
+        : 'queued';
+
+    if (status === 'queued') {
+      logs.push(`[${new Date(now).toISOString()}] Queued ${params.subtasks.length} subtask(s) for worker execution.`);
+    }
+
     const record: CloudAgentRunRecord = {
       runId,
       userId: params.userId,
       projectId: params.projectId,
       goal: params.goal,
       worktreeId,
-      status: mergedProposal ? 'proposal_ready' : 'completed',
+      status,
       subtasks: params.subtasks,
       fileOwnershipConflicts: [],
       logs,

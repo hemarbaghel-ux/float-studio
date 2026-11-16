@@ -97,6 +97,13 @@ export interface CreateAppOptions {
 }
 
 export async function createApp(options: CreateAppOptions = {}) {
+  // Production security invariant: reject unsafe desktop-development overrides in production
+  if (process.env.NODE_ENV === 'production' && process.env.FLOAT_DESKTOP_DEV === '1') {
+    throw new Error(
+      'UNSAFE_CONFIGURATION_DETECTED: FLOAT_DESKTOP_DEV=1 is strictly prohibited in production environments. Refusing to boot server.'
+    );
+  }
+
   const app = express();
   // All model-backed endpoints in one app instance share a single routing authority.
   const modelRouter = options.modelRouterOverride || new ModelRouter();
@@ -170,30 +177,13 @@ export async function createApp(options: CreateAppOptions = {}) {
     res.json(runTerminalSetupDoctor(process.env));
   });
 
-  // Stage 7: Cloud / Background Multi-Agent Orchestrator Endpoints
-  app.post('/api/projects/:projectId/cloud-agent/runs', requireAuth, express.json(), async (req: any, res: any) => {
-    const { projectId } = req.params;
-    const userId = req.user.uid;
-    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
-    if (!ownership.allowed) {
-      return res.status(ownership.status).json({ error: ownership.error });
-    }
-    const { goal, subtasks = [], proposalsBySubtask } = req.body || {};
-    if (!goal || !Array.isArray(subtasks) || subtasks.length === 0) {
-      return res.status(400).json({ error: 'goal and non-empty subtasks array are required.' });
-    }
-    try {
-      const record = defaultCloudAgentOrchestrator.startRun({
-        userId,
-        projectId,
-        goal: String(goal),
-        subtasks,
-        proposalsBySubtask,
-      });
-      return res.status(record.status === 'conflict_blocked' ? 409 : 200).json(record);
-    } catch (err: any) {
-      return res.status(400).json({ error: err?.message || 'Failed to start cloud-agent run.' });
-    }
+  // Stage 7: Cloud / Background Multi-Agent Orchestrator Endpoints (Option B: Explicit fail-closed until async worker cluster is connected)
+  app.post('/api/projects/:projectId/cloud-agent/runs', requireAuth, express.json(), async (_req: any, res: any) => {
+    return res.status(503).json({
+      error: 'Cloud Agent autonomous execution pipeline is not configured in this environment. Background worker fleet dispatch requires an active Cloud Tasks / BullMQ worker cluster.',
+      code: 'CLOUD_AGENT_EXECUTION_NOT_CONFIGURED',
+      status: 'unavailable',
+    });
   });
 
   // Integrations Routes
