@@ -123,13 +123,17 @@ export function createUserApiKeyMiddleware(vault: UserKeyVaultService = defaultU
 
       // 2. Load stored keys from vault if user is authenticated
       if (req.user?.uid) {
-        const storedKeys = await vault.getUserApiKeys(req.user.uid);
-        req.userApiKeys = { ...storedKeys, ...req.userApiKeys };
+        try {
+          const storedKeys = await vault.getUserApiKeys(req.user.uid);
+          req.userApiKeys = { ...storedKeys, ...req.userApiKeys };
+        } catch (vaultErr: any) {
+          (req as any).byokError = vaultErr?.message || 'Failed to decrypt user API keys.';
+        }
       }
 
       next();
-    } catch (err) {
-      // Fail open to standard server credentials if vault lookup encounters an issue
+    } catch (err: any) {
+      (req as any).byokError = err?.message || 'Error processing user API keys.';
       next();
     }
   };

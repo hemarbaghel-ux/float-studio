@@ -8,40 +8,88 @@ import { adminDb, hasAdminCredentials } from '../adminFirebase';
 
 export type ByokProviderId = 'openai' | 'anthropic' | 'google' | 'xai' | 'deepseek';
 
+export const CURRENT_BYOK_KEY_VERSION = 2;
+
 export interface UserApiKeyRecord {
   readonly provider: ByokProviderId;
   readonly masked: string;
   readonly isConfigured: boolean;
   readonly verified: boolean;
+  readonly status?: 'ACTIVE' | 'NEEDS_REPLACEMENT';
   readonly accessibleModels?: readonly string[];
   readonly createdAt: number;
   readonly updatedAt: number;
 }
 
-interface EncryptedVaultEntry {
+export interface EncryptedVaultEntry {
   readonly iv: string;
   readonly authTag: string;
   readonly ciphertext: string;
   readonly masked: string;
   readonly provider: ByokProviderId;
   readonly accessibleModels?: string[];
+  readonly keyVersion: number;
+  readonly status?: 'ACTIVE' | 'NEEDS_REPLACEMENT';
   readonly createdAt: number;
   readonly updatedAt: number;
 }
 
-export class UserKeyVaultService {
-  // In-memory fallback vault when Firestore is unavailable
-  private readonly memoryVault = new Map<string, Map<ByokProviderId, EncryptedVaultEntry>>();
-
-  private getMasterEncryptionKey(): Buffer {
-    const rawSecret =
-      process.env.FLOAT_APPROVAL_SECRET ||
-      process.env.FLOAT_ENCRYPTION_KEY ||
-      'float_secure_default_master_byok_encryption_secret_2026';
-    return crypto.scryptSync(rawSecret, 'float_byok_salt_vector_v1', 32);
+/**
+ * Derives the 256-bit AES master encryption key exclusively from FLOAT_BYOK_ENCRYPTION_KEY.
+ *
+ * Invariants:
+ * 1. Independent key: never reuses FLOAT_APPROVAL_SECRET or provider keys.
+ * 2. High entropy: enforces >= 32 characters (256 bits).
+ * 3. Fails closed in production if missing or insufficient.
+ */
+export function getByokMasterKey(explicitKey?: string): Buffer {
+  const rawKey = explicitKey || process.env.FLOAT_BYOK_ENCRYPTION_KEY;
+  if (!rawKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'BYOK_ENCRYPTION_KEY_MISSING: FLOAT_BYOK_ENCRYPTION_KEY environment secret is required in production.'
+      );
+    }
+    // Isolated non-production fallback for local development and unit tests
+    return crypto.scryptSync('dev_test_byok_encryption_key_32bytes_min!', 'float_byok_salt_v2', 32);
   }
 
-  private encrypt(plaintext: string): { iv: string; authTag: string; ciphertext: string } {
+  const trimmed = rawKey.trim();
+  if (trimmed.length < 32) {
+    throw new Error(
+      `BYOK_ENCRYPTION_KEY_INSUFFICIENT_ENTROPY: FLOAT_BYOK_ENCRYPTION_KEY must provide at least 32 bytes (256 bits) of entropy, received ${trimmed.length}.`
+    );
+  }
+
+  const approvalSecret = process.env.FLOAT_APPROVAL_SECRET?.trim();
+  if (approvalSecret && trimmed === approvalSecret) {
+    throw new Error(
+      'BYOK_ENCRYPTION_KEY_REUSE_FORBIDDEN: FLOAT_BYOK_ENCRYPTION_KEY must not reuse FLOAT_APPROVAL_SECRET.'
+    );
+  }
+
+  return crypto.scryptSync(trimmed, 'float_byok_salt_v2', 32);
+}
+
+export class UserKeyVaultService {
+  // In-memory fallback vault when running in non-production test environments
+  private readonly memoryVault = new Map<string, Map<ByokProviderId, EncryptedVaultEntry>>();
+  private explicitKey?: string;
+
+  constructor(options?: { encryptionKey?: string }) {
+    this.explicitKey = options?.encryptionKey;
+  }
+
+  public setEncryptionKey(key: string): void {
+    getByokMasterKey(key);
+    this.explicitKey = key;
+  }
+
+  private getMasterEncryptionKey(): Buffer {
+    return getByokMasterKey(this.explicitKey);
+  }
+
+  private encrypt(plaintext: string): { iv: string; authTag: string; ciphertext: string; keyVersion: number } {
     const key = this.getMasterEncryptionKey();
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
@@ -52,10 +100,18 @@ export class UserKeyVaultService {
       iv: iv.toString('hex'),
       authTag,
       ciphertext,
+      keyVersion: CURRENT_BYOK_KEY_VERSION,
     };
   }
 
-  private decrypt(entry: { iv: string; authTag: string; ciphertext: string }): string {
+  private decrypt(entry: EncryptedVaultEntry): string {
+    // Legacy credentials without keyVersion or encrypted under legacy version are considered compromised
+    if (!entry.keyVersion || entry.keyVersion < CURRENT_BYOK_KEY_VERSION) {
+      throw new Error(
+        'LEGACY_BYOK_KEY_COMPROMISED: This credential was stored under a legacy or compromised secret version. Please replace your API key in Settings -> Models.'
+      );
+    }
+
     const key = this.getMasterEncryptionKey();
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(entry.iv, 'hex'));
     decipher.setAuthTag(Buffer.from(entry.authTag, 'hex'));
@@ -99,7 +155,7 @@ export class UserKeyVaultService {
           return {
             valid: false,
             accessibleModels: [],
-            error: body?.error?.message || `OpenAI rejected key (HTTP ${res.status}).`,
+            error: body.error?.message || `OpenAI validation failed with status ${res.status}`,
           };
         }
         const data: any = await res.json();
@@ -120,7 +176,7 @@ export class UserKeyVaultService {
           return {
             valid: false,
             accessibleModels: [],
-            error: body?.error?.message || `Anthropic rejected key (HTTP ${res.status}).`,
+            error: body.error?.message || `Anthropic validation failed with status ${res.status}`,
           };
         }
         const data: any = await res.json();
@@ -129,16 +185,15 @@ export class UserKeyVaultService {
       }
 
       if (provider === 'google') {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
-          { signal: controller.signal }
-        );
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`, {
+          signal: controller.signal,
+        });
         if (!res.ok) {
           const body: any = await res.json().catch(() => ({}));
           return {
             valid: false,
             accessibleModels: [],
-            error: body?.error?.message || `Google Gemini rejected key (HTTP ${res.status}).`,
+            error: body.error?.message || `Google validation failed with status ${res.status}`,
           };
         }
         const data: any = await res.json();
@@ -156,25 +211,7 @@ export class UserKeyVaultService {
           return {
             valid: false,
             accessibleModels: [],
-            error: body?.error?.message || `DeepSeek rejected key (HTTP ${res.status}).`,
-          };
-        }
-        const data: any = await res.json();
-        const models = (data.data || []).map((m: any) => m.id);
-        return { valid: true, accessibleModels: models };
-      }
-
-      if (provider === 'xai') {
-        const res = await fetch('https://api.x.ai/v1/models', {
-          headers: { Authorization: `Bearer ${key}` },
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          const body: any = await res.json().catch(() => ({}));
-          return {
-            valid: false,
-            accessibleModels: [],
-            error: body?.error?.message || `xAI rejected key (HTTP ${res.status}).`,
+            error: body.error?.message || `DeepSeek validation failed with status ${res.status}`,
           };
         }
         const data: any = await res.json();
@@ -195,6 +232,7 @@ export class UserKeyVaultService {
 
   /**
    * Encrypts and saves a user API key.
+   * Fails closed if durable persistence cannot be guaranteed in production.
    */
   public async saveUserKey(
     userId: string,
@@ -214,11 +252,26 @@ export class UserKeyVaultService {
       masked,
       provider,
       accessibleModels,
+      status: 'ACTIVE',
       createdAt: now,
       updatedAt: now,
     };
 
-    // 1. In-memory storage
+    // 1. Persistent Firestore storage
+    if (hasAdminCredentials() && adminDb) {
+      await adminDb
+        .collection('user_key_vaults')
+        .doc(userId)
+        .collection('keys')
+        .doc(provider)
+        .set(vaultEntry);
+    } else if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'DURABLE_VAULT_UNAVAILABLE: Firestore persistence is required in production. Refusing memory-only save.'
+      );
+    }
+
+    // 2. Cache in memory
     let userMap = this.memoryVault.get(userId);
     if (!userMap) {
       userMap = new Map();
@@ -226,25 +279,12 @@ export class UserKeyVaultService {
     }
     userMap.set(provider, vaultEntry);
 
-    // 2. Persistent Firestore storage if available
-    if (hasAdminCredentials() && adminDb) {
-      try {
-        await adminDb
-          .collection('user_key_vaults')
-          .doc(userId)
-          .collection('keys')
-          .doc(provider)
-          .set(vaultEntry);
-      } catch (err) {
-        console.warn(`[UserKeyVault] Failed to persist key to Firestore: ${err}`);
-      }
-    }
-
     return {
       provider,
       masked,
       isConfigured: true,
       verified: true,
+      status: 'ACTIVE',
       accessibleModels,
       createdAt: now,
       updatedAt: now,
@@ -263,37 +303,37 @@ export class UserKeyVaultService {
       for (const [provider, entry] of userMap.entries()) {
         try {
           result[provider] = this.decrypt(entry);
-        } catch {}
+        } catch (err: any) {
+          console.warn(`[UserKeyVault] Failed to decrypt ${provider} key for user ${userId}: ${err.message}`);
+        }
       }
     }
 
     // Load from Firestore if missing from memory
     if (hasAdminCredentials() && adminDb && Object.keys(result).length === 0) {
-      try {
-        const snap = await adminDb
-          .collection('user_key_vaults')
-          .doc(userId)
-          .collection('keys')
-          .get();
-        for (const doc of snap.docs) {
-          const entry = doc.data() as EncryptedVaultEntry;
-          if (entry.provider && entry.ciphertext) {
-            try {
-              const decrypted = this.decrypt(entry);
-              result[entry.provider] = decrypted;
-              // Cache in memory
-              if (!userMap) {
-                const newMap = new Map<ByokProviderId, EncryptedVaultEntry>();
-                this.memoryVault.set(userId, newMap);
-                newMap.set(entry.provider, entry);
-              } else {
-                userMap.set(entry.provider, entry);
-              }
-            } catch {}
+      const snap = await adminDb
+        .collection('user_key_vaults')
+        .doc(userId)
+        .collection('keys')
+        .get();
+      for (const doc of snap.docs) {
+        const entry = doc.data() as EncryptedVaultEntry;
+        if (entry.provider && entry.ciphertext) {
+          try {
+            const decrypted = this.decrypt(entry);
+            result[entry.provider] = decrypted;
+            // Cache in memory
+            if (!userMap) {
+              const newMap = new Map<ByokProviderId, EncryptedVaultEntry>();
+              this.memoryVault.set(userId, newMap);
+              newMap.set(entry.provider, entry);
+            } else {
+              userMap.set(entry.provider, entry);
+            }
+          } catch (err: any) {
+            console.warn(`[UserKeyVault] Failed to decrypt Firestore key for ${entry.provider}: ${err.message}`);
           }
         }
-      } catch (err) {
-        console.warn(`[UserKeyVault] Error fetching keys from Firestore: ${err}`);
       }
     }
 
@@ -311,11 +351,13 @@ export class UserKeyVaultService {
     for (const p of providers) {
       const entry = userMap?.get(p);
       if (entry) {
+        const isLegacy = !entry.keyVersion || entry.keyVersion < CURRENT_BYOK_KEY_VERSION;
         records.push({
           provider: p,
           masked: entry.masked,
           isConfigured: true,
-          verified: true,
+          verified: !isLegacy,
+          status: isLegacy ? 'NEEDS_REPLACEMENT' : 'ACTIVE',
           accessibleModels: entry.accessibleModels,
           createdAt: entry.createdAt,
           updatedAt: entry.updatedAt,
@@ -325,25 +367,25 @@ export class UserKeyVaultService {
 
     // If memory had nothing, check Firestore
     if (records.length === 0 && hasAdminCredentials() && adminDb) {
-      try {
-        const snap = await adminDb
-          .collection('user_key_vaults')
-          .doc(userId)
-          .collection('keys')
-          .get();
-        for (const doc of snap.docs) {
-          const entry = doc.data() as EncryptedVaultEntry;
-          records.push({
-            provider: entry.provider,
-            masked: entry.masked,
-            isConfigured: true,
-            verified: true,
-            accessibleModels: entry.accessibleModels,
-            createdAt: entry.createdAt,
-            updatedAt: entry.updatedAt,
-          });
-        }
-      } catch {}
+      const snap = await adminDb
+        .collection('user_key_vaults')
+        .doc(userId)
+        .collection('keys')
+        .get();
+      for (const doc of snap.docs) {
+        const entry = doc.data() as EncryptedVaultEntry;
+        const isLegacy = !entry.keyVersion || entry.keyVersion < CURRENT_BYOK_KEY_VERSION;
+        records.push({
+          provider: entry.provider,
+          masked: entry.masked,
+          isConfigured: true,
+          verified: !isLegacy,
+          status: isLegacy ? 'NEEDS_REPLACEMENT' : 'ACTIVE',
+          accessibleModels: entry.accessibleModels,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+        });
+      }
     }
 
     return records;
@@ -359,14 +401,14 @@ export class UserKeyVaultService {
     }
 
     if (hasAdminCredentials() && adminDb) {
-      try {
-        await adminDb
-          .collection('user_key_vaults')
-          .doc(userId)
-          .collection('keys')
-          .doc(provider)
-          .delete();
-      } catch {}
+      await adminDb
+        .collection('user_key_vaults')
+        .doc(userId)
+        .collection('keys')
+        .doc(provider)
+        .delete();
+    } else if (process.env.NODE_ENV === 'production') {
+      throw new Error('DURABLE_VAULT_UNAVAILABLE: Firestore deletion is required in production.');
     }
 
     return true;
