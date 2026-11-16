@@ -251,6 +251,17 @@ export async function verifyAndConsumeToolApprovalToken(
   return { valid: true };
 }
 
+export interface ICommandExecutionAdapter {
+  runCommand(
+    command: string,
+    options?: { cwd?: string; timeoutMs?: number; signal?: AbortSignal }
+  ): Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  }>;
+}
+
 export interface ToolExecutionContext {
   readonly workspace: IWorkspaceService;
   readonly userId: string;
@@ -263,6 +274,7 @@ export interface ToolExecutionContext {
   readonly approvalToken?: string;
   readonly approvalSecret?: string;
   readonly nonceStore?: INonceStore;
+  readonly executionAdapter?: ICommandExecutionAdapter;
 }
 
 export interface ToolExecutionResult {

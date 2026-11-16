@@ -722,7 +722,41 @@ export const runCommandTool: IToolDefinition = {
       }
     }
 
-    // Enforce fail-closed isolation: if Docker or local sandbox is not configured, reject
+    // 1. If a trusted desktop execution adapter or daemon IPC boundary is provided, execute through it
+    if (context.executionAdapter) {
+      try {
+        const adapterResult = await context.executionAdapter.runCommand(command, {
+          cwd: '.',
+          timeoutMs,
+          signal: context.signal,
+        });
+        const success = adapterResult.exitCode === 0;
+        return {
+          toolName: 'run_command',
+          success,
+          data: {
+            command,
+            exitCode: adapterResult.exitCode,
+            stdout: sanitizeToolOutputText(adapterResult.stdout || '').slice(0, 50_000),
+            stderr: sanitizeToolOutputText(adapterResult.stderr || '').slice(0, 50_000),
+            durationMs: Date.now() - start,
+          },
+          error: !success ? (adapterResult.stderr || `Command failed with exit code ${adapterResult.exitCode}`) : undefined,
+          durationMs: Date.now() - start,
+          timestamp: start,
+        };
+      } catch (err: any) {
+        return {
+          toolName: 'run_command',
+          success: false,
+          error: err?.message || String(err),
+          durationMs: Date.now() - start,
+          timestamp: start,
+        };
+      }
+    }
+
+    // 2. Otherwise enforce hosted fail-closed isolation: if Docker or local sandbox is not configured, reject
     if (!projectProcessManager.available) {
       return {
         toolName: 'run_command',
