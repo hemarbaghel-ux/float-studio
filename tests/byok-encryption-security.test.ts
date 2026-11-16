@@ -30,8 +30,13 @@ describe('BYOK Encryption & Vault Security Engine (P0 Remediation Tests)', () =>
       }
     });
 
-    it('fails closed if key has insufficient entropy (< 32 bytes)', () => {
-      expect(() => getByokMasterKey('short-key-16bytes')).toThrow(/BYOK_ENCRYPTION_KEY_INSUFFICIENT_ENTROPY/);
+    it('fails closed if key has insufficient length (< 32 bytes)', () => {
+      expect(() => getByokMasterKey('short-key-16bytes')).toThrow(/BYOK_ENCRYPTION_KEY_INSUFFICIENT_LENGTH/);
+    });
+
+    it('fails closed if key has low Shannon entropy (< 3.5 bits/char) even if length >= 32', () => {
+      expect(() => getByokMasterKey('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toThrow(/BYOK_ENCRYPTION_KEY_INSUFFICIENT_ENTROPY/);
+      expect(() => getByokMasterKey('11111111111111111111111111111111')).toThrow(/BYOK_ENCRYPTION_KEY_INSUFFICIENT_ENTROPY/);
     });
 
     it('prohibits key reuse between BYOK encryption and approval HMAC signing', () => {

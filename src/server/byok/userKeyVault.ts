@@ -39,25 +39,58 @@ export interface EncryptedVaultEntry {
  *
  * Invariants:
  * 1. Independent key: never reuses FLOAT_APPROVAL_SECRET or provider keys.
- * 2. High entropy: enforces >= 32 characters (256 bits).
+ * 2. High entropy: enforces >= 32 characters (256 bits) AND Shannon entropy >= 3.5 bits/char.
  * 3. Fails closed in production if missing or insufficient.
+ * 4. Zero static hardcoded secrets: ephemeral random 256-bit key used exclusively in test mode.
  */
+export function calculateShannonEntropy(input: string): number {
+  if (!input || input.length === 0) return 0;
+  const frequencies = new Map<string, number>();
+  for (const char of input) {
+    frequencies.set(char, (frequencies.get(char) || 0) + 1);
+  }
+  let entropy = 0;
+  const len = input.length;
+  for (const count of frequencies.values()) {
+    const p = count / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+let ephemeralTestKey: string | undefined;
+
 export function getByokMasterKey(explicitKey?: string): Buffer {
   const rawKey = explicitKey || process.env.FLOAT_BYOK_ENCRYPTION_KEY;
   if (!rawKey) {
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
       throw new Error(
         'BYOK_ENCRYPTION_KEY_MISSING: FLOAT_BYOK_ENCRYPTION_KEY environment secret is required in production.'
       );
     }
-    // Isolated non-production fallback for local development and unit tests
-    return crypto.scryptSync('dev_test_byok_encryption_key_32bytes_min!', 'float_byok_salt_v2', 32);
+    // Only in explicit test environments, generate a high-entropy ephemeral random key per process
+    if (process.env.NODE_ENV === 'test') {
+      if (!ephemeralTestKey) {
+        ephemeralTestKey = crypto.randomBytes(32).toString('hex');
+      }
+      return crypto.scryptSync(ephemeralTestKey, 'float_byok_salt_v2', 32);
+    }
+    throw new Error(
+      'BYOK_ENCRYPTION_KEY_MISSING: FLOAT_BYOK_ENCRYPTION_KEY is required. Generate a 256-bit key using "openssl rand -hex 32".'
+    );
   }
 
   const trimmed = rawKey.trim();
   if (trimmed.length < 32) {
     throw new Error(
-      `BYOK_ENCRYPTION_KEY_INSUFFICIENT_ENTROPY: FLOAT_BYOK_ENCRYPTION_KEY must provide at least 32 bytes (256 bits) of entropy, received ${trimmed.length}.`
+      `BYOK_ENCRYPTION_KEY_INSUFFICIENT_LENGTH: FLOAT_BYOK_ENCRYPTION_KEY must provide at least 32 characters (256 bits), received ${trimmed.length}.`
+    );
+  }
+
+  const entropy = calculateShannonEntropy(trimmed);
+  if (entropy < 3.5) {
+    throw new Error(
+      `BYOK_ENCRYPTION_KEY_INSUFFICIENT_ENTROPY: FLOAT_BYOK_ENCRYPTION_KEY must provide adequate Shannon entropy (expected >= 3.5 bits/char, received ${entropy.toFixed(2)} bits/char).`
     );
   }
 

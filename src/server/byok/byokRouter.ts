@@ -108,7 +108,7 @@ export function createByokRouter(vault: UserKeyVaultService = defaultUserKeyVaul
  * and attach them to req.userApiKeys for model execution.
  */
 export function createUserApiKeyMiddleware(vault: UserKeyVaultService = defaultUserKeyVault) {
-  return async (req: AuthenticatedUserRequest, _res: Response, next: NextFunction) => {
+  return async (req: AuthenticatedUserRequest, res: Response, next: NextFunction) => {
     try {
       req.userApiKeys = {};
 
@@ -127,13 +127,23 @@ export function createUserApiKeyMiddleware(vault: UserKeyVaultService = defaultU
           const storedKeys = await vault.getUserApiKeys(req.user.uid);
           req.userApiKeys = { ...storedKeys, ...req.userApiKeys };
         } catch (vaultErr: any) {
-          (req as any).byokError = vaultErr?.message || 'Failed to decrypt user API keys.';
+          const errMsg = vaultErr?.message || 'Failed to decrypt user API keys.';
+          (req as any).byokError = errMsg;
+          res.setHeader('X-Float-BYOK-Error', encodeURIComponent(errMsg));
+          if (req.headers['x-require-byok'] === 'true' || req.headers['x-use-byok'] === 'true') {
+            return res.status(400).json({
+              error: `BYOK_KEY_RETRIEVAL_FAILED: ${errMsg}`,
+              code: 'BYOK_KEY_RETRIEVAL_FAILED',
+            });
+          }
         }
       }
 
       next();
     } catch (err: any) {
-      (req as any).byokError = err?.message || 'Error processing user API keys.';
+      const errMsg = err?.message || 'Error processing user API keys.';
+      (req as any).byokError = errMsg;
+      res.setHeader('X-Float-BYOK-Error', encodeURIComponent(errMsg));
       next();
     }
   };
