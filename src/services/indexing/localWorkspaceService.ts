@@ -61,7 +61,7 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
     };
   }
 
-  resolvePath(relativePath: string): string {
+  resolvePath(relativePath: string, allowSymlinkLeaf: boolean = false): string {
     const safeRel = validateSafeWorkspacePath(relativePath);
 
     // Check all roots
@@ -74,18 +74,27 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
       } catch {}
 
       const candidate = path.resolve(root, safeRel);
-      if (fs.existsSync(candidate)) {
-        try {
-          const realCandidate = fs.realpathSync(candidate);
-          const rel = path.relative(realRoot, realCandidate);
-          if (rel.startsWith('..') || path.isAbsolute(rel)) {
-            throw new Error(`Path containment violation: "${relativePath}" resolves to "${realCandidate}" outside workspace root "${realRoot}".`);
+      try {
+        const lstat = fs.lstatSync(candidate);
+        if (lstat.isSymbolicLink() && allowSymlinkLeaf) {
+          const parentDir = path.dirname(candidate);
+          const realParent = fs.realpathSync(parentDir);
+          const relParent = path.relative(realRoot, realParent);
+          if (relParent.startsWith('..') || path.isAbsolute(relParent)) {
+            throw new Error(`Path containment violation: parent directory of "${relativePath}" resolves outside workspace root "${realRoot}".`);
           }
           return candidate;
-        } catch (err: any) {
-          if (err.message && err.message.includes('Path containment violation')) {
-            throw err;
-          }
+        }
+
+        const realCandidate = fs.realpathSync(candidate);
+        const rel = path.relative(realRoot, realCandidate);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
+          throw new Error(`Path containment violation: "${relativePath}" resolves to "${realCandidate}" outside workspace root "${realRoot}".`);
+        }
+        return candidate;
+      } catch (err: any) {
+        if (err.message && err.message.includes('Path containment violation')) {
+          throw err;
         }
       }
     }
@@ -101,14 +110,28 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
 
     const candidate = path.resolve(primaryRoot, safeRel);
 
-    // If candidate exists, verify its realpath
-    if (fs.existsSync(candidate)) {
+    try {
+      const lstat = fs.lstatSync(candidate);
+      if (lstat.isSymbolicLink() && allowSymlinkLeaf) {
+        const parentDir = path.dirname(candidate);
+        const realParent = fs.realpathSync(parentDir);
+        const relParent = path.relative(realPrimaryRoot, realParent);
+        if (relParent.startsWith('..') || path.isAbsolute(relParent)) {
+          throw new Error(`Path containment violation: parent directory of "${relativePath}" resolves outside workspace root "${realPrimaryRoot}".`);
+        }
+        return candidate;
+      }
+
       const realCandidate = fs.realpathSync(candidate);
       const rel = path.relative(realPrimaryRoot, realCandidate);
       if (rel.startsWith('..') || path.isAbsolute(rel)) {
         throw new Error(`Path containment violation: "${relativePath}" resolves to "${realCandidate}" outside workspace root "${realPrimaryRoot}".`);
       }
       return candidate;
+    } catch (err: any) {
+      if (err.message && err.message.includes('Path containment violation')) {
+        throw err;
+      }
     }
 
     // If candidate does not exist yet (e.g. for writeFile), verify closest existing ancestor
@@ -224,7 +247,8 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
   }
 
   async deleteFile(relativePath: string): Promise<void> {
-    const fullPath = this.resolvePath(relativePath);
+    const fullPath = this.resolvePath(relativePath, true);
+    await this.validateDirectoryHierarchy(path.dirname(fullPath));
     try {
       const lstat = await fs.promises.lstat(fullPath);
       if (lstat.isSymbolicLink()) {

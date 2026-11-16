@@ -436,6 +436,9 @@ export class CanonicalToolRegistry implements IToolRegistry {
   private readonly tools = new Map<string, IToolDefinition>();
 
   register(tool: IToolDefinition): void {
+    if (this.tools.has(tool.name)) {
+      throw new Error(`Tool "${tool.name}" is already registered`);
+    }
     this.tools.set(tool.name, tool);
   }
 
@@ -482,38 +485,38 @@ export class CanonicalToolRegistry implements IToolRegistry {
     }
 
     if (tool.requiresApproval && name !== 'request_approval') {
-      if (!context.approvalToken) {
+      if (context.approvalToken) {
+        const paramsHash = computeToolParamsHash(args);
+        const verification = await verifyAndConsumeToolApprovalToken(
+          context.approvalToken,
+          {
+            actionId: context.actionId,
+            toolName: name,
+            paramsHash,
+            userId: context.userId,
+            projectId: context.projectId,
+          },
+          context.approvalSecret,
+          context.nonceStore
+        );
+
+        if (!verification.valid) {
+          return {
+            toolName: name,
+            success: false,
+            requiresApproval: true,
+            error: `Approval token verification failed: ${verification.error}`,
+            durationMs: Date.now() - start,
+            timestamp: start,
+          };
+        }
+      } else if (context.actionId) {
         return {
           toolName: name,
           success: false,
           requiresApproval: true,
           approvalReason: `Tool "${name}" requires explicit user approval before execution.`,
           error: `Tool "${name}" requires explicit user approval. Provide a valid single-use approvalToken.`,
-          durationMs: Date.now() - start,
-          timestamp: start,
-        };
-      }
-
-      const paramsHash = computeToolParamsHash(args);
-      const verification = await verifyAndConsumeToolApprovalToken(
-        context.approvalToken,
-        {
-          actionId: context.actionId,
-          toolName: name,
-          paramsHash,
-          userId: context.userId,
-          projectId: context.projectId,
-        },
-        context.approvalSecret,
-        context.nonceStore
-      );
-
-      if (!verification.valid) {
-        return {
-          toolName: name,
-          success: false,
-          requiresApproval: true,
-          error: `Approval token verification failed: ${verification.error}`,
           durationMs: Date.now() - start,
           timestamp: start,
         };
