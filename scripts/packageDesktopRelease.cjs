@@ -433,6 +433,50 @@ async function packageMacOS() {
   const dmgOut = path.join(distReleaseDir, 'FLOAT-arm64.dmg');
   console.log(`Building DMG image: ${dmgOut}...`);
   exec(`hdiutil create -volname "${APP_NAME}" -srcfolder "${targetApp}" -ov -format UDZO "${dmgOut}"`);
+
+  // 3. Apple Notarization & Stapling Gate
+  if (process.env.APPLE_ID && process.env.APPLE_TEAM_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD) {
+    console.log('Submitting DMG to Apple Notary Service (xcrun notarytool)...');
+    exec(`xcrun notarytool submit "${dmgOut}" --apple-id "${process.env.APPLE_ID}" --team-id "${process.env.APPLE_TEAM_ID}" --password "${process.env.APPLE_APP_SPECIFIC_PASSWORD}" --wait`);
+    console.log('Stapling notarization ticket to DMG (xcrun stapler)...');
+    exec(`xcrun stapler staple "${dmgOut}"`);
+  } else {
+    console.log('[Notice] Apple Notary credentials not set. Skipping notarization submission.');
+  }
+}
+
+function generateChecksumManifest() {
+  const crypto = require('crypto');
+  console.log('\nGenerating SHA-256 release checksum manifest...');
+  const files = fs.readdirSync(distReleaseDir).filter(f => !f.endsWith('.txt') && !f.endsWith('.json'));
+  const checksumLines = [];
+  const manifestData = {
+    version: VERSION,
+    timestamp: new Date().toISOString(),
+    artifacts: []
+  };
+
+  for (const file of files) {
+    const filePath = path.join(distReleaseDir, file);
+    if (!fs.statSync(filePath).isFile()) continue;
+    const fileBytes = fs.readFileSync(filePath);
+    const hash = crypto.createHash('sha256').update(fileBytes).digest('hex');
+    checksumLines.push(`${hash}  ${file}`);
+    manifestData.artifacts.push({
+      filename: file,
+      sha256: hash,
+      sizeBytes: fileBytes.length,
+      sizeMb: (fileBytes.length / (1024 * 1024)).toFixed(2)
+    });
+  }
+
+  const checksumFile = path.join(distReleaseDir, 'FLOAT-SHA256SUMS.txt');
+  fs.writeFileSync(checksumFile, checksumLines.join('\n') + '\n', 'utf8');
+
+  const manifestFile = path.join(distReleaseDir, 'release-manifest.json');
+  fs.writeFileSync(manifestFile, JSON.stringify(manifestData, null, 2), 'utf8');
+
+  console.log(`Generated manifest: ${manifestFile} (${manifestData.artifacts.length} artifacts)`);
 }
 
 async function main() {
@@ -452,6 +496,8 @@ async function main() {
   } else {
     throw new Error(`Unsupported packaging platform: ${platform}`);
   }
+
+  generateChecksumManifest();
 
   console.log('\nPackaging complete. Validating artifacts...\n');
   const validatorScript = path.join(__dirname, 'validateReleaseArtifacts.cjs');

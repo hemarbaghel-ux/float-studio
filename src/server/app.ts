@@ -28,8 +28,10 @@ import { milestone9Router } from './milestone9Router';
 import { brainRouter } from './brain';
 import { createAnalystRouter } from './analystRouter';
 import { createComposerRouter } from './composer/composerRouter';
+import { createExtensionGalleryRouter } from './extensions/extensionGalleryRouter';
 import { runTerminalSetupDoctor } from './terminal/terminalDoctor';
 import { defaultTabCoordinator } from '../services/completion/tabCompletionService';
+import { defaultFimEngine } from '../services/completion/fimCompletionEngine';
 import { defaultCloudAgentOrchestrator } from './cloudAgent/cloudAgentOrchestrator';
 import { redactSecretsInText } from '../services/git/secretScanner';
 
@@ -192,6 +194,7 @@ export async function createApp(options: CreateAppOptions = {}) {
 
   // Integrations Routes
   app.use('/api/integrations', integrationsRouter);
+  app.use('/api/extensions/gallery', createExtensionGalleryRouter());
   app.use('/api/projects/:projectId/git', gitRouter);
   app.use('/api/projects/:projectId/composer', createComposerRouter(modelRouter));
   app.use('/api', milestone9Router);
@@ -656,33 +659,19 @@ export async function createApp(options: CreateAppOptions = {}) {
         });
       }
 
-      const startMs = Date.now();
+      const fimResult = await defaultFimEngine.complete(
+        {
+          prefix: boundedPrefix,
+          suffix: boundedSuffix,
+          language,
+          fileName,
+          model,
+        },
+        { modelRouter }
+      );
 
-      const prompt = `You are a high-speed code completion engine. Continue the code exactly where the cursor is located between <PREFIX> and <SUFFIX>.
-Output ONLY the code continuation to be inserted directly at the cursor. Do not output markdown, do not output backticks, and do not repeat the prefix or suffix.
-
-File: ${fileName} (${language})
-<PREFIX>
-${boundedPrefix}
-</PREFIX>
-<SUFFIX>
-${boundedSuffix}
-</SUFFIX>`;
-
-      const effectiveModel = model && model !== 'gpt-6-astra' ? model : 'gpt-4o-mini';
-
-      const result = await modelRouter.generateContent({
-        model: effectiveModel,
-        messages: [{ role: 'user', content: prompt }],
-        speed: 'fast',
-        systemInstruction: "You are an inline code autocompletion engine. Output only the immediate completion code."
-      });
-
-      let completionText = result.text || '';
-      // Clean up markdown fences if the model emitted them accidentally
-      completionText = completionText.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '');
-
-      const latencyMs = Date.now() - startMs;
+      const completionText = fimResult.completion;
+      const latencyMs = fimResult.latencyMs;
       const prediction = defaultTabCoordinator.recordCompletion(
         cacheKey,
         completionText,
@@ -693,6 +682,8 @@ ${boundedSuffix}
 
       res.json({
         completion: completionText,
+        template: fimResult.template,
+        speculativeCacheHit: fimResult.speculativeCacheHit,
         ...prediction,
       });
     } catch (error: any) {
