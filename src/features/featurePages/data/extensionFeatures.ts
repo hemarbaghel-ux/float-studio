@@ -364,7 +364,7 @@ triggers: ["/apply-notion-styleguide", "styleguide"]
       executionProcess: [
         'Dispatches list_tables and describe_table tool calls to local Postgres MCP server.',
         'Receives column types, foreign keys, and nullability constraints.',
-        'Generates src/db/schema.ts with exact matching types and relations.'
+        'Generates src/models/schema.ts with exact matching types and relations.'
       ],
       codeOrDiffType: 'code',
       codeOrDiffSnippet: `// float.mcp.json configuration:
