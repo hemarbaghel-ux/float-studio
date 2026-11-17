@@ -28,6 +28,7 @@ import { milestone9Router } from './milestone9Router';
 import { brainRouter } from './brain';
 import { createAnalystRouter } from './analystRouter';
 import { createComposerRouter } from './composer/composerRouter';
+import { createFloatLogicRouter } from './floatLogicRouter';
 import { createExtensionGalleryRouter } from './extensions/extensionGalleryRouter';
 import { createByokRouter, createUserApiKeyMiddleware } from './byok/byokRouter';
 import { runTerminalSetupDoctor } from './terminal/terminalDoctor';
@@ -192,6 +193,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.use('/api/user', createByokRouter());
   app.use('/api/projects/:projectId/git', gitRouter);
   app.use('/api/projects/:projectId/composer', createComposerRouter(modelRouter));
+  app.use('/api/float/v1', createFloatLogicRouter());
   app.use('/api', milestone9Router);
   app.use('/api', brainRouter);
 
