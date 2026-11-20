@@ -6,6 +6,7 @@ import { FloatLogo } from '../../components/FloatLogo';
 import { cn } from '../../lib/utils';
 import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { useConsentStore } from '../../store/consentStore';
+import { ByokModelKeySettings } from './ByokModelKeySettings';
 
 export function SettingsModal({ onClose, initialSection }: { onClose: () => void; initialSection?: 'profile' | 'appearance' | 'editor' | 'models' | 'integrations' | 'privacy' }) {
   const { settings, updateSettings } = useIDEStore();
@@ -490,12 +491,15 @@ export function SettingsModal({ onClose, initialSection }: { onClose: () => void
           {/* AI & MODELS SECTION */}
           {activeSection === 'models' && (
             <div className="space-y-6">
-              <div>
+              {/* Bring Your Own Key (BYOK) Management */}
+              <ByokModelKeySettings />
+
+              <div className="border-t border-slate-200 dark:border-[#2A2A2A] pt-4">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-[#8B949E] mb-2">
-                  AI Model Connection
+                  Server Default Provider Health
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-[#8B949E] mb-4">
-                  FLOAT uses server-side configured AI model providers. Live credentials and upstream access are verified on the server.
+                  FLOAT also provides managed fallback inference when personal keys are not supplied.
                 </p>
               </div>
 

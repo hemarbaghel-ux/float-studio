@@ -307,6 +307,8 @@ async function runTests() {
 
     // 2e. Post-apply test verification & self-repair on real local disk workspace
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'float-stage1-repair-'));
+    const prevDesktopDev = process.env.FLOAT_DESKTOP_DEV;
+    process.env.FLOAT_DESKTOP_DEV = '1';
     try {
       fs.mkdirSync(path.join(tempDir, 'src'), { recursive: true });
       fs.writeFileSync(
@@ -343,6 +345,8 @@ async function runTests() {
       const finalDiskMath = fs.readFileSync(path.join(tempDir, 'src/math.ts'), 'utf8');
       check(finalDiskMath.includes('return a * b;'), 'Repaired code is persisted on disk and passes verification');
     } finally {
+      if (prevDesktopDev !== undefined) process.env.FLOAT_DESKTOP_DEV = prevDesktopDev;
+      else delete process.env.FLOAT_DESKTOP_DEV;
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
 

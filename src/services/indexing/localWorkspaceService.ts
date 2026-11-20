@@ -5,6 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import {
   IWorkspaceService,
   WorkspaceCapabilities,
@@ -61,28 +62,215 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
     };
   }
 
-  resolvePath(relativePath: string): string {
+  resolvePath(relativePath: string, allowSymlinkLeaf: boolean = false): string {
     const safeRel = validateSafeWorkspacePath(relativePath);
-    // Find matching root if multi-root
+
+    // Check all roots
     for (const root of this.rootPaths) {
-      const candidate = path.join(root, safeRel);
-      if (fs.existsSync(candidate)) {
+      let realRoot = root;
+      try {
+        if (fs.existsSync(root)) {
+          realRoot = fs.realpathSync(root);
+        }
+      } catch {}
+
+      const candidate = path.resolve(root, safeRel);
+      try {
+        const lstat = fs.lstatSync(candidate);
+        if (lstat.isSymbolicLink() && allowSymlinkLeaf) {
+          const parentDir = path.dirname(candidate);
+          const realParent = fs.realpathSync(parentDir);
+          const relParent = path.relative(realRoot, realParent);
+          if (relParent.startsWith('..') || path.isAbsolute(relParent)) {
+            throw new Error(`Path containment violation: parent directory of "${relativePath}" resolves outside workspace root "${realRoot}".`);
+          }
+          return candidate;
+        }
+
+        const realCandidate = fs.realpathSync(candidate);
+        const rel = path.relative(realRoot, realCandidate);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
+          throw new Error(`Path containment violation: "${relativePath}" resolves to "${realCandidate}" outside workspace root "${realRoot}".`);
+        }
         return candidate;
+      } catch (err: any) {
+        if (err.message && err.message.includes('Path containment violation')) {
+          throw err;
+        }
       }
     }
+
     // Default to primary root
-    return path.join(this.rootPaths[0], safeRel);
+    const primaryRoot = this.rootPaths[0];
+    let realPrimaryRoot = primaryRoot;
+    try {
+      if (fs.existsSync(primaryRoot)) {
+        realPrimaryRoot = fs.realpathSync(primaryRoot);
+      }
+    } catch {}
+
+    const candidate = path.resolve(primaryRoot, safeRel);
+
+    try {
+      const lstat = fs.lstatSync(candidate);
+      if (lstat.isSymbolicLink() && allowSymlinkLeaf) {
+        const parentDir = path.dirname(candidate);
+        const realParent = fs.realpathSync(parentDir);
+        const relParent = path.relative(realPrimaryRoot, realParent);
+        if (relParent.startsWith('..') || path.isAbsolute(relParent)) {
+          throw new Error(`Path containment violation: parent directory of "${relativePath}" resolves outside workspace root "${realPrimaryRoot}".`);
+        }
+        return candidate;
+      }
+
+      const realCandidate = fs.realpathSync(candidate);
+      const rel = path.relative(realPrimaryRoot, realCandidate);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        throw new Error(`Path containment violation: "${relativePath}" resolves to "${realCandidate}" outside workspace root "${realPrimaryRoot}".`);
+      }
+      return candidate;
+    } catch (err: any) {
+      if (err.message && err.message.includes('Path containment violation')) {
+        throw err;
+      }
+    }
+
+    // If candidate does not exist yet (e.g. for writeFile), verify closest existing ancestor
+    let ancestor = path.dirname(candidate);
+    while (!fs.existsSync(ancestor) && ancestor !== path.dirname(ancestor)) {
+      ancestor = path.dirname(ancestor);
+    }
+    if (fs.existsSync(ancestor)) {
+      const realAncestor = fs.realpathSync(ancestor);
+      const rel = path.relative(realPrimaryRoot, realAncestor);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        throw new Error(`Path containment violation: ancestor directory of "${relativePath}" resolves outside workspace root "${realPrimaryRoot}".`);
+      }
+    }
+
+    const relToRoot = path.relative(realPrimaryRoot, candidate);
+    if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) {
+      throw new Error(`Path containment violation: "${relativePath}" escapes primary workspace root "${realPrimaryRoot}".`);
+    }
+
+    return candidate;
+  }
+
+  private assertContainedInRoots(realCandidate: string, relativePath: string): void {
+    let contained = false;
+    for (const root of this.rootPaths) {
+      let realRoot = root;
+      try {
+        if (fs.existsSync(root)) realRoot = fs.realpathSync(root);
+      } catch {}
+      const rel = path.relative(realRoot, realCandidate);
+      if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+        contained = true;
+        break;
+      }
+    }
+    if (!contained) {
+      throw new Error(`Path containment violation: "${relativePath}" resolves to "${realCandidate}" outside workspace roots.`);
+    }
+  }
+
+  private validateDirectoryHierarchy(dirPath: string): void {
+    let current = path.resolve(dirPath);
+    while (current && current !== path.dirname(current)) {
+      if (fs.existsSync(current)) {
+        try {
+          const lstat = fs.lstatSync(current);
+          if (lstat.isSymbolicLink()) {
+            const realDir = fs.realpathSync(current);
+            this.assertContainedInRoots(realDir, current);
+          }
+        } catch (err: any) {
+          if (err.message && err.message.includes('Path containment violation')) throw err;
+        }
+      }
+      current = path.dirname(current);
+    }
   }
 
   async readFile(relativePath: string): Promise<string> {
     const fullPath = this.resolvePath(relativePath);
-    return fs.promises.readFile(fullPath, 'utf8');
+    
+    // 1. Verify parent directory hierarchy has no escaping symlinks
+    this.validateDirectoryHierarchy(path.dirname(fullPath));
+
+    // 2. Secure file handle open with post-open realpath and inode verification
+    const handle = await fs.promises.open(fullPath, 'r');
+    try {
+      const fdStat = await handle.stat();
+      if (fdStat.isDirectory()) {
+        throw new Error(`Cannot readFile on directory "${relativePath}".`);
+      }
+      const realAfterOpen = fs.realpathSync(fullPath);
+      this.assertContainedInRoots(realAfterOpen, relativePath);
+
+      // Verify open descriptor points to the exact same filesystem object as realAfterOpen
+      const realStat = fs.statSync(realAfterOpen);
+      if (fdStat.dev && realStat.dev && (fdStat.dev !== realStat.dev || fdStat.ino !== realStat.ino)) {
+        throw new Error(`TOCTOU race detected: file descriptor does not match realpath target for "${relativePath}".`);
+      }
+
+      return await handle.readFile('utf8');
+    } finally {
+      await handle.close();
+    }
   }
 
   async writeFile(relativePath: string, content: string): Promise<void> {
     const fullPath = this.resolvePath(relativePath);
-    await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
-    await fs.promises.writeFile(fullPath, content, 'utf8');
+    const parentDir = path.dirname(fullPath);
+
+    // 1. Validate parent directory hierarchy contains no escaping symlinks
+    this.validateDirectoryHierarchy(parentDir);
+    await fs.promises.mkdir(parentDir, { recursive: true });
+
+    // 2. Refuse writing if target is an existing symlink (prevents writing through symlinks)
+    try {
+      const lstat = await fs.promises.lstat(fullPath);
+      if (lstat.isSymbolicLink()) {
+        throw new Error(`Path containment violation: refusing to write through symlink "${relativePath}".`);
+      }
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+
+    // 3. Write via unique temporary file in the same directory using O_CREAT | O_EXCL
+    const tempName = `.${path.basename(fullPath)}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+    const tempPath = path.join(parentDir, tempName);
+
+    const tempHandle = await fs.promises.open(
+      tempPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      0o600
+    );
+    try {
+      const realTemp = fs.realpathSync(tempPath);
+      this.assertContainedInRoots(realTemp, tempName);
+      await tempHandle.writeFile(content, 'utf8');
+    } finally {
+      await tempHandle.close();
+    }
+
+    // 4. Double check target is not a symlink right before atomic rename
+    try {
+      const finalLstat = await fs.promises.lstat(fullPath);
+      if (finalLstat.isSymbolicLink()) {
+        await fs.promises.unlink(tempPath).catch(() => {});
+        throw new Error(`Path containment violation: refusing to write through symlink "${relativePath}".`);
+      }
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        await fs.promises.unlink(tempPath).catch(() => {});
+        throw err;
+      }
+    }
+
+    // 5. Atomic rename into place
+    await fs.promises.rename(tempPath, fullPath);
 
     // Incrementally update index
     const safeRel = validateSafeWorkspacePath(relativePath);
@@ -92,9 +280,20 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
   }
 
   async deleteFile(relativePath: string): Promise<void> {
-    const fullPath = this.resolvePath(relativePath);
-    if (fs.existsSync(fullPath)) {
-      await fs.promises.unlink(fullPath);
+    const fullPath = this.resolvePath(relativePath, true);
+    await this.validateDirectoryHierarchy(path.dirname(fullPath));
+    try {
+      const lstat = await fs.promises.lstat(fullPath);
+      if (lstat.isSymbolicLink()) {
+        // Unlink ONLY the symlink itself; never follow to external target
+        await fs.promises.unlink(fullPath);
+      } else if (lstat.isDirectory()) {
+        await fs.promises.rm(fullPath, { recursive: true, force: true });
+      } else {
+        await fs.promises.unlink(fullPath);
+      }
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') throw err;
     }
 
     // Incrementally prune from index
@@ -161,6 +360,23 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
       }
 
       const relPath = currentRel ? `${currentRel}/${name}` : name;
+      const fullPath = path.join(baseDir, relPath);
+
+      // Verify symlink containment
+      if (entry.isSymbolicLink()) {
+        try {
+          const realTarget = fs.realpathSync(fullPath);
+          let realBase = baseDir;
+          try { realBase = fs.realpathSync(baseDir); } catch {}
+          const relFromBase = path.relative(realBase, realTarget);
+          if (relFromBase.startsWith('..') || path.isAbsolute(relFromBase)) {
+            // Symlink escapes workspace root; skip for containment security
+            continue;
+          }
+        } catch {
+          continue;
+        }
+      }
 
       if (entry.isDirectory()) {
         out.push({
@@ -194,10 +410,12 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
 
   /**
    * Initializes workspace indexing by scanning files and populating WorkspaceIndex.
+   * Respects .gitignore, .floatignore, and scalable file budgets.
    */
-  async initializeIndex(): Promise<{ totalIndexed: number; durationMs: number }> {
+  async initializeIndex(options?: { maxFiles?: number }): Promise<{ totalIndexed: number; totalScanned: number; durationMs: number }> {
     const start = Date.now();
-    const files = await this.listFiles({ recursive: true, maxFiles: 1000 });
+    const maxFiles = options?.maxFiles ?? 25_000;
+    const files = await this.listFiles({ recursive: true, maxFiles });
     const documentsToIndex: Array<{ path: string; content: string }> = [];
 
     for (const f of files) {
@@ -211,6 +429,7 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
     this.index.indexProject(documentsToIndex);
     return {
       totalIndexed: documentsToIndex.length,
+      totalScanned: files.length,
       durationMs: Date.now() - start,
     };
   }

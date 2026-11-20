@@ -16,6 +16,7 @@ import ReactMarkdown from 'react-markdown';
 import { ChangeSet, AIMessage, AIContextItem } from '../../types';
 import { DiffReviewModal } from '../proposals/DiffReviewModal';
 import { MultiFileDiffCard } from '../composer/MultiFileDiffCard';
+import { ComposerEventTimeline } from '../composer/ComposerEventTimeline';
 import { ModelSelector } from './ModelSelector';
 import { ProjectFilePickerModal } from './ProjectFilePickerModal';
 import { CodebaseSearchModal } from './CodebaseSearchModal';
@@ -213,6 +214,7 @@ export function AIPanel() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef<boolean>(true);
   const activeConvIdRef = useRef<string | null>(null);
+  const activeTaskIdRef = useRef<string | null>(null);
 
   const currentProjectId = projectId || 'default-workspace';
 
@@ -256,6 +258,75 @@ export function AIPanel() {
     return list;
   };
 
+  const handleApproveTool = async (msgId: string, actionId: string, toolName: string, params: any) => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      // 1. Confirm approval request on server to obtain HMAC approvalToken
+      const confirmRes = await fetch(`/api/projects/${currentProjectId}/composer/approvals/confirm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ actionId, approved: true }),
+      });
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok || !confirmData.approvalToken) {
+        throw new Error(confirmData.error || 'Failed to authorize tool execution');
+      }
+
+      // 2. Resume task with the single-use approvalToken
+      const targetTaskId = activeTaskIdRef.current || 'active';
+      const resumeRes = await fetch(`/api/projects/${currentProjectId}/composer/tasks/${targetTaskId}/resume`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          actionId,
+          approved: true,
+          approvalToken: confirmData.approvalToken,
+        }),
+      });
+      const resumeData = await resumeRes.json();
+      if (resumeRes.ok) {
+        updateAiMessage(msgId, {
+          status: resumeData.status === 'completed' ? 'completed' : 'streaming',
+        });
+      } else {
+        throw new Error(resumeData.error || 'Execution failed during resumption');
+      }
+    } catch (err: any) {
+      console.error('[Composer] Tool approval execution failed:', err);
+      alert(`Approval execution failed: ${err.message}`);
+    }
+  };
+
+  const handleRejectTool = async (msgId: string, actionId: string) => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      await fetch(`/api/projects/${currentProjectId}/composer/approvals/confirm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ actionId, approved: false }),
+      });
+
+      const targetTaskId = activeTaskIdRef.current;
+      if (targetTaskId) {
+        await fetch(`/api/projects/${currentProjectId}/composer/tasks/${targetTaskId}/resume`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ actionId, approved: false }),
+        });
+      }
+
+      updateAiMessage(msgId, { status: 'cancelled' });
+    } catch (err: any) {
+      console.error('[Composer] Tool rejection failed:', err);
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -293,6 +364,9 @@ export function AIPanel() {
 
   useEffect(() => {
     if (initialPrompt && !isLoading) {
+      if (initialPrompt.includes('terminal error') || initialPrompt.includes('Fix error')) {
+        setActiveWorkflowMode('debug');
+      }
       setInput(initialPrompt);
       setInitialPrompt(null);
       setTimeout(() => {
@@ -671,7 +745,7 @@ export function AIPanel() {
         effectiveSystemInstruction = "You are operating in DEBUG MODE. Follow the systematic 4-step diagnostic protocol:\n1. Inspect the reported error, stack trace, and any active compiler/runtime diagnostics.\n2. Trace the relevant symbol definitions, call sites, and recent git changes.\n3. Identify the underlying root cause with concrete evidence from the files (do NOT fabricate findings).\n4. Propose a targeted, minimal fix with exact before/after code blocks and verification instructions.";
       }
 
-      const isComposerMode = activeWorkflowMode === 'agent' || activeWorkflowMode === 'plan';
+      const isComposerMode = activeWorkflowMode === 'agent' || activeWorkflowMode === 'plan' || activeWorkflowMode === 'ask' || activeWorkflowMode === 'debug';
       const endpointUrl = isComposerMode
         ? `/api/projects/${encodeURIComponent(currentProjectId)}/composer/run`
         : '/api/ai/chat';
@@ -692,7 +766,10 @@ export function AIPanel() {
                 mode: activeWorkflowMode,
                 model: selectedModel,
                 files: flatFiles.filter(f => f.type === 'file').map(f => ({ path: f.path || f.name, content: f.content || '' })),
-                stream: true
+                stream: true,
+                verificationCommand: activeWorkflowMode === 'debug'
+                  ? (flatFiles.some(f => (f.path || f.name).endsWith('.py')) ? 'python -m unittest' : 'npm test')
+                  : undefined
               }
             : {
                 messages: requestMessages,
@@ -751,6 +828,7 @@ export function AIPanel() {
           updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
         } else if (data.type === 'done') {
           receivedDone = true;
+          if (data.taskId) activeTaskIdRef.current = data.taskId;
           if (typeof data.text === 'string') accumulatedText = data.text;
           finalUsage = data.usage;
           if (data.contextExplanation) finalExplanation = data.contextExplanation;
@@ -763,9 +841,10 @@ export function AIPanel() {
             });
           } else {
             const isSimulated = Boolean(data.isSimulated || accumulatedText.includes('[SIMULATED DEMO RESPONSE]'));
+            const status = data.status === 'approval_required' ? 'approval_required' : 'completed';
             updateAiMessage(modelMsgId, {
               content: accumulatedText,
-              status: 'completed',
+              status,
               isSimulated,
               latency: Date.now() - startTime,
               contextExplanation: finalExplanation
@@ -790,10 +869,32 @@ export function AIPanel() {
           data.type === 'completed' ||
           data.type === 'cancelled'
         ) {
-          setComposerTaskEvents(prev => [...prev, data]);
+          setComposerTaskEvents(prev => {
+            const next = [...prev, data];
+            updateAiMessage(modelMsgId, { composerEvents: next });
+            return next;
+          });
+          if (data.type === 'started' && data.taskId) {
+            activeTaskIdRef.current = data.taskId;
+          }
+          if (data.type === 'approval_requested') {
+            updateAiMessage(modelMsgId, { status: 'approval_required' });
+          }
           if (data.type === 'thinking' && typeof data.content === 'string') {
             accumulatedText = data.content;
             updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
+          } else if (data.type === 'plan' && data.plan) {
+            const planText = Array.isArray(data.plan.steps)
+              ? `### Implementation Plan\n\n${data.plan.steps.map((s: any, i: number) => `${i + 1}. **${s.title || s.step || s}**\n   ${s.description || ''}`).join('\n')}`
+              : String(data.plan);
+            accumulatedText = planText;
+            updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
+          } else if (data.type === 'completed' && data.result) {
+            const completionMsg = data.result.message || data.result.answer || data.result.summary || '';
+            if (completionMsg) {
+              accumulatedText = completionMsg;
+              updateAiMessage(modelMsgId, { content: accumulatedText, status: 'completed' });
+            }
           } else if (data.type === 'proposal_created' && data.proposal) {
             const prop = data.proposal;
             updateAiMessage(modelMsgId, {
@@ -1637,6 +1738,16 @@ export function AIPanel() {
                       </button>
                     )}
                   </div>
+                )}
+
+                {/* Composer Event Timeline (Autonomous Tool & Test Execution Steps) */}
+                {msg.composerEvents && msg.composerEvents.length > 0 && (
+                  <ComposerEventTimeline
+                    events={msg.composerEvents}
+                    isStreaming={isStreaming && idx === aiMessages.length - 1}
+                    onApproveTool={(actionId, toolName, params) => handleApproveTool(msg.id, actionId, toolName, params)}
+                    onRejectTool={(actionId) => handleRejectTool(msg.id, actionId)}
+                  />
                 )}
 
                 {/* Proposed Changes Multi-File Diff Card (Cursor Composer UX) */}

@@ -38,7 +38,7 @@ export interface AIMessage {
   checkpointId?: string;
   checkpoint?: FileNode[];
   imageAttachments?: Array<{ id: string; name: string; mimeType: string; dataUrl: string }>;
-  status?: 'sending' | 'streaming' | 'completed' | 'error' | 'cancelled';
+  status?: 'sending' | 'streaming' | 'completed' | 'error' | 'cancelled' | 'approval_required';
   error?: string;
   isSimulated?: boolean;
   conversationId?: string;
@@ -53,6 +53,7 @@ export interface AIMessage {
     excludedItems?: Array<{ name: string; reason: string }>;
     appliedRules?: Array<{ id: string; name: string; scope: string; sourceFile?: string; priority?: number }>;
   };
+  composerEvents?: any[];
 }
 
 export interface EditorSelection {

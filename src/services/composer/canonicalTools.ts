@@ -3,8 +3,8 @@
  *  Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { exec } from 'node:child_process';
 import crypto from 'crypto';
+import { projectProcessManager } from '../../server/execution/processManager';
 import {
   CANONICAL_TOOL_SCHEMAS,
   IToolDefinition,
@@ -23,17 +23,15 @@ import {
 import { validateSafeWorkspacePath } from '../../shared/contracts/workspace';
 import { TerminalExecutionPolicy } from '../terminal';
 
+import { redactSecretsInText } from '../git/secretScanner';
+
 const DEFAULT_MAX_READ_BYTES = 50_000;
 const DEFAULT_MAX_SEARCH_RESULTS = 25;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 
 export function sanitizeToolOutputText(text: string): string {
   if (!text) return '';
-  return text
-    .replace(/sk-(?:proj-)?[a-zA-Z0-9_\-]{12,}/g, '[REDACTED_SECRET]')
-    .replace(/gh[pousr]_[a-zA-Z0-9]{16,}/g, '[REDACTED_SECRET]')
-    .replace(/AIzaSy[A-Za-z0-9_\-]{25,}/g, '[REDACTED_SECRET]')
-    .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED_SECRET]');
+  return redactSecretsInText(text);
 }
 
 /**
@@ -218,7 +216,7 @@ export const searchCodebaseTool: IToolDefinition = {
         };
       }
 
-      const files = await context.workspace.listFiles({ recursive: true, maxFiles: 100 });
+      const files = await context.workspace.listFiles({ recursive: true, maxFiles: 2000 });
       const matches: Array<{ path: string; line: number; preview: string }> = [];
       const lowerQuery = query.toLowerCase();
 
@@ -347,7 +345,7 @@ export const retrieveContextTool: IToolDefinition = {
     try {
       const query = String(args.query).trim();
       const maxChars = typeof args.maxChars === 'number' ? Math.min(Math.max(500, args.maxChars), 32_000) : 12_000;
-      const files = await context.workspace.listFiles({ recursive: true, maxFiles: 100 });
+      const files = await context.workspace.listFiles({ recursive: true, maxFiles: 2000 });
       const terms = query.toLowerCase().split(/\W+/).filter(t => t.length >= 2);
       const snippets: Array<{ path: string; startLine: number; endLine: number; score: number; excerpt: string }> = [];
       let usedChars = 0;
@@ -433,7 +431,7 @@ export const inspectDiagnosticsTool: IToolDefinition = {
           }
         }
       } else {
-        const listed = await context.workspace.listFiles({ recursive: true, maxFiles: 100 });
+        const listed = await context.workspace.listFiles({ recursive: true, maxFiles: 2000 });
         for (const f of listed) {
           if (f.type === 'file') {
             try {
@@ -509,7 +507,7 @@ export const inspectGitTool: IToolDefinition = {
         }
       }
 
-      const files = await context.workspace.listFiles({ recursive: true, maxFiles: 100 });
+      const files = await context.workspace.listFiles({ recursive: true, maxFiles: 2000 });
       return {
         toolName: 'inspect_git',
         success: true,
@@ -583,7 +581,9 @@ export const proposeChangesTool: IToolDefinition = {
   name: 'propose_changes',
   description: 'Proposes multi-file code modifications with unified diffs. Changes remain unapplied pending user approval.',
   parametersSchema: CANONICAL_TOOL_SCHEMAS.propose_changes,
-  requiresApproval: true,
+  // Note: Drafting a proposal in memory does not mutate files on disk. User approval
+  // is strictly required when applying the proposal via /api/composer/apply-proposal.
+  requiresApproval: false,
   async execute(args: any, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const start = Date.now();
     const validationError = validateToolArgs('propose_changes', args);
@@ -710,7 +710,11 @@ export const runCommandTool: IToolDefinition = {
     }
 
     if (context.allowedCommands && context.allowedCommands.length > 0) {
-      const allowed = context.allowedCommands.some(cmd => command.startsWith(cmd));
+      const allowed = context.allowedCommands.some(cmd => {
+        if (typeof cmd !== 'string') return false;
+        const trimmed = cmd.trim();
+        return trimmed.length > 0 && command.trim() === trimmed;
+      });
       if (!allowed) {
         return {
           toolName: 'run_command',
@@ -722,37 +726,86 @@ export const runCommandTool: IToolDefinition = {
       }
     }
 
-    try {
-      const execResult = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve, reject) => {
-        const proc = exec(command, { timeout: timeoutMs }, (error, stdout, stderr) => {
-          if (error && !stdout && !stderr) {
-            reject(error);
-          } else {
-            resolve({
-              stdout: sanitizeToolOutputText(stdout ? stdout.toString() : '').slice(0, 50_000),
-              stderr: sanitizeToolOutputText(stderr ? stderr.toString() : '').slice(0, 50_000),
-              exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
-            });
-          }
+    // 1. If a trusted desktop execution adapter or daemon IPC boundary is provided, execute through it
+    if (context.executionAdapter) {
+      try {
+        const adapterResult = await context.executionAdapter.runCommand(command, {
+          cwd: '.',
+          timeoutMs,
+          signal: context.signal,
         });
+        const success = adapterResult.exitCode === 0;
+        return {
+          toolName: 'run_command',
+          success,
+          data: {
+            command,
+            exitCode: adapterResult.exitCode,
+            stdout: sanitizeToolOutputText(adapterResult.stdout || '').slice(0, 50_000),
+            stderr: sanitizeToolOutputText(adapterResult.stderr || '').slice(0, 50_000),
+            durationMs: Date.now() - start,
+          },
+          error: !success ? (adapterResult.stderr || `Command failed with exit code ${adapterResult.exitCode}`) : undefined,
+          durationMs: Date.now() - start,
+          timestamp: start,
+        };
+      } catch (err: any) {
+        return {
+          toolName: 'run_command',
+          success: false,
+          error: err?.message || String(err),
+          durationMs: Date.now() - start,
+          timestamp: start,
+        };
+      }
+    }
 
-        if (context.signal) {
-          context.signal.addEventListener('abort', () => {
-            proc.kill();
-            reject(new Error('Command cancelled by user.'));
-          });
-        }
-      });
-
+    // 2. Otherwise enforce hosted fail-closed isolation: if Docker or local sandbox is not configured, reject
+    if (!projectProcessManager.available) {
       return {
         toolName: 'run_command',
-        success: execResult.exitCode === 0,
+        success: false,
+        error: 'Isolated project execution environment is not configured (Docker container or local sandbox disabled). Command execution refused for security.',
+        durationMs: Date.now() - start,
+        timestamp: start,
+      };
+    }
+
+    try {
+      // Gather current workspace files for isolated container mount/sandbox
+      const listedFiles = await context.workspace.listFiles({ recursive: true, maxFiles: 200 });
+      const files: Array<{ path: string; content?: string }> = [];
+      for (const f of listedFiles) {
+        if (f.type === 'file') {
+          try {
+            const content = await context.workspace.readFile(f.path);
+            files.push({ path: f.path, content });
+          } catch {}
+        }
+      }
+
+      const execResult = await projectProcessManager.execute({
+        ownerId: context.userId || 'system',
+        projectId: context.projectId || 'default',
+        command,
+        files,
+        timeoutMs,
+        signal: context.signal,
+      });
+
+      const success = execResult.status === 'succeeded' && (execResult.exitCode === 0 || execResult.exitCode === null);
+      return {
+        toolName: 'run_command',
+        success,
         data: {
           command,
-          exitCode: execResult.exitCode,
-          stdout: execResult.stdout,
-          stderr: execResult.stderr,
+          exitCode: execResult.exitCode ?? (execResult.status === 'succeeded' ? 0 : 1),
+          stdout: sanitizeToolOutputText(execResult.stdout || '').slice(0, 50_000),
+          stderr: sanitizeToolOutputText(execResult.stderr || '').slice(0, 50_000),
+          durationMs: execResult.durationMs,
+          status: execResult.status,
         },
+        error: execResult.error,
         durationMs: Date.now() - start,
         timestamp: start,
       };

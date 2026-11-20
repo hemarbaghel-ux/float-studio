@@ -28,9 +28,14 @@ import { milestone9Router } from './milestone9Router';
 import { brainRouter } from './brain';
 import { createAnalystRouter } from './analystRouter';
 import { createComposerRouter } from './composer/composerRouter';
+import { createFloatLogicRouter } from './floatLogicRouter';
+import { createExtensionGalleryRouter } from './extensions/extensionGalleryRouter';
+import { createByokRouter, createUserApiKeyMiddleware } from './byok/byokRouter';
 import { runTerminalSetupDoctor } from './terminal/terminalDoctor';
 import { defaultTabCoordinator } from '../services/completion/tabCompletionService';
+import { defaultFimEngine } from '../services/completion/fimCompletionEngine';
 import { defaultCloudAgentOrchestrator } from './cloudAgent/cloudAgentOrchestrator';
+import { redactSecretsInText } from '../services/git/secretScanner';
 
 function resolvePort(): number {
   // 1. Explicit CLI arguments: --port <number> or --port=<number>
@@ -93,6 +98,13 @@ export interface CreateAppOptions {
 }
 
 export async function createApp(options: CreateAppOptions = {}) {
+  // Production security invariant: reject unsafe desktop-development overrides in production
+  if (process.env.NODE_ENV === 'production' && process.env.FLOAT_DESKTOP_DEV === '1') {
+    throw new Error(
+      'UNSAFE_CONFIGURATION_DETECTED: FLOAT_DESKTOP_DEV=1 is strictly prohibited in production environments. Refusing to boot server.'
+    );
+  }
+
   const app = express();
   // All model-backed endpoints in one app instance share a single routing authority.
   const modelRouter = options.modelRouterOverride || new ModelRouter();
@@ -111,6 +123,9 @@ export async function createApp(options: CreateAppOptions = {}) {
 
   // Subscription & Checkout Routes
   app.use('/api/subscription', subscriptionRouter);
+
+  // User BYOK API Key Middleware (attaches user keys for execution)
+  app.use(createUserApiKeyMiddleware());
 
   // Data Analyst routes use the same registry/router as chat and agents.
   app.use('/api/analyst', createAnalystRouter(modelRouter));
@@ -163,36 +178,22 @@ export async function createApp(options: CreateAppOptions = {}) {
     res.json(runTerminalSetupDoctor(process.env));
   });
 
-  // Stage 7: Cloud / Background Multi-Agent Orchestrator Endpoints
-  app.post('/api/projects/:projectId/cloud-agent/runs', requireAuth, express.json(), async (req: any, res: any) => {
-    const { projectId } = req.params;
-    const userId = req.user.uid;
-    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
-    if (!ownership.allowed) {
-      return res.status(ownership.status).json({ error: ownership.error });
-    }
-    const { goal, subtasks = [], proposalsBySubtask } = req.body || {};
-    if (!goal || !Array.isArray(subtasks) || subtasks.length === 0) {
-      return res.status(400).json({ error: 'goal and non-empty subtasks array are required.' });
-    }
-    try {
-      const record = defaultCloudAgentOrchestrator.startRun({
-        userId,
-        projectId,
-        goal: String(goal),
-        subtasks,
-        proposalsBySubtask,
-      });
-      return res.status(record.status === 'conflict_blocked' ? 409 : 200).json(record);
-    } catch (err: any) {
-      return res.status(400).json({ error: err?.message || 'Failed to start cloud-agent run.' });
-    }
+  // Stage 7: Cloud / Background Multi-Agent Orchestrator Endpoints (Option B: Explicit fail-closed until async worker cluster is connected)
+  app.post('/api/projects/:projectId/cloud-agent/runs', requireAuth, express.json(), async (_req: any, res: any) => {
+    return res.status(503).json({
+      error: 'Cloud Agent autonomous execution pipeline is not configured in this environment. Background worker fleet dispatch requires an active Cloud Tasks / BullMQ worker cluster.',
+      code: 'CLOUD_AGENT_EXECUTION_NOT_CONFIGURED',
+      status: 'unavailable',
+    });
   });
 
   // Integrations Routes
   app.use('/api/integrations', integrationsRouter);
+  app.use('/api/extensions/gallery', createExtensionGalleryRouter());
+  app.use('/api/user', createByokRouter());
   app.use('/api/projects/:projectId/git', gitRouter);
   app.use('/api/projects/:projectId/composer', createComposerRouter(modelRouter));
+  app.use('/api/float/v1', createFloatLogicRouter());
   app.use('/api', milestone9Router);
   app.use('/api', brainRouter);
 
@@ -271,10 +272,22 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   // Model Intelligence & Availability Routes
-  app.get(['/api/ai/models', '/api/ai/models/'], (_req, res) => {
+  app.get(['/api/ai/models', '/api/ai/models/'], (req: any, res: any) => {
     try {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.json({ success: true, models: modelRouter.getModelCatalog(), timestamp: Date.now() });
+      const userConfiguredProviders: Record<string, boolean> = {};
+      if (req.userApiKeys) {
+        for (const [provider, key] of Object.entries(req.userApiKeys)) {
+          if (typeof key === 'string' && key.trim().length > 0) {
+            userConfiguredProviders[provider] = true;
+          }
+        }
+      }
+      res.json({
+        success: true,
+        models: modelRouter.getModelCatalog(userConfiguredProviders),
+        timestamp: Date.now()
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'Could not load model catalog.' });
     }
@@ -310,6 +323,20 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   // Privacy & Governance Disclosure Route
+  // Terminal Execution Policy endpoints
+  let currentTerminalExecutionPolicyMode: 'safe' | 'review' | 'allowlist' | 'manual' | 'sandboxed' = 'sandboxed';
+  app.get('/api/policy', requireAuth, (_req, res) => {
+    res.json({ mode: currentTerminalExecutionPolicyMode, permitted: true });
+  });
+  app.post('/api/policy', requireAuth, express.json(), (req: any, res: any) => {
+    const { mode } = req.body || {};
+    const validModes = ['safe', 'review', 'allowlist', 'manual', 'sandboxed'];
+    if (validModes.includes(mode)) {
+      currentTerminalExecutionPolicyMode = mode;
+    }
+    res.json({ success: true, mode: currentTerminalExecutionPolicyMode });
+  });
+
   app.get('/api/privacy/policy', (_req, res) => {
     const launchBlockerChecklist = {
       controllerAndContact: Boolean(process.env.FLOAT_PRIVACY_CONTROLLER_NAME && process.env.FLOAT_PRIVACY_CONTACT_EMAIL),
@@ -505,7 +532,8 @@ export async function createApp(options: CreateAppOptions = {}) {
             speed,
             dataSharingConsent: dataSharingAllowed,
             dataSharingAllowed,
-            demoMode: Boolean(req.body?.demoMode)
+            demoMode: Boolean(req.body?.demoMode),
+            userApiKeys: req.userApiKeys
           },
           (delta: string) => {
             if (!abortController.signal.aborted && !res.destroyed && !res.writableEnded) {
@@ -558,7 +586,8 @@ export async function createApp(options: CreateAppOptions = {}) {
         speed,
         dataSharingConsent: dataSharingAllowed,
         dataSharingAllowed,
-        demoMode: Boolean(req.body?.demoMode)
+        demoMode: Boolean(req.body?.demoMode),
+        userApiKeys: req.userApiKeys
       });
 
       res.json({ text: response.text, usage: response.usage, isSimulated: response.isSimulated });
@@ -602,7 +631,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     });
   });
 
-  // Fast inline ghost-text completion endpoint
+  // Fast inline ghost-text completion endpoint (Cursor Tab Parity)
   app.post('/api/ai/complete', requireAuth, express.json({ limit: '2mb' }), async (req: any, res: any) => {
     try {
       const {
@@ -610,48 +639,90 @@ export async function createApp(options: CreateAppOptions = {}) {
         suffix = '',
         language = 'plaintext',
         fileName = 'file',
-        model = 'gpt-6-astra'
+        model = 'gpt-4o-mini'
       } = req.body || {};
+
+      const policy = defaultTabCoordinator.getPolicy();
+      if (!policy.enabled || !defaultTabCoordinator.isAllowedForLanguage(language)) {
+        return res.json({ completion: '', disabled: true });
+      }
 
       if (!prefix && !suffix) {
         return res.json({ completion: '' });
       }
 
       // Bound context to fast local window
-      const boundedPrefix = String(prefix).slice(-2000);
-      const boundedSuffix = String(suffix).slice(0, 1000);
+      let boundedPrefix = String(prefix).slice(-4000);
+      let boundedSuffix = String(suffix).slice(0, 2000);
 
-      const prompt = `You are a high-speed code completion engine. Continue the code exactly where the cursor is located between <PREFIX> and <SUFFIX>.
-Output ONLY the code continuation to be inserted directly at the cursor. Do not output markdown, do not output backticks, and do not repeat the prefix or suffix.
+      // Server-side privacy mode redaction: scrub API keys, tokens, JWTs, and private keys
+      if (policy.privacyModeRedaction) {
+        boundedPrefix = redactSecretsInText(boundedPrefix);
+        boundedSuffix = redactSecretsInText(boundedSuffix);
+      }
 
-File: ${fileName} (${language})
-<PREFIX>
-${boundedPrefix}
-</PREFIX>
-<SUFFIX>
-${boundedSuffix}
-</SUFFIX>`;
+      const cacheKey = defaultTabCoordinator.buildCacheKey(fileName, language, boundedPrefix, boundedSuffix);
+      const cached = defaultTabCoordinator.getCached(cacheKey);
+      if (cached) {
+        return res.json({
+          completion: cached.completionText,
+          ...cached,
+        });
+      }
 
-      const result = await modelRouter.generateContent({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        speed: 'fast',
-        systemInstruction: "You are an inline code autocompletion engine. Output only the immediate completion code."
+      const fimResult = await defaultFimEngine.complete(
+        {
+          prefix: boundedPrefix,
+          suffix: boundedSuffix,
+          language,
+          fileName,
+          model,
+          userApiKeys: req.userApiKeys,
+        },
+        { modelRouter }
+      );
+
+      const completionText = fimResult.completion;
+      const latencyMs = fimResult.latencyMs;
+      const prediction = defaultTabCoordinator.recordCompletion(
+        cacheKey,
+        completionText,
+        fileName,
+        boundedSuffix,
+        latencyMs
+      );
+
+      res.json({
+        completion: completionText,
+        template: fimResult.template,
+        speculativeCacheHit: fimResult.speculativeCacheHit,
+        ...prediction,
       });
-
-      let completionText = result.text || '';
-      // Clean up markdown fences if the model emitted them accidentally
-      completionText = completionText.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '');
-
-      res.json({ completion: completionText });
     } catch (error: any) {
       const isCancelled = error?.name === 'AbortError' || /cancel/i.test(error?.message || '');
       if (isCancelled) {
+        defaultTabCoordinator.recordCancellation();
         return res.json({ completion: '', cancelled: true });
       }
       const statusCode = error?.statusCode || 500;
       res.status(statusCode).json({ error: error.message || 'Completion failed', code: error?.code || 'PROVIDER_ERROR' });
     }
+  });
+
+  // Autocomplete Telemetry & User Feedback endpoint
+  app.post('/api/ai/complete/feedback', requireAuth, express.json(), (req: any, res: any) => {
+    const { accepted, cancelled } = req.body || {};
+    if (cancelled) {
+      defaultTabCoordinator.recordCancellation();
+    } else if (typeof accepted === 'boolean') {
+      defaultTabCoordinator.recordAcceptance(accepted);
+    }
+    res.json({ success: true, metrics: defaultTabCoordinator.getMetrics() });
+  });
+
+  // Autocomplete Metrics endpoint
+  app.get('/api/ai/complete/metrics', requireAuth, (_req: any, res: any) => {
+    res.json(defaultTabCoordinator.getMetrics());
   });
 
   // Dedicated Inline AI Transformation endpoint (Ctrl+K / Cmd+K)

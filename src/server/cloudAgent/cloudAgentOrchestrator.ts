@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import { IProposal, IProposalFileChange, ProposalStatus } from '../../shared/contracts/proposals';
 import { validateSafeWorkspacePath } from '../../shared/contracts/workspace';
+import { WorktreeExecutionRunner, EphemeralWorktree, WorktreeCommitResult } from './worktreeExecutionRunner';
 
 export interface CloudAgentSubtaskSpec {
   readonly subtaskId: string;
@@ -30,8 +31,51 @@ export interface CloudAgentRunRecord {
   updatedAt: number;
 }
 
+export type CloudAgentRunStatus = CloudAgentRunRecord['status'];
+
 export class CloudAgentOrchestrator {
   private readonly runs = new Map<string, CloudAgentRunRecord>();
+  private worktreeRunner?: WorktreeExecutionRunner;
+
+  public setWorktreeRunner(runner: WorktreeExecutionRunner): void {
+    this.worktreeRunner = runner;
+  }
+
+  public getWorktreeRunner(): WorktreeExecutionRunner | undefined {
+    return this.worktreeRunner;
+  }
+
+  public async runSubtaskInWorktree<T>(
+    runId: string,
+    subtaskId: string,
+    taskFn: (worktree: EphemeralWorktree) => Promise<T>,
+    commitMessage?: string
+  ): Promise<{ result: T; commitResult?: WorktreeCommitResult; worktree?: EphemeralWorktree }> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      throw new Error(`Run ${runId} not found`);
+    }
+
+    if (!this.worktreeRunner) {
+      const dummyWorktree: EphemeralWorktree = {
+        worktreeId: run.worktreeId,
+        branchName: `float-agent/${run.runId}-${subtaskId}`,
+        worktreePath: '',
+        createdAt: Date.now(),
+      };
+      const result = await taskFn(dummyWorktree);
+      return { result, worktree: dummyWorktree };
+    }
+
+    return this.worktreeRunner.executeIsolatedTask(
+      {
+        runId,
+        subtaskId,
+        commitMessage,
+      },
+      taskFn
+    );
+  }
 
   /**
    * Detects overlapping file ownership across concurrent subtasks before execution
@@ -139,13 +183,24 @@ export class CloudAgentOrchestrator {
           }
         : undefined;
 
+    const isAuditOnly = params.subtasks.length > 0 && params.subtasks.every(st => st.role === 'reviewer');
+    const status: CloudAgentRunStatus = mergedProposal
+      ? 'proposal_ready'
+      : (params.proposalsBySubtask || isAuditOnly)
+        ? 'completed'
+        : 'queued';
+
+    if (status === 'queued') {
+      logs.push(`[${new Date(now).toISOString()}] Queued ${params.subtasks.length} subtask(s) for worker execution.`);
+    }
+
     const record: CloudAgentRunRecord = {
       runId,
       userId: params.userId,
       projectId: params.projectId,
       goal: params.goal,
       worktreeId,
-      status: mergedProposal ? 'proposal_ready' : 'completed',
+      status,
       subtasks: params.subtasks,
       fileOwnershipConflicts: [],
       logs,

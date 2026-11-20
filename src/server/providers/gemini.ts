@@ -94,13 +94,20 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
   id = 'google';
   name = 'Google Gemini';
 
-  isConfigured(): boolean {
-    const key = process.env.GEMINI_API_KEY;
-    return Boolean(key && key.trim().length > 0 && !key.includes('MY_GEMINI_API_KEY'));
+  resolveApiKey(apiKeyOverride?: string): string | undefined {
+    if (apiKeyOverride && apiKeyOverride.trim().length > 0) {
+      return apiKeyOverride.trim();
+    }
+    const key = process.env.GEMINI_API_KEY?.trim();
+    return key && key.length > 0 && !key.includes('MY_GEMINI_API_KEY') ? key : undefined;
   }
 
-  async checkHealth(): Promise<ProviderHealthCheckResult> {
-    if (!this.isConfigured()) {
+  isConfigured(apiKeyOverride?: string): boolean {
+    return Boolean(this.resolveApiKey(apiKeyOverride));
+  }
+
+  async checkHealth(apiKeyOverride?: string): Promise<ProviderHealthCheckResult> {
+    if (!this.isConfigured(apiKeyOverride)) {
       return {
         provider: 'Google Gemini',
         configured: false,
@@ -172,9 +179,10 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
   }
 
   async generateContent(request: AIProviderRequest): Promise<AIProviderResponse> {
-    if (!this.isConfigured()) {
+    const effectiveKey = this.resolveApiKey(request.apiKeyOverride);
+    if (!effectiveKey) {
       throw new AIProviderError(
-        'GEMINI_API_KEY is not configured on the FLOAT server.',
+        'GEMINI_API_KEY is not configured on the FLOAT server. Provide a key or configure in Settings -> Models.',
         'AUTH_ERROR',
         'Google Gemini',
         401
@@ -182,7 +190,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
+      const ai = new GoogleGenAI({ apiKey: effectiveKey, httpOptions: { timeout: 120_000 } });
       const contents = this.normalizeMessages(request.messages);
       const apiModel = this.resolveApiModel(request.apiModelId || request.model);
 
@@ -217,9 +225,10 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<AIProviderResponse> {
-    if (!this.isConfigured()) {
+    const effectiveKey = this.resolveApiKey(request.apiKeyOverride);
+    if (!effectiveKey) {
       throw new AIProviderError(
-        'GEMINI_API_KEY is not configured on the FLOAT server.',
+        'GEMINI_API_KEY is not configured on the FLOAT server. Provide a key or configure in Settings -> Models.',
         'AUTH_ERROR',
         'Google Gemini',
         401
@@ -235,7 +244,7 @@ export class GoogleGeminiAdapter implements AIProviderAdapter {
     const toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> = [];
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!, httpOptions: { timeout: 120_000 } });
+      const ai = new GoogleGenAI({ apiKey: effectiveKey, httpOptions: { timeout: 120_000 } });
       const contents = this.normalizeMessages(request.messages);
       const apiModel = this.resolveApiModel(request.apiModelId || request.model);
 

@@ -26,6 +26,8 @@ import assert from 'assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { exec } from 'node:child_process';
+import { ICommandExecutionAdapter } from '../src/shared/contracts/tools';
 import { LocalFileSystemWorkspaceService } from '../src/services/indexing/localWorkspaceService';
 import { WorkspaceIndex } from '../src/services/indexing/workspaceIndex';
 import { ContextBuilder } from '../src/server/contextBuilder';
@@ -275,11 +277,26 @@ async function runEndToEndCursorWorkflow() {
     const policy = TerminalExecutionPolicy.evaluateCommand(testCmd);
     assert.strictEqual(policy.permitted, true);
 
+    const localAdapter: ICommandExecutionAdapter = {
+      async runCommand(command: string) {
+        return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+          exec(command, { cwd: tempDir }, (error, stdout, stderr) => {
+            resolve({
+              exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
+              stdout: stdout?.toString() || '',
+              stderr: stderr?.toString() || (error ? error.message : ''),
+            });
+          });
+        });
+      }
+    };
+
     const runCommandTool = toolRegistry.get('run_command')!;
     const outcome = await runCommandTool.execute({ command: testCmd }, {
       workspace: workspace!,
       userId: 'user-engineer',
       projectId: 'proj-e2e',
+      executionAdapter: localAdapter,
     });
     assert.strictEqual(outcome.success, true);
     assert.ok(outcome.data?.stdout?.includes('Tests passed successfully'));

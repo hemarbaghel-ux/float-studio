@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import crypto from 'crypto';
+import path from 'node:path';
 import express, { Request, Response, Router } from 'express';
 import { requireAuth } from '../authMiddleware';
 import { verifyProjectOwnership } from '../projectOwnership';
@@ -15,6 +16,9 @@ import {
   ComposerProgressEvent,
 } from '../../services/composer/composerAgent';
 import { createStandardToolRegistry } from '../../services/composer/canonicalTools';
+import { defaultToolApprovalService } from './toolApprovalService';
+import { registerBridgedMCPTool } from '../../services/composer/mcpToolBridge';
+import { MCPService } from '../mcp/mcpService';
 import { WorkspaceCheckpointManager } from '../../services/composer/checkpointManager';
 import { applyProposal, rejectProposal, rollbackProposal } from '../../services/composer/proposalApplier';
 import {
@@ -31,6 +35,7 @@ import { WorkspaceIndex } from '../../services/indexing/workspaceIndex';
 import { RulesService } from '../rules/rulesService';
 import { SkillsService } from '../skills/skillsService';
 import { LocalFileSystemWorkspaceService } from '../../services/indexing/localWorkspaceService';
+import { ToolExecutionContext } from '../../shared/contracts/tools';
 
 const DEFAULT_VIRTUAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
@@ -206,7 +211,7 @@ export interface StoredComposerTask {
   readonly task: string;
   readonly mode: ComposerMode;
   readonly modelId: string;
-  status: 'running' | 'completed' | 'plan_ready' | 'proposal_ready' | 'verified' | 'cancelled' | 'budget_exceeded' | 'error';
+  status: 'running' | 'completed' | 'plan_ready' | 'proposal_ready' | 'verified' | 'cancelled' | 'budget_exceeded' | 'error' | 'approval_required';
   readonly createdAt: number;
   updatedAt: number;
   readonly events: ComposerProgressEvent[];
@@ -257,7 +262,6 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       maxIterations,
       timeoutMs,
       maxTokens,
-      allowedCommands,
       autoApplyApprovedProposal = false,
       verificationCommand,
       repairOnVerificationFailure = true,
@@ -303,31 +307,104 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       }
     }
 
-    // Resolve workspace (local filesystem in desktop/test when explicitly provided and exists, else virtual project workspace)
+    // Resolve workspace (local filesystem ONLY in authenticated desktop dev mode when explicitly requested)
     let workspace: IWorkspaceService;
+    let desktopExecutionAdapter: import('../../shared/contracts/tools').ICommandExecutionAdapter | undefined;
     if (typeof localWorkspacePath === 'string' && localWorkspacePath.trim()) {
+      if (process.env.NODE_ENV === 'production' || process.env.FLOAT_DESKTOP_DEV !== '1') {
+        return res.status(403).json({
+          error: 'Arbitrary localWorkspacePath is forbidden in hosted environment. Projects must use server-managed project storage.',
+          code: 'FORBIDDEN_LOCAL_WORKSPACE_PATH',
+        });
+      }
       const localWs = new LocalFileSystemWorkspaceService(localWorkspacePath.trim());
       await localWs.initializeIndex();
       workspace = localWs;
+      const validatedRoot = path.resolve(localWorkspacePath.trim());
+      desktopExecutionAdapter = {
+        async runCommand(command: string, options?: { cwd?: string; timeoutMs?: number; signal?: AbortSignal }) {
+          const { exec } = await import('node:child_process');
+          return new Promise((resolve) => {
+            const proc = exec(command, { cwd: validatedRoot, timeout: options?.timeoutMs }, (error, stdout, stderr) => {
+              if (options?.signal?.aborted) {
+                resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
+              } else {
+                resolve({
+                  exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
+                  stdout: stdout?.toString() || '',
+                  stderr: stderr?.toString() || (error ? error.message : ''),
+                });
+              }
+            });
+            if (options?.signal) {
+              options.signal.addEventListener('abort', () => {
+                proc.kill();
+                resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
+              });
+            }
+          });
+        }
+      };
     } else {
       let initialFiles: Array<{ path?: string; name?: string; content?: string }> = Array.isArray(files)
         ? (files as Array<{ path?: string; name?: string; content?: string }>)
         : [];
-      if (initialFiles.length === 0 && ownership.projectData?.files) {
+      if (initialFiles.length === 0 && ownership.projectData) {
         try {
-          const parsed = typeof ownership.projectData.files === 'string'
-            ? JSON.parse(ownership.projectData.files)
-            : ownership.projectData.files;
-          if (Array.isArray(parsed)) {
-            initialFiles = parsed as Array<{ path?: string; name?: string; content?: string }>;
-          }
-        } catch {}
+          const { loadProjectFileTreeAdmin } = await import('../projectContent');
+          const tree = await loadProjectFileTreeAdmin(projectId, ownership.projectData as Record<string, unknown>);
+          const flatten = (nodes: any[], prefix = ''): Array<{ path: string; content: string }> => {
+            const out: Array<{ path: string; content: string }> = [];
+            for (const n of nodes) {
+              const currentPath = prefix ? `${prefix}/${n.name}` : n.name;
+              if (n.type === 'file') {
+                out.push({ path: currentPath, content: n.content || '' });
+              } else if (n.type === 'folder' && Array.isArray(n.children)) {
+                out.push(...flatten(n.children, currentPath));
+              }
+            }
+            return out;
+          };
+          initialFiles = flatten(tree);
+        } catch {
+          try {
+            const parsed = typeof ownership.projectData.files === 'string'
+              ? JSON.parse(ownership.projectData.files)
+              : ownership.projectData.files;
+            if (Array.isArray(parsed)) {
+              initialFiles = parsed as Array<{ path?: string; name?: string; content?: string }>;
+            }
+          } catch {}
+        }
       }
       workspace = new VirtualProjectWorkspaceService(projectId, initialFiles);
     }
 
     const checkpointManager = new WorkspaceCheckpointManager(workspace);
     const toolRegistry = createStandardToolRegistry();
+
+    // Register active bridged MCP tools into Composer's canonical registry
+    try {
+      const activeServers = MCPService.listServers(true, userId, projectId).filter(s => s.enabled);
+      for (const srv of activeServers) {
+        const tools = MCPService.getDiscoveredTools(srv.id, userId, projectId).filter(t => t.isAllowed);
+        for (const t of tools) {
+          try {
+            registerBridgedMCPTool(toolRegistry, {
+              server: srv,
+              tool: t,
+              invokeHandler: async (sId, tName, tArgs) => {
+                return await MCPService.executeTool(sId, tName, tArgs, { userId, projectId, userApproved: true });
+              }
+            });
+          } catch {
+            // Already registered or schema error
+          }
+        }
+      }
+    } catch (mcpErr) {
+      console.warn('[Composer] MCP tool registration skipped:', mcpErr);
+    }
 
     const ruleFiles: Array<{ path: string; content: string }> = Array.isArray(files)
       ? (files as Array<{ path?: string; name?: string; content?: string }>).map(f => ({
@@ -386,6 +463,28 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       });
     }
 
+    const SERVER_CONTROLLED_VERIFICATION_ALLOWLIST = new Set([
+      'npm test',
+      'npm run test',
+      'npm run lint',
+      'npm run build',
+      'npx vitest run',
+      'cargo test',
+      'go test ./...',
+      'pytest',
+      'python -m unittest',
+    ]);
+
+    const serverAllowedCommands: string[] = [];
+    if (typeof verificationCommand === 'string' && verificationCommand.trim()) {
+      const trimmedVerify = verificationCommand.trim();
+      const isServerAllowlisted = SERVER_CONTROLLED_VERIFICATION_ALLOWLIST.has(trimmedVerify);
+      const isDesktopDev = process.env.NODE_ENV !== 'production' && process.env.FLOAT_DESKTOP_DEV === '1';
+      if (isServerAllowlisted || isDesktopDev) {
+        serverAllowedCommands.push(trimmedVerify);
+      }
+    }
+
     const agent = new ComposerAgent(modelRouter, toolRegistry, workspace, checkpointManager);
 
     const execResult = await agent.run({
@@ -399,16 +498,30 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : undefined,
       maxTokens: typeof maxTokens === 'number' ? maxTokens : undefined,
       signal: abortController.signal,
-      allowedCommands: Array.isArray(allowedCommands) ? allowedCommands.map(String) : undefined,
+      allowedCommands: serverAllowedCommands.length > 0 ? serverAllowedCommands : undefined,
       autoApplyApprovedProposal: Boolean(autoApplyApprovedProposal),
       verificationCommand: typeof verificationCommand === 'string' ? verificationCommand : undefined,
       repairOnVerificationFailure: repairOnVerificationFailure !== false,
       activeRulesInstruction: activeRulesInstruction || undefined,
+      executionAdapter: desktopExecutionAdapter,
+      userApiKeys: (req as any).userApiKeys,
       onProgress: (event: ComposerProgressEvent) => {
         storedTask.events.push(event);
         storedTask.updatedAt = Date.now();
         if (isSse && !res.writableEnded) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
+        }
+        if (event.type === 'approval_requested' && event.actionId) {
+          defaultToolApprovalService.registerRequest({
+            actionId: event.actionId,
+            toolName: String(event.toolName || 'run_command'),
+            params: event.params || {},
+            userId,
+            projectId,
+            reason: event.reason,
+          }).catch(regErr => {
+            console.warn('[Composer] Auto-registration of approval request skipped:', regErr);
+          });
         }
       },
     });
@@ -450,6 +563,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
             activeRules: storedTask.activeRules,
             activeSkills: storedTask.activeSkills,
             text: execResult.finalResponse || '',
+            pendingApproval: execResult.pendingApproval,
           })}\n\n`
         );
         res.end();
@@ -459,15 +573,14 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
 
     return res.json({
       taskId,
-      status: execResult.status,
-      mode: effectiveMode,
-      modelId: selectedModel,
-      events: storedTask.events,
+      status: storedTask.status,
+      mode: storedTask.mode,
+      modelId: storedTask.modelId,
       result: execResult,
       proposal: storedTask.proposal,
       checkpointId: storedTask.checkpointId,
-      activeRules: storedTask.activeRules,
-      activeSkills: storedTask.activeSkills,
+      events: storedTask.events,
+      pendingApproval: execResult.pendingApproval,
     });
   });
 
@@ -524,6 +637,103 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
     storedTask.status = 'cancelled';
     storedTask.updatedAt = Date.now();
     return res.json({ cancelled: true, taskId, status: storedTask.status });
+  });
+
+  // 3b. Resume a Paused Composer Task with User Tool Approval or Rejection (Phase 1.1 UI Connectivity)
+  router.post('/tasks/:taskId/resume', requireAuth, express.json(), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const taskId = String(req.params.taskId || '');
+    const userId = String(req.user?.uid || '');
+
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const storedTask = tasksById.get(taskId);
+    if (!storedTask || storedTask.projectId !== projectId) {
+      return res.status(404).json({ error: `Composer task "${taskId}" not found.` });
+    }
+    if (storedTask.ownerId !== userId) {
+      return res.status(403).json({ error: 'Permission denied for this Composer task.' });
+    }
+
+    if (storedTask.status !== 'approval_required') {
+      return res.status(400).json({
+        error: `Cannot resume task in "${storedTask.status}" state. Only tasks in "approval_required" status can be resumed.`,
+      });
+    }
+
+    const { actionId, approved = true, approvalToken } = req.body || {};
+    if (!actionId) {
+      return res.status(400).json({ error: 'actionId is required to resume task.' });
+    }
+
+    if (approved && !approvalToken) {
+      return res.status(400).json({ error: 'approvalToken is required when approving execution.' });
+    }
+
+    const pending = storedTask.result?.pendingApproval;
+    const toolName = pending?.toolName || 'run_command';
+    const params = pending?.params || {};
+
+    if (approved) {
+      const toolRegistry = createStandardToolRegistry();
+      const execContext: ToolExecutionContext = {
+        workspace: storedTask.workspace,
+        userId,
+        projectId,
+        approvalSecret: process.env.FLOAT_APPROVAL_SECRET,
+        nonceStore: defaultToolApprovalService.getNonceStore(),
+        actionId: String(actionId),
+        approvalToken: String(approvalToken),
+      };
+
+      const outcome = await toolRegistry.execute(toolName, params, execContext);
+
+      storedTask.events.push({
+        type: 'tool_result',
+        toolName,
+        success: outcome.success,
+        data: outcome.data,
+        error: outcome.error,
+        timestamp: Date.now(),
+      });
+
+      if (outcome.success) {
+        storedTask.status = 'completed';
+        storedTask.updatedAt = Date.now();
+        return res.json({
+          success: true,
+          status: 'completed',
+          taskId,
+          outcome,
+        });
+      } else {
+        storedTask.status = 'error';
+        storedTask.updatedAt = Date.now();
+        return res.status(400).json({
+          success: false,
+          status: 'error',
+          taskId,
+          error: outcome.error || 'Execution failed',
+        });
+      }
+    } else {
+      storedTask.status = 'cancelled';
+      storedTask.events.push({
+        type: 'cancelled',
+        reason: 'User rejected tool execution approval',
+        timestamp: Date.now(),
+      });
+      storedTask.updatedAt = Date.now();
+      return res.json({
+        success: true,
+        status: 'cancelled',
+        taskId,
+        message: 'Tool execution rejected by user.',
+      });
+    }
   });
 
   // 4. Apply Proposal with Automatic Pre-Apply Checkpoint & Conflict Detection
@@ -643,6 +853,137 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       ...restoreResult,
       restoredWorkspaceFiles: restoredFiles,
     });
+  });
+
+  // 7. Request human approval for privileged operation (Phase 1.1 Task 3)
+  router.post('/approvals/request', requireAuth, express.json(), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const { actionId, toolName, params, reason, target, ttlMs } = req.body || {};
+    if (!toolName) {
+      return res.status(400).json({ error: 'toolName is required.' });
+    }
+
+    const pending = await defaultToolApprovalService.registerRequest({
+      actionId,
+      toolName: String(toolName),
+      params: params || {},
+      userId,
+      projectId,
+      reason: reason ? String(reason) : undefined,
+      target: target ? String(target) : undefined,
+      ttlMs: typeof ttlMs === 'number' ? ttlMs : undefined,
+    });
+
+    return res.status(201).json({
+      success: true,
+      request: pending,
+    });
+  });
+
+  // 8. Explicit User Confirmation / Rejection of Approval Request (Phase 1.1 Task 3)
+  router.post('/approvals/confirm', requireAuth, express.json(), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const { actionId, approved } = req.body || {};
+    if (!actionId || typeof approved !== 'boolean') {
+      return res.status(400).json({ error: 'actionId and approved (boolean) are required.' });
+    }
+
+    const outcome = await defaultToolApprovalService.confirmRequest(String(actionId), approved, userId, projectId);
+    if (!outcome.success) {
+      return res.status(400).json({ error: outcome.error });
+    }
+
+    return res.json({
+      success: true,
+      actionId,
+      approved: outcome.approved,
+      approvalToken: outcome.approvalToken,
+    });
+  });
+
+  // 9. Inspect Approval Request State
+  router.get('/approvals/:actionId', requireAuth, async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
+    const actionId = String(req.params.actionId || '');
+
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const request = await defaultToolApprovalService.getRequest(actionId);
+    if (!request || request.projectId !== projectId) {
+      return res.status(404).json({ error: `Approval request "${actionId}" not found.` });
+    }
+
+    return res.json({ success: true, request });
+  });
+
+  // 10. Execute Privileged Canonical Tool with Approval Token (Phase 1.1 Task 3)
+  router.post('/tools/execute', requireAuth, express.json({ limit: '10mb' }), async (req: AuthenticatedComposerRequest, res: Response) => {
+    const projectId = String(req.params.projectId || '');
+    const userId = String(req.user?.uid || '');
+    const ownership = await verifyProjectOwnership(projectId, userId, { allowMissing: true });
+    if (!ownership.allowed) {
+      return res.status(ownership.status || 403).json({ error: ownership.error || 'Unauthorized' });
+    }
+
+    const { actionId, toolName, params, approvalToken } = req.body || {};
+    if (!toolName) {
+      return res.status(400).json({ error: 'toolName is required.' });
+    }
+
+    const toolRegistry = createStandardToolRegistry();
+    const tool = toolRegistry.get(String(toolName));
+    if (!tool) {
+      return res.status(404).json({ error: `Tool "${toolName}" is not registered in CanonicalToolRegistry.` });
+    }
+
+    // If tool requires approval, check presence of token before delegating to registry
+    if (tool.requiresApproval && toolName !== 'request_approval') {
+      if (!approvalToken) {
+        return res.status(403).json({
+          error: `Tool "${toolName}" requires explicit user approval. Provide a valid approvalToken.`,
+          requiresApproval: true,
+        });
+      }
+    }
+
+    // Resolve workspace for tool execution
+    // CanonicalToolRegistry.execute is the single authoritative token verification and nonce consumption boundary
+    const workspace = new VirtualProjectWorkspaceService(projectId);
+    const result = await toolRegistry.execute(String(toolName), params || {}, {
+      workspace,
+      userId,
+      projectId,
+      actionId: actionId ? String(actionId) : undefined,
+      approvalToken: approvalToken ? String(approvalToken) : undefined,
+      approvalSecret: defaultToolApprovalService.getSecret(),
+      nonceStore: defaultToolApprovalService.getNonceStore(),
+    });
+
+    if (result.requiresApproval || (!result.success && result.error && /approval/i.test(result.error))) {
+      return res.status(403).json(result);
+    }
+
+    if (result.success && actionId) {
+      await defaultToolApprovalService.markConsumed(String(actionId), userId, projectId);
+    }
+
+    return res.json(result);
   });
 
   return router;

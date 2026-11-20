@@ -24,9 +24,11 @@ import {
 } from '../src/server/terminal/terminalService';
 import { runCommandTool } from '../src/services/composer/canonicalTools';
 import { LocalFileSystemWorkspaceService } from '../src/services/indexing/localWorkspaceService';
+import { ICommandExecutionAdapter } from '../src/shared/contracts/tools';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
+import { exec } from 'node:child_process';
 
 let passed = 0;
 let failed = 0;
@@ -181,11 +183,36 @@ async function run() {
   const tempWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'float-phase7-term-'));
   const wsService = new LocalFileSystemWorkspaceService(tempWorkspace);
 
+  const localAdapter: ICommandExecutionAdapter = {
+    async runCommand(command: string, options?: { cwd?: string; timeoutMs?: number; signal?: AbortSignal }) {
+      return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+        const proc = exec(command, { cwd: tempWorkspace, timeout: options?.timeoutMs }, (error, stdout, stderr) => {
+          if (options?.signal?.aborted) {
+            resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
+          } else {
+            resolve({
+              exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
+              stdout: stdout?.toString() || '',
+              stderr: stderr?.toString() || (error ? error.message : ''),
+            });
+          }
+        });
+        if (options?.signal) {
+          options.signal.addEventListener('abort', () => {
+            proc.kill();
+            resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
+          });
+        }
+      });
+    }
+  };
+
   await check('run_command executes and returns stdout and exit code 0', async () => {
     const outcome = await runCommandTool.execute({ command: 'node -e "console.log(\'FLOAT_EXEC_OK\')"' }, {
       workspace: wsService,
       userId: 'user-1',
       projectId: 'proj-1',
+      executionAdapter: localAdapter,
     });
     if (!outcome.success) throw new Error(`Command failed: ${outcome.error}`);
     if (!outcome.data?.stdout?.includes('FLOAT_EXEC_OK')) {
@@ -206,6 +233,7 @@ async function run() {
       userId: 'user-1',
       projectId: 'proj-1',
       signal: abortController.signal,
+      executionAdapter: localAdapter,
     });
 
     if (outcome.success) {
