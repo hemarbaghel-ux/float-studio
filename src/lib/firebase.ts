@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, GithubAuthProvider, OAuthProvider, EmailAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, GithubAuthProvider, OAuthProvider } from 'firebase/auth';
 import { initializeFirestore, setLogLevel } from 'firebase/firestore';
+import { getAnalytics, isSupported } from 'firebase/analytics';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Silence Firestore internal RPC transport and idle stream debug logs
@@ -28,12 +29,24 @@ if (typeof window !== 'undefined') {
 
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with autoDetectLongPolling for reliable iframe and web proxy connectivity
-export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId);
+// Initialize Firestore with autoDetectLongPolling for reliable iframe and web proxy connectivity.
+// Connects to default database if firestoreDatabaseId is '(default)' or omitted, or a named database if configured.
+const firestoreDbId = (firebaseConfig as any).firestoreDatabaseId;
+export const db = (firestoreDbId && firestoreDbId !== '(default)')
+  ? initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, firestoreDbId)
+  : initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
 
 export const auth = getAuth(app);
+
+// Initialize Firebase Analytics safely when running in a browser environment with analytics support
+export let analytics: any = null;
+if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
+  isSupported().then((supported) => {
+    if (supported) {
+      analytics = getAnalytics(app);
+    }
+  }).catch(() => {});
+}
 
 export const googleProvider = new GoogleAuthProvider();
 export const githubProvider = new GithubAuthProvider();
