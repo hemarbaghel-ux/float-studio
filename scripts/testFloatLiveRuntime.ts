@@ -115,7 +115,7 @@ async function runRuntimeSafetyVerification() {
   }
 }
 
-runLiveVerification().catch((err) => {
+runRuntimeSafetyVerification().catch((err) => {
   console.error('[FAIL] Runtime safety verification failed:', err);
   process.exit(1);
 });
