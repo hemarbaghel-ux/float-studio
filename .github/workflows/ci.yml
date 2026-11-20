@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, feat/float-phase-0-runtime-safety-gate]
   pull_request:
     branches: [main, master, float/phase-1.1-security-closure]
 
