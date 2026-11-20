@@ -17,6 +17,7 @@ import { clearComposerTaskStoreForTests } from '../src/server/composer/composerR
 import { CANONICAL_FLOAT_MODELS } from '../src/shared/contracts/models';
 import { VERIFIED_MODELS } from '../src/data/verifiedModels';
 import { getPublicModelCatalog } from '../src/server/providers/modelRegistry';
+import { defaultDesktopWorkspaceCapabilityService } from '../src/server/workspace/desktopWorkspaceCapabilityService';
 
 let passed = 0;
 
@@ -319,13 +320,34 @@ async function runTests() {
 
       const verifyScript = `node -e "const fs = require('fs'); const c = fs.readFileSync('${path.join(tempDir, 'src/math.ts').replace(/\\/g, '/')}', 'utf8'); if (!c.includes('a * b')) { console.error('FAIL: expected a * b'); process.exit(1); } console.log('PASS');"`;
 
+      // P0 Assertion: verify that arbitrary caller-supplied localWorkspacePath is rejected
+      const rejectedRes = await fetch(`${baseUrl}/api/projects/proj_alice_composer/composer/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aliceToken}` },
+        body: JSON.stringify({
+          task: 'Try host path access',
+          mode: 'debug',
+          localWorkspacePath: tempDir,
+        }),
+      });
+      check(rejectedRes.status === 403, 'Arbitrary localWorkspacePath in request body is rejected with HTTP 403');
+      const rejectedBody: any = await rejectedRes.json();
+      check(rejectedBody.code === 'FORBIDDEN_LOCAL_WORKSPACE_PATH', 'Rejection returns code FORBIDDEN_LOCAL_WORKSPACE_PATH');
+
+      // Register authorized desktop capability token
+      const capability = defaultDesktopWorkspaceCapabilityService.registerCapability({
+        userId: 'user_alice',
+        projectId: 'proj_alice_composer',
+        workspaceRoot: tempDir,
+      });
+
       const repairRes = await fetch(`${baseUrl}/api/projects/proj_alice_composer/composer/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aliceToken}` },
         body: JSON.stringify({
           task: 'Implement multiply (trigger_broken_patch first, then repair)',
           mode: 'debug',
-          localWorkspacePath: tempDir,
+          workspaceCapabilityToken: capability.capabilityToken,
           autoApplyApprovedProposal: true,
           verificationCommand: verifyScript,
           allowedCommands: ['node -e'],
