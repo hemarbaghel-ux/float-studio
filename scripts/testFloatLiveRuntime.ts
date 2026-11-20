@@ -1,7 +1,7 @@
 /**
- * FLOAT Studio — Live Production Runtime Verification
+ * FLOAT Studio — Runtime Safety Smoke Test
  * 
- * Boots the built production Express server (dist/server.cjs) and tests real HTTP endpoints:
+ * Boots the Express server in NODE_ENV=test and checks real HTTP route behavior:
  * 1. GET /api/health
  * 2. GET /api/terminal/doctor
  * 3. Verify unscoped experimental FloatEngine endpoints are not exposed
@@ -15,8 +15,8 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const firebaseConfig = require('../firebase-applet-config.json');
 
-async function runLiveVerification() {
-  console.log('=== FLOAT AI STUDIO: LIVE PRODUCTION RUNTIME VERIFICATION ===\n');
+async function runRuntimeSafetyVerification() {
+  console.log('=== FLOAT AI STUDIO: RUNTIME SAFETY SMOKE TEST (TEST MODE) ===\n');
 
   process.env.NODE_ENV = 'test';
   process.env.FLOAT_APPROVAL_SECRET = 'test_float_approval_secret_entropy_64_bytes_secure_signature!';
@@ -116,6 +116,6 @@ async function runLiveVerification() {
 }
 
 runLiveVerification().catch((err) => {
-  console.error('[FAIL] Live runtime verification failed:', err);
+  console.error('[FAIL] Runtime safety verification failed:', err);
   process.exit(1);
 });
