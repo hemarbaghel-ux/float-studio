@@ -4,10 +4,7 @@
  * Boots the built production Express server (dist/server.cjs) and tests real HTTP endpoints:
  * 1. GET /api/health
  * 2. GET /api/terminal/doctor
- * 3. GET /api/float/v1/workspace/tree
- * 4. POST /api/float/v1/editor/autocomplete (Cursor Tab)
- * 5. POST /api/float/v1/editor/inline-edit (Ctrl+K)
- * 6. Direct FloatEngine: FIM Tab Completion, Context Resolution, Autonomous Task Execution
+ * 3. Verify unscoped experimental FloatEngine endpoints are not exposed
  */
 
 import http from 'http';
@@ -82,75 +79,36 @@ async function runLiveVerification() {
     assert.ok(typeof doctorJson.ready === 'boolean', 'Doctor must report boolean ready state');
     console.log('[PASS] 2. GET /api/terminal/doctor -> 200 OK (structured isolation checklist)');
 
-    // 3. Float Logic Workspace Tree (authenticated)
-    const treeRes = await fetch(`${baseUrl}/api/float/v1/workspace/tree`, { headers: authHeaders });
-    assert.strictEqual(treeRes.status, 200, 'GET /api/float/v1/workspace/tree must return 200');
-    const treeJson: any = await treeRes.json();
-    assert.ok(treeJson.success, 'Tree response must be successful');
-    console.log('[PASS] 3. GET /api/float/v1/workspace/tree -> 200 OK (returned file tree)');
+    // The experimental FloatEngine router must remain inaccessible until its
+    // workspace is project-scoped and terminal execution uses the real sandbox.
+    const gatedEndpoints: Array<{ method: 'GET' | 'POST'; route: string; body?: unknown }> = [
+      { method: 'GET', route: '/api/float/v1/workspace/tree' },
+      { method: 'GET', route: '/api/float/v1/workspace/files?path=README.md' },
+      { method: 'POST', route: '/api/float/v1/composer/plan', body: { projectId: 'project-alice', prompt: 'Inspect this project' } },
+      { method: 'POST', route: '/api/float/v1/editor/autocomplete', body: { filePath: 'src/math.ts', prefix: 'const x = ', suffix: '' } },
+      { method: 'POST', route: '/api/float/v1/editor/inline-edit', body: { filePath: 'src/math.ts', originalCode: 'const x = 1;', instruction: 'Rename x' } },
+      { method: 'POST', route: '/api/float/v1/gateway/execute', body: { model: 'gpt-4o-mini', prompt: 'Test' } },
+      { method: 'POST', route: '/api/float/v1/terminal/execute', body: { projectId: 'project-alice', command: 'npm test' } }
+    ];
 
-    // 4. Float Logic Autocomplete (Cursor Tab)
-    const tabRes = await fetch(`${baseUrl}/api/float/v1/editor/autocomplete`, {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({
-        filePath: 'src/math.ts',
-        prefix: 'function add(a: number, b: number): number {',
-        suffix: ''
-      })
-    });
-    assert.strictEqual(tabRes.status, 200, 'POST /api/float/v1/editor/autocomplete must return 200');
-    const tabJson: any = await tabRes.json();
-    assert.ok(tabJson.success, 'Tab response must be successful');
-    assert.ok(tabJson.completion.completion.includes('return a + b;'), 'Tab completion must generate body');
-    console.log('[PASS] 4. POST /api/float/v1/editor/autocomplete -> 200 OK (Cursor Tab FIM completion served)');
-
-    // 5. Float Logic Inline Edit (Ctrl+K)
-    const inlineRes = await fetch(`${baseUrl}/api/float/v1/editor/inline-edit`, {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({
-        filePath: 'src/calc.ts',
-        originalCode: 'function calc() { return 1; }',
-        instruction: 'Add docstring comment'
-      })
-    });
-    assert.strictEqual(inlineRes.status, 200, 'POST /api/float/v1/editor/inline-edit must return 200');
-    const inlineJson: any = await inlineRes.json();
-    assert.ok(inlineJson.success, 'Inline edit response must be successful');
-    assert.strictEqual(inlineJson.result.hunks.length, 1, 'Inline edit must return 1 hunk');
-    console.log('[PASS] 5. POST /api/float/v1/editor/inline-edit -> 200 OK (Ctrl+K inline diff generated)');
-
-    // 6. Direct FloatEngine Subsystem In-Memory Checks
-    const { FloatEngine } = await import('../src/core/float/index.js');
-    const os = await import('os');
-    const path = await import('path');
-    const tempDir = path.join(os.tmpdir(), `float_live_test_${Date.now()}`);
-    const engine = new FloatEngine({
-      workspaceRoot: tempDir,
-      approvalSecret: 'test_float_approval_secret_entropy_64_bytes_secure_signature!',
-      byokEncryptionKey: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-    });
-
-    // Test context resolution
-    await engine.workspace.writeFile('src/app.ts', 'export const APP_NAME = "Float Studio";');
-    engine.intelligence.indexFile('src/app.ts', 'export const APP_NAME = "Float Studio";');
-    const context = await engine.intelligence.resolveContext('Look at @file:src/app.ts', 2000);
-    assert.ok(context.formattedPrompt.includes('APP_NAME'), 'Resolved context must include file content');
-    console.log('[PASS] 6. Direct FloatEngine: Context resolution resolved @file mention accurately');
-
-    // Test autonomous task execution with shadow diff
-    const goal = await engine.executeAutonomousTask(
-      'proj_test',
-      'user_test',
-      'Add helper function',
-      [{ filePath: 'src/helper.ts', content: 'export function help() { return true; }' }]
-    );
-    assert.strictEqual(goal.diffs.length, 1, 'Autonomous task must produce 1 shadow diff');
-    console.log('[PASS] 7. Direct FloatEngine: Autonomous goal executed and produced shadow diffs');
+    for (const endpoint of gatedEndpoints) {
+      const response = await fetch(`${baseUrl}${endpoint.route}`, {
+        method: endpoint.method,
+        headers: authHeaders,
+        ...(endpoint.body === undefined ? {} : { body: JSON.stringify(endpoint.body) })
+      });
+      assert.strictEqual(
+        response.status,
+        404,
+        `${endpoint.method} ${endpoint.route} must stay unavailable until project-scoped runtime integration is complete`
+      );
+      const payload: any = await response.json();
+      assert.strictEqual(payload.error, 'API endpoint not found.');
+      console.log(`[PASS] ${endpoint.method} ${endpoint.route} -> 404 (experimental endpoint safely unmounted)`);
+    }
 
     console.log('\n======================================================');
-    console.log('LIVE RUNTIME VERIFICATION COMPLETE: ALL CHECKS PASSED!');
+    console.log('RUNTIME SAFETY VERIFICATION COMPLETE: HEALTH, DOCTOR, AND FAIL-CLOSED ROUTE CHECKS PASSED!');
     console.log('======================================================');
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
