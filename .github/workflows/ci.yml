@@ -5,9 +5,9 @@ permissions:
 
 on:
   push:
-    branches: [main, master, feat/float-phase-0-runtime-safety-gate]
+    branches: [main, master]
   pull_request:
-    branches: [main, master, float/phase-1.1-security-closure]
+    branches: [main, master]
 
 jobs:
   verify:

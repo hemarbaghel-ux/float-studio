@@ -4,6 +4,9 @@ import { useIDEStore } from '../../store';
 import { useAIStore } from '../../store/aiStore';
 import { auth } from '../../lib/firebase';
 import { InlineAssistantModal } from './InlineAssistantModal';
+import { FloatEditorLogic } from '../../core/float/FloatEditorLogic';
+
+const floatEditorLogic = new FloatEditorLogic();
 
 interface CodeEditorProps {
   fileId: string;
@@ -101,18 +104,6 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
             return { items: [] };
           }
 
-          // Check if provider is configured
-          const hasConfiguredProvider = Boolean(
-            providers.openai?.configured ||
-            providers.google?.configured ||
-            providers.anthropic?.configured ||
-            providers.ollama?.configured
-          );
-
-          if (!hasConfiguredProvider) {
-            return { items: [] };
-          }
-
           // Abort previous in-flight request
           if (abortController) {
             abortController.abort();
@@ -151,48 +142,85 @@ export function CodeEditor({ fileId, fileName, content }: CodeEditorProps) {
                   return resolve({ items: [] });
                 }
 
-                const authToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
+                // 1. Try server completion if authenticated and configured
+                let serverCompletion = '';
+                try {
+                  const authToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
+                  if (authToken) {
+                    const response = await fetch('/api/ai/complete', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                      },
+                      signal: reqSignal,
+                      body: JSON.stringify({
+                        prefix,
+                        suffix,
+                        fileName,
+                        language: currentLanguage,
+                        model: selectedModel || 'gpt-6.1-sol'
+                      })
+                    });
 
-                const response = await fetch('/api/ai/complete', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authToken}`
-                  },
-                  signal: reqSignal,
-                  body: JSON.stringify({
-                    prefix,
-                    suffix,
-                    fileName,
-                    language: currentLanguage,
-                    model: selectedModel || 'gpt-6.1-sol'
-                  })
-                });
-
-                if (!response.ok || token.isCancellationRequested) {
-                  return resolve({ items: [] });
-                }
-
-                const data = await response.json();
-                if (data.cancelled || !data.completion) {
-                  return resolve({ items: [] });
-                }
-
-                resolve({
-                  items: [
-                    {
-                      insertText: data.completion,
-                      range: new monaco.Range(
-                        position.lineNumber,
-                        position.column,
-                        position.lineNumber,
-                        position.column
-                      )
+                    const text = await response.text();
+                    if (response.ok && !text.trim().startsWith('<') && !text.includes('<!DOCTYPE') && !text.includes('<!doctype')) {
+                      try {
+                        const data = JSON.parse(text);
+                        if (!data.cancelled && data.completion) {
+                          serverCompletion = data.completion;
+                        }
+                      } catch {
+                        // Not JSON, fall through
+                      }
                     }
-                  ]
+                  }
+                } catch {
+                  // Fall through to local FloatEditorLogic
+                }
+
+                if (serverCompletion) {
+                  return resolve({
+                    items: [
+                      {
+                        insertText: serverCompletion,
+                        range: new monaco.Range(
+                          position.lineNumber,
+                          position.column,
+                          position.lineNumber,
+                          position.column
+                        )
+                      }
+                    ]
+                  });
+                }
+
+                // 2. Client-side predictive speculation via FloatEditorLogic
+                const localRes = await floatEditorLogic.getTabCompletion({
+                  filePath: fileName,
+                  prefix,
+                  suffix,
+                  languageId: currentLanguage
                 });
-              } catch (err: any) {
-                // Ignore cancellations cleanly; show no fake completion on error
+
+                if (localRes && localRes.completion && !token.isCancellationRequested) {
+                  return resolve({
+                    items: [
+                      {
+                        insertText: localRes.completion,
+                        range: new monaco.Range(
+                          position.lineNumber,
+                          position.column,
+                          position.lineNumber,
+                          position.column
+                        )
+                      }
+                    ]
+                  });
+                }
+
+                resolve({ items: [] });
+              } catch {
                 resolve({ items: [] });
               }
             }, 250);

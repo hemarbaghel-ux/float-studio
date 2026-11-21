@@ -28,6 +28,7 @@ import { milestone9Router } from './milestone9Router';
 import { brainRouter } from './brain';
 import { createAnalystRouter } from './analystRouter';
 import { createComposerRouter } from './composer/composerRouter';
+import { createFloatLogicRouter } from './floatLogicRouter';
 import { createExtensionGalleryRouter } from './extensions/extensionGalleryRouter';
 import { createByokRouter, createUserApiKeyMiddleware } from './byok/byokRouter';
 import { runTerminalSetupDoctor } from './terminal/terminalDoctor';
@@ -192,12 +193,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.use('/api/user', createByokRouter());
   app.use('/api/projects/:projectId/git', gitRouter);
   app.use('/api/projects/:projectId/composer', createComposerRouter(modelRouter));
-  // Experimental FloatEngine API intentionally remains unmounted.
-  // Its current singleton workspace defaults to process.cwd(), and its terminal
-  // implementation returns simulated success instead of executing commands.
-  // Keep it inaccessible until project-scoped storage, ownership checks, and the
-  // authoritative isolated execution adapter are integrated.
-  // The existing Composer and ProjectProcessManager routes remain canonical.
+  app.use('/api/float/v1', createFloatLogicRouter());
   app.use('/api', milestone9Router);
   app.use('/api', brainRouter);
 

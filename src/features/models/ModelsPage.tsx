@@ -215,8 +215,9 @@ export function ModelsPage() {
               onBack={() => setSelectedModelId(null)}
               onSelect={() => {
                 setSelectedModel(selectedModel.id);
-                // Return to dashboard or IDE if initiated
-                window.history.pushState({}, '', '/');
+                useIDEStore.getState().startSession();
+                // Return to workspace IDE with selected model active
+                window.history.pushState({}, '', '/workspace');
                 window.dispatchEvent(new PopStateEvent('popstate'));
               }}
             />
@@ -519,11 +520,12 @@ export function ModelsPage() {
                             <button
                               onClick={() => {
                                 setSelectedModel(model.id);
-                                window.history.pushState({}, '', '/');
+                                useIDEStore.getState().startSession();
+                                window.history.pushState({}, '', '/workspace');
                                 window.dispatchEvent(new PopStateEvent('popstate'));
                               }}
                               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-white text-black text-xs font-semibold transition-colors cursor-pointer"
-                              title="Select this model for FLOAT workspace"
+                              title="Select this model and open FLOAT workspace"
                             >
                               <Check size={12} />
                               <span>Select</span>
