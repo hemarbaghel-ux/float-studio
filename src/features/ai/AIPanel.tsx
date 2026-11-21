@@ -29,7 +29,7 @@ import { ConversationService, ConversationMeta } from '../../services/conversati
 import { ContextPicker } from './ContextPicker';
 import { ChatFeedbackButtons } from '../float/ChatFeedbackButtons';
 import { CODING_ASSISTANT_SYSTEM_PROMPT } from '../float/chatParsing';
-import { createAssistantProposal, prepareAssistantProposal } from '../proposals/proposalWorkflow';
+import { createAssistantProposal, prepareAssistantProposal, proposalDraftToLocalChangeSet } from '../proposals/proposalWorkflow';
 import { dispatchClientAiStream } from '../../services/byok/clientAiDispatcher';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -732,7 +732,7 @@ export function AIPanel() {
           })),
           systemPrompt: effectiveSystemInstruction,
           signal: requestController.signal,
-          onChunk: (chunk) => {
+          onChunk: async (chunk) => {
             if (chunk.type === 'delta' && chunk.text) {
               accumulatedText += chunk.text;
               updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
@@ -742,6 +742,33 @@ export function AIPanel() {
                 status: 'completed',
                 latency: Date.now() - startTime,
               });
+              try {
+                const workspace = useIDEStore.getState();
+                const draft = prepareAssistantProposal(accumulatedText, draftText, workspace.files);
+                if (draft) {
+                  let changeSet = null;
+                  if (token && workspace.projectId) {
+                    try {
+                      changeSet = await createAssistantProposal({
+                        responseText: accumulatedText,
+                        prompt: draftText,
+                        projectId: workspace.projectId,
+                        conversationId: targetConvId,
+                        files: workspace.files,
+                        token
+                      });
+                    } catch (cloudErr) {
+                      console.warn('Cloud proposal creation failed, falling back to local changeset:', cloudErr);
+                    }
+                  }
+                  if (!changeSet) {
+                    changeSet = proposalDraftToLocalChangeSet(draft, workspace.projectId || undefined);
+                  }
+                  if (changeSet) updateAiMessage(modelMsgId, { changeSet });
+                }
+              } catch (proposalErr) {
+                console.warn('Proposal extraction skipped for client stream:', proposalErr);
+              }
             } else if (chunk.type === 'error') {
               updateAiMessage(modelMsgId, {
                 content: accumulatedText || 'An error occurred during response generation.',
@@ -802,7 +829,7 @@ export function AIPanel() {
           })),
           systemPrompt: effectiveSystemInstruction,
           signal: requestController.signal,
-          onChunk: (chunk) => {
+          onChunk: async (chunk) => {
             if (chunk.type === 'delta' && chunk.text) {
               accumulatedText += chunk.text;
               updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
@@ -812,6 +839,33 @@ export function AIPanel() {
                 status: 'completed',
                 latency: Date.now() - startTime,
               });
+              try {
+                const workspace = useIDEStore.getState();
+                const draft = prepareAssistantProposal(accumulatedText, draftText, workspace.files);
+                if (draft) {
+                  let changeSet = null;
+                  if (token && workspace.projectId) {
+                    try {
+                      changeSet = await createAssistantProposal({
+                        responseText: accumulatedText,
+                        prompt: draftText,
+                        projectId: workspace.projectId,
+                        conversationId: targetConvId,
+                        files: workspace.files,
+                        token
+                      });
+                    } catch (cloudErr) {
+                      console.warn('Cloud proposal creation failed, falling back to local changeset:', cloudErr);
+                    }
+                  }
+                  if (!changeSet) {
+                    changeSet = proposalDraftToLocalChangeSet(draft, workspace.projectId || undefined);
+                  }
+                  if (changeSet) updateAiMessage(modelMsgId, { changeSet });
+                }
+              } catch (proposalErr) {
+                console.warn('Proposal extraction skipped for client stream:', proposalErr);
+              }
             } else if (chunk.type === 'error') {
               updateAiMessage(modelMsgId, {
                 content: accumulatedText || 'An error occurred during response generation.',
@@ -1004,18 +1058,29 @@ export function AIPanel() {
         try {
           const proposalDraft = prepareAssistantProposal(accumulatedText, draftText, files);
           if (proposalDraft) {
-            const saveResult = await useIDEStore.getState().saveProject();
-            if (saveResult.status === 'error') throw new Error(saveResult.message);
-            const workspace = useIDEStore.getState();
-            if (!workspace.projectId) throw new Error('Save this workspace before creating a code proposal.');
-            const changeSet = await createAssistantProposal({
-              responseText: accumulatedText,
-              prompt: draftText,
-              projectId: workspace.projectId,
-              conversationId: targetConvId,
-              files: workspace.files,
-              token
-            });
+            let changeSet = null;
+            if (token) {
+              try {
+                const saveResult = await useIDEStore.getState().saveProject();
+                const workspace = useIDEStore.getState();
+                if (saveResult.status !== 'error' && workspace.projectId) {
+                  changeSet = await createAssistantProposal({
+                    responseText: accumulatedText,
+                    prompt: draftText,
+                    projectId: workspace.projectId,
+                    conversationId: targetConvId,
+                    files: workspace.files,
+                    token
+                  });
+                }
+              } catch (cloudErr) {
+                console.warn('Cloud proposal creation failed, falling back to local changeset:', cloudErr);
+              }
+            }
+            if (!changeSet) {
+              const workspace = useIDEStore.getState();
+              changeSet = proposalDraftToLocalChangeSet(proposalDraft, workspace.projectId || undefined);
+            }
             if (changeSet) updateAiMessage(modelMsgId, { changeSet });
           }
         } catch (proposalError: any) {

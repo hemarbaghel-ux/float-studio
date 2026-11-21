@@ -182,8 +182,8 @@ export function ByokModelKeySettings() {
                           <Check size={10} /> Active ({configuredKey?.masked})
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 dark:bg-[#1E1E1E] text-slate-500 dark:text-[#8B949E]">
-                          Using Server Default
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                          Free Mode (Local Simulation)
                         </span>
                       )}
                     </div>

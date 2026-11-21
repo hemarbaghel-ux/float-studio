@@ -13,11 +13,11 @@ const rawInitialModels: AIModel[] = [
     exactModelId: vm.exactModelId,
     apiModelId: vm.exactModelId,
     providerId: vm.providerId,
-    provider: vm.providerId === 'openai' ? 'OpenAI' : vm.providerId === 'google' ? 'Google Gemini' : 'FLOAT',
+    provider: vm.providerId === 'openai' ? 'OpenAI' : vm.providerId === 'google' ? 'Google Gemini' : vm.providerId === 'anthropic' ? 'Anthropic' : vm.providerId === 'deepseek' ? 'DeepSeek' : 'FLOAT',
     displayName: vm.displayName,
-    shortName: vm.displayName.replace('OpenAI ', ''),
+    shortName: vm.displayName.replace('OpenAI ', '').replace('FLOAT ', ''),
     family: vm.family,
-    tier: vm.deprecationStatus === 'preview' ? 'Preview' : undefined,
+    tier: vm.id === 'float-free-intelligence' ? 'Free' : vm.deprecationStatus === 'preview' ? 'Preview' : undefined,
     description: vm.description,
     capabilities: {
       coding: vm.capabilities.coding,
@@ -68,7 +68,14 @@ const rawInitialModels: AIModel[] = [
 
 const seenInitialModelIds = new Set<string>();
 export const INITIAL_MODELS: AIModel[] = [
-  ...rawInitialModels.filter(m => ['gpt-6-astra', 'gpt-6.1-sol', 'gemini-3.8-flash'].includes(m.id))
+  ...rawInitialModels.filter(m => [
+    'float-free-intelligence',
+    'gpt-6-astra',
+    'gpt-6.1-sol',
+    'claude-3-5-sonnet',
+    'gemini-3.8-flash',
+    'deepseek-r1'
+  ].includes(m.id))
 ].filter(m => {
   if (seenInitialModelIds.has(m.id)) return false;
   seenInitialModelIds.add(m.id);

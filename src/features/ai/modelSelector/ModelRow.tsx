@@ -34,22 +34,13 @@ export const ModelRow: React.FC<ModelRowProps> = ({
       tabIndex={isHighlighted ? 0 : -1}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      onClick={() => {
-        if (model.status === 'CONFIG_REQUIRED' || model.availability === 'Add key to enable') {
-          document.dispatchEvent(new CustomEvent('open-api-config-modal'));
-          return;
-        }
-        onSelect();
-      }}
-      className={`group/item px-2.5 py-1.5 rounded-lg flex items-center justify-between select-none transition-colors ${
-        model.status === 'CONFIG_REQUIRED' || model.availability === 'Add key to enable'
-          ? 'opacity-65 cursor-pointer hover:bg-amber-500/5'
-          : 'cursor-pointer ' +
-            (isSelected
-              ? 'bg-slate-100/90 dark:bg-white/[0.08]'
-              : isHighlighted
-              ? 'bg-slate-50 dark:bg-white/[0.04]'
-              : 'hover:bg-slate-50 dark:hover:bg-white/[0.04]')
+      onClick={onSelect}
+      className={`group/item px-2.5 py-1.5 rounded-lg flex items-center justify-between select-none transition-colors cursor-pointer ${
+        isSelected
+          ? 'bg-slate-100/90 dark:bg-white/[0.08]'
+          : isHighlighted
+          ? 'bg-slate-50 dark:bg-white/[0.04]'
+          : 'hover:bg-slate-50 dark:hover:bg-white/[0.04]'
       }`}
     >
       {/* Model Name & Reasoning/Speed/Effort label */}

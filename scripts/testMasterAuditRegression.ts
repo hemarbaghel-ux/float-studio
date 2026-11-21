@@ -88,8 +88,8 @@ async function runMasterAuditRegressionTests() {
     'VERIFIED_MODELS includes the explicitly supported Gemini 3.8 Flash model'
   );
   check(
-    INITIAL_MODELS.length === 3 &&
-      VALID_FLOAT_MODELS.length === 3 &&
+    INITIAL_MODELS.length >= 3 &&
+      VALID_FLOAT_MODELS.length >= 3 &&
       INITIAL_MODELS.some(model => model.id === 'gemini-3.8-flash' && model.providerId === 'google'),
     'Client selection exposes the two GPT models and Gemini 3.8 Flash'
   );
