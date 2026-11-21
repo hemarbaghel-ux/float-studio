@@ -6,7 +6,7 @@ export function BugReportModal({ onClose }: { onClose: () => void }) {
   const { user } = useAuthStore();
   
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState<'Editor' | 'AI Chat' | 'Python Runtime' | 'Auth' | 'UI / Styling' | 'Other'>('Editor');
+  const [category, setCategory] = useState<'Editor' | 'AI Chat' | 'Execution Runtime' | 'Auth' | 'UI / Styling' | 'Other'>('Editor');
   const [description, setDescription] = useState('');
   const [steps, setSteps] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -120,7 +120,7 @@ export function BugReportModal({ onClose }: { onClose: () => void }) {
               >
                 <option value="Editor">Monaco Editor & Code View</option>
                 <option value="AI Chat">AI Chat & Model Generation</option>
-                <option value="Python Runtime">Python Pyodide Execution</option>
+                <option value="Execution Runtime">Code Execution & Terminal</option>
                 <option value="Auth">Firebase Authentication & Session</option>
                 <option value="UI / Styling">UI Alignment & Dark/Light Theme</option>
                 <option value="Other">Other Issues</option>

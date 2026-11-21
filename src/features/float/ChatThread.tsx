@@ -668,7 +668,7 @@ export function ChatThread({ chatId }: { chatId: string }) {
         {/* header */}
         <div className="h-14 shrink-0 border-b border-slate-200 dark:border-[#2A2A2A] flex items-center gap-3 px-4">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">{projectName || 'Untitled chat'}</div>
+            <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">{projectName === 'Python Workspace' ? 'FLOAT Workspace' : (projectName || 'Untitled chat')}</div>
             <div className="text-[11px] text-slate-400 dark:text-[#6E7681]">{paths.length} file{paths.length === 1 ? '' : 's'} in workspace</div>
           </div>
           <HeaderButton icon={Files} label="Files" active={drawer === 'files'} onClick={() => setDrawer(drawer === 'files' ? null : 'files')} />

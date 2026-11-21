@@ -80,7 +80,7 @@ export function EditorTabs({ onToggleSplit, isSplitActive }: EditorTabsProps) {
         <button
           onClick={runActiveCode}
           disabled={isRunningCode}
-          title="Run Python File (Ctrl+Enter)"
+          title="Run Code (Ctrl+Enter)"
           className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded border border-emerald-500/20 transition-all disabled:opacity-50 cursor-pointer active:scale-95"
         >
           {isRunningCode ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} className="fill-current" />}

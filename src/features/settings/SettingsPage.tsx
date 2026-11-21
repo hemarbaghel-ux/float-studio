@@ -220,7 +220,7 @@ export function SettingsPage() {
                   >
                     <option value="chat">New Chat Workspace</option>
                     <option value="projects">Projects Explorer</option>
-                    <option value="workspace">Python IDE</option>
+                    <option value="workspace">FLOAT Studio IDE</option>
                   </select>
                 </div>
 
