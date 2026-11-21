@@ -19,7 +19,24 @@ import { flattenFileTree } from '../lib/utils';
 import { projectStorageKey } from './projectStorage';
 import { workspaceIndexManager } from '../services/indexing/workspaceIndexManager';
 
-export const DEFAULT_PYTHON_FILES: FileNode[] = [
+export const DEFAULT_WORKSPACE_FILES: FileNode[] = [
+  {
+    id: 'file-main-ts',
+    name: 'main.ts',
+    type: 'file',
+    content: `// Welcome to FLOAT - AI Coding Agent Studio
+export interface AgentTask {
+  id: string;
+  task: string;
+  status: 'pending' | 'in-progress' | 'completed';
+}
+
+export function executeCodingTask(task: AgentTask): string {
+  console.log(\`[FLOAT Agent] Executing task: \${task.task}\`);
+  return \`Task \${task.id} processed by FLOAT AI Harness\`;
+}
+`
+  },
   {
     id: 'file-main-py',
     name: 'main.py',
@@ -52,6 +69,8 @@ FLOAT is an AI-native coding IDE and autonomous agent harness.
 `
   }
 ];
+
+export const DEFAULT_PYTHON_FILES = DEFAULT_WORKSPACE_FILES;
 
 export interface WorkspaceCheckpoint {
   id: string;
