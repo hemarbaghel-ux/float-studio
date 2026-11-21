@@ -6,16 +6,13 @@
 import React, { useState, useEffect } from 'react';
 import { Key, Check, AlertCircle, Loader2, Trash2, Eye, EyeOff, Sparkles, ExternalLink } from 'lucide-react';
 import { cn } from '../../lib/utils';
-
-export interface UserApiKeyRecord {
-  provider: 'openai' | 'anthropic' | 'google' | 'deepseek' | 'xai';
-  masked: string;
-  isConfigured: boolean;
-  verified: boolean;
-  accessibleModels?: string[];
-  createdAt: number;
-  updatedAt: number;
-}
+import {
+  getClientKeys,
+  saveClientKey,
+  deleteClientKey,
+  validateClientKey,
+  UserApiKeyRecord
+} from '../../services/byok/clientKeyring';
 
 interface ProviderMeta {
   id: 'openai' | 'anthropic' | 'google' | 'deepseek';
@@ -72,13 +69,10 @@ export function ByokModelKeySettings() {
   const fetchKeys = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch('/api/user/keys');
-      if (res.ok) {
-        const data = await res.json();
-        setKeys(data.keys || []);
-      }
+      const clientKeys = await getClientKeys();
+      setKeys(clientKeys);
     } catch {
-      // Offline fallback
+      setKeys([]);
     } finally {
       setIsLoading(false);
     }
@@ -94,24 +88,19 @@ export function ByokModelKeySettings() {
 
     setTestState(prev => ({ ...prev, [providerId]: { loading: true } }));
     try {
-      const res = await fetch('/api/user/keys/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: providerId, apiKey }),
-      });
-      const data = await res.json();
-      if (res.ok && data.valid) {
+      const res = await validateClientKey(providerId, apiKey);
+      if (res.valid) {
         setTestState(prev => ({ ...prev, [providerId]: { loading: false, success: true } }));
       } else {
         setTestState(prev => ({
           ...prev,
-          [providerId]: { loading: false, success: false, error: data.error || 'Key validation failed' },
+          [providerId]: { loading: false, success: false, error: res.error || 'Key validation failed' },
         }));
       }
     } catch (err: any) {
       setTestState(prev => ({
         ...prev,
-        [providerId]: { loading: false, success: false, error: err.message || 'Network error' },
+        [providerId]: { loading: false, success: false, error: err.message || 'Validation error' },
       }));
     }
   };
@@ -122,26 +111,14 @@ export function ByokModelKeySettings() {
 
     setSaveState(prev => ({ ...prev, [providerId]: { loading: true } }));
     try {
-      const res = await fetch('/api/user/keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: providerId, apiKey }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setInputs(prev => ({ ...prev, [providerId]: '' }));
-        setTestState(prev => ({ ...prev, [providerId]: { loading: false } }));
-        await fetchKeys();
-      } else {
-        setSaveState(prev => ({
-          ...prev,
-          [providerId]: { loading: false, error: data.error || 'Failed to save key' },
-        }));
-      }
+      await saveClientKey(providerId, apiKey);
+      setInputs(prev => ({ ...prev, [providerId]: '' }));
+      setTestState(prev => ({ ...prev, [providerId]: { loading: false, success: true } }));
+      await fetchKeys();
     } catch (err: any) {
       setSaveState(prev => ({
         ...prev,
-        [providerId]: { loading: false, error: err.message || 'Network error' },
+        [providerId]: { loading: false, error: err.message || 'Failed to save key' },
       }));
     } finally {
       setSaveState(prev => ({ ...prev, [providerId]: { ...prev[providerId], loading: false } }));
@@ -150,10 +127,8 @@ export function ByokModelKeySettings() {
 
   const handleDeleteKey = async (providerId: string) => {
     try {
-      const res = await fetch(`/api/user/keys/${providerId}`, { method: 'DELETE' });
-      if (res.ok) {
-        await fetchKeys();
-      }
+      await deleteClientKey(providerId);
+      await fetchKeys();
     } catch {}
   };
 
@@ -207,8 +182,8 @@ export function ByokModelKeySettings() {
                           <Check size={10} /> Active ({configuredKey?.masked})
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 dark:bg-[#1E1E1E] text-slate-500 dark:text-[#8B949E]">
-                          Using Server Default
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                          Free Mode (Local Simulation)
                         </span>
                       )}
                     </div>

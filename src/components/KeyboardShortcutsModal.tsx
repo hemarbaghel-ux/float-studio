@@ -22,7 +22,7 @@ export function KeyboardShortcutsModal({ onClose }: { onClose: () => void }) {
     { id: '8', category: 'Editor', name: 'Save File / Workspace', keys: ['⌘', 'S'] },
     { id: '9', category: 'Editor', name: 'Format Code', keys: ['Shift', 'Alt', 'F'] },
     { id: '10', category: 'Editor', name: 'Toggle Line Comment', keys: ['⌘', '/'] },
-    { id: '11', category: 'AI & Execution', name: 'Run Python Code in Terminal', keys: ['⌘', 'Enter'] },
+    { id: '11', category: 'AI & Execution', name: 'Run Code in Terminal', keys: ['⌘', 'Enter'] },
     { id: '12', category: 'AI & Execution', name: 'Submit AI Chat Prompt', keys: ['Enter'] },
     { id: '13', category: 'AI & Execution', name: 'Multiline Prompt (Chat)', keys: ['Shift', 'Enter'] },
   ];

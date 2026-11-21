@@ -117,7 +117,9 @@ export function ModelsFilteredPage({ providerId, title, description }: ModelsFil
 
   const handleSelectModel = (modelId: string) => {
     setSelectedModel(modelId);
-    window.location.href = '/'; 
+    useIDEStore.getState().startSession();
+    window.history.pushState({}, '', '/workspace');
+    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   const selectedModelInfo = selectedModelId ? activeModels.find(m => m.id === selectedModelId) || null : null;

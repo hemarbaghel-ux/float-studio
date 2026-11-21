@@ -79,6 +79,27 @@ export function prepareAssistantProposal(
   };
 }
 
+export function proposalDraftToLocalChangeSet(draft: AssistantProposalDraft, projectId?: string): ChangeSet {
+  const proposalId = `local-prop-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return {
+    id: proposalId,
+    proposalId,
+    projectId: projectId || 'local-workspace',
+    description: draft.description,
+    status: 'pending_review',
+    changes: draft.changes.map((c) => {
+      const v = draft.virtualFiles.find((vf) => vf.path === c.path);
+      return {
+        path: c.path,
+        operation: c.operation,
+        originalContent: v ? v.content : '',
+        proposedContent: c.proposedContent || '',
+        status: 'pending' as const
+      };
+    })
+  };
+}
+
 export function proposalToChangeSet(proposal: CodeProposal): ChangeSet {
   return {
     id: proposal.id,

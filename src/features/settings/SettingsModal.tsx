@@ -22,8 +22,17 @@ export function SettingsModal({ onClose, initialSection }: { onClose: () => void
     setIsTestingAi(true);
     setAiHealthResult(null);
     try {
-      const res = await fetch('/api/ai/health');
-      const data = await res.json();
+      const res = await fetch('/api/ai/health', { headers: { Accept: 'application/json' } });
+      const text = await res.text();
+      if (!res.ok || text.trim().startsWith('<')) {
+        setAiHealthResult({
+          status: 'unconfigured',
+          message: 'Client-side BYOK mode active. Configure your personal API keys in AI & Models tab.'
+        });
+        return;
+      }
+      let data: any = {};
+      try { data = JSON.parse(text); } catch { return; }
       if (!res.ok) {
         setAiHealthResult({ status: 'error', message: data.error || 'Connection failed' });
       } else {

@@ -129,7 +129,7 @@ export const ModelInfoCard: React.FC<ModelInfoCardProps> = ({
       ref={cardRef}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="model-information-card fixed z-[99999] w-[320px] bg-white dark:bg-[#181818] border border-slate-200/90 dark:border-[#2C2C2C] rounded-[14px] shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/75 p-4 flex flex-col shrink-0 animate-in fade-in duration-150 text-left select-text overflow-y-auto scrollbar-thin font-sans"
+      className="model-information-card fixed z-[99990] w-[320px] bg-white dark:bg-[#181818] border border-slate-200/90 dark:border-[#2C2C2C] rounded-[14px] shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/75 p-4 flex flex-col shrink-0 animate-in fade-in duration-150 text-left select-text overflow-y-auto scrollbar-thin font-sans"
       style={{
         left: `${coords.left}px`,
         top: coords.top !== undefined ? `${coords.top}px` : undefined,

@@ -19,18 +19,35 @@ import { flattenFileTree } from '../lib/utils';
 import { projectStorageKey } from './projectStorage';
 import { workspaceIndexManager } from '../services/indexing/workspaceIndexManager';
 
-export const DEFAULT_PYTHON_FILES: FileNode[] = [
+export const DEFAULT_WORKSPACE_FILES: FileNode[] = [
+  {
+    id: 'file-main-ts',
+    name: 'main.ts',
+    type: 'file',
+    content: `// Welcome to FLOAT - AI Coding Agent Studio
+export interface AgentTask {
+  id: string;
+  task: string;
+  status: 'pending' | 'in-progress' | 'completed';
+}
+
+export function executeCodingTask(task: AgentTask): string {
+  console.log(\`[FLOAT Agent] Executing task: \${task.task}\`);
+  return \`Task \${task.id} processed by FLOAT AI Harness\`;
+}
+`
+  },
   {
     id: 'file-main-py',
     name: 'main.py',
     type: 'file',
-    content: `# Welcome to FLOAT - Python IDE & Coding Agent
+    content: `# Welcome to FLOAT - AI Coding Agent Studio
 def main():
-    print("Welcome to FLOAT!")
-    name = "Python Developer"
-    print(f"Ready to code, {name}.")
+    print("Welcome to FLOAT - Autonomous AI Coding Studio!")
+    name = "Developer"
+    print(f"Ready to build and refactor, {name}.")
     
-    # Try out some Python features:
+    # Try out some code features:
     numbers = [1, 2, 3, 4, 5]
     squared = [n ** 2 for n in numbers]
     print(f"Squares: {squared}")
@@ -43,13 +60,17 @@ if __name__ == "__main__":
     id: 'file-readme-md',
     name: 'README.md',
     type: 'file',
-    content: `# FLOAT Python Project
+    content: `# FLOAT AI Coding Agent Studio
 
-Click **Run** in the top bar or press **Ctrl+Enter** (Cmd+Enter) to execute your Python code.
-Execution is performed live in the browser via Pyodide.
+FLOAT is an AI-native coding IDE and autonomous agent harness.
+- **Agent Mode**: Full multi-file editing with diff inspection and one-click rollback.
+- **Chat & Ask**: Codebase intelligence, lexical & semantic search.
+- **Terminal & Execution**: In-browser sandboxed execution and test runners.
 `
   }
 ];
+
+export const DEFAULT_PYTHON_FILES = DEFAULT_WORKSPACE_FILES;
 
 export interface WorkspaceCheckpoint {
   id: string;
@@ -76,6 +97,12 @@ const loadStoredProject = (ownerId?: string | null): StoredProject => {
           if (!parsed.projectId || parsed.projectId === 'default-python-workspace') {
             parsed.projectId = uuidv4();
           }
+          if (!parsed.projectName || parsed.projectName === 'Python Workspace') {
+            parsed.projectName = 'FLOAT Workspace';
+            try {
+              localStorage.setItem(projectStorageKey(ownerId), JSON.stringify(parsed));
+            } catch {}
+          }
           return parsed;
         }
       }
@@ -86,7 +113,7 @@ const loadStoredProject = (ownerId?: string | null): StoredProject => {
 
   return {
     projectId: uuidv4(),
-    projectName: 'Python Workspace',
+    projectName: 'FLOAT Workspace',
     files: DEFAULT_PYTHON_FILES,
     openTabs: [
       { id: 'tab-main', fileId: 'file-main-py', isModified: false }
@@ -403,7 +430,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     const newId = uuidv4();
     const def = {
       projectId: newId,
-      projectName: 'Python Workspace',
+      projectName: 'FLOAT Workspace',
       files: DEFAULT_PYTHON_FILES,
       openTabs: [{ id: 'tab-main', fileId: 'file-main-py', isModified: false }],
       activeFileId: 'file-main-py'
@@ -1104,7 +1131,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
     {
       id: 'init-entry',
       type: 'output',
-      content: 'FLOAT Python 3.12 Runtime ready. Type python code, "python main.py", or click Run to execute.',
+      content: 'FLOAT AI Coding Agent Runtime ready. Run code, execute terminal commands, or prompt the AI Agent to build and refactor.',
       timestamp: Date.now()
     }
   ],

@@ -61,15 +61,8 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false, r
       onClose();
       return;
     }
-    try {
-      if (window.history.length > 1) {
-        window.history.back();
-      } else {
-        window.location.href = '/';
-      }
-    } catch {
-      window.location.href = '/';
-    }
+    window.history.pushState({}, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   useEffect(() => {
@@ -235,9 +228,12 @@ export function SignUpPage({ initialMode = 'signup', onClose, isModal = false, r
           <a 
             href="/" 
             onClick={(e) => {
+              e.preventDefault();
               if (isModal && onClose) {
-                e.preventDefault();
                 onClose();
+              } else {
+                window.history.pushState({}, '', '/');
+                window.dispatchEvent(new PopStateEvent('popstate'));
               }
             }}
             onMouseEnter={() => setBrandHovered(true)}

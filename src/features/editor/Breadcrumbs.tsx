@@ -34,7 +34,7 @@ export function Breadcrumbs({ fileId }: BreadcrumbsProps) {
   return (
     <div className="h-6 px-3 bg-slate-50 dark:bg-[#0E0E0E] border-b border-slate-200 dark:border-[#202020] flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-[#8B949E] select-none overflow-x-auto no-scrollbar font-mono">
       <span className="font-sans font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[120px]">
-        {projectName}
+        {projectName === 'Python Workspace' ? 'FLOAT Workspace' : projectName}
       </span>
       {segments.map((seg, idx) => {
         const isLast = idx === segments.length - 1;

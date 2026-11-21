@@ -36,8 +36,8 @@ export function Header() {
           <span className="sr-only">FLOAT</span>
         </a>
         <span className="text-slate-300 dark:text-[#2A2A2A]">/</span>
-        <span className="truncate font-medium text-slate-800 dark:text-[#C9D1D9] max-w-[180px]" title={projectName || 'Workspace'}>
-          {projectName || 'Workspace'}
+        <span className="truncate font-medium text-slate-800 dark:text-[#C9D1D9] max-w-[180px]" title={projectName === 'Python Workspace' ? 'FLOAT Workspace' : (projectName || 'Workspace')}>
+          {projectName === 'Python Workspace' ? 'FLOAT Workspace' : (projectName || 'Workspace')}
         </span>
         {projectCloudSaveStatus !== 'idle' && (
           <div

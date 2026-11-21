@@ -1,108 +1,100 @@
-import { adminDb } from './adminFirebase';
+/**
+ * FLOAT Studio — In-Memory Eval State Store
+ * 
+ * Replaces legacy heavy Firestore eval database collections (evalTasks, evaluationRuns, benchmarks)
+ * with a zero-cost in-memory cache. Eliminates database clutter and cloud query costs.
+ */
+
 import type { EvalTask, EvalRun, Benchmark, HumanReview } from '../types/evals';
 
-const taskCollection = () => adminDb.collection('evalTasks');
-const runCollection = () => adminDb.collection('evaluationRuns');
-const benchmarkCollection = () => adminDb.collection('benchmarks');
-const reviewCollection = () => adminDb.collection('evalReviews');
-const MAX_DOCUMENT_BYTES = 850 * 1024;
-
-function toSafeDocument(value: unknown): Record<string, any> {
-  const serialized = JSON.stringify(value);
-  if (Buffer.byteLength(serialized, 'utf8') > MAX_DOCUMENT_BYTES) {
-    throw new Error('This evaluation record is too large to store safely. Reduce its files or output and retry.');
-  }
-  return JSON.parse(serialized);
-}
+const inMemoryTasks = new Map<string, EvalTask>();
+const inMemoryRuns = new Map<string, EvalRun>();
+const inMemoryBenchmarks = new Map<string, Benchmark>();
+const inMemoryReviews = new Map<string, HumanReview[]>();
 
 export async function saveEvalTask(task: EvalTask): Promise<void> {
-  await taskCollection().doc(task.id).set(toSafeDocument(task));
+  inMemoryTasks.set(task.id, { ...task });
 }
 
 export async function getEvalTask(id: string, ownerId: string): Promise<EvalTask | null> {
-  const snapshot = await taskCollection().doc(id).get();
-  if (!snapshot.exists || snapshot.get('ownerId') !== ownerId) return null;
-  return snapshot.data() as EvalTask;
+  const task = inMemoryTasks.get(id);
+  if (!task || task.ownerId !== ownerId) return null;
+  return task;
 }
 
 export async function listEvalTasks(ownerId: string): Promise<EvalTask[]> {
-  const snapshot = await taskCollection().where('ownerId', '==', ownerId).orderBy('createdAt', 'desc').limit(200).get();
-  return snapshot.docs.map((document: any) => document.data() as EvalTask);
+  return Array.from(inMemoryTasks.values())
+    .filter(t => t.ownerId === ownerId)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
 export async function deleteEvalTask(id: string, ownerId: string): Promise<boolean> {
-  const reference = taskCollection().doc(id);
-  return adminDb.runTransaction(async (transaction: any) => {
-    const snapshot = await transaction.get(reference);
-    if (!snapshot.exists || snapshot.get('ownerId') !== ownerId) return false;
-    transaction.delete(reference);
-    return true;
-  });
+  const task = inMemoryTasks.get(id);
+  if (!task || task.ownerId !== ownerId) return false;
+  inMemoryTasks.delete(id);
+  return true;
 }
 
 export async function saveEvalRun(run: EvalRun): Promise<void> {
-  await runCollection().doc(run.id).set(toSafeDocument({ ...run, updatedAt: Date.now() }), { merge: true });
+  inMemoryRuns.set(run.id, { ...run, updatedAt: Date.now() });
 }
 
 export async function heartbeatEvalRun(id: string): Promise<void> {
-  await runCollection().doc(id).update({ heartbeatAt: Date.now(), updatedAt: Date.now() });
+  const run = inMemoryRuns.get(id);
+  if (run) {
+    run.heartbeatAt = Date.now();
+    run.updatedAt = Date.now();
+  }
 }
 
 export async function listRunningEvalRuns(): Promise<EvalRun[]> {
-  const snapshot = await runCollection().where('status', '==', 'running').get();
-  return snapshot.docs.map((document: any) => document.data() as EvalRun);
+  return Array.from(inMemoryRuns.values()).filter(r => r.status === 'running');
 }
 
 export async function failInterruptedEvalRun(id: string): Promise<boolean> {
-  const reference = runCollection().doc(id);
-  return adminDb.runTransaction(async (transaction: any) => {
-    const snapshot = await transaction.get(reference);
-    if (!snapshot.exists || snapshot.get('status') !== 'running') return false;
-    const heartbeatAt = Number(snapshot.get('heartbeatAt') || 0);
-    if (heartbeatAt && Date.now() - heartbeatAt < 60_000) return false;
-    transaction.update(reference, {
-      status: 'failed',
-      errorType: 'WorkerInterrupted',
-      errorMessage: 'Evaluation was interrupted when its worker stopped. Retry this run.',
-      completedAt: Date.now(),
-      updatedAt: Date.now(),
-      heartbeatAt: null,
-    });
-    return true;
-  });
+  const run = inMemoryRuns.get(id);
+  if (!run || run.status !== 'running') return false;
+  run.status = 'failed';
+  run.errorType = 'WorkerInterrupted';
+  run.errorMessage = 'Evaluation was interrupted. In-memory worker recycled.';
+  run.completedAt = Date.now();
+  run.updatedAt = Date.now();
+  return true;
 }
 
 export async function getEvalRun(id: string, ownerId: string): Promise<EvalRun | null> {
-  const snapshot = await runCollection().doc(id).get();
-  if (!snapshot.exists || snapshot.get('ownerId') !== ownerId) return null;
-  return snapshot.data() as EvalRun;
+  const run = inMemoryRuns.get(id);
+  if (!run || run.ownerId !== ownerId) return null;
+  return run;
 }
 
 export async function listEvalRuns(ownerId: string): Promise<EvalRun[]> {
-  const snapshot = await runCollection().where('ownerId', '==', ownerId).orderBy('startedAt', 'desc').limit(200).get();
-  return snapshot.docs.map((document: any) => document.data() as EvalRun);
+  return Array.from(inMemoryRuns.values())
+    .filter(r => r.ownerId === ownerId)
+    .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
 }
 
 export async function saveEvalBenchmark(benchmark: Benchmark): Promise<void> {
-  await benchmarkCollection().doc(benchmark.id).set(toSafeDocument(benchmark));
+  inMemoryBenchmarks.set(benchmark.id, { ...benchmark });
 }
 
 export async function listEvalBenchmarks(ownerId: string): Promise<Benchmark[]> {
-  const snapshot = await benchmarkCollection().where('ownerId', '==', ownerId).orderBy('createdAt', 'desc').limit(100).get();
-  return snapshot.docs.map((document: any) => document.data() as Benchmark);
+  return Array.from(inMemoryBenchmarks.values()).filter(b => b.ownerId === ownerId);
 }
 
 export async function getEvalBenchmark(id: string, ownerId: string): Promise<Benchmark | null> {
-  const snapshot = await benchmarkCollection().doc(id).get();
-  if (!snapshot.exists || snapshot.get('ownerId') !== ownerId) return null;
-  return snapshot.data() as Benchmark;
+  const bm = inMemoryBenchmarks.get(id);
+  if (!bm || bm.ownerId !== ownerId) return null;
+  return bm;
 }
 
 export async function saveEvalReview(review: HumanReview): Promise<void> {
-  await reviewCollection().doc(review.id).set(toSafeDocument(review));
+  const existing = inMemoryReviews.get(review.runId) || [];
+  existing.push(review);
+  inMemoryReviews.set(review.runId, existing);
 }
 
 export async function listEvalReviews(runId: string, ownerId: string): Promise<HumanReview[]> {
-  const snapshot = await reviewCollection().where('runId', '==', runId).where('ownerId', '==', ownerId).get();
-  return snapshot.docs.map((document: any) => document.data() as HumanReview);
+  const list = inMemoryReviews.get(runId) || [];
+  return list.filter(r => r.ownerId === ownerId);
 }

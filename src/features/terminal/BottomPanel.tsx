@@ -237,7 +237,7 @@ export function BottomPanel() {
             <button
               onClick={runActiveCode}
               disabled={isRunningCode}
-              title="Run Python File"
+              title="Run Code"
               className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:bg-slate-200 dark:hover:bg-[#1C1C1C] rounded transition-colors disabled:opacity-50 cursor-pointer"
             >
               {isRunningCode ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} className="fill-current" />}
@@ -362,7 +362,7 @@ export function BottomPanel() {
             ) : (
               <div className="px-2 py-4 text-slate-500 dark:text-[#8B949E] flex flex-col gap-2">
                 <p>No output generated yet.</p>
-                <p className="text-[11px]">Run a project command in the Terminal, or click <strong className="text-emerald-500">Run</strong> to execute the active Python file in the isolated project runner.</p>
+                <p className="text-[11px]">Run a project command in the Terminal, or click <strong className="text-emerald-500">Run</strong> to execute the active file in the project runner.</p>
               </div>
             )}
           </div>

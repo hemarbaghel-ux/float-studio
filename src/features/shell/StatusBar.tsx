@@ -101,7 +101,26 @@ export function StatusBar() {
     : 'Ln 1, Col 1';
 
   const tabSize = settings.tabSize || 2;
-  const currentModelName = selectedModel === 'gpt-6.1-sol' ? 'GPT-6.1 Sol' : 'GPT-6 Astra';
+  const activeModelObj = models.find(m => m.id === selectedModel);
+  const currentModelName = activeModelObj?.displayName || activeModelObj?.shortName || (
+    selectedModel === 'float-free-intelligence' ? 'FLOAT Free' :
+    selectedModel === 'gpt-6.1-sol' ? 'GPT-6.1 Sol' :
+    selectedModel === 'gemini-3.8-flash' ? 'Gemini 3.8 Flash' :
+    selectedModel === 'claude-3-5-sonnet' ? 'Claude 3.5 Sonnet' :
+    selectedModel === 'deepseek-r1' ? 'DeepSeek R1' :
+    'GPT-6 Astra'
+  );
+
+  const handleSelectModel = (id: string) => {
+    if (id === 'gpt-6-astra') {
+      setSelectedModel('gpt-6-astra');
+    } else if (id === 'gpt-6.1-sol') {
+      setSelectedModel('gpt-6.1-sol');
+    } else {
+      setSelectedModel(id);
+    }
+    setIsModelMenuOpen(false);
+  };
 
   return (
     <footer 
@@ -239,38 +258,25 @@ export function StatusBar() {
           {/* Quick Model Switcher Popover */}
           {isModelMenuOpen && (
             <div 
-              className="absolute bottom-full right-0 mb-1 w-52 bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
+              className="absolute bottom-full right-0 mb-1 w-60 bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2A2A2A] rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 max-h-64 overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-[#666] border-b border-slate-100 dark:border-[#222]">
-                Authoritative AI Catalog
+                Active AI Models
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedModel('gpt-6-astra');
-                  setIsModelMenuOpen(false);
-                }}
-                className={`w-full px-2.5 py-1.5 text-left flex items-center justify-between text-xs hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer ${
-                  selectedModel === 'gpt-6-astra' ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <span>GPT-6 Astra</span>
-                {selectedModel === 'gpt-6-astra' && <Check size={12} />}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedModel('gpt-6.1-sol');
-                  setIsModelMenuOpen(false);
-                }}
-                className={`w-full px-2.5 py-1.5 text-left flex items-center justify-between text-xs hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer ${
-                  selectedModel === 'gpt-6.1-sol' ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <span>GPT-6.1 Sol</span>
-                {selectedModel === 'gpt-6.1-sol' && <Check size={12} />}
-              </button>
+              {models.map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => handleSelectModel(m.id)}
+                  className={`w-full px-2.5 py-1.5 text-left flex items-center justify-between text-xs hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer ${
+                    selectedModel === m.id ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <span className="truncate">{m.displayName || m.shortName || m.id}</span>
+                  {selectedModel === m.id && <Check size={12} className="shrink-0 ml-1" />}
+                </button>
+              ))}
             </div>
           )}
         </div>

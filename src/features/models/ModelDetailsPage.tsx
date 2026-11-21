@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react';
 import { INITIAL_MODELS } from '../ai/registry';
 import { ModelDetails } from './ModelDetails';
 import { useAIStore } from '../../store/aiStore';
+import { useIDEStore } from '../../store';
 
 export function ModelDetailsPage({ providerId, modelId }: { providerId: string, modelId: string }) {
   const { setSelectedModel, models } = useAIStore();
@@ -42,7 +43,8 @@ export function ModelDetailsPage({ providerId, modelId }: { providerId: string, 
         }}
         onSelect={() => {
           setSelectedModel(model.id);
-          window.history.pushState({}, '', '/');
+          useIDEStore.getState().startSession();
+          window.history.pushState({}, '', '/workspace');
           window.dispatchEvent(new PopStateEvent('popstate'));
         }}
       />

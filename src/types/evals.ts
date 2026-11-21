@@ -154,6 +154,7 @@ export interface EvalRun {
   status: EvalRunStatus;
   startedAt: number;
   completedAt?: number;
+  heartbeatAt?: number;
   duration?: number; // in seconds
   durationMs?: number; // in milliseconds
   score?: number; // 0-100

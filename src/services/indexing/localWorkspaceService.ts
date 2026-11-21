@@ -205,6 +205,9 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
       if (fdStat.isDirectory()) {
         throw new Error(`Cannot readFile on directory "${relativePath}".`);
       }
+      if (fdStat.isSocket() || fdStat.isFIFO() || fdStat.isCharacterDevice() || fdStat.isBlockDevice()) {
+        throw new Error(`Special filesystem objects (sockets, FIFOs, device nodes) cannot be read: "${relativePath}".`);
+      }
       const realAfterOpen = fs.realpathSync(fullPath);
       this.assertContainedInRoots(realAfterOpen, relativePath);
 
@@ -228,11 +231,14 @@ export class LocalFileSystemWorkspaceService implements IWorkspaceService {
     this.validateDirectoryHierarchy(parentDir);
     await fs.promises.mkdir(parentDir, { recursive: true });
 
-    // 2. Refuse writing if target is an existing symlink (prevents writing through symlinks)
+    // 2. Refuse writing if target is an existing symlink or special file (prevents writing through symlinks)
     try {
       const lstat = await fs.promises.lstat(fullPath);
       if (lstat.isSymbolicLink()) {
         throw new Error(`Path containment violation: refusing to write through symlink "${relativePath}".`);
+      }
+      if (lstat.isSocket() || lstat.isFIFO() || lstat.isCharacterDevice() || lstat.isBlockDevice()) {
+        throw new Error(`Path containment violation: refusing to write to special filesystem object "${relativePath}".`);
       }
     } catch (err: any) {
       if (err.code !== 'ENOENT') throw err;

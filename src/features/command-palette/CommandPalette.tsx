@@ -70,7 +70,7 @@ export function CommandPalette() {
       {
         id: 'run-code',
         category: 'Editor',
-        label: 'Run Python File',
+        label: 'Run File / Script',
         shortcut: 'Ctrl+Enter',
         icon: <Play size={13} className="text-emerald-500" />,
         action: () => void runActiveCode()
@@ -86,7 +86,7 @@ export function CommandPalette() {
       {
         id: 'new-workspace',
         category: 'Project',
-        label: 'New Python Workspace',
+        label: 'New FLOAT Workspace',
         icon: <FileCode size={13} className="text-purple-500" />,
         action: () => clearProject()
       },

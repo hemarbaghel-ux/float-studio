@@ -56,6 +56,13 @@ export const SENSITIVE_SEGMENTS = /^(?:\.env(?:$|\.)|\.git$|node_modules$|vendor
 export const SENSITIVE_EXTENSIONS = /\.(?:pem|key|p12|pfx|keystore|crt|cer)$/i;
 
 /**
+ * Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).
+ */
+export const WINDOWS_DEVICE_NAMES = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i;
+
+export const MAX_SAFE_PATH_LENGTH = 1024;
+
+/**
  * Strict path sanitization that enforces workspace confinement and traversal protection.
  */
 export function validateSafeWorkspacePath(rawPath: string): string {
@@ -63,7 +70,29 @@ export function validateSafeWorkspacePath(rawPath: string): string {
     throw new Error('Workspace path must be a non-empty string.');
   }
 
-  let normalized = rawPath.trim().replace(/\\/g, '/');
+  if (rawPath.length > MAX_SAFE_PATH_LENGTH) {
+    throw new Error(`Workspace path exceeds maximum length of ${MAX_SAFE_PATH_LENGTH} characters.`);
+  }
+
+  // 1. Check for URL percent-encoding (e.g. %2e%2e for .. or %2f for /)
+  let decoded = rawPath;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    throw new Error(`Malformed URL-encoded workspace path: "${rawPath}"`);
+  }
+
+  // Double-decoding check for nested encoded traversals (%252e%252e)
+  try {
+    const doubleDecoded = decodeURIComponent(decoded);
+    if (doubleDecoded !== decoded) {
+      decoded = doubleDecoded;
+    }
+  } catch {
+    // If double decode fails, proceed with single decode
+  }
+
+  let normalized = decoded.trim().replace(/\\/g, '/');
 
   // Strip leading ./
   if (normalized.startsWith('./')) {
@@ -73,11 +102,22 @@ export function validateSafeWorkspacePath(rawPath: string): string {
   // Reject null bytes, root slashes, Windows absolute drives, and parent traversal
   if (
     normalized.includes('\0') ||
+    rawPath.includes('\0') ||
     normalized.startsWith('/') ||
     /^[a-zA-Z]:/i.test(normalized) ||
     normalized.split('/').some((part) => !part || part === '.' || part === '..')
   ) {
     throw new Error(`Path traversal is strictly prohibited: "${rawPath}"`);
+  }
+
+  // Reject Windows reserved device names and segments with trailing dots/spaces
+  for (const part of normalized.split('/')) {
+    if (WINDOWS_DEVICE_NAMES.test(part)) {
+      throw new Error(`Access to reserved system device name is forbidden: "${rawPath}"`);
+    }
+    if (part.endsWith(' ') || part.endsWith('.')) {
+      throw new Error(`Path segment contains forbidden trailing space or dot: "${rawPath}"`);
+    }
   }
 
   // Reject sensitive paths

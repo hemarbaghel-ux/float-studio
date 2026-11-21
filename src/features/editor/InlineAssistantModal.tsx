@@ -4,6 +4,9 @@ import { auth } from '../../lib/firebase';
 import { useAIStore } from '../../store/aiStore';
 import { ChangeSet } from '../../types';
 import { ModelSelector } from '../ai/ModelSelector';
+import { FloatEditorLogic } from '../../core/float/FloatEditorLogic';
+
+const floatEditorLogic = new FloatEditorLogic();
 
 interface InlineAssistantModalProps {
   isOpen: boolean;
@@ -78,39 +81,58 @@ export function InlineAssistantModal({
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
+    let proposedContent = '';
+    let diffStats = { additions: 1, deletions: 1 };
+    let transformedSelection: string | undefined = undefined;
+
     try {
-      const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
+      try {
+        const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
+        if (token) {
+          const response = await fetch('/api/ai/transform', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            signal: abortController.signal,
+            body: JSON.stringify({
+              instruction: instruction.trim(),
+              selectedCode: selectedCode || fullCode,
+              fullCode,
+              startLine,
+              endLine,
+              fileName,
+              language,
+              model: selectedModel || 'gpt-6.1-sol'
+            })
+          });
 
-      const response = await fetch('/api/ai/transform', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        signal: abortController.signal,
-        body: JSON.stringify({
-          instruction: instruction.trim(),
-          selectedCode: selectedCode || fullCode,
-          fullCode,
-          startLine,
-          endLine,
-          fileName,
-          language,
-          model: selectedModel || 'gpt-6.1-sol'
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: Failed to transform code.`);
+          const text = await response.text();
+          if (response.ok && !text.trim().startsWith('<') && !text.includes('<!DOCTYPE') && !text.includes('<!doctype')) {
+            try {
+              const data = JSON.parse(text);
+              if (data.cancelled) return;
+              proposedContent = data.proposedContent || '';
+              transformedSelection = data.transformedSelection;
+              if (data.diffStats) diffStats = data.diffStats;
+            } catch {
+              // Not valid JSON, fall through
+            }
+          }
+        }
+      } catch {
+        // Fall through to client FloatEditorLogic
       }
 
-      const data = await response.json();
-      if (data.cancelled) {
-        return;
+      if (!proposedContent) {
+        const editRes = floatEditorLogic.generateInlineEdit(
+          filePath || fileName,
+          selectedCode || fullCode,
+          instruction.trim()
+        );
+        proposedContent = editRes.fullProposedContent;
       }
-
-      const proposedContent = data.proposedContent || '';
 
       // Construct a valid ChangeSet matching FLOAT's proposal architecture
       const changeSetId = `cs-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -124,7 +146,7 @@ export function InlineAssistantModal({
             operation: 'modify',
             originalContent: fullCode,
             proposedContent,
-            diffStats: data.diffStats || { additions: 1, deletions: 1 },
+            diffStats,
             status: 'pending'
           }
         ]
@@ -133,8 +155,8 @@ export function InlineAssistantModal({
       if (onApplyDirectly) {
         setPendingDiff({
           proposedContent,
-          transformedSelection: data.transformedSelection,
-          diffStats: data.diffStats,
+          transformedSelection,
+          diffStats,
           changeSet
         });
       } else {

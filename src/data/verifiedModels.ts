@@ -72,6 +72,30 @@ export interface VerifiedModel {
  */
 export const VERIFIED_MODELS: VerifiedModel[] = [
   {
+    id: 'float-free-intelligence',
+    exactModelId: 'float-free-intelligence',
+    upstreamModelId: 'float-free-intelligence',
+    isInternalAlias: false,
+    displayName: 'FLOAT Free Intelligence',
+    providerId: 'float',
+    family: 'float',
+    category: 'flagship_coding',
+    snapshotVersion: 'v1.0.0',
+    docUrl: 'https://float-ai-82239.web.app',
+    description: 'Built-in local coding intelligence. 100% free with zero API key or credit requirements.',
+    contextWindow: 128000,
+    maxOutputTokens: 8192,
+    modalities: ['text', 'code'],
+    capabilities: { coding: true, reasoning: true, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: true },
+    speed: 'fast',
+    pricing: { inputCostPer1M: 0.00, outputCostPer1M: 0.00, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2026-11-21', sourceUrl: 'https://float-ai-82239.web.app' },
+    limitations: ['Local simulated inference; add personal API keys for frontier cloud reasoning.'],
+    intendedUseCases: ['Free coding assistance', 'Code explanation and refactoring', 'Test generation without API keys'],
+    availabilityStatus: 'AVAILABLE',
+    availabilityDetails: 'Free Tier: Active and unlocked without API keys or credits.',
+    deprecationStatus: 'active'
+  },
+  {
     id: 'gpt-6-astra',
     exactModelId: 'gpt-6-astra',
     isInternalAlias: false,
@@ -204,6 +228,31 @@ export const VERIFIED_MODELS: VerifiedModel[] = [
     availabilityDetails: 'Model access is unverified until a real generation request succeeds.',
     deprecationStatus: 'active',
     requiredEnvironmentVariable: 'ANTHROPIC_API_KEY'
+  },
+  {
+    id: 'deepseek-r1',
+    exactModelId: 'deepseek-reasoner',
+    upstreamModelId: 'deepseek-reasoner',
+    isInternalAlias: false,
+    displayName: 'DeepSeek R1',
+    providerId: 'deepseek',
+    family: 'deepseek-r1',
+    category: 'advanced_reasoning',
+    snapshotVersion: '2025-01',
+    docUrl: 'https://api-docs.deepseek.com',
+    description: 'DeepSeek open-weights reasoning model optimized for mathematical deduction, algorithmic coding, and logic.',
+    contextWindow: 64000,
+    maxOutputTokens: 8192,
+    modalities: ['text', 'code'],
+    capabilities: { coding: true, reasoning: true, tools: true, vision: false, structuredOutput: true, streaming: true, longContext: true },
+    speed: 'fast',
+    pricing: { inputCostPer1M: 0.55, outputCostPer1M: 2.19, currency: 'USD', pricingUnit: 'per 1M tokens', effectiveDate: '2025-01-20', sourceUrl: 'https://api-docs.deepseek.com' },
+    limitations: ['Requires DEEPSEEK_API_KEY or runs in client simulation fallback.'],
+    intendedUseCases: ['Complex algorithmic reasoning', 'Mathematical verification', 'Competitive coding'],
+    availabilityStatus: 'UNKNOWN',
+    availabilityDetails: 'Model access available via DeepSeek BYOK or client simulation.',
+    deprecationStatus: 'active',
+    requiredEnvironmentVariable: 'DEEPSEEK_API_KEY'
   }
 ];
 

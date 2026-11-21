@@ -35,6 +35,7 @@ import { WorkspaceIndex } from '../../services/indexing/workspaceIndex';
 import { RulesService } from '../rules/rulesService';
 import { SkillsService } from '../skills/skillsService';
 import { LocalFileSystemWorkspaceService } from '../../services/indexing/localWorkspaceService';
+import { defaultDesktopWorkspaceCapabilityService } from '../workspace/desktopWorkspaceCapabilityService';
 import { ToolExecutionContext } from '../../shared/contracts/tools';
 
 const DEFAULT_VIRTUAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
@@ -259,6 +260,7 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       idempotencyKey,
       files = [],
       localWorkspacePath,
+      workspaceCapabilityToken,
       maxIterations,
       timeoutMs,
       maxTokens,
@@ -267,6 +269,14 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       repairOnVerificationFailure = true,
       stream = false,
     } = (req.body || {}) as Record<string, unknown>;
+
+    // P0 SECURITY BOUNDARY: Unconditionally reject any caller-supplied host filesystem path
+    if (localWorkspacePath !== undefined || 'localWorkspacePath' in (req.body || {})) {
+      return res.status(403).json({
+        error: 'Arbitrary localWorkspacePath is forbidden in hosted environment. Host filesystem paths cannot be specified via API requests.',
+        code: 'FORBIDDEN_LOCAL_WORKSPACE_PATH',
+      });
+    }
 
     const taskText = String(task || prompt || '').trim();
     if (!taskText) {
@@ -307,44 +317,53 @@ export function createComposerRouter(modelRouter: ModelRouter): Router {
       }
     }
 
-    // Resolve workspace (local filesystem ONLY in authenticated desktop dev mode when explicitly requested)
+    // Resolve workspace (local filesystem ONLY via validated desktop workspace capability token)
     let workspace: IWorkspaceService;
     let desktopExecutionAdapter: import('../../shared/contracts/tools').ICommandExecutionAdapter | undefined;
-    if (typeof localWorkspacePath === 'string' && localWorkspacePath.trim()) {
-      if (process.env.NODE_ENV === 'production' || process.env.FLOAT_DESKTOP_DEV !== '1') {
+    if (typeof workspaceCapabilityToken === 'string' && workspaceCapabilityToken.trim()) {
+      const capVerification = defaultDesktopWorkspaceCapabilityService.verifyCapability(
+        workspaceCapabilityToken.trim(),
+        userId,
+        projectId
+      );
+      if (!capVerification.valid || !capVerification.canonicalRoot) {
         return res.status(403).json({
-          error: 'Arbitrary localWorkspacePath is forbidden in hosted environment. Projects must use server-managed project storage.',
-          code: 'FORBIDDEN_LOCAL_WORKSPACE_PATH',
+          error: capVerification.error || 'Invalid or unauthorized workspace capability.',
+          code: capVerification.code || 'INVALID_WORKSPACE_CAPABILITY',
         });
       }
-      const localWs = new LocalFileSystemWorkspaceService(localWorkspacePath.trim());
+      const localWs = new LocalFileSystemWorkspaceService(capVerification.canonicalRoot);
       await localWs.initializeIndex();
       workspace = localWs;
-      const validatedRoot = path.resolve(localWorkspacePath.trim());
-      desktopExecutionAdapter = {
-        async runCommand(command: string, options?: { cwd?: string; timeoutMs?: number; signal?: AbortSignal }) {
-          const { exec } = await import('node:child_process');
-          return new Promise((resolve) => {
-            const proc = exec(command, { cwd: validatedRoot, timeout: options?.timeoutMs }, (error, stdout, stderr) => {
-              if (options?.signal?.aborted) {
-                resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
-              } else {
-                resolve({
-                  exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
-                  stdout: stdout?.toString() || '',
-                  stderr: stderr?.toString() || (error ? error.message : ''),
+
+      // In verified local desktop development environments, execute within the verified canonical root
+      if (process.env.FLOAT_DESKTOP_DEV === '1' && process.env.NODE_ENV !== 'production') {
+        const validatedRoot = capVerification.canonicalRoot;
+        desktopExecutionAdapter = {
+          async runCommand(command: string, options?: { cwd?: string; timeoutMs?: number; signal?: AbortSignal }) {
+            const { exec } = await import('node:child_process');
+            return new Promise((resolve) => {
+              const proc = exec(command, { cwd: validatedRoot, timeout: options?.timeoutMs }, (error, stdout, stderr) => {
+                if (options?.signal?.aborted) {
+                  resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
+                } else {
+                  resolve({
+                    exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
+                    stdout: stdout?.toString() || '',
+                    stderr: stderr?.toString() || (error ? error.message : ''),
+                  });
+                }
+              });
+              if (options?.signal) {
+                options.signal.addEventListener('abort', () => {
+                  proc.kill();
+                  resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
                 });
               }
             });
-            if (options?.signal) {
-              options.signal.addEventListener('abort', () => {
-                proc.kill();
-                resolve({ exitCode: 130, stdout: '', stderr: 'Command execution cancelled via AbortSignal' });
-              });
-            }
-          });
-        }
-      };
+          }
+        };
+      }
     } else {
       let initialFiles: Array<{ path?: string; name?: string; content?: string }> = Array.isArray(files)
         ? (files as Array<{ path?: string; name?: string; content?: string }>)

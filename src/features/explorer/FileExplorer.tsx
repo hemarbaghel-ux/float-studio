@@ -33,7 +33,9 @@ export function FileExplorer() {
   return (
     <div className="h-full flex flex-col text-sm bg-white dark:bg-[#0A0A0A]">
       <div className="group px-4 py-3 flex items-center justify-between select-none border-b border-slate-200 dark:border-[#2A2A2A]">
-        <span className="font-semibold text-xs tracking-wider uppercase text-slate-500 dark:text-[#8B949E] truncate pr-2">{projectName}</span>
+        <span className="font-semibold text-xs tracking-wider uppercase text-slate-500 dark:text-[#8B949E] truncate pr-2">
+          {projectName === 'Python Workspace' ? 'FLOAT Workspace' : projectName}
+        </span>
         <div className="flex items-center gap-1">
           <button 
             onClick={() => { setIsCreatingFile(true); setIsCreatingFolder(false); setNewItemName(''); }} 

@@ -29,7 +29,8 @@ import { ConversationService, ConversationMeta } from '../../services/conversati
 import { ContextPicker } from './ContextPicker';
 import { ChatFeedbackButtons } from '../float/ChatFeedbackButtons';
 import { CODING_ASSISTANT_SYSTEM_PROMPT } from '../float/chatParsing';
-import { createAssistantProposal, prepareAssistantProposal } from '../proposals/proposalWorkflow';
+import { createAssistantProposal, prepareAssistantProposal, proposalDraftToLocalChangeSet } from '../proposals/proposalWorkflow';
+import { dispatchClientAiStream } from '../../services/byok/clientAiDispatcher';
 import { v4 as uuidv4 } from 'uuid';
 
 function CodeBlock({ node, inline, className, children, ...props }: any) {
@@ -645,38 +646,8 @@ export function AIPanel() {
     let token: string | undefined;
     try {
       token = await auth.currentUser?.getIdToken();
-    } catch (authError: any) {
-      if (overrideInput === undefined) setInput(draftText);
-      addAiMessage({
-        id: uuidv4(),
-        role: 'model',
-        content: '**Authentication Error**: Could not refresh your sign-in session. Please sign in again and retry.',
-        status: 'error',
-        error: authError?.message || 'Failed to obtain authentication token',
-        modelId: selectedModel,
-        conversationId: targetConvId
-      });
-      setIsLoading(false);
-      isSubmittingRef.current = false;
-      return;
-    }
-
-    if (!token) {
-      if (overrideInput === undefined) {
-        setInput(draftText); // Preserve user draft on auth failure
-      }
-      addAiMessage({
-        id: uuidv4(),
-        role: 'model',
-        content: '**Authentication Required**: Please sign in to communicate with FLOAT AI models.',
-        status: 'error',
-        error: 'Missing authentication token',
-        modelId: selectedModel,
-        conversationId: targetConvId
-      });
-      setIsLoading(false);
-      isSubmittingRef.current = false;
-      return;
+    } catch {
+      token = undefined;
     }
 
     // Standard Chat with progressive streaming
@@ -751,6 +722,68 @@ export function AIPanel() {
         : '/api/ai/chat';
       setComposerTaskEvents([]);
 
+      // If unauthenticated or guest mode, dispatch directly via client-side AI streamer
+      if (!token) {
+        await dispatchClientAiStream({
+          modelId: selectedModel,
+          messages: requestMessages.map(m => ({
+            role: m.role as any,
+            content: m.parts?.[0]?.text || '',
+          })),
+          systemPrompt: effectiveSystemInstruction,
+          signal: requestController.signal,
+          onChunk: async (chunk) => {
+            if (chunk.type === 'delta' && chunk.text) {
+              accumulatedText += chunk.text;
+              updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
+            } else if (chunk.type === 'done') {
+              updateAiMessage(modelMsgId, {
+                content: accumulatedText,
+                status: 'completed',
+                latency: Date.now() - startTime,
+              });
+              try {
+                const workspace = useIDEStore.getState();
+                const draft = prepareAssistantProposal(accumulatedText, draftText, workspace.files);
+                if (draft) {
+                  let changeSet = null;
+                  if (token && workspace.projectId) {
+                    try {
+                      changeSet = await createAssistantProposal({
+                        responseText: accumulatedText,
+                        prompt: draftText,
+                        projectId: workspace.projectId,
+                        conversationId: targetConvId,
+                        files: workspace.files,
+                        token
+                      });
+                    } catch (cloudErr) {
+                      console.warn('Cloud proposal creation failed, falling back to local changeset:', cloudErr);
+                    }
+                  }
+                  if (!changeSet) {
+                    changeSet = proposalDraftToLocalChangeSet(draft, workspace.projectId || undefined);
+                  }
+                  if (changeSet) updateAiMessage(modelMsgId, { changeSet });
+                }
+              } catch (proposalErr) {
+                console.warn('Proposal extraction skipped for client stream:', proposalErr);
+              }
+            } else if (chunk.type === 'error') {
+              updateAiMessage(modelMsgId, {
+                content: accumulatedText || 'An error occurred during response generation.',
+                status: 'error',
+                error: chunk.error,
+              });
+            }
+          }
+        });
+        setIsLoading(false);
+        isSubmittingRef.current = false;
+        abortControllerRef.current = null;
+        return;
+      }
+
       const response = await fetch(endpointUrl, {
         method: 'POST',
         headers: {
@@ -785,9 +818,67 @@ export function AIPanel() {
         )
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: Failed to reach model provider.`);
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok || contentType.includes('text/html')) {
+        // Backend unavailable or returned SPA rewrite fallback: gracefully stream via client-side AI dispatcher
+        await dispatchClientAiStream({
+          modelId: selectedModel,
+          messages: requestMessages.map(m => ({
+            role: m.role as any,
+            content: m.parts?.[0]?.text || '',
+          })),
+          systemPrompt: effectiveSystemInstruction,
+          signal: requestController.signal,
+          onChunk: async (chunk) => {
+            if (chunk.type === 'delta' && chunk.text) {
+              accumulatedText += chunk.text;
+              updateAiMessage(modelMsgId, { content: accumulatedText, status: 'streaming' });
+            } else if (chunk.type === 'done') {
+              updateAiMessage(modelMsgId, {
+                content: accumulatedText,
+                status: 'completed',
+                latency: Date.now() - startTime,
+              });
+              try {
+                const workspace = useIDEStore.getState();
+                const draft = prepareAssistantProposal(accumulatedText, draftText, workspace.files);
+                if (draft) {
+                  let changeSet = null;
+                  if (token && workspace.projectId) {
+                    try {
+                      changeSet = await createAssistantProposal({
+                        responseText: accumulatedText,
+                        prompt: draftText,
+                        projectId: workspace.projectId,
+                        conversationId: targetConvId,
+                        files: workspace.files,
+                        token
+                      });
+                    } catch (cloudErr) {
+                      console.warn('Cloud proposal creation failed, falling back to local changeset:', cloudErr);
+                    }
+                  }
+                  if (!changeSet) {
+                    changeSet = proposalDraftToLocalChangeSet(draft, workspace.projectId || undefined);
+                  }
+                  if (changeSet) updateAiMessage(modelMsgId, { changeSet });
+                }
+              } catch (proposalErr) {
+                console.warn('Proposal extraction skipped for client stream:', proposalErr);
+              }
+            } else if (chunk.type === 'error') {
+              updateAiMessage(modelMsgId, {
+                content: accumulatedText || 'An error occurred during response generation.',
+                status: 'error',
+                error: chunk.error,
+              });
+            }
+          }
+        });
+        setIsLoading(false);
+        isSubmittingRef.current = false;
+        abortControllerRef.current = null;
+        return;
       }
 
       if (!response.body) {
@@ -967,18 +1058,29 @@ export function AIPanel() {
         try {
           const proposalDraft = prepareAssistantProposal(accumulatedText, draftText, files);
           if (proposalDraft) {
-            const saveResult = await useIDEStore.getState().saveProject();
-            if (saveResult.status === 'error') throw new Error(saveResult.message);
-            const workspace = useIDEStore.getState();
-            if (!workspace.projectId) throw new Error('Save this workspace before creating a code proposal.');
-            const changeSet = await createAssistantProposal({
-              responseText: accumulatedText,
-              prompt: draftText,
-              projectId: workspace.projectId,
-              conversationId: targetConvId,
-              files: workspace.files,
-              token
-            });
+            let changeSet = null;
+            if (token) {
+              try {
+                const saveResult = await useIDEStore.getState().saveProject();
+                const workspace = useIDEStore.getState();
+                if (saveResult.status !== 'error' && workspace.projectId) {
+                  changeSet = await createAssistantProposal({
+                    responseText: accumulatedText,
+                    prompt: draftText,
+                    projectId: workspace.projectId,
+                    conversationId: targetConvId,
+                    files: workspace.files,
+                    token
+                  });
+                }
+              } catch (cloudErr) {
+                console.warn('Cloud proposal creation failed, falling back to local changeset:', cloudErr);
+              }
+            }
+            if (!changeSet) {
+              const workspace = useIDEStore.getState();
+              changeSet = proposalDraftToLocalChangeSet(proposalDraft, workspace.projectId || undefined);
+            }
             if (changeSet) updateAiMessage(modelMsgId, { changeSet });
           }
         } catch (proposalError: any) {

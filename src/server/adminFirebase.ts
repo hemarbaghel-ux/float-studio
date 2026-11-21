@@ -83,5 +83,8 @@ export const adminApp = existing || initializeApp(
   'float-admin'
 );
 
-// The applet uses a named Firestore database, so admin persistence must use it too.
-export const adminDb = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
+// Connects to default database if firestoreDatabaseId is '(default)' or omitted, or a named database if configured.
+const adminDbId = process.env.FIRESTORE_DATABASE_ID || (firebaseConfig as any).firestoreDatabaseId;
+export const adminDb = (adminDbId && adminDbId !== '(default)')
+  ? getFirestore(adminApp, adminDbId)
+  : getFirestore(adminApp);

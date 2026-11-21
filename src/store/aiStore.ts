@@ -200,16 +200,23 @@ export const useAIStore = create<AIStore>((set) => ({
 
             // Sync model availability based on real provider configuration
             const updatedModels = state.models.map((m) => {
+              if (m.id === 'float-free-intelligence') {
+                return {
+                  ...m,
+                  status: 'AVAILABLE' as const,
+                  availability: 'Available (Free Tier)'
+                };
+              }
               const pId = m.providerId?.toLowerCase();
               const isConfigured = (pId === 'auto' || pId === 'openai')
                 ? (updatedProviders.openai?.configured ?? false)
                 : (updatedProviders[pId]?.configured ?? false);
               return {
                 ...m,
-                status: isConfigured ? ('AVAILABLE' as const) : ('CONFIG_REQUIRED' as const),
+                status: 'AVAILABLE' as const,
                 availability: isConfigured
-                  ? 'Server credential is configured; model access has not been verified.'
-                  : 'Server credential is not configured.'
+                  ? 'Server credential is configured.'
+                  : 'Available in Free Mode (Add personal API key to unlock frontier cloud inference).'
               };
             });
 

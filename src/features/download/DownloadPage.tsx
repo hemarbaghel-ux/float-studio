@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Monitor, Apple, Terminal, Copy, Check, Sparkles, Download, Layers } from 'lucide-react';
+import { ArrowLeft, Monitor, Apple, Terminal, Copy, Check, Sparkles, Download } from 'lucide-react';
 import { FloatLogo, FloatWordmark } from '../../components/FloatLogo';
+import { useIDEStore } from '../../store';
 
 export function DownloadPage() {
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
@@ -57,8 +58,14 @@ export function DownloadPage() {
           <span className="text-xs font-semibold text-slate-500 dark:text-[#8B949E]">/ Download</span>
         </a>
         <a
-          href="/"
-          className="px-4 py-2 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full text-xs font-semibold hover:opacity-90 transition-opacity shadow-xs"
+          href="/workspace"
+          onClick={(e) => {
+            e.preventDefault();
+            useIDEStore.getState().startSession();
+            window.history.pushState({}, '', '/workspace');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+          className="px-4 py-2 bg-slate-900 text-white dark:bg-white dark:text-black rounded-full text-xs font-semibold hover:opacity-90 transition-opacity shadow-xs cursor-pointer"
         >
           Open Web IDE
         </a>
@@ -80,8 +87,14 @@ export function DownloadPage() {
 
           <div className="mt-8 flex flex-wrap justify-center gap-4">
             <a
-              href="/"
-              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md flex items-center gap-2"
+              href="/workspace"
+              onClick={(e) => {
+                e.preventDefault();
+                useIDEStore.getState().startSession();
+                window.history.pushState({}, '', '/workspace');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              }}
+              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md flex items-center gap-2 cursor-pointer"
             >
               <Download size={16} />
               <span>Launch Instant Web Workspace</span>
@@ -139,31 +152,6 @@ export function DownloadPage() {
               </div>
             );
           })}
-        </div>
-
-        {/* Extensions & VS Code Parity */}
-        <div className="p-8 rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121210] shadow-sm">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-                <Layers size={24} />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  Migrating from VS Code or Cursor?
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-[#8B949E] mt-1">
-                  Import your extensions, keybindings, and `.cursorrules` in one step. All familiar shortcuts (Cmd/Ctrl+K, Cmd/Ctrl+Shift+P) are configured automatically.
-                </p>
-              </div>
-            </div>
-            <a
-              href="/"
-              className="px-4 py-2.5 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-black text-xs font-semibold hover:opacity-90 transition-opacity shrink-0"
-            >
-              Start Coding
-            </a>
-          </div>
         </div>
       </section>
     </main>
