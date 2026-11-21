@@ -257,7 +257,7 @@ export function ModelSelector({
       const idx = filteredModels.findIndex(m => m.id === currentModel.id);
       const targetIdx = idx >= 0 ? idx : 0;
       setHighlightedIndex(targetIdx);
-      setHoveredModel(filteredModels[targetIdx] || currentModel);
+      setHoveredModel(null);
       setIsCardPinned(false);
 
       setTimeout(() => {
@@ -450,7 +450,7 @@ export function ModelSelector({
         <Portal>
           <div
             ref={dropdownRef}
-            className="model-selector-dropdown fixed z-[9999] w-[250px] bg-white dark:bg-[#181818] border border-slate-200/90 dark:border-[#2C2C2C] rounded-[14px] shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/75 overflow-hidden flex flex-col animate-in fade-in duration-100 select-none font-sans"
+            className="model-selector-dropdown fixed z-[100000] w-[250px] bg-white dark:bg-[#181818] border border-slate-200/90 dark:border-[#2C2C2C] rounded-[14px] shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/75 overflow-hidden flex flex-col animate-in fade-in duration-100 select-none font-sans"
             style={{
               left: `${dropdownCoords.left}px`,
               top: dropdownCoords.top !== undefined ? `${dropdownCoords.top}px` : undefined,
